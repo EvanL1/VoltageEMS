@@ -10,10 +10,10 @@ use axum::{
     extract::{Path, State},
     response::Json,
 };
+use common::SuccessResponse;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use voltage_config::api::SuccessResponse;
 
 use crate::app_state::AppState;
 use crate::dto::RoutingRequest;

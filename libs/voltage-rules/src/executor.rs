@@ -7,18 +7,18 @@
 
 use crate::error::Result;
 use crate::logger::format_conditions;
+use crate::types::{
+    CalculationRule, FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment,
+    RuleVariable,
+};
 use bytes::Bytes;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, SharedStateStore};
-use voltage_config::rules::{
-    CalculationRule, FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment,
-    RuleVariable,
-};
-use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_routing::set_action_point;
 use voltage_rtdb::traits::Rtdb;
+use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 /// Result of executing a rule
 #[derive(Debug, Clone, Serialize)]
@@ -638,7 +638,6 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use voltage_config::rules::Rule;
     use voltage_rtdb::{Bytes, MemoryRtdb};
 
     use crate::parser::extract_rule_flow;

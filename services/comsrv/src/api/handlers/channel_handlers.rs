@@ -315,7 +315,7 @@ pub async fn get_channel_detail_handler(
         let logging = obj
             .remove("logging")
             .and_then(|l| {
-                serde_json::from_value::<voltage_config::comsrv::ChannelLoggingConfig>(l).ok()
+                serde_json::from_value::<crate::core::config::ChannelLoggingConfig>(l).ok()
             })
             .unwrap_or_default();
 
@@ -351,7 +351,7 @@ pub async fn get_channel_detail_handler(
     };
 
     let config = ChannelConfig {
-        core: voltage_config::comsrv::ChannelCore {
+        core: crate::core::config::ChannelCore {
             id: id_u16,
             name,
             description,

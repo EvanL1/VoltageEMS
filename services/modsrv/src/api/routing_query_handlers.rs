@@ -10,10 +10,10 @@ use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
+use common::SuccessResponse;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use voltage_config::api::SuccessResponse;
 
 use crate::app_state::AppState;
 use crate::error::ModSrvError;

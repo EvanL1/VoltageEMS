@@ -456,7 +456,7 @@ async fn handle_instance_command(
             if use_lib_api {
                 #[cfg(feature = "lib-mode")]
                 {
-                    use voltage_config::KeySpaceConfig;
+                    use voltage_rtdb::KeySpaceConfig;
 
                     let ctx = service_ctx.expect("ServiceContext should be available in lib-mode");
                     let modsrv = ctx.modsrv()?;

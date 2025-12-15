@@ -143,7 +143,7 @@ pub struct ChannelManager {
     /// Shared RTDB (Redis or Memory for testing)
     rtdb: Arc<dyn voltage_rtdb::Rtdb>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
-    pub routing_cache: Arc<voltage_config::RoutingCache>,
+    pub routing_cache: Arc<voltage_rtdb::RoutingCache>,
     /// Telemetry sync manager
     telemetry_sync: TelemetrySync,
     /// SQLite connection pool for configuration loading
@@ -164,7 +164,7 @@ impl ChannelManager {
     /// Create new channel manager
     pub fn new(
         rtdb: Arc<dyn voltage_rtdb::Rtdb>,
-        routing_cache: Arc<voltage_config::RoutingCache>,
+        routing_cache: Arc<voltage_rtdb::RoutingCache>,
     ) -> Self {
         // Create point configuration provider for data transformation
         let config_provider = Arc::new(RuntimeConfigProvider::new());
@@ -185,7 +185,7 @@ impl ChannelManager {
     /// Create channel manager with SQLite pool
     pub fn with_sqlite_pool(
         rtdb: Arc<dyn voltage_rtdb::Rtdb>,
-        routing_cache: Arc<voltage_config::RoutingCache>,
+        routing_cache: Arc<voltage_rtdb::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
     ) -> Self {
         // Create point configuration provider for data transformation
@@ -498,17 +498,25 @@ impl ChannelManager {
             .map(|p| p.base.point_id)
             .collect();
 
-        let telemetry_types: Vec<(&str, voltage_config::FourRemote, Vec<u32>)> = vec![
+        let telemetry_types: Vec<(&str, crate::core::config::FourRemote, Vec<u32>)> = vec![
             (
                 "telemetry",
-                voltage_config::FourRemote::Telemetry,
+                crate::core::config::FourRemote::Telemetry,
                 telemetry_ids,
             ),
-            ("signal", voltage_config::FourRemote::Signal, signal_ids),
-            ("control", voltage_config::FourRemote::Control, control_ids),
+            (
+                "signal",
+                crate::core::config::FourRemote::Signal,
+                signal_ids,
+            ),
+            (
+                "control",
+                crate::core::config::FourRemote::Control,
+                control_ids,
+            ),
             (
                 "adjustment",
-                voltage_config::FourRemote::Adjustment,
+                crate::core::config::FourRemote::Adjustment,
                 adjustment_ids,
             ),
         ];
@@ -527,9 +535,9 @@ impl ChannelManager {
             );
 
             // Get existing point IDs from Redis
-            let config = voltage_config::KeySpaceConfig::production();
+            let config = voltage_rtdb::KeySpaceConfig::production();
             // Convert FourRemote to PointType via string (both have same T/S/C/A representation)
-            let point_type = voltage_config::protocols::PointType::from_str(four_remote.as_str())
+            let point_type = voltage_model::PointType::from_str(four_remote.as_str())
                 .expect("FourRemote and PointType have matching string representations");
             let channel_key = config.channel_key(channel_id, point_type);
 
@@ -671,8 +679,8 @@ mod tests {
     use voltage_rtdb::helpers::create_test_rtdb;
 
     /// Create test routing cache for unit tests
-    fn create_test_routing_cache() -> Arc<voltage_config::RoutingCache> {
-        Arc::new(voltage_config::RoutingCache::new())
+    fn create_test_routing_cache() -> Arc<voltage_rtdb::RoutingCache> {
+        Arc::new(voltage_rtdb::RoutingCache::new())
     }
 
     #[tokio::test]

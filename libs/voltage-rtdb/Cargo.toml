@@ -22,9 +22,11 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 
+# Core dependencies for keyspace
+voltage-model = { path = "../voltage-model" }
+
 # Optional dependencies
 common = { path = "../common", optional = true }
-voltage-config = { path = "../voltage-config" }
 redis = { workspace = true, optional = true }
 
 [features]

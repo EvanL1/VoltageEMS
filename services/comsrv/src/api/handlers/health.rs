@@ -74,7 +74,7 @@ pub async fn health_check() -> Result<Json<SuccessResponse<HealthStatus>>, AppEr
     let metrics = SystemMetrics::collect();
 
     let health = HealthStatus {
-        status: voltage_config::api::ServiceStatus::Healthy,
+        status: common::ServiceStatus::Healthy,
         service: "comsrv".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime_seconds,

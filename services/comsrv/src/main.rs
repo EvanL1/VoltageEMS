@@ -18,8 +18,8 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use common::service_bootstrap::ServiceInfo;
-use voltage_config::comsrv::DEFAULT_PORT;
-use voltage_config::error::VoltageResult;
+use comsrv::core::config::DEFAULT_PORT;
+use errors::VoltageResult;
 
 // comsrv imports
 use comsrv::{
@@ -127,7 +127,7 @@ async fn main() -> VoltageResult<()> {
         let c2m_len = c2m_data.len();
         let m2c_len = m2c_data.len();
         let c2c_len = c2c_data.len();
-        let cache = Arc::new(voltage_config::RoutingCache::from_maps(
+        let cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
             c2m_data, m2c_data, c2c_data,
         ));
 

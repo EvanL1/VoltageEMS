@@ -1,15 +1,25 @@
 //! Configuration validation module
 //!
 //! This module provides validation functionality for service configurations
-//! using the shared voltage-config validation framework.
+//! using the shared validation framework.
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-use voltage_config::{
-    ComsrvValidator, ConfigValidator as VoltageConfigValidator, ModsrvValidator, RulesValidator,
-    ValidationLevel, ValidationResult,
+
+// Import validation types from common
+use common::{
+    ConfigValidator as VoltageConfigValidator, GenericValidator, ValidationLevel, ValidationResult,
 };
+
+// Import config types from service libs (lib-mode)
+use comsrv::core::config::ComsrvConfig;
+use modsrv::config::{ModsrvConfig, RulesConfig};
+
+// Type aliases for validators
+type ComsrvValidator = GenericValidator<ComsrvConfig>;
+type ModsrvValidator = GenericValidator<ModsrvConfig>;
+type RulesValidator = GenericValidator<RulesConfig>;
 
 /// Create a failed validation result with error message
 fn validation_error(error: impl Into<String>) -> ValidationResult {

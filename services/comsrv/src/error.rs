@@ -2,8 +2,8 @@
 //!
 //! This module provides error type definitions and conversions for the Communication Service.
 
+use errors::VoltageError;
 use thiserror::Error;
-use voltage_config::error::VoltageError;
 
 /// Communication Service Error Type
 #[derive(Error, Debug, Clone)]
@@ -364,7 +364,7 @@ impl From<ComSrvError> for VoltageError {
 // ComSrvError implements VoltageErrorTrait
 // ============================================================================
 
-use voltage_config::error::{ErrorCategory, VoltageErrorTrait};
+use errors::{ErrorCategory, VoltageErrorTrait};
 
 impl VoltageErrorTrait for ComSrvError {
     fn error_code(&self) -> &'static str {
@@ -492,12 +492,10 @@ impl VoltageErrorTrait for ComSrvError {
 // ============================================================================
 
 /// Automatically convert ComSrvError to AppError using VoltageErrorTrait for HTTP status mapping
-impl From<ComSrvError> for voltage_config::api::AppError {
+impl From<ComSrvError> for common::AppError {
     fn from(err: ComSrvError) -> Self {
-        use voltage_config::{
-            api::{AppError, ErrorInfo},
-            error::VoltageErrorTrait,
-        };
+        use common::{AppError, ErrorInfo};
+        use errors::VoltageErrorTrait;
 
         let status = err.http_status();
         let error_info = ErrorInfo::new(err.to_string())

@@ -3,6 +3,8 @@
 //! Provides a type-safe enum for handling different byte/word ordering patterns
 //! commonly used in industrial protocols (Modbus, CAN, IEC104, etc.).
 
+use serde::{Deserialize, Serialize};
+
 /// Unified byte/word order representation for 16/32/64-bit values
 ///
 /// # Terminology
@@ -21,42 +23,48 @@
 /// - `LittleEndian (DCBA)`: [0x78, 0x56, 0x34, 0x12]
 /// - `BigEndianSwap (CDAB)`: [0x56, 0x78, 0x12, 0x34] (Modbus common)
 /// - `LittleEndianSwap (BADC)`: [0x34, 0x12, 0x78, 0x56]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ByteOrder {
     /// Big-endian: ABCD (most significant byte first)
     ///
     /// Network byte order, used in most protocols.
     /// Example: 0x12345678 → [0x12, 0x34, 0x56, 0x78]
+    #[serde(alias = "ABCD", alias = "big_endian")]
     BigEndian,
 
     /// Little-endian: DCBA (least significant byte first)
     ///
     /// Intel x86 native byte order.
     /// Example: 0x12345678 → [0x78, 0x56, 0x34, 0x12]
+    #[serde(alias = "DCBA", alias = "little_endian")]
     LittleEndian,
 
     /// Big-endian with swapped words: CDAB
     ///
     /// Common in Modbus and some PLCs. Words are big-endian but swapped.
     /// Example: 0x12345678 → [0x56, 0x78, 0x12, 0x34]
+    #[serde(alias = "CDAB", alias = "big_endian_swap")]
     BigEndianSwap,
 
     /// Little-endian with swapped words: BADC
     ///
     /// Rare, but exists in some devices.
     /// Example: 0x12345678 → [0x34, 0x12, 0x78, 0x56]
+    #[serde(alias = "BADC", alias = "little_endian_swap")]
     LittleEndianSwap,
 
     /// 16-bit big-endian: AB
     ///
     /// For 16-bit values only.
     /// Example: 0x1234 → [0x12, 0x34]
+    #[serde(alias = "AB")]
     BigEndian16,
 
     /// 16-bit little-endian: BA
     ///
     /// For 16-bit values only.
     /// Example: 0x1234 → [0x34, 0x12]
+    #[serde(alias = "BA")]
     LittleEndian16,
 }
 

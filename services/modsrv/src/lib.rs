@@ -1,5 +1,7 @@
 //! ModSrv library exports for testing
 
+pub mod config;
+
 pub mod api {
     //! API Module Aggregation
     //!

@@ -7,11 +7,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
-#[cfg(feature = "schema")]
-use schemars::JsonSchema;
-
-// Re-export PointType from voltage-model for backward compatibility
+// Re-export PointType from voltage-model for convenience
 pub use voltage_model::PointType;
+
+/// FourRemote is an alias for PointType for backward compatibility
+///
+/// Both represent the same concept: the four remote point types (T/S/C/A)
+/// in industrial SCADA systems.
+///
+/// **Prefer using `PointType` for new code.**
+pub type FourRemote = PointType;
+
+// Re-export ByteOrder from bytes module for unified access
+pub use crate::bytes::ByteOrder;
 
 // ============================================================================
 // Data Type Definitions
@@ -22,7 +30,6 @@ pub use voltage_model::PointType;
 /// This enum represents all possible data types that can be transmitted
 /// through various industrial protocols (Modbus, CAN, IEC, etc.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum SignalDataType {
     // Unsigned integers
@@ -125,101 +132,6 @@ impl fmt::Display for SignalDataType {
 }
 
 // ============================================================================
-// Byte Order Definitions
-// ============================================================================
-
-/// Byte order for multi-byte values (using ABCD notation)
-///
-/// Common in industrial protocols for specifying endianness
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum ByteOrder {
-    /// ABCD - Big Endian (MSB first)
-    #[serde(rename = "ABCD")]
-    ABCD,
-    /// DCBA - Little Endian (LSB first)
-    #[serde(rename = "DCBA")]
-    DCBA,
-    /// CDAB - Middle Endian (swap pairs)
-    #[serde(rename = "CDAB")]
-    CDAB,
-    /// BADC - Middle Endian (swap bytes)
-    #[serde(rename = "BADC")]
-    BADC,
-    /// BA - 16-bit Little Endian
-    #[serde(rename = "BA")]
-    BA,
-    /// AB - 16-bit Big Endian
-    #[serde(rename = "AB")]
-    AB,
-}
-
-impl ByteOrder {
-    /// Parse from string representation
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.to_uppercase().as_str() {
-            "ABCD" => Some(Self::ABCD),
-            "DCBA" => Some(Self::DCBA),
-            "CDAB" => Some(Self::CDAB),
-            "BADC" => Some(Self::BADC),
-            "BA" => Some(Self::BA),
-            "AB" => Some(Self::AB),
-            _ => None,
-        }
-    }
-
-    /// Convert to string representation
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::ABCD => "ABCD",
-            Self::DCBA => "DCBA",
-            Self::CDAB => "CDAB",
-            Self::BADC => "BADC",
-            Self::BA => "BA",
-            Self::AB => "AB",
-        }
-    }
-
-    /// Reorder bytes according to this byte order
-    pub fn reorder_bytes(&self, bytes: &[u8]) -> Vec<u8> {
-        match (self, bytes.len()) {
-            (Self::AB | Self::BA, 2) => {
-                if *self == Self::BA {
-                    vec![bytes[1], bytes[0]]
-                } else {
-                    bytes.to_vec()
-                }
-            },
-            (_, 4) => match self {
-                Self::ABCD => bytes.to_vec(),
-                Self::DCBA => vec![bytes[3], bytes[2], bytes[1], bytes[0]],
-                Self::CDAB => vec![bytes[2], bytes[3], bytes[0], bytes[1]],
-                Self::BADC => vec![bytes[1], bytes[0], bytes[3], bytes[2]],
-                _ => bytes.to_vec(),
-            },
-            (_, 8) if *self == Self::DCBA => {
-                vec![
-                    bytes[7], bytes[6], bytes[5], bytes[4], bytes[3], bytes[2], bytes[1], bytes[0],
-                ]
-            },
-            _ => bytes.to_vec(),
-        }
-    }
-}
-
-impl Default for ByteOrder {
-    fn default() -> Self {
-        Self::ABCD // Big Endian as default
-    }
-}
-
-impl fmt::Display for ByteOrder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-// ============================================================================
 // Protocol Parameter Types
 // ============================================================================
 
@@ -227,7 +139,6 @@ impl fmt::Display for ByteOrder {
 ///
 /// Used for defining and validating protocol-specific configuration parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ParameterType {
     String {
@@ -282,7 +193,6 @@ pub enum ParameterType {
 
 /// Enum value for parameter type
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct EnumValue {
     pub value: String,
     pub label: String,
@@ -292,7 +202,6 @@ pub struct EnumValue {
 
 /// Duration unit specification
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum DurationUnit {
     Milliseconds,
@@ -309,7 +218,6 @@ impl Default for DurationUnit {
 
 /// IP version specification
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub enum IpVersion {
     #[serde(rename = "v4")]
     V4,
@@ -325,7 +233,6 @@ pub enum IpVersion {
 
 /// Supported protocol types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ProtocolType {
     // Modbus variants
@@ -424,7 +331,6 @@ impl std::str::FromStr for ProtocolType {
 
 /// Communication mode for protocol channels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum CommunicationMode {
     /// Act as client/master
@@ -447,7 +353,6 @@ impl Default for CommunicationMode {
 
 /// Data quality codes for protocol values
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum QualityCode {
     Good,
@@ -531,17 +436,6 @@ mod tests {
     }
 
     #[test]
-    fn test_byte_order_reordering() {
-        let bytes = vec![0x01, 0x02, 0x03, 0x04];
-
-        let result = ByteOrder::DCBA.reorder_bytes(&bytes);
-        assert_eq!(result, vec![0x04, 0x03, 0x02, 0x01]);
-
-        let result = ByteOrder::CDAB.reorder_bytes(&bytes);
-        assert_eq!(result, vec![0x03, 0x04, 0x01, 0x02]);
-    }
-
-    #[test]
     fn test_protocol_type_categorization() {
         assert!(ProtocolType::ModbusTcp.is_modbus());
         assert!(ProtocolType::Iec61850.is_iec());
@@ -606,5 +500,21 @@ mod tests {
         assert_eq!(format!("{}", PointType::Signal), "S");
         assert_eq!(format!("{}", PointType::Control), "C");
         assert_eq!(format!("{}", PointType::Adjustment), "A");
+    }
+
+    #[test]
+    fn test_byte_order_serde() {
+        // Test deserialization with different aliases
+        let json_abcd = r#""ABCD""#;
+        let bo: ByteOrder = serde_json::from_str(json_abcd).unwrap();
+        assert_eq!(bo, ByteOrder::BigEndian);
+
+        let json_dcba = r#""DCBA""#;
+        let bo: ByteOrder = serde_json::from_str(json_dcba).unwrap();
+        assert_eq!(bo, ByteOrder::LittleEndian);
+
+        let json_cdab = r#""CDAB""#;
+        let bo: ByteOrder = serde_json::from_str(json_cdab).unwrap();
+        assert_eq!(bo, ByteOrder::BigEndianSwap);
     }
 }

@@ -88,7 +88,7 @@ pub fn print_startup_banner(service: &ServiceInfo) {
 /// 3. Default "logs"
 pub fn init_logging(
     service: &ServiceInfo,
-    logging_config: Option<&voltage_config::common::LoggingConfig>,
+    logging_config: Option<&crate::LoggingConfig>,
 ) -> anyhow::Result<()> {
     // Initialize log root directory from config or environment
     let config_dir = logging_config.map(|c| c.dir.as_str());

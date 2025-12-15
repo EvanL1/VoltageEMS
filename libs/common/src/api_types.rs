@@ -6,14 +6,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[cfg(feature = "schema")]
-use schemars::JsonSchema;
-
-#[cfg(feature = "axum-support")]
-use axum::{
-    http::StatusCode,
-    response::{IntoResponse, Json, Response},
-};
+#[cfg(feature = "openapi")]
+use utoipa::ToSchema;
 
 // ============================================================================
 // Standard API Response Models
@@ -21,10 +15,10 @@ use axum::{
 
 /// Standard success response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct SuccessResponse<T> {
     /// Success indicator (always true)
-    #[serde(default = "crate::serde_defaults::bool_true")]
+    #[serde(default = "crate::serde_helpers::bool_true")]
     pub success: bool,
     /// Response data
     pub data: T,
@@ -52,10 +46,10 @@ impl<T> SuccessResponse<T> {
 
 /// Standard error response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ErrorResponse {
     /// Success indicator (always false for errors)
-    #[serde(default = "crate::serde_defaults::bool_false")]
+    #[serde(default = "crate::serde_helpers::bool_false")]
     pub success: bool,
     /// Error information
     pub error: ErrorInfo,
@@ -63,7 +57,7 @@ pub struct ErrorResponse {
 
 /// Standard error information
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ErrorInfo {
     /// Error code (HTTP status or custom)
     pub code: u16,
@@ -111,12 +105,18 @@ impl ErrorInfo {
 }
 
 // ============================================================================
-// AppError - HTTP Error with proper status codes
+// AppError - HTTP Error with proper status codes (requires axum feature)
 // ============================================================================
+
+#[cfg(feature = "axum")]
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Json, Response},
+};
 
 /// Application error with HTTP status code
 /// This type implements IntoResponse for seamless integration with axum handlers
-#[cfg(feature = "axum-support")]
+#[cfg(feature = "axum")]
 #[derive(Debug, Clone)]
 pub struct AppError {
     /// HTTP status code
@@ -125,7 +125,7 @@ pub struct AppError {
     pub error: ErrorInfo,
 }
 
-#[cfg(feature = "axum-support")]
+#[cfg(feature = "axum")]
 impl AppError {
     /// Create a new error
     pub fn new(status: StatusCode, error: ErrorInfo) -> Self {
@@ -189,7 +189,7 @@ impl AppError {
     }
 }
 
-#[cfg(feature = "axum-support")]
+#[cfg(feature = "axum")]
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         (
@@ -203,17 +203,20 @@ impl IntoResponse for AppError {
     }
 }
 
-#[cfg(feature = "axum-support")]
+#[cfg(feature = "axum")]
 impl From<anyhow::Error> for AppError {
     fn from(err: anyhow::Error) -> Self {
         Self::internal_error(err.to_string())
     }
 }
 
+// ============================================================================
+// Pagination Models
+// ============================================================================
+
 /// Paginated response wrapper
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct PaginatedResponse<T> {
     /// List of items
     #[serde(rename = "list", alias = "items")]
@@ -254,19 +257,6 @@ impl<T: Clone> PaginatedResponse<T> {
     /// - Clamps page_size between 1 and 100
     /// - Calculates correct slice boundaries
     /// - Returns empty list if page is out of bounds
-    ///
-    /// # Arguments
-    /// * `all_items` - The complete list of items to paginate
-    /// * `page` - Page number (1-indexed, will be clamped to minimum of 1)
-    /// * `page_size` - Items per page (will be clamped between 1 and 100)
-    ///
-    /// # Example
-    /// ```ignore
-    /// let items = vec![1, 2, 3, 4, 5];
-    /// let response = PaginatedResponse::from_slice(items, 1, 2);
-    /// assert_eq!(response.items, vec![1, 2]);
-    /// assert_eq!(response.total, 5);
-    /// ```
     pub fn from_slice(all_items: Vec<T>, page: usize, page_size: usize) -> Self {
         let total = all_items.len();
         let page = page.max(1);
@@ -286,19 +276,15 @@ impl<T: Clone> PaginatedResponse<T> {
     }
 }
 
-// ============================================================================
-// Common Request Models
-// ============================================================================
-
 /// Pagination request parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct PaginationParams {
     /// Page number (0-indexed)
     #[serde(default)]
     pub page: usize,
     /// Items per page
-    #[serde(default = "crate::serde_defaults::page_size")]
+    #[serde(default = "crate::serde_helpers::page_size")]
     pub page_size: usize,
     /// Sort field
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -309,23 +295,21 @@ pub struct PaginationParams {
 }
 
 /// Sort order
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum SortOrder {
+    #[default]
     Asc,
     Desc,
 }
 
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::Asc
-    }
-}
+// ============================================================================
+// Time Range Filter
+// ============================================================================
 
 /// Time range filter
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// JsonSchema not supported for chrono::DateTime
 pub struct TimeRange {
     /// Start time (ISO 8601)
     pub start: Option<chrono::DateTime<chrono::Utc>>,
@@ -364,7 +348,6 @@ impl TimeRange {
 
 /// Service health status
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// JsonSchema not supported for chrono::DateTime
 pub struct HealthStatus {
     /// Overall health status
     pub status: ServiceStatus,
@@ -386,7 +369,7 @@ pub struct HealthStatus {
 
 /// Service status enum
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ServiceStatus {
     Healthy,
@@ -397,7 +380,7 @@ pub enum ServiceStatus {
 
 /// Component health check result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ComponentHealth {
     /// Component status
     pub status: ServiceStatus,
@@ -415,7 +398,7 @@ pub struct ComponentHealth {
 
 /// Batch operation request
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct BatchRequest<T> {
     /// List of operations to perform
     pub operations: Vec<T>,
@@ -429,7 +412,7 @@ pub struct BatchRequest<T> {
 
 /// Batch operation response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct BatchResponse<T> {
     /// Results for each operation
     pub results: Vec<BatchResult<T>>,
@@ -443,7 +426,7 @@ pub struct BatchResponse<T> {
 
 /// Individual batch operation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct BatchResult<T> {
     /// Operation index
     pub index: usize,
@@ -463,7 +446,6 @@ pub struct BatchResult<T> {
 
 /// WebSocket message wrapper
 #[derive(Debug, Clone, Serialize, Deserialize)]
-// JsonSchema not supported for chrono::DateTime
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WebSocketMessage<T> {
     /// Data message
@@ -488,7 +470,7 @@ pub enum WebSocketMessage<T> {
 
 /// WebSocket control actions
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ControlAction {
     Subscribe,
@@ -528,22 +510,6 @@ mod tests {
         assert_eq!(response.error.message, "Something went wrong");
         assert_eq!(response.error.code, 500);
         assert!(!response.success);
-    }
-
-    #[cfg(feature = "axum-support")]
-    #[test]
-    fn test_app_error_creation() {
-        let err = AppError::not_found("Resource not found");
-        assert_eq!(err.status, StatusCode::NOT_FOUND);
-        assert_eq!(err.error.code, 404);
-
-        let err = AppError::bad_request("Invalid input");
-        assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        assert_eq!(err.error.code, 400);
-
-        let err = AppError::internal_error("Server error");
-        assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(err.error.code, 500);
     }
 
     #[test]

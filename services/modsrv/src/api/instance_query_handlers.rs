@@ -9,13 +9,13 @@ use axum::{
     response::Json,
 };
 use bytes::Bytes;
+use common::SuccessResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 use utoipa::ToSchema;
-use voltage_config::api::SuccessResponse;
 use voltage_rtdb::Rtdb;
 
 use crate::app_state::AppState;
@@ -595,7 +595,7 @@ pub async fn set_instance_measurement(
     let rtdb = &state.instance_manager.rtdb;
 
     // Build M value Hash key: inst:{id}:M
-    let key = voltage_config::modsrv::InstanceRedisKeys::measurement_hash(id);
+    let key = crate::config::InstanceRedisKeys::measurement_hash(id);
 
     // Write to Redis Hash
     rtdb.hash_set(&key, &req.point_id, Bytes::from(req.value.to_string()))

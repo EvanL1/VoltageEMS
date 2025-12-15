@@ -7,11 +7,11 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use tracing::debug;
 
+use crate::config::ModsrvConfig;
 use crate::error::ModSrvError;
 use crate::instance_manager::InstanceManager;
 use crate::product_loader::ProductLoader;
 use common::sqlite::SqliteClient;
-use voltage_config::modsrv::ModsrvConfig;
 #[cfg(test)]
 use voltage_rtdb::MemoryRtdb as TestRtdb;
 #[cfg(not(test))]

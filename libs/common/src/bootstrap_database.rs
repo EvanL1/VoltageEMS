@@ -3,11 +3,11 @@
 //! Provides common functions for setting up Redis and SQLite connections
 //! with retry logic and validation
 
+use errors::{VoltageError, VoltageResult};
 use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use voltage_config::error::{VoltageError, VoltageResult};
 
 use crate::config_loader::{build_redis_candidates, connect_redis_with_retry};
 use crate::redis::RedisClient;

@@ -140,7 +140,7 @@ impl TryFrom<RawRouteContext> for RouteContext {
 #[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn set_action_point<R>(
     redis: &R,
-    routing_cache: &voltage_config::RoutingCache,
+    routing_cache: &voltage_rtdb::RoutingCache,
     instance_id: u32,
     point_id: &str,
     value: f64,
@@ -148,7 +148,7 @@ pub async fn set_action_point<R>(
 where
     R: Rtdb + ?Sized,
 {
-    let config = voltage_config::KeySpaceConfig::production();
+    let config = voltage_rtdb::KeySpaceConfig::production();
 
     // Build M2C routing key and lookup target
     let route_key = format!("{}:A:{}", instance_id, point_id);
@@ -185,7 +185,7 @@ where
             .context("Failed to write instance action point")?;
 
         // Step 4: Write to channel Hash + auto-trigger TODO queue (Write-Triggers-Routing pattern)
-        use voltage_config::protocols::PointType;
+        use voltage_model::PointType;
         let point_type_enum = PointType::from_str(point_type)
             .ok_or_else(|| anyhow!("Invalid point type: {}", point_type))?;
 
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn test_m2c_config_has_required_fields() {
         // M2C routing requires specific configuration fields
-        let config = voltage_config::KeySpaceConfig::production().for_m2c();
+        let config = voltage_rtdb::KeySpaceConfig::production().for_m2c();
 
         // inst_name_pattern is REQUIRED for resolving instance names to IDs
         assert!(
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_production_config_is_incomplete_for_m2c() {
         // Verify that raw production() config is NOT suitable for M2C
-        let config = voltage_config::KeySpaceConfig::production();
+        let config = voltage_rtdb::KeySpaceConfig::production();
 
         // Without for_m2c(), these fields are None
         assert!(
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn test_config_serialization() {
         // Verify that config can be serialized for Module calls
-        let config = voltage_config::KeySpaceConfig::production().for_m2c();
+        let config = voltage_rtdb::KeySpaceConfig::production().for_m2c();
         let config_json = serde_json::to_string(&config);
 
         assert!(

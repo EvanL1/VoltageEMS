@@ -7,12 +7,12 @@
 //!
 //! Uses MemoryRtdb (no external dependencies) for fast, isolated testing.
 
+use common::FourRemote;
 use comsrv::storage::{write_batch, PointUpdate};
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_config::FourRemote;
-use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_rtdb::Rtdb;
+use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 /// 创建测试用的内存 RTDB
 fn create_test_rtdb() -> Arc<dyn Rtdb> {
@@ -48,7 +48,7 @@ async fn assert_channel_value(
     point_id: u32,
     expected_value: f64,
 ) {
-    use voltage_config::protocols::PointType;
+    use voltage_model::PointType;
     let config = KeySpaceConfig::production();
     let point_type_enum = PointType::from_str(point_type).expect("Invalid point type");
     let channel_key = config.channel_key(channel_id, point_type_enum);
@@ -71,7 +71,7 @@ async fn assert_channel_timestamp_exists(
     point_type: &str,
     point_id: u32,
 ) {
-    use voltage_config::protocols::PointType;
+    use voltage_model::PointType;
     let config = KeySpaceConfig::production();
     let point_type_enum = PointType::from_str(point_type).expect("Invalid point type");
     let channel_key = config.channel_key(channel_id, point_type_enum);
@@ -96,7 +96,7 @@ async fn assert_channel_raw_value(
     point_id: u32,
     expected_raw: f64,
 ) {
-    use voltage_config::protocols::PointType;
+    use voltage_model::PointType;
     let config = KeySpaceConfig::production();
     let point_type_enum = PointType::from_str(point_type).expect("Invalid point type");
     let channel_key = config.channel_key(channel_id, point_type_enum);

@@ -10,10 +10,10 @@
 use clap::Parser;
 use tracing::{debug, info};
 
+use crate::core::config::DEFAULT_PORT;
 use common::service_bootstrap::ServiceInfo;
-use voltage_config::common::DEFAULT_API_HOST;
-use voltage_config::comsrv::DEFAULT_PORT;
-use voltage_config::error::{VoltageError, VoltageResult};
+use common::DEFAULT_API_HOST;
+use errors::{VoltageError, VoltageResult};
 
 use crate::core::config::ConfigManager;
 
@@ -77,7 +77,7 @@ impl From<Args> for ServiceArgs {
 pub fn initialize_logging(
     args: &ServiceArgs,
     service_info: &ServiceInfo,
-    logging_config: Option<&voltage_config::common::LoggingConfig>,
+    logging_config: Option<&common::LoggingConfig>,
 ) -> VoltageResult<()> {
     // Load environment variables from .env file in development mode
     common::service_bootstrap::load_development_env();
@@ -209,7 +209,7 @@ pub async fn load_routing_maps_from_sqlite(
     std::collections::HashMap<String, String>,
     std::collections::HashMap<String, String>,
 )> {
-    use voltage_config::KeySpaceConfig;
+    use voltage_rtdb::KeySpaceConfig;
 
     info!("Loading routing maps from route.db");
 
@@ -234,7 +234,7 @@ pub async fn load_routing_maps_from_sqlite(
         measurement_routing
     {
         // Parse channel type
-        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+        let point_type = voltage_model::PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
         // Build routing keys (no prefix for hash fields)
@@ -261,7 +261,7 @@ pub async fn load_routing_maps_from_sqlite(
 
     for (instance_id, _, action_id, channel_id, channel_type, channel_point_id) in action_routing {
         // Parse channel type (A or C)
-        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+        let point_type = voltage_model::PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
         // Build routing keys (no prefix for hash fields)
@@ -306,9 +306,9 @@ pub async fn load_routing_maps_from_sqlite(
     ) in c2c_routing
     {
         // Parse source and target types
-        let source_point_type = voltage_config::protocols::PointType::from_str(&source_type)
+        let source_point_type = voltage_model::PointType::from_str(&source_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid source type: {}", source_type))?;
-        let target_point_type = voltage_config::protocols::PointType::from_str(&target_type)
+        let target_point_type = voltage_model::PointType::from_str(&target_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid target type: {}", target_type))?;
 
         // Build C2C routing key

@@ -7,11 +7,10 @@ use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
-// Import product types from voltage-config
-use voltage_config::products::{ProductDef, ProductType};
+use voltage_model::products::{ProductDef, ProductType};
 
-// Re-export types from voltage-config for other modules
-pub use voltage_config::modsrv::{
+// Re-export types from local config for other modules
+pub use crate::config::{
     ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, PointType, Product,
     ProductHierarchy, PropertyTemplate,
 };

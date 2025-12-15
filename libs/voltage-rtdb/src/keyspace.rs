@@ -1,4 +1,10 @@
-use crate::protocols::PointType;
+//! Redis KeySpace Configuration
+//!
+//! This module provides the `KeySpaceConfig` struct for generating Redis keys
+//! in a consistent and type-safe manner across all VoltageEMS services.
+
+use voltage_model::PointType;
+
 /// 键空间配置（用于 Redis 操作）
 /// Keyspace configuration (for Redis operations)
 ///
@@ -14,7 +20,8 @@ use crate::protocols::PointType;
 /// **使用示例**：
 /// **Usage Example:**
 /// ```
-/// use voltage_config::{KeySpaceConfig, PointType};
+/// use voltage_rtdb::{KeySpaceConfig};
+/// use voltage_model::PointType;
 ///
 /// // 生产环境
 /// // Production environment
@@ -99,6 +106,8 @@ impl KeySpaceConfig {
     /// 使用示例：
     /// Example:
     /// ```
+    /// use voltage_rtdb::KeySpaceConfig;
+    ///
     /// let test_config = KeySpaceConfig::test();
     /// // data_prefix: "test:comsrv"
     /// // routing_table: "test:route:c2m"
@@ -143,6 +152,8 @@ impl KeySpaceConfig {
     /// 使用示例：
     /// Example:
     /// ```
+    /// use voltage_rtdb::KeySpaceConfig;
+    ///
     /// let prod_config = KeySpaceConfig::production();
     /// let m2c_config = prod_config.for_m2c();
     /// // routing_table: "route:m2c"
@@ -176,7 +187,9 @@ impl KeySpaceConfig {
     ///
     /// # Examples
     /// ```
-    /// # use voltage_config::{KeySpaceConfig, PointType};
+    /// use voltage_rtdb::KeySpaceConfig;
+    /// use voltage_model::PointType;
+    ///
     /// let config = KeySpaceConfig::production();
     /// assert_eq!(config.channel_key(1001, PointType::Telemetry).as_ref(), "comsrv:1001:T");
     /// ```
@@ -224,7 +237,8 @@ impl KeySpaceConfig {
     ///
     /// # Examples
     /// ```
-    /// # use voltage_config::KeySpaceConfig;
+    /// use voltage_rtdb::KeySpaceConfig;
+    ///
     /// let config = KeySpaceConfig::production();
     /// assert_eq!(config.instance_measurement_key(1).as_ref(), "inst:1:M");
     /// ```
@@ -357,8 +371,6 @@ mod tests {
 
     #[test]
     fn test_channel_key_generation() {
-        use crate::protocols::PointType;
-
         let config = KeySpaceConfig::production();
 
         assert_eq!(
@@ -381,8 +393,6 @@ mod tests {
 
     #[test]
     fn test_channel_ts_and_raw_keys() {
-        use crate::protocols::PointType;
-
         let config = KeySpaceConfig::production();
 
         assert_eq!(
@@ -397,8 +407,6 @@ mod tests {
 
     #[test]
     fn test_todo_queue_key() {
-        use crate::protocols::PointType;
-
         let config = KeySpaceConfig::production();
         assert_eq!(
             config.todo_queue_key(1001, PointType::Control).as_ref(),
@@ -425,8 +433,6 @@ mod tests {
 
     #[test]
     fn test_routing_keys() {
-        use crate::protocols::PointType;
-
         let config = KeySpaceConfig::production();
 
         // C2M route key
@@ -448,8 +454,6 @@ mod tests {
 
     #[test]
     fn test_key_generation_with_test_environment() {
-        use crate::protocols::PointType;
-
         let config = KeySpaceConfig::test();
 
         // All keys should have test: prefix
@@ -466,7 +470,6 @@ mod tests {
 
     #[test]
     fn test_key_generation_cow_type() {
-        use crate::protocols::PointType;
         use std::borrow::Cow;
 
         let config = KeySpaceConfig::production();

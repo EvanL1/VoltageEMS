@@ -4,6 +4,7 @@
 //! Note: Current version is a temporary implementation, focused on compilation
 
 use async_trait::async_trait;
+use common::timeouts;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,7 +12,6 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
-use voltage_config::common::timeouts;
 
 use crate::core::channels::traits::{
     ChannelCommand, ChannelLogger, ConnectionState, TelemetryBatch,
@@ -145,7 +145,7 @@ impl ModbusProtocol {
         })
     }
 
-    /// Create from RuntimeChannelConfig
+    /// Create from RuntimeChannelConfig and store it for initialization
     pub fn from_runtime_config(
         runtime_config: &crate::core::config::RuntimeChannelConfig,
     ) -> Result<Self> {
@@ -2299,11 +2299,11 @@ mod tests {
     #[test]
     fn test_modbus_protocol_new_tcp_mode() {
         use crate::core::config::ChannelConfig;
+        use crate::core::config::ChannelLoggingConfig;
         use std::collections::HashMap;
-        use voltage_config::comsrv::ChannelLoggingConfig;
 
         let channel_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 1001,
                 name: "TestChannel".to_string(),
                 description: Some("Test TCP channel".to_string()),
@@ -2338,11 +2338,11 @@ mod tests {
     #[test]
     fn test_modbus_protocol_new_rtu_mode() {
         use crate::core::config::ChannelConfig;
+        use crate::core::config::ChannelLoggingConfig;
         use std::collections::HashMap;
-        use voltage_config::comsrv::ChannelLoggingConfig;
 
         let channel_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 2001,
                 name: "RTU_Channel".to_string(),
                 description: Some("Test RTU channel".to_string()),
@@ -2379,9 +2379,9 @@ mod tests {
         use crate::core::config::ChannelConfig;
         use std::collections::HashMap;
 
-        use voltage_config::comsrv::ChannelLoggingConfig;
+        use crate::core::config::ChannelLoggingConfig;
         let channel_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 3001,
                 name: "DefaultStateChannel".to_string(),
                 description: None,
@@ -2429,11 +2429,11 @@ mod tests {
     #[test]
     fn test_modbus_protocol_config_parameters_passed_correctly() {
         use crate::core::config::ChannelConfig;
+        use crate::core::config::ChannelLoggingConfig;
         use std::collections::HashMap;
-        use voltage_config::comsrv::ChannelLoggingConfig;
 
         let channel_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 4001,
                 name: "ConfigTest".to_string(),
                 description: None,
@@ -2473,11 +2473,11 @@ mod tests {
     #[test]
     fn test_modbus_protocol_arc_wrapped_fields() {
         use crate::core::config::ChannelConfig;
+        use crate::core::config::ChannelLoggingConfig;
         use std::collections::HashMap;
-        use voltage_config::comsrv::ChannelLoggingConfig;
 
         let channel_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 5001,
                 name: "ArcTest".to_string(),
                 description: None,
@@ -2517,11 +2517,11 @@ mod tests {
     /// Helper function to create a test ModbusProtocol instance for control/adjustment tests
     fn create_test_protocol() -> ModbusProtocol {
         use crate::core::config::ChannelConfig;
+        use crate::core::config::ChannelLoggingConfig;
         use std::collections::HashMap;
-        use voltage_config::comsrv::ChannelLoggingConfig;
 
         let channel_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 2001,
                 name: "ControlTestChannel".to_string(),
                 description: Some("Test channel for control/adjustment".to_string()),

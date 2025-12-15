@@ -6,9 +6,9 @@
 
 use axum::{extract::State, response::Json};
 use common::system_metrics::SystemMetrics;
+use common::{AppError, SuccessResponse};
 use serde_json::json;
 use std::sync::Arc;
-use voltage_config::api::{AppError, SuccessResponse};
 
 use crate::app_state::AppState;
 

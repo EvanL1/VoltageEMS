@@ -2,23 +2,23 @@
 //!
 //! Loads channel configurations, point tables, and mappings from SQLite database
 
+use crate::core::config::Point;
 use crate::core::config::{
     AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
     SignalPoint, TelemetryPoint,
 };
+#[cfg(test)]
+use crate::core::config::{
+    ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
+    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE,
+};
 use crate::error::{ComSrvError, Result};
 use common::sqlite::ServiceConfigLoader;
+use common::DEFAULT_API_HOST;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::path::Path;
 use tracing::info;
-use voltage_config::common::DEFAULT_API_HOST;
-use voltage_config::comsrv::Point;
-#[cfg(test)]
-use voltage_config::comsrv::{
-    ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
-    SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE,
-};
 
 /// Comsrv-specific SQLite configuration loader
 pub struct ComsrvSqliteLoader {
@@ -164,7 +164,7 @@ impl ComsrvSqliteLoader {
 
             // Create channel config (without runtime fields)
             let channel = ChannelConfig {
-                core: voltage_config::comsrv::ChannelCore {
+                core: crate::core::config::ChannelCore {
                     id: channel_id,
                     name: name.clone(),
                     description: extra_config
@@ -195,7 +195,7 @@ impl ComsrvSqliteLoader {
         &self,
         runtime_config: &mut RuntimeChannelConfig,
     ) -> Result<()> {
-        use voltage_config::comsrv::{GpioMapping, ModbusMapping, VirtualMapping};
+        use crate::core::config::{GpioMapping, ModbusMapping, VirtualMapping};
 
         // Clear existing points and mappings
         runtime_config.telemetry_points.clear();

@@ -3,10 +3,10 @@
 //! Provides common functions for validating service configurations
 //! and environment settings
 
+use errors::{VoltageError, VoltageResult};
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::{debug, error, warn};
-use voltage_config::error::{VoltageError, VoltageResult};
 
 /// Validation result with detailed information
 #[derive(Debug, Clone)]

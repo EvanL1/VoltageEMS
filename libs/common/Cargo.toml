@@ -5,13 +5,18 @@ edition = "2021"
 license.workspace = true
 
 [features]
-default = ["redis", "sqlite"]
+default = ["redis", "sqlite", "axum", "openapi"]
 redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
 sqlite = ["dep:sqlx"]
 cli = ["dep:clap", "dep:reqwest"]
+axum = ["dep:axum"]
+openapi = ["dep:utoipa"]
+schema = ["dep:schemars"]
 
 [dependencies]
-voltage-config = { path = "../voltage-config" }
+errors = { path = "../errors" }
+voltage-model = { path = "../voltage-model" }
+voltage-schema-macro = { path = "../voltage-schema-macro" }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }
@@ -31,8 +36,8 @@ anyhow = { workspace = true }
 flate2 = { workspace = true }
 csv = { workspace = true }
 futures = { workspace = true }
-axum = { workspace = true }
-utoipa = { workspace = true }
+axum = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
 sysinfo = "0.32"
 
 # CLI dependencies  
@@ -46,6 +51,9 @@ bb8-redis = { workspace = true, optional = true }
 
 # SQLite
 sqlx = { workspace = true, optional = true }
+
+# Schema generation
+schemars = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

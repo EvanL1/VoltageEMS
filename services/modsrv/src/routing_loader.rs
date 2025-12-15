@@ -9,18 +9,14 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
+use common::{FourRemote, PointType, ValidationLevel, ValidationResult};
 use csv::ReaderBuilder;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, info, warn};
-use voltage_config::{
-    common::{ValidationLevel, ValidationResult},
-    protocols::PointType,
-    FourRemote, KeySpaceConfig,
-};
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{KeySpaceConfig, Rtdb};
 
 use crate::redis_state::{self, RoutingEntry};
 
@@ -506,8 +502,6 @@ impl RoutingLoader {
         ))
     }
 }
-
-// ValidationResult is now imported from voltage-config
 
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable

@@ -27,6 +27,7 @@ pub mod logger;
 mod parser;
 mod repository;
 mod scheduler;
+pub mod types;
 
 // Re-export public API
 pub use error::{Result, RuleError};
@@ -38,3 +39,9 @@ pub use repository::{
     load_all_rules, load_enabled_rules, set_rule_enabled, upsert_rule,
 };
 pub use scheduler::{RuleScheduler, SchedulerStatus, TriggerConfig, DEFAULT_TICK_MS};
+
+// Re-export rule types for convenience
+pub use types::{
+    CalculationRule, FlowCondition, Rule, RuleFlow, RuleNode, RuleSwitchBranch,
+    RuleValueAssignment, RuleVariable, RuleWires,
+};

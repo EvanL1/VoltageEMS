@@ -4,9 +4,9 @@
 //! enabling incremental synchronization of instance configurations from SQLite to Redis.
 
 use anyhow::Result;
+use common::{InstanceReloadResult, ReloadableService};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use voltage_config::{InstanceReloadResult, ReloadableService};
 use voltage_rtdb::Rtdb;
 
 use crate::instance_manager::InstanceManager;
@@ -218,7 +218,7 @@ mod tests {
 
     fn create_test_instance(id: u32, name: &str, product: &str) -> Instance {
         Instance {
-            core: voltage_config::modsrv::InstanceCore {
+            core: crate::config::InstanceCore {
                 instance_id: id,
                 instance_name: name.to_string(),
                 product_name: product.to_string(),

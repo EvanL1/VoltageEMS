@@ -4,16 +4,16 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use crate::config::CreateInstanceRequest;
 use axum::{
     extract::{Path, State},
     response::Json,
 };
+use common::SuccessResponse;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info, warn};
-use voltage_config::api::SuccessResponse;
-use voltage_config::modsrv::CreateInstanceRequest;
 
 use crate::app_state::AppState;
 use crate::dto::{ActionRequest, CreateInstanceDto, UpdateInstanceDto};
@@ -424,7 +424,7 @@ pub async fn reload_instances_from_db(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Use unified ReloadableService interface for incremental sync
-    use voltage_config::ReloadableService;
+    use common::ReloadableService;
     match ReloadableService::reload_from_database(
         &*state.instance_manager,
         &state.instance_manager.pool,

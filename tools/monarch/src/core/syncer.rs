@@ -4,12 +4,13 @@
 //! to the SQLite database.
 
 use anyhow::{Context, Result};
+use comsrv::core::config::ComsrvConfig;
+use modsrv::config::ModsrvConfig;
 use serde_json::Value as JsonValue;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-use voltage_config::{comsrv::ComsrvConfig, modsrv::ModsrvConfig};
 
 use super::file_utils::{flatten_json, load_csv, load_csv_typed};
 use super::schema;
@@ -666,7 +667,7 @@ impl ConfigSyncer {
         errors: &mut Vec<SyncError>,
     ) -> Result<usize> {
         use crate::core::file_utils::{load_csv_typed_with_errors, load_csv_with_errors};
-        use voltage_config::comsrv::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
+        use comsrv::core::config::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
 
         let mut total_count = 0;
 
@@ -1084,7 +1085,7 @@ impl ConfigSyncer {
             // Load measurement point definitions.
             let measurements_file = product_dir.join("measurements.csv");
             if measurements_file.exists() {
-                use voltage_config::modsrv::{MeasurementPoint, SqlInsertableProduct};
+                use modsrv::config::{MeasurementPoint, SqlInsertableProduct};
                 eprintln!(
                     "DEBUG: About to load measurements from: {:?}",
                     measurements_file
@@ -1103,7 +1104,7 @@ impl ConfigSyncer {
             // Load action point definitions.
             let actions_file = product_dir.join("actions.csv");
             if actions_file.exists() {
-                use voltage_config::modsrv::{ActionPoint, SqlInsertableProduct};
+                use modsrv::config::{ActionPoint, SqlInsertableProduct};
                 let points: Vec<ActionPoint> = load_csv_typed(&actions_file)?;
                 for point in points {
                     point.insert_with(&mut **tx, product_name).await?;
@@ -1114,7 +1115,7 @@ impl ConfigSyncer {
             // Load property template definitions.
             let properties_file = product_dir.join("properties.csv");
             if properties_file.exists() {
-                use voltage_config::modsrv::{PropertyTemplate, SqlInsertableProduct};
+                use modsrv::config::{PropertyTemplate, SqlInsertableProduct};
                 let templates: Vec<PropertyTemplate> = load_csv_typed(&properties_file)?;
                 for template in templates {
                     template.insert_with(&mut **tx, product_name).await?;

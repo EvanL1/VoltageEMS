@@ -4,14 +4,14 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use crate::config::{Product, SqlInsertableProduct};
 use axum::{
     extract::{Path, State},
     response::Json,
 };
+use common::SuccessResponse;
 use serde_json::json;
 use std::sync::Arc;
-use voltage_config::api::SuccessResponse;
-use voltage_config::modsrv::{Product, SqlInsertableProduct};
 
 use crate::app_state::AppState;
 use crate::error::ModSrvError;

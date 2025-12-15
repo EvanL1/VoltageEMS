@@ -9,7 +9,7 @@ anyhow = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-voltage-config = { path = "../voltage-config" }
+voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 
 [dev-dependencies]

@@ -7,9 +7,45 @@ use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use std::path::Path;
 use tracing::info;
-use voltage_config::{comsrv, modsrv, rules};
+
+// Import DDL constants from services (lib mode)
+use comsrv::core::config as comsrv_schema;
+use modsrv::config as modsrv_schema;
 
 use super::file_utils;
+
+// ============================================================================
+// Rules DDL (defined locally since rules are managed by monarch)
+// ============================================================================
+
+/// Rules table SQL
+const RULE_CHAINS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS rules (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        enabled BOOLEAN DEFAULT TRUE,
+        priority INTEGER DEFAULT 0,
+        cooldown_ms INTEGER DEFAULT 0,
+        nodes_json TEXT NOT NULL,
+        flow_json TEXT,
+        format TEXT DEFAULT 'vue-flow',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+/// Rule history table SQL
+const RULE_HISTORY_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS rule_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_id INTEGER NOT NULL,
+        triggered_at TIMESTAMP NOT NULL,
+        execution_result TEXT,
+        error TEXT,
+        FOREIGN KEY (rule_id) REFERENCES rules(id)
+    )
+"#;
 
 /// Initialize all database tables in voltage.db
 ///
@@ -37,52 +73,56 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     file_utils::set_database_permissions(db_path)?;
 
     // === Shared tables ===
-    sqlx::query(comsrv::SERVICE_CONFIG_TABLE)
+    sqlx::query(comsrv_schema::SERVICE_CONFIG_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(comsrv::SYNC_METADATA_TABLE)
+    sqlx::query(comsrv_schema::SYNC_METADATA_TABLE)
         .execute(&pool)
         .await?;
 
     // === Channel & Point tables (comsrv) ===
-    sqlx::query(comsrv::CHANNELS_TABLE).execute(&pool).await?;
-    sqlx::query(comsrv::TELEMETRY_POINTS_TABLE)
+    sqlx::query(comsrv_schema::CHANNELS_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(comsrv::SIGNAL_POINTS_TABLE)
+    sqlx::query(comsrv_schema::TELEMETRY_POINTS_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(comsrv::CONTROL_POINTS_TABLE)
+    sqlx::query(comsrv_schema::SIGNAL_POINTS_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(comsrv::ADJUSTMENT_POINTS_TABLE)
+    sqlx::query(comsrv_schema::CONTROL_POINTS_TABLE)
+        .execute(&pool)
+        .await?;
+    sqlx::query(comsrv_schema::ADJUSTMENT_POINTS_TABLE)
         .execute(&pool)
         .await?;
 
     // === Product & Instance tables (modsrv) ===
-    sqlx::query(modsrv::PRODUCTS_TABLE).execute(&pool).await?;
-    sqlx::query(modsrv::MEASUREMENT_POINTS_TABLE)
+    sqlx::query(modsrv_schema::PRODUCTS_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(modsrv::ACTION_POINTS_TABLE)
+    sqlx::query(modsrv_schema::MEASUREMENT_POINTS_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(modsrv::PROPERTY_TEMPLATES_TABLE)
+    sqlx::query(modsrv_schema::ACTION_POINTS_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(modsrv::INSTANCES_TABLE).execute(&pool).await?;
-    sqlx::query(modsrv::MEASUREMENT_ROUTING_TABLE)
+    sqlx::query(modsrv_schema::PROPERTY_TEMPLATES_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(modsrv::ACTION_ROUTING_TABLE)
+    sqlx::query(modsrv_schema::INSTANCES_TABLE)
+        .execute(&pool)
+        .await?;
+    sqlx::query(modsrv_schema::MEASUREMENT_ROUTING_TABLE)
+        .execute(&pool)
+        .await?;
+    sqlx::query(modsrv_schema::ACTION_ROUTING_TABLE)
         .execute(&pool)
         .await?;
 
     // === Rule tables (rules engine) ===
-    sqlx::query(rules::RULE_CHAINS_TABLE).execute(&pool).await?;
-    sqlx::query(rules::RULE_HISTORY_TABLE)
-        .execute(&pool)
-        .await?;
+    sqlx::query(RULE_CHAINS_TABLE).execute(&pool).await?;
+    sqlx::query(RULE_HISTORY_TABLE).execute(&pool).await?;
 
     // === Indexes ===
     create_indexes(&pool).await?;

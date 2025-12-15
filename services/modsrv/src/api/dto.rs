@@ -4,18 +4,18 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use common::FourRemote;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
-use voltage_config::FourRemote;
 
 // Import Core types for zero-duplication architecture
-use voltage_config::modsrv::{Instance, InstanceCore};
+use crate::config::{Instance, InstanceCore};
 
 // Import shared serde helpers
 use common::serde_helpers::{deserialize_optional_i32, deserialize_optional_u32};
 
-// === Custom Deserializer for FourRemote (depends on voltage-config type) ===
+// === Custom Deserializer for FourRemote ===
 
 /// Deserialize Option<FourRemote> from null, empty string, or valid enum value
 fn deserialize_optional_four_remote<'de, D>(deserializer: D) -> Result<Option<FourRemote>, D::Error>

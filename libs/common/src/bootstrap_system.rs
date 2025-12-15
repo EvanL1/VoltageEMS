@@ -3,8 +3,8 @@
 //! Provides functions to check system resources and requirements
 //! before starting VoltageEMS services
 
+use errors::VoltageResult;
 use tracing::{debug, info, warn};
-use voltage_config::error::VoltageResult;
 
 /// System requirements for VoltageEMS services
 #[derive(Debug, Clone)]

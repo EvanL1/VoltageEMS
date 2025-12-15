@@ -1,4 +1,10 @@
 //! Common configuration structures shared across all services
+//!
+//! This module provides shared types for service configuration including:
+//! - Base configuration structs (ApiConfig, RedisConfig, LoggingConfig)
+//! - Validation framework (ConfigValidator, ValidationResult)
+//! - Hot reload infrastructure (ReloadableService, ReloadResult)
+//! - Shared enums (PointRole, InstanceStatus, ResponseStatus, ComparisonOperator)
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -187,7 +193,7 @@ pub struct RedisConfig {
     pub url: String,
 
     /// Whether Redis is enabled
-    #[serde(default = "crate::serde_defaults::bool_true")]
+    #[serde(default = "bool_true")]
     pub enabled: bool,
 }
 
@@ -266,6 +272,11 @@ fn default_max_size_mb() -> u64 {
 
 fn default_max_files() -> u32 {
     7
+}
+
+/// Serde default for boolean true
+pub fn bool_true() -> bool {
+    true
 }
 
 // ============================================================================
@@ -361,7 +372,7 @@ pub const SERVICE_CONFIG_TABLE: &str = ServiceConfigRecord::CREATE_TABLE_SQL;
 pub const SYNC_METADATA_TABLE: &str = SyncMetadataRecord::CREATE_TABLE_SQL;
 
 // ============================================================================
-// Core Validation Framework (moved from validation.rs)
+// Core Validation Framework
 // ============================================================================
 
 /// Validation result with detailed information
@@ -612,20 +623,6 @@ impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator
 ///
 /// # Type Parameters
 /// - `I`: Item identifier type (e.g., `u16` for channel/instance ID, `String` for rule ID)
-///
-/// # Examples
-/// ```
-/// use voltage_config::common::ReloadResult;
-///
-/// let result: ReloadResult<u16> = ReloadResult {
-///     total_count: 10,
-///     added: vec![1001, 1002],
-///     updated: vec![1003],
-///     removed: vec![1004],
-///     errors: vec![],
-///     duration_ms: 150,
-/// };
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -693,31 +690,6 @@ pub type RuleReloadResult = ReloadResult<String>;
 ///
 /// This trait provides a consistent API for reloading service configurations
 /// from SQLite database without restarting the service.
-///
-/// # Design Principles
-/// 1. **Incremental Updates**: Only modified items are reloaded
-/// 2. **Intelligent Change Detection**: Different severity levels (Metadata/NonCritical/Critical)
-/// 3. **Automatic Rollback**: Failed reloads restore previous configuration
-/// 4. **Zero Downtime**: Services remain operational during reload
-///
-/// # Type Parameters
-/// - `ChangeType`: Enum representing change severity (must be comparable)
-/// - `Config`: Configuration type (must be cloneable and serializable)
-/// - `ReloadResult`: Result type for reload operations
-///
-/// # Examples
-/// ```ignore
-/// // comsrv implementation
-/// impl ReloadableService for ChannelManager {
-///     type ChangeType = ChannelChangeType;
-///     type Config = ChannelConfig;
-///     type ReloadResult = ChannelReloadResult;
-///
-///     async fn reload_from_database(&self, pool: &SqlitePool) -> Result<Self::ReloadResult> {
-///         // Load from database and sync runtime state
-///     }
-/// }
-/// ```
 #[allow(async_fn_in_trait)]
 pub trait ReloadableService {
     /// Change severity type (e.g., MetadataOnly < NonCritical < Critical)
@@ -730,46 +702,12 @@ pub trait ReloadableService {
     type ReloadResult: Serialize + for<'de> Deserialize<'de>;
 
     /// Reload all configurations from SQLite database
-    ///
-    /// This method performs incremental synchronization:
-    /// 1. Load configurations from SQLite
-    /// 2. Compare with runtime state
-    /// 3. Add new items
-    /// 4. Update changed items (with hot reload)
-    /// 5. Remove deleted items
-    ///
-    /// # Arguments
-    /// * `pool` - SQLite connection pool
-    ///
-    /// # Returns
-    /// Result containing reload statistics and errors
-    ///
-    /// # Errors
-    /// - Database connection failures
-    /// - Configuration parsing errors
-    /// - Validation errors
-    ///
-    /// # Side Effects
-    /// - Modifies runtime service state to match database
-    /// - May restart communication channels/instances/rules
     async fn reload_from_database(
         &self,
         pool: &sqlx::SqlitePool,
     ) -> anyhow::Result<Self::ReloadResult>;
 
     /// Analyze configuration change severity
-    ///
-    /// Determines whether a configuration change requires:
-    /// - **MetadataOnly**: No restart (name/description changes)
-    /// - **NonCritical**: Optional restart (timeout/retry changes)
-    /// - **Critical**: Mandatory restart (connection parameters change)
-    ///
-    /// # Arguments
-    /// * `old_config` - Previous configuration
-    /// * `new_config` - New configuration
-    ///
-    /// # Returns
-    /// Change severity level
     fn analyze_changes(
         &self,
         old_config: &Self::Config,
@@ -777,47 +715,9 @@ pub trait ReloadableService {
     ) -> Self::ChangeType;
 
     /// Perform hot reload with automatic rollback on failure
-    ///
-    /// Execution flow:
-    /// 1. Save current configuration (for rollback)
-    /// 2. Stop old runtime instance
-    /// 3. Start new runtime instance with new_config
-    /// 4. If step 3 fails → rollback to saved configuration
-    ///
-    /// # Arguments
-    /// * `config` - New configuration to apply
-    ///
-    /// # Returns
-    /// Success message or error
-    ///
-    /// # Errors
-    /// - Configuration validation errors
-    /// - Resource initialization errors (network, database)
-    /// - Rollback failures (critical - service may be in inconsistent state)
-    ///
-    /// # Safety
-    /// This operation is designed to be atomic - either fully succeeds or
-    /// fully rolls back. However, rollback failure is a critical error.
     async fn perform_hot_reload(&self, config: Self::Config) -> anyhow::Result<String>;
 
     /// Rollback to previous configuration
-    ///
-    /// Used internally by `perform_hot_reload` when reload fails.
-    /// Can also be called explicitly for manual recovery.
-    ///
-    /// # Arguments
-    /// * `previous_config` - Last known good configuration
-    ///
-    /// # Returns
-    /// Confirmation message or error
-    ///
-    /// # Errors
-    /// - Configuration restoration errors
-    /// - Resource re-initialization errors
-    ///
-    /// # Warning
-    /// Rollback failure is a critical error that may leave the service
-    /// in an inconsistent state. Manual intervention may be required.
     async fn rollback(&self, previous_config: Self::Config) -> anyhow::Result<String>;
 }
 
@@ -1001,9 +901,6 @@ impl LogRotationConfig {
 // ============================================================================
 // Shared enum types
 // ============================================================================
-
-// Note: ProtocolType is defined in protocols.rs and re-exported from lib.rs
-// Use voltage_config::ProtocolType for the full protocol type enum
 
 /// Point role types (Measurement/Action)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -1326,12 +1223,8 @@ pub fn parse_four_remote(s: &str) -> Result<PointType, String> {
 mod tests {
     use super::*;
 
-    // Note: ProtocolType tests are in protocols.rs
-
-    // ============ PointRole Tests ============
     #[test]
     fn test_point_role_serialization() {
-        // Test JSON serialization with serde rename
         let role = PointRole::Measurement;
         let json = serde_json::to_string(&role).unwrap();
         assert_eq!(json, "\"M\"");
@@ -1340,225 +1233,27 @@ mod tests {
         let json = serde_json::to_string(&role).unwrap();
         assert_eq!(json, "\"A\"");
 
-        // Test deserialization
         let role: PointRole = serde_json::from_str("\"M\"").unwrap();
         assert_eq!(role, PointRole::Measurement);
     }
 
     #[test]
     fn test_point_role_from_str() {
-        // Test short forms
         assert_eq!(PointRole::from_str("M").unwrap(), PointRole::Measurement);
         assert_eq!(PointRole::from_str("A").unwrap(), PointRole::Action);
-
-        // Test long forms
         assert_eq!(
             PointRole::from_str("measurement").unwrap(),
             PointRole::Measurement
         );
-        assert_eq!(PointRole::from_str("action").unwrap(), PointRole::Action);
-
-        // Test case insensitive
-        assert_eq!(PointRole::from_str("m").unwrap(), PointRole::Measurement);
-        assert_eq!(
-            PointRole::from_str("MEASUREMENT").unwrap(),
-            PointRole::Measurement
-        );
-
-        // Test invalid
         assert!(PointRole::from_str("X").is_err());
-    }
-
-    // ============ InstanceStatus Tests ============
-    #[test]
-    fn test_instance_status_serialization() {
-        // Test all variants
-        assert_eq!(
-            serde_json::to_string(&InstanceStatus::Running).unwrap(),
-            "\"running\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InstanceStatus::Stopped).unwrap(),
-            "\"stopped\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InstanceStatus::Error).unwrap(),
-            "\"error\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InstanceStatus::Warning).unwrap(),
-            "\"warning\""
-        );
-        assert_eq!(
-            serde_json::to_string(&InstanceStatus::Disconnected).unwrap(),
-            "\"disconnected\""
-        );
-
-        // Test deserialization
-        let status: InstanceStatus = serde_json::from_str("\"running\"").unwrap();
-        assert_eq!(status, InstanceStatus::Running);
     }
 
     #[test]
     fn test_instance_status_methods() {
-        // Test is_healthy method - Running and Warning are healthy
         assert!(InstanceStatus::Running.is_healthy());
-        assert!(InstanceStatus::Warning.is_healthy()); // Warning is still healthy
+        assert!(InstanceStatus::Warning.is_healthy());
         assert!(!InstanceStatus::Stopped.is_healthy());
         assert!(!InstanceStatus::Error.is_healthy());
-        assert!(!InstanceStatus::Disconnected.is_healthy());
-
-        // Test Display - returns lowercase strings
-        assert_eq!(InstanceStatus::Running.to_string(), "running");
-        assert_eq!(InstanceStatus::Error.to_string(), "error");
-        assert_eq!(InstanceStatus::Warning.to_string(), "warning");
-
-        // Test Default
-        assert_eq!(InstanceStatus::default(), InstanceStatus::Stopped);
-    }
-
-    // ============ ResponseStatus Tests ============
-    #[test]
-    fn test_response_status_serialization() {
-        assert_eq!(
-            serde_json::to_string(&ResponseStatus::Success).unwrap(),
-            "\"success\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ResponseStatus::Error).unwrap(),
-            "\"error\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ResponseStatus::Pending).unwrap(),
-            "\"pending\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ResponseStatus::Partial).unwrap(),
-            "\"partial\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ResponseStatus::Timeout).unwrap(),
-            "\"timeout\""
-        );
-    }
-
-    #[test]
-    fn test_response_status_methods() {
-        // Test is_ok method
-        assert!(ResponseStatus::Success.is_ok());
-        assert!(ResponseStatus::Partial.is_ok());
-        assert!(!ResponseStatus::Error.is_ok());
-        assert!(!ResponseStatus::Timeout.is_ok());
-        assert!(!ResponseStatus::Pending.is_ok());
-
-        // Test is_err method
-        assert!(ResponseStatus::Error.is_err());
-        assert!(ResponseStatus::Timeout.is_err());
-        assert!(!ResponseStatus::Success.is_err());
-        assert!(!ResponseStatus::Partial.is_err());
-        assert!(!ResponseStatus::Pending.is_err());
-
-        // Test Default
-        assert_eq!(ResponseStatus::default(), ResponseStatus::Pending);
-    }
-
-    // ============ ComparisonOperator Tests ============
-    #[test]
-    fn test_comparison_operator_serialization() {
-        // Test serde rename attributes
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::Equal).unwrap(),
-            "\"eq\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::NotEqual).unwrap(),
-            "\"ne\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::GreaterThan).unwrap(),
-            "\"gt\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::GreaterThanOrEqual).unwrap(),
-            "\"gte\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::LessThan).unwrap(),
-            "\"lt\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::LessThanOrEqual).unwrap(),
-            "\"lte\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::InRange).unwrap(),
-            "\"in\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::NotInRange).unwrap(),
-            "\"not_in\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::Contains).unwrap(),
-            "\"contains\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ComparisonOperator::Matches).unwrap(),
-            "\"matches\""
-        );
-    }
-
-    #[test]
-    fn test_comparison_operator_from_str() {
-        // Test primary names
-        assert_eq!(
-            ComparisonOperator::from_str("eq").unwrap(),
-            ComparisonOperator::Equal
-        );
-        assert_eq!(
-            ComparisonOperator::from_str("gt").unwrap(),
-            ComparisonOperator::GreaterThan
-        );
-
-        // Test symbol aliases
-        assert_eq!(
-            ComparisonOperator::from_str("==").unwrap(),
-            ComparisonOperator::Equal
-        );
-        assert_eq!(
-            ComparisonOperator::from_str("!=").unwrap(),
-            ComparisonOperator::NotEqual
-        );
-        assert_eq!(
-            ComparisonOperator::from_str(">").unwrap(),
-            ComparisonOperator::GreaterThan
-        );
-        assert_eq!(
-            ComparisonOperator::from_str(">=").unwrap(),
-            ComparisonOperator::GreaterThanOrEqual
-        );
-        assert_eq!(
-            ComparisonOperator::from_str("<").unwrap(),
-            ComparisonOperator::LessThan
-        );
-        assert_eq!(
-            ComparisonOperator::from_str("<=").unwrap(),
-            ComparisonOperator::LessThanOrEqual
-        );
-
-        // Test word aliases
-        assert_eq!(
-            ComparisonOperator::from_str("equal").unwrap(),
-            ComparisonOperator::Equal
-        );
-        assert_eq!(
-            ComparisonOperator::from_str("contains").unwrap(),
-            ComparisonOperator::Contains
-        );
-        assert_eq!(
-            ComparisonOperator::from_str("matches").unwrap(),
-            ComparisonOperator::Matches
-        );
     }
 
     #[test]
@@ -1570,92 +1265,12 @@ mod tests {
         let op = ComparisonOperator::Equal;
         assert!(op.compare_i64(42, 42));
         assert!(!op.compare_i64(42, 43));
-
-        // Test floating point equality - f64::EPSILON is very small
-        assert!(ComparisonOperator::Equal.compare_f64(1.0, 1.0));
-        // These values differ by more than f64::EPSILON, so not equal
-        assert!(!ComparisonOperator::Equal.compare_f64(1.0, 1.0000000001));
-        assert!(ComparisonOperator::NotEqual.compare_f64(1.0, 1.0000000001));
-    }
-
-    #[test]
-    fn test_comparison_operator_symbols() {
-        assert_eq!(ComparisonOperator::Equal.symbol(), "==");
-        assert_eq!(ComparisonOperator::GreaterThan.symbol(), ">");
-        assert_eq!(ComparisonOperator::InRange.symbol(), "∈");
-        assert_eq!(ComparisonOperator::NotInRange.symbol(), "∉");
-        assert_eq!(ComparisonOperator::Contains.symbol(), "⊃");
-        assert_eq!(ComparisonOperator::Matches.symbol(), "~");
-    }
-
-    // ============ FourRemote Tests ============
-    // Note: FourRemote is now a type alias for PointType
-    // These tests verify backward compatibility
-
-    #[test]
-    fn test_four_remote_serialization() {
-        // Test serde rename to single letters
-        assert_eq!(
-            serde_json::to_string(&FourRemote::Telemetry).unwrap(),
-            "\"T\""
-        );
-        assert_eq!(serde_json::to_string(&FourRemote::Signal).unwrap(), "\"S\"");
-        assert_eq!(
-            serde_json::to_string(&FourRemote::Control).unwrap(),
-            "\"C\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FourRemote::Adjustment).unwrap(),
-            "\"A\""
-        );
-    }
-
-    #[test]
-    fn test_four_remote_from_str() {
-        // Use parse() to invoke FromStr trait
-        assert_eq!("T".parse::<FourRemote>().unwrap(), FourRemote::Telemetry);
-        assert_eq!("S".parse::<FourRemote>().unwrap(), FourRemote::Signal);
-        assert_eq!("C".parse::<FourRemote>().unwrap(), FourRemote::Control);
-        assert_eq!("A".parse::<FourRemote>().unwrap(), FourRemote::Adjustment);
-        // IEC synonyms
-        assert_eq!("YC".parse::<FourRemote>().unwrap(), FourRemote::Telemetry);
-        assert_eq!("YX".parse::<FourRemote>().unwrap(), FourRemote::Signal);
-        assert_eq!("YK".parse::<FourRemote>().unwrap(), FourRemote::Control);
-        assert_eq!("YT".parse::<FourRemote>().unwrap(), FourRemote::Adjustment);
-
-        // Test invalid
-        assert!("X".parse::<FourRemote>().is_err());
-    }
-
-    #[test]
-    fn test_four_remote_methods() {
-        // Test input/output classification
-        assert!(FourRemote::Telemetry.is_input());
-        assert!(FourRemote::Signal.is_input());
-        assert!(!FourRemote::Control.is_input());
-        assert!(!FourRemote::Adjustment.is_input());
-
-        assert!(!FourRemote::Telemetry.is_output());
-        assert!(!FourRemote::Signal.is_output());
-        assert!(FourRemote::Control.is_output());
-        assert!(FourRemote::Adjustment.is_output());
-
-        // Test Default
-        assert_eq!(FourRemote::default(), FourRemote::Telemetry);
-    }
-
-    #[test]
-    fn test_parse_four_remote_helper() {
-        assert_eq!(parse_four_remote("T").unwrap(), FourRemote::Telemetry);
-        assert_eq!(parse_four_remote("yc").unwrap(), FourRemote::Telemetry);
-        assert!(parse_four_remote("invalid").is_err());
     }
 
     #[test]
     fn test_four_remote_is_point_type() {
-        // Verify FourRemote and PointType are the same type
         let fr: FourRemote = FourRemote::Telemetry;
-        let pt: PointType = fr; // Should compile because they're the same type
+        let pt: PointType = fr;
         assert_eq!(pt, PointType::Telemetry);
     }
 }

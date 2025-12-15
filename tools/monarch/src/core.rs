@@ -17,10 +17,10 @@ pub mod syncer;
 pub mod validator;
 
 // Re-export key types
+pub use common::ValidationResult;
 pub use exporter::{ConfigExporter, ExportResult};
 pub use syncer::{ConfigSyncer, SyncResult};
 pub use validator::ConfigValidator;
-pub use voltage_config::ValidationResult;
 
 /// Access mode for the Monarch core
 #[derive(Debug, Clone, Copy, PartialEq)]

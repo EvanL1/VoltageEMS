@@ -3,18 +3,16 @@
 //! Handles all service initialization including logging, configuration,
 //! database connections, and component setup.
 
+use crate::config::{ModsrvConfig, ModsrvQueries};
 use common::bootstrap_database::{setup_redis_connection, setup_sqlite_pool};
 use common::bootstrap_system::{check_system_requirements_with, SystemRequirements};
 use common::redis::RedisClient;
 use common::service_bootstrap::{get_service_port, ServiceInfo};
 use common::sqlite::{ServiceConfigLoader, SqliteClient};
+use common::{ApiConfig, BaseServiceConfig, RedisConfig, DEFAULT_API_HOST, DEFAULT_REDIS_URL};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use voltage_config::{
-    common::{ApiConfig, BaseServiceConfig, RedisConfig, DEFAULT_API_HOST, DEFAULT_REDIS_URL},
-    modsrv::{ModsrvConfig, ModsrvQueries},
-};
 
 // Import from error module directly (works in both lib and bin context)
 use super::error::{ModSrvError, Result};
@@ -223,7 +221,7 @@ where
 pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     _rtdb: Arc<voltage_rtdb::RedisRtdb>,
-    routing_cache: Arc<voltage_config::RoutingCache>,
+    routing_cache: Arc<voltage_rtdb::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::MemoryRtdb>>> {
     // Create MemoryRtdb for testing (ignore the injected RedisRtdb)
@@ -244,7 +242,7 @@ pub async fn setup_instance_manager(
 pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     rtdb: Arc<voltage_rtdb::RedisRtdb>,
-    routing_cache: Arc<voltage_config::RoutingCache>,
+    routing_cache: Arc<voltage_rtdb::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::RedisRtdb>>> {
     // RTDB is a pure storage abstraction
@@ -305,7 +303,7 @@ pub async fn load_routing_maps_from_sqlite(
     std::collections::HashMap<String, String>,
     std::collections::HashMap<String, String>,
 )> {
-    use voltage_config::KeySpaceConfig;
+    use voltage_rtdb::KeySpaceConfig;
 
     debug!("Loading routing maps");
 
@@ -330,7 +328,7 @@ pub async fn load_routing_maps_from_sqlite(
         measurement_routing
     {
         // Parse channel type
-        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+        let point_type = voltage_model::PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
         // Build routing keys (no prefix for hash fields)
@@ -360,7 +358,7 @@ pub async fn load_routing_maps_from_sqlite(
         action_routing
     {
         // Parse channel type (A or C)
-        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+        let point_type = voltage_model::PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
         // Build routing keys (no prefix for hash fields)
@@ -492,7 +490,7 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
 /// * `Err(anyhow::Error)` - Database or parsing errors
 pub async fn refresh_routing_cache(
     sqlite_pool: &SqlitePool,
-    routing_cache: &Arc<voltage_config::RoutingCache>,
+    routing_cache: &Arc<voltage_rtdb::RoutingCache>,
 ) -> anyhow::Result<usize> {
     debug!("Refreshing routes");
 
@@ -515,7 +513,7 @@ pub async fn refresh_routing_cache(
 /// NOTE: This method is kept for backward compatibility but should be
 /// avoided during service initialization. Use `load_routing_maps_from_sqlite`
 /// instead for better performance.
-pub async fn load_routing_cache<R>(rtdb: &Arc<R>) -> Result<Arc<voltage_config::RoutingCache>>
+pub async fn load_routing_cache<R>(rtdb: &Arc<R>) -> Result<Arc<voltage_rtdb::RoutingCache>>
 where
     R: voltage_rtdb::Rtdb + ?Sized,
 {
@@ -547,7 +545,7 @@ where
 
     info!("Routes: {} C2M, {} M2C", c2m_data.len(), m2c_data.len());
 
-    Ok(Arc::new(voltage_config::RoutingCache::from_maps(
+    Ok(Arc::new(voltage_rtdb::RoutingCache::from_maps(
         c2m_data,
         m2c_data,
         std::collections::HashMap::new(), // C2C routing not yet implemented
@@ -594,7 +592,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         let c2m_len = c2m_map.len();
         let m2c_len = m2c_map.len();
 
-        let cache = Arc::new(voltage_config::RoutingCache::from_maps(
+        let cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
             c2m_map,
             m2c_map,
             std::collections::HashMap::new(), // C2C routing not yet implemented

@@ -8,7 +8,7 @@
 //! - Protocol name normalization
 //! - Bytes utilities (re-exported from voltage_comlink)
 
-use voltage_config::ProtocolType;
+use voltage_comlink::ProtocolType;
 
 // Re-export bytes utilities from voltage_comlink
 pub use voltage_comlink::bytes::*;

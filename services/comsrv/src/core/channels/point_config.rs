@@ -4,11 +4,11 @@
 
 use super::sync::PointTransformer;
 use crate::core::config::RuntimeChannelConfig;
+use common::FourRemote;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
-use voltage_config::common::FourRemote;
 
 /// Runtime configuration provider
 ///
@@ -181,12 +181,12 @@ impl RuntimeConfigProvider {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
+    use crate::core::config::ChannelConfig;
     use crate::core::config::{AdjustmentPoint, Point, SignalPoint, TelemetryPoint};
-    use voltage_config::comsrv::ChannelConfig;
 
     fn create_test_runtime_config() -> RuntimeChannelConfig {
         let base_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 1001,
                 name: "Test Channel".to_string(),
                 description: None,

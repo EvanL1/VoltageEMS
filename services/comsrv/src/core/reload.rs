@@ -3,9 +3,9 @@
 //! This module implements the unified `ReloadableService` trait for comsrv,
 //! enabling zero-downtime configuration updates from SQLite database.
 
+use common::{ChannelReloadResult, ReloadableService};
 use std::sync::Arc;
 use tracing::{error, info, warn};
-use voltage_config::{ChannelReloadResult, ReloadableService};
 
 use crate::core::channels::channel_manager::ChannelManager;
 use crate::core::config::ChannelConfig;
@@ -335,7 +335,7 @@ impl ChannelManager {
         };
 
         Ok(ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: channel_id,
                 name,
                 description,
@@ -343,7 +343,7 @@ impl ChannelManager {
                 enabled,
             },
             parameters,
-            logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+            logging: crate::core::config::ChannelLoggingConfig::default(),
         })
     }
 
@@ -356,7 +356,7 @@ impl ChannelManager {
     /// independently of channel reload operations.
     pub async fn reload_routing_cache(
         sqlite_pool: &sqlx::SqlitePool,
-        routing_cache: &Arc<voltage_config::RoutingCache>,
+        routing_cache: &Arc<voltage_rtdb::RoutingCache>,
     ) -> anyhow::Result<(usize, usize, usize)> {
         use tracing::debug;
 
@@ -435,7 +435,7 @@ mod tests {
         parameters.insert("port".to_string(), serde_json::json!(port));
 
         ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id,
                 name: name.to_string(),
                 description: None,
@@ -443,7 +443,7 @@ mod tests {
                 enabled: true,
             },
             parameters,
-            logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+            logging: crate::core::config::ChannelLoggingConfig::default(),
         }
     }
 }

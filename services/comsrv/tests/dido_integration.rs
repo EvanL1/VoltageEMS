@@ -25,10 +25,10 @@ use std::time::Duration;
 
 use comsrv::core::channels::{ComBase, ComClient, ProtocolValue};
 use comsrv::core::config::FourRemote;
-use comsrv::protocols::dido::DiDoProtocol;
-use voltage_config::comsrv::{
+use comsrv::core::config::{
     ChannelConfig, ChannelCore, ControlPoint, GpioMapping, Point, RuntimeChannelConfig, SignalPoint,
 };
+use comsrv::protocols::dido::DiDoProtocol;
 
 /// Temporary GPIO filesystem simulator
 ///

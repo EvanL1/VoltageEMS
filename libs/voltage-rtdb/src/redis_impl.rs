@@ -370,17 +370,16 @@ mod tests {
             .await
             .unwrap();
 
-        // Pop using list operations and RedisKeys helper
-        use voltage_config::comsrv::ChannelRedisKeys;
-        let c_key = ChannelRedisKeys::control_todo(1001);
-        let a_key = ChannelRedisKeys::adjustment_todo(1001);
+        // Pop using list operations
+        let c_key = "comsrv:1001:C:TODO";
+        let a_key = "comsrv:1001:A:TODO";
 
-        let action1 = rtdb.list_lpop(&c_key).await.unwrap();
+        let action1 = rtdb.list_lpop(c_key).await.unwrap();
         assert!(action1.is_some());
         let s1 = String::from_utf8(action1.unwrap().to_vec()).unwrap();
         assert!(s1.contains("c1"));
 
-        let action2 = rtdb.list_lpop(&a_key).await.unwrap();
+        let action2 = rtdb.list_lpop(a_key).await.unwrap();
         assert!(action2.is_some());
         let s2 = String::from_utf8(action2.unwrap().to_vec()).unwrap();
         assert!(s2.contains("a1"));

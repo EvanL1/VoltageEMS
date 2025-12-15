@@ -1,8 +1,7 @@
 //! Test database schema utilities
 //!
-//! Provides helper functions to initialize test databases with standard schemas
-//! defined in voltage-config. This eliminates the need for duplicate CREATE TABLE
-//! statements across test files.
+//! Provides helper functions to initialize test databases with standard schemas.
+//! This eliminates the need for duplicate CREATE TABLE statements across test files.
 //!
 //! # Usage
 //!
@@ -21,13 +20,235 @@
 
 use anyhow::Result;
 use sqlx::SqlitePool;
-use voltage_config::comsrv;
-use voltage_config::modsrv;
-use voltage_config::rules;
+
+// Re-export common table constants
+pub use crate::{SERVICE_CONFIG_TABLE, SYNC_METADATA_TABLE};
+
+// ============================================================================
+// Comsrv Table DDL
+// ============================================================================
+
+/// Channels table DDL (matches comsrv::core::config::ChannelRecord)
+pub const CHANNELS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS channels (
+        channel_id INTEGER NOT NULL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        protocol TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        config TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+/// Telemetry points table DDL (matches comsrv::core::config::TelemetryPointRecord)
+pub const TELEMETRY_POINTS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS telemetry_points (
+        point_id INTEGER NOT NULL,
+        channel_id INTEGER NOT NULL REFERENCES channels(channel_id),
+        signal_name TEXT NOT NULL,
+        scale REAL DEFAULT 1.0,
+        offset REAL DEFAULT 0.0,
+        unit TEXT,
+        reverse INTEGER DEFAULT 0,
+        data_type TEXT,
+        description TEXT,
+        protocol_mappings TEXT,
+        PRIMARY KEY (channel_id, point_id)
+    )
+"#;
+
+/// Signal points table DDL (matches comsrv::core::config::SignalPointRecord)
+pub const SIGNAL_POINTS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS signal_points (
+        point_id INTEGER NOT NULL,
+        channel_id INTEGER NOT NULL REFERENCES channels(channel_id),
+        signal_name TEXT NOT NULL,
+        scale REAL DEFAULT 1.0,
+        offset REAL DEFAULT 0.0,
+        unit TEXT,
+        reverse INTEGER DEFAULT 0,
+        normal_state INTEGER DEFAULT 0,
+        data_type TEXT,
+        description TEXT,
+        protocol_mappings TEXT,
+        PRIMARY KEY (channel_id, point_id)
+    )
+"#;
+
+/// Control points table DDL (matches comsrv::core::config::ControlPointRecord)
+pub const CONTROL_POINTS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS control_points (
+        point_id INTEGER NOT NULL,
+        channel_id INTEGER NOT NULL REFERENCES channels(channel_id),
+        signal_name TEXT NOT NULL,
+        scale REAL DEFAULT 1.0,
+        offset REAL DEFAULT 0.0,
+        unit TEXT,
+        reverse INTEGER DEFAULT 0,
+        data_type TEXT,
+        description TEXT,
+        protocol_mappings TEXT,
+        PRIMARY KEY (channel_id, point_id)
+    )
+"#;
+
+/// Adjustment points table DDL (matches comsrv::core::config::AdjustmentPointRecord)
+pub const ADJUSTMENT_POINTS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS adjustment_points (
+        point_id INTEGER NOT NULL,
+        channel_id INTEGER NOT NULL REFERENCES channels(channel_id),
+        signal_name TEXT NOT NULL,
+        scale REAL DEFAULT 1.0,
+        offset REAL DEFAULT 0.0,
+        unit TEXT,
+        reverse INTEGER DEFAULT 0,
+        data_type TEXT,
+        description TEXT,
+        protocol_mappings TEXT,
+        PRIMARY KEY (channel_id, point_id)
+    )
+"#;
+
+// ============================================================================
+// Modsrv Table DDL (matches modsrv::config schemas)
+// ============================================================================
+
+/// Products table DDL (matches modsrv::config::ProductRecord)
+pub const PRODUCTS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS products (
+        product_name TEXT NOT NULL PRIMARY KEY,
+        parent_name TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+/// Instances table DDL (matches modsrv::config::InstanceRecord)
+pub const INSTANCES_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS instances (
+        instance_id INTEGER NOT NULL PRIMARY KEY,
+        instance_name TEXT NOT NULL UNIQUE,
+        product_name TEXT NOT NULL REFERENCES products(product_name),
+        properties TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+/// Measurement points table DDL (matches modsrv::config::MeasurementPointRecord)
+pub const MEASUREMENT_POINTS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS measurement_points (
+        product_name TEXT NOT NULL REFERENCES products(product_name) ON DELETE CASCADE,
+        measurement_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        unit TEXT,
+        description TEXT,
+        PRIMARY KEY (product_name, measurement_id)
+    )
+"#;
+
+/// Action points table DDL (matches modsrv::config::ActionPointRecord)
+pub const ACTION_POINTS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS action_points (
+        product_name TEXT NOT NULL REFERENCES products(product_name) ON DELETE CASCADE,
+        action_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        unit TEXT,
+        description TEXT,
+        PRIMARY KEY (product_name, action_id)
+    )
+"#;
+
+/// Property templates table DDL (matches modsrv::config::PropertyTemplateRecord)
+pub const PROPERTY_TEMPLATES_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS property_templates (
+        product_name TEXT NOT NULL REFERENCES products(product_name) ON DELETE CASCADE,
+        property_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        unit TEXT,
+        default_value TEXT,
+        description TEXT,
+        PRIMARY KEY (product_name, property_id)
+    )
+"#;
+
+/// Measurement routing table DDL (matches modsrv::config::MeasurementRoutingRecord)
+pub const MEASUREMENT_ROUTING_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS measurement_routing (
+        routing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance_id INTEGER NOT NULL REFERENCES instances(instance_id) ON DELETE CASCADE,
+        instance_name TEXT NOT NULL,
+        channel_id INTEGER REFERENCES channels(channel_id) ON DELETE SET NULL,
+        channel_type TEXT,
+        channel_point_id INTEGER,
+        measurement_id INTEGER NOT NULL,
+        description TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(instance_id, measurement_id),
+        CHECK(channel_type IN ('T','S'))
+    )
+"#;
+
+/// Action routing table DDL (matches modsrv::config::ActionRoutingRecord)
+pub const ACTION_ROUTING_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS action_routing (
+        routing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        instance_id INTEGER NOT NULL REFERENCES instances(instance_id) ON DELETE CASCADE,
+        instance_name TEXT NOT NULL,
+        action_id INTEGER NOT NULL,
+        channel_id INTEGER REFERENCES channels(channel_id) ON DELETE SET NULL,
+        channel_type TEXT,
+        channel_point_id INTEGER,
+        description TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(instance_id, action_id),
+        CHECK(channel_type IN ('C','A'))
+    )
+"#;
+
+// ============================================================================
+// Rules Table DDL
+// ============================================================================
+
+/// Rule chains table DDL (Vue Flow format)
+pub const RULE_CHAINS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS rules (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        enabled INTEGER DEFAULT 1,
+        priority INTEGER DEFAULT 0,
+        cooldown_ms INTEGER DEFAULT 0,
+        nodes_json TEXT NOT NULL,
+        flow_json TEXT,
+        format TEXT DEFAULT 'vue-flow',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+/// Rule history table DDL
+pub const RULE_HISTORY_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS rule_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_id INTEGER NOT NULL REFERENCES rules(id),
+        triggered_at TEXT NOT NULL,
+        execution_result TEXT,
+        error TEXT
+    )
+"#;
+
+// ============================================================================
+// Schema Initialization Functions
+// ============================================================================
 
 /// Initialize comsrv standard schema for testing
 ///
-/// Creates all comsrv-related tables using schema definitions from voltage-config.
+/// Creates all comsrv-related tables.
 /// This includes:
 /// - service_config
 /// - sync_metadata
@@ -35,40 +256,24 @@ use voltage_config::rules;
 /// - telemetry_points, signal_points, control_points, adjustment_points
 pub async fn init_comsrv_schema(pool: &SqlitePool) -> Result<()> {
     // Service metadata tables
-    sqlx::query(comsrv::SERVICE_CONFIG_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(comsrv::SYNC_METADATA_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(SERVICE_CONFIG_TABLE).execute(pool).await?;
+    sqlx::query(SYNC_METADATA_TABLE).execute(pool).await?;
 
     // Core channel table
-    sqlx::query(comsrv::CHANNELS_TABLE).execute(pool).await?;
+    sqlx::query(CHANNELS_TABLE).execute(pool).await?;
 
     // Point tables
-    sqlx::query(comsrv::TELEMETRY_POINTS_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(comsrv::SIGNAL_POINTS_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(comsrv::CONTROL_POINTS_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(comsrv::ADJUSTMENT_POINTS_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(TELEMETRY_POINTS_TABLE).execute(pool).await?;
+    sqlx::query(SIGNAL_POINTS_TABLE).execute(pool).await?;
+    sqlx::query(CONTROL_POINTS_TABLE).execute(pool).await?;
+    sqlx::query(ADJUSTMENT_POINTS_TABLE).execute(pool).await?;
 
     Ok(())
 }
 
 /// Initialize modsrv standard schema for testing
 ///
-/// Creates all modsrv-related tables using schema definitions from voltage-config.
+/// Creates all modsrv-related tables.
 /// This includes:
 /// - service_config
 /// - sync_metadata
@@ -79,50 +284,31 @@ pub async fn init_comsrv_schema(pool: &SqlitePool) -> Result<()> {
 /// - measurement_routing, action_routing
 pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
     // Service metadata tables
-    sqlx::query(modsrv::SERVICE_CONFIG_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(modsrv::SYNC_METADATA_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(SERVICE_CONFIG_TABLE).execute(pool).await?;
+    sqlx::query(SYNC_METADATA_TABLE).execute(pool).await?;
 
     // Channels table (required by routing table foreign keys in unified database architecture)
-    sqlx::query(comsrv::CHANNELS_TABLE).execute(pool).await?;
+    sqlx::query(CHANNELS_TABLE).execute(pool).await?;
 
     // Product and instance tables
-    sqlx::query(modsrv::PRODUCTS_TABLE).execute(pool).await?;
-
-    sqlx::query(modsrv::INSTANCES_TABLE).execute(pool).await?;
+    sqlx::query(PRODUCTS_TABLE).execute(pool).await?;
+    sqlx::query(INSTANCES_TABLE).execute(pool).await?;
 
     // Point definition tables
-    sqlx::query(modsrv::MEASUREMENT_POINTS_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(modsrv::ACTION_POINTS_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(modsrv::PROPERTY_TEMPLATES_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(MEASUREMENT_POINTS_TABLE).execute(pool).await?;
+    sqlx::query(ACTION_POINTS_TABLE).execute(pool).await?;
+    sqlx::query(PROPERTY_TEMPLATES_TABLE).execute(pool).await?;
 
     // Routing tables
-    sqlx::query(modsrv::MEASUREMENT_ROUTING_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(modsrv::ACTION_ROUTING_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(MEASUREMENT_ROUTING_TABLE).execute(pool).await?;
+    sqlx::query(ACTION_ROUTING_TABLE).execute(pool).await?;
 
     Ok(())
 }
 
 /// Initialize rules standard schema for testing
 ///
-/// Creates all rules-related tables using schema definitions from voltage-config.
+/// Creates all rules-related tables.
 /// This includes:
 /// - service_config
 /// - sync_metadata
@@ -130,18 +316,12 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
 /// - rule_history
 pub async fn init_rules_schema(pool: &SqlitePool) -> Result<()> {
     // Service metadata tables
-    sqlx::query(rules::SERVICE_CONFIG_TABLE)
-        .execute(pool)
-        .await?;
-
-    sqlx::query(rules::SYNC_METADATA_TABLE)
-        .execute(pool)
-        .await?;
+    sqlx::query(SERVICE_CONFIG_TABLE).execute(pool).await?;
+    sqlx::query(SYNC_METADATA_TABLE).execute(pool).await?;
 
     // Rule chains table (Vue Flow format)
-    sqlx::query(rules::RULE_CHAINS_TABLE).execute(pool).await?;
-
-    sqlx::query(rules::RULE_HISTORY_TABLE).execute(pool).await?;
+    sqlx::query(RULE_CHAINS_TABLE).execute(pool).await?;
+    sqlx::query(RULE_HISTORY_TABLE).execute(pool).await?;
 
     Ok(())
 }

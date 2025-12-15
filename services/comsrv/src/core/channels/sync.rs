@@ -12,7 +12,7 @@ use super::point_config::RuntimeConfigProvider;
 use crate::core::channels::traits::TelemetryBatch;
 use crate::error::{ComSrvError, Result};
 use crate::storage::PluginPointUpdate;
-use voltage_config::common::FourRemote;
+use common::FourRemote;
 
 // ============================================================================
 // Point Transformation (merged from point_transformer.rs)
@@ -183,7 +183,7 @@ fn transform_telemetry_batch(
 /// Telemetry sync manager
 pub struct TelemetrySync {
     rtdb: Arc<dyn voltage_rtdb::Rtdb>,
-    routing_cache: Arc<voltage_config::RoutingCache>,
+    routing_cache: Arc<voltage_rtdb::RoutingCache>,
     sync_task_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
     data_receiver: Arc<Mutex<Option<mpsc::Receiver<TelemetryBatch>>>>,
     data_sender: mpsc::Sender<TelemetryBatch>,
@@ -195,7 +195,7 @@ impl TelemetrySync {
     /// Create new telemetry sync manager with configuration provider and routing cache
     pub fn new(
         rtdb: Arc<dyn voltage_rtdb::Rtdb>,
-        routing_cache: Arc<voltage_config::RoutingCache>,
+        routing_cache: Arc<voltage_rtdb::RoutingCache>,
         config_provider: Arc<RuntimeConfigProvider>,
     ) -> Self {
         let (data_sender, data_receiver) = mpsc::channel(1000);
@@ -320,16 +320,16 @@ impl TelemetrySync {
 mod tests {
     use super::*;
     use crate::core::channels::point_config::RuntimeConfigProvider;
+    use crate::core::config::ChannelConfig;
     use crate::core::config::RuntimeChannelConfig;
     use crate::core::config::{Point, SignalPoint, TelemetryPoint};
     use std::collections::HashMap;
-    use voltage_config::comsrv::ChannelConfig;
 
     use voltage_rtdb::helpers::create_test_rtdb;
 
     fn create_test_runtime_config() -> RuntimeChannelConfig {
         let base_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 1001,
                 name: "Test Channel".to_string(),
                 description: None,
@@ -378,7 +378,7 @@ mod tests {
         config_provider.load_channel_config(&runtime_config).await;
 
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
 
         // Create test batch with raw value
@@ -406,7 +406,7 @@ mod tests {
         config_provider.load_channel_config(&runtime_config).await;
 
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
 
         // Create test batch with signal data
@@ -433,7 +433,7 @@ mod tests {
         config_provider.load_channel_config(&runtime_config).await;
 
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
 
         // Create batch with both telemetry and signal
@@ -466,7 +466,7 @@ mod tests {
         let config_provider = Arc::new(RuntimeConfigProvider::new());
 
         let base_config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id: 1002,
                 name: "Test Channel 2".to_string(),
                 description: None,
@@ -494,7 +494,7 @@ mod tests {
         config_provider.load_channel_config(&runtime_config).await;
 
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let sync = TelemetrySync::new(rtdb, routing_cache, config_provider);
 
         // Create test batch

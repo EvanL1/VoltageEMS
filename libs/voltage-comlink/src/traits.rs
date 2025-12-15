@@ -12,8 +12,30 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::Result;
-use voltage_config::comsrv::RuntimeChannelConfig;
-use voltage_config::FourRemote;
+use crate::protocols::FourRemote;
+
+// ============================================================================
+// Runtime Configuration Trait
+// ============================================================================
+
+/// Trait for runtime channel configuration
+///
+/// This trait abstracts the runtime configuration needed by protocol implementations.
+/// It allows different services to define their own concrete configuration types
+/// while sharing the communication trait definitions.
+///
+/// Protocol implementations that need access to the full concrete configuration type
+/// can use `as_any()` to downcast.
+pub trait RuntimeConfig: Send + Sync {
+    /// Get channel ID
+    fn id(&self) -> u32;
+
+    /// Get channel name
+    fn name(&self) -> &str;
+
+    /// Downcast support for accessing the concrete type
+    fn as_any(&self) -> &dyn std::any::Any;
+}
 
 // ============================================================================
 // Connection State
@@ -329,11 +351,11 @@ pub trait ComBase: Send + Sync {
 
     /// Initialize channel (load point configuration)
     ///
-    /// @input runtime_config: Arc<RuntimeChannelConfig> - Point definitions and mappings
+    /// @input runtime_config: Arc<dyn RuntimeConfig> - Point definitions and mappings
     /// @output Result<()> - Success or initialization error
     /// @side-effects Loads protocol mappings into memory
     /// @lifecycle Called once during channel creation
-    async fn initialize(&mut self, runtime_config: Arc<RuntimeChannelConfig>) -> Result<()>;
+    async fn initialize(&mut self, runtime_config: Arc<dyn RuntimeConfig>) -> Result<()>;
 
     /// Read four-telemetry data (from cache or Redis)
     /// Each telemetry type should be handled independently with its own configuration

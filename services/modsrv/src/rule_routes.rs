@@ -12,16 +12,15 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use common::{PaginatedResponse, SuccessResponse};
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
-use voltage_config::api::{PaginatedResponse, SuccessResponse};
-use voltage_config::rules::{RuleNode, RuleVariable};
 use voltage_rtdb::traits::Rtdb;
-use voltage_rules::{self as rule_repository, RuleScheduler};
+use voltage_rules::{self as rule_repository, RuleNode, RuleScheduler, RuleVariable};
 
 /// Rule Engine state shared across handlers
 pub struct RuleEngineState<R: Rtdb + ?Sized> {
@@ -161,7 +160,7 @@ pub struct UpdateRuleRequest {
         ("page_size" = Option<usize>, Query, description = "Items per page (default: 20, max: 100)")
     ),
     responses(
-        (status = 200, description = "List rules (paginated)", body = voltage_config::api::PaginatedResponse<serde_json::Value>,
+        (status = 200, description = "List rules (paginated)", body = common::PaginatedResponse<serde_json::Value>,
             example = json!({
                 "success": true,
                 "data": {

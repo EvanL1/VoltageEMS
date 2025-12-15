@@ -7,7 +7,7 @@ description = "Communication link library for VoltageEMS - protocol abstractions
 
 [dependencies]
 # Local dependencies
-voltage-config = { path = "../voltage-config" }
+voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 common = { path = "../common", default-features = false }
 

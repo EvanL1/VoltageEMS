@@ -10,6 +10,7 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use crate::api::routes::AppState;
+use crate::core::config::{ChannelCore, ChannelLoggingConfig};
 use crate::dto::{AppError, ParameterChangeType, SuccessResponse};
 use axum::{
     extract::{Path, State},
@@ -23,7 +24,7 @@ fn parse_channel_config(
 ) -> (
     Option<String>,
     std::collections::HashMap<String, serde_json::Value>,
-    voltage_config::comsrv::ChannelLoggingConfig,
+    ChannelLoggingConfig,
 ) {
     let config_obj = config_str
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
@@ -52,7 +53,7 @@ fn parse_channel_config(
 fn build_channel_config_json(
     description: Option<&String>,
     parameters: &std::collections::HashMap<String, serde_json::Value>,
-    logging: &voltage_config::comsrv::ChannelLoggingConfig,
+    logging: &ChannelLoggingConfig,
 ) -> Result<String, serde_json::Error> {
     let mut config_obj = serde_json::Map::new();
 
@@ -377,7 +378,7 @@ pub async fn create_channel_handler(
 
     // 3. Build channel config
     let channel_config = ChannelConfig {
-        core: voltage_config::comsrv::ChannelCore {
+        core: ChannelCore {
             id: channel_id,
             name: req.name.clone(),
             description: req.description.clone(),
@@ -385,7 +386,7 @@ pub async fn create_channel_handler(
             enabled,
         },
         parameters: req.parameters.clone(),
-        logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+        logging: ChannelLoggingConfig::default(),
     };
 
     // Determine runtime status based on enabled flag
@@ -419,7 +420,7 @@ pub async fn create_channel_handler(
 
     // 3. Runtime successful, now write to database
     // Build config JSON in structured format
-    let logging = voltage_config::comsrv::ChannelLoggingConfig::default();
+    let logging = ChannelLoggingConfig::default();
     let config_json =
         build_channel_config_json(req.description.as_ref(), &req.parameters, &logging)
             .map_err(|e| AppError::internal_error(format!("Failed to build config JSON: {}", e)))?;
@@ -443,7 +444,7 @@ pub async fn create_channel_handler(
     }
 
     let result = crate::dto::ChannelCrudResult {
-        core: voltage_config::comsrv::ChannelCore {
+        core: ChannelCore {
             id: channel_id,
             name: req.name,
             description: req.description,
@@ -583,7 +584,7 @@ pub async fn update_channel_handler(
     }
 
     if req.description.is_some() || req.parameters.is_some() {
-        let logging = voltage_config::comsrv::ChannelLoggingConfig::default();
+        let logging = ChannelLoggingConfig::default();
         let config_json = build_channel_config_json(description.as_ref(), &parameters, &logging)
             .map_err(|e| {
                 tracing::error!("Serialize Ch{}: {}", id, e);
@@ -642,7 +643,7 @@ pub async fn update_channel_handler(
 
                 // Build new config
                 let new_config = crate::core::config::ChannelConfig {
-                    core: voltage_config::comsrv::ChannelCore {
+                    core: ChannelCore {
                         id,
                         name: name.clone(),
                         description: description.clone(),
@@ -650,7 +651,7 @@ pub async fn update_channel_handler(
                         enabled,
                     },
                     parameters,
-                    logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+                    logging: ChannelLoggingConfig::default(),
                 };
 
                 // Spawn background hot reload
@@ -674,7 +675,7 @@ pub async fn update_channel_handler(
 
                 // Build new config
                 let new_config = crate::core::config::ChannelConfig {
-                    core: voltage_config::comsrv::ChannelCore {
+                    core: ChannelCore {
                         id,
                         name: name.clone(),
                         description: description.clone(),
@@ -682,7 +683,7 @@ pub async fn update_channel_handler(
                         enabled,
                     },
                     parameters,
-                    logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+                    logging: ChannelLoggingConfig::default(),
                 };
 
                 // Spawn background hot reload
@@ -707,7 +708,7 @@ pub async fn update_channel_handler(
 
     // Use the final description after applying updates (or keep previous if not provided)
     let result = crate::dto::ChannelCrudResult {
-        core: voltage_config::comsrv::ChannelCore {
+        core: ChannelCore {
             id,
             name,
             description, // propagate actual description
@@ -781,7 +782,7 @@ pub async fn set_channel_enabled_handler(
     if current_enabled == req.enabled {
         // State unchanged - enabled is a configuration state independent of connection
         return Ok(Json(SuccessResponse::new(crate::dto::ChannelCrudResult {
-            core: voltage_config::comsrv::ChannelCore {
+            core: ChannelCore {
                 id,
                 name,
                 description, // propagate existing description
@@ -804,7 +805,7 @@ pub async fn set_channel_enabled_handler(
     let runtime_status = if req.enabled {
         // Enable: create and start channel
         let config = ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: ChannelCore {
                 id,
                 name: name.clone(),
                 description: description.clone(),
@@ -812,7 +813,7 @@ pub async fn set_channel_enabled_handler(
                 enabled: true,
             },
             parameters,
-            logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+            logging: ChannelLoggingConfig::default(),
         };
 
         let manager = state.channel_manager.write().await;
@@ -900,7 +901,7 @@ pub async fn set_channel_enabled_handler(
     };
 
     let result = crate::dto::ChannelCrudResult {
-        core: voltage_config::comsrv::ChannelCore {
+        core: ChannelCore {
             id,
             name,
             description, // propagate existing description
@@ -1081,7 +1082,7 @@ pub async fn reload_configuration_handler(
             };
 
             let channel_config = ChannelConfig {
-                core: voltage_config::comsrv::ChannelCore {
+                core: ChannelCore {
                     id: *id,
                     name: name.clone(),
                     description,
@@ -1089,7 +1090,7 @@ pub async fn reload_configuration_handler(
                     enabled: *enabled,
                 },
                 parameters,
-                logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+                logging: ChannelLoggingConfig::default(),
             };
 
             // Only create and connect if enabled
@@ -1149,7 +1150,7 @@ pub async fn reload_configuration_handler(
             // Only create and connect if enabled
             if *enabled {
                 let channel_config = ChannelConfig {
-                    core: voltage_config::comsrv::ChannelCore {
+                    core: ChannelCore {
                         id: *id,
                         name: name.clone(),
                         description,
@@ -1157,7 +1158,7 @@ pub async fn reload_configuration_handler(
                         enabled: *enabled,
                     },
                     parameters,
-                    logging: voltage_config::comsrv::ChannelLoggingConfig::default(),
+                    logging: ChannelLoggingConfig::default(),
                 };
 
                 match manager.create_channel(Arc::new(channel_config)).await {

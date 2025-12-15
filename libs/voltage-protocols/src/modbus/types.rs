@@ -2,9 +2,9 @@
 //!
 //! Contains simplified Modbus point definitions, polling configuration and batch processing configuration
 
+use common::timeouts;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use voltage_config::common::timeouts;
 
 /// Simplified Modbus point mapping
 /// Contains protocol-related fields and transformation parameters for logging
@@ -205,7 +205,7 @@ impl Default for DeviceLimit {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use voltage_config::common::timeouts;
+    use common::timeouts;
 
     // ========== ModbusPollingConfig Default tests ==========
 

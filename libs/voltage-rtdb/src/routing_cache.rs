@@ -40,9 +40,12 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// let c2m_data: HashMap<String, String> = /* load from SQLite */;
-    /// let m2c_data: HashMap<String, String> = /* load from SQLite */;
-    /// let c2c_data: HashMap<String, String> = /* load from SQLite */;
+    /// use voltage_rtdb::RoutingCache;
+    /// use std::collections::HashMap;
+    ///
+    /// let c2m_data: HashMap<String, String> = HashMap::new(); // load from SQLite
+    /// let m2c_data: HashMap<String, String> = HashMap::new(); // load from SQLite
+    /// let c2c_data: HashMap<String, String> = HashMap::new(); // load from SQLite
     /// let cache = RoutingCache::from_maps(c2m_data, m2c_data, c2c_data);
     /// ```
     pub fn from_maps(
@@ -102,9 +105,16 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// let key = "2:T:1";  // Channel 2, Telemetry, Point 1
-    /// if let Some(target) = cache.lookup_c2m(key) {
+    /// use voltage_rtdb::RoutingCache;
+    /// use std::collections::HashMap;
+    ///
+    /// let mut c2m = HashMap::new();
+    /// c2m.insert("2:T:1".to_string(), "23:M:1".to_string());
+    /// let cache = RoutingCache::from_maps(c2m, HashMap::new(), HashMap::new());
+    ///
+    /// if let Some(target) = cache.lookup_c2m("2:T:1") {
     ///     // target = "23:M:1" (Instance 23, Measurement, Point 1)
+    ///     assert_eq!(target.as_ref(), "23:M:1");
     /// }
     /// ```
     pub fn lookup_c2m(&self, key: &str) -> Option<Arc<str>> {
@@ -117,9 +127,16 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// let key = "23:A:4";  // Instance 23, Action, Point 4
-    /// if let Some(target) = cache.lookup_m2c(key) {
+    /// use voltage_rtdb::RoutingCache;
+    /// use std::collections::HashMap;
+    ///
+    /// let mut m2c = HashMap::new();
+    /// m2c.insert("23:A:4".to_string(), "2:A:1".to_string());
+    /// let cache = RoutingCache::from_maps(HashMap::new(), m2c, HashMap::new());
+    ///
+    /// if let Some(target) = cache.lookup_m2c("23:A:4") {
     ///     // target = "2:A:1" (Channel 2, Adjustment, Point 1)
+    ///     assert_eq!(target.as_ref(), "2:A:1");
     /// }
     /// ```
     pub fn lookup_m2c(&self, key: &str) -> Option<Arc<str>> {
@@ -132,9 +149,16 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// let key = "1001:T:1";  // Source: Channel 1001, Telemetry, Point 1
-    /// if let Some(target) = cache.lookup_c2c(key) {
+    /// use voltage_rtdb::RoutingCache;
+    /// use std::collections::HashMap;
+    ///
+    /// let mut c2c = HashMap::new();
+    /// c2c.insert("1001:T:1".to_string(), "1002:T:5".to_string());
+    /// let cache = RoutingCache::from_maps(HashMap::new(), HashMap::new(), c2c);
+    ///
+    /// if let Some(target) = cache.lookup_c2c("1001:T:1") {
     ///     // target = "1002:T:5" (Target: Channel 1002, Telemetry, Point 5)
+    ///     assert_eq!(target.as_ref(), "1002:T:5");
     /// }
     /// ```
     pub fn lookup_c2c(&self, key: &str) -> Option<Arc<str>> {

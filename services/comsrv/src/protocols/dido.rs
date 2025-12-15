@@ -379,8 +379,8 @@ impl ComClient for DiDoProtocol {
 #[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
+    use crate::core::config::{ChannelConfig, ChannelCore};
     use std::collections::HashMap;
-    use voltage_config::comsrv::{ChannelConfig, ChannelCore};
 
     fn create_test_runtime_config(id: u32) -> RuntimeChannelConfig {
         let mut parameters = HashMap::new();
@@ -443,7 +443,7 @@ mod tests {
 
     /// Create test config with GPIO mappings
     fn create_test_config_with_mappings(id: u32) -> RuntimeChannelConfig {
-        use voltage_config::comsrv::{ControlPoint, GpioMapping, Point, SignalPoint};
+        use crate::core::config::{ControlPoint, GpioMapping, Point, SignalPoint};
 
         let mut config = create_test_runtime_config(id);
 

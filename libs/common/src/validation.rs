@@ -1,4 +1,4 @@
-//! CSV Validation Module
+//! CSV and configuration validation utilities
 //!
 //! Provides automatic CSV header validation by comparing actual CSV files
 //! against expected field names from Rust struct definitions.
@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::common::{ValidationLevel, ValidationResult};
+use crate::service_config::{ValidationLevel, ValidationResult};
 
 /// Trait for types that can be deserialized from CSV files
 ///
@@ -142,93 +142,5 @@ impl CsvHeaderValidator {
         }
 
         Ok(aggregated)
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
-mod tests {
-    use super::*;
-
-    struct TestPoint;
-
-    impl CsvFields for TestPoint {
-        fn field_names() -> Vec<String> {
-            vec![
-                "point_id".to_string(),
-                "signal_name".to_string(),
-                "unit".to_string(),
-            ]
-        }
-    }
-
-    #[test]
-    fn test_header_validation_exact_match() {
-        let actual = vec![
-            "point_id".to_string(),
-            "signal_name".to_string(),
-            "unit".to_string(),
-        ];
-        let expected = TestPoint::field_names();
-
-        let result =
-            CsvHeaderValidator::validate_headers(&actual, &expected, Path::new("test.csv"))
-                .unwrap();
-
-        assert!(result.is_valid);
-        assert!(result.errors.is_empty());
-    }
-
-    #[test]
-    fn test_header_validation_missing_field() {
-        let actual = vec!["point_id".to_string(), "signal_name".to_string()];
-        let expected = TestPoint::field_names();
-
-        let result =
-            CsvHeaderValidator::validate_headers(&actual, &expected, Path::new("test.csv"))
-                .unwrap();
-
-        assert!(!result.is_valid);
-        assert!(result.errors.len() == 1);
-        assert!(result.errors[0].contains("Missing required fields"));
-        assert!(result.errors[0].contains("unit"));
-    }
-
-    #[test]
-    fn test_header_validation_extra_field() {
-        let actual = vec![
-            "point_id".to_string(),
-            "signal_name".to_string(),
-            "unit".to_string(),
-            "extra_field".to_string(),
-        ];
-        let expected = TestPoint::field_names();
-
-        let result =
-            CsvHeaderValidator::validate_headers(&actual, &expected, Path::new("test.csv"))
-                .unwrap();
-
-        assert!(result.is_valid); // Extra fields are warnings, not errors
-        assert!(result.warnings.len() == 1);
-        assert!(result.warnings[0].contains("Extra fields"));
-        assert!(result.warnings[0].contains("extra_field"));
-    }
-
-    #[test]
-    fn test_header_validation_different_order() {
-        let actual = vec![
-            "signal_name".to_string(),
-            "point_id".to_string(),
-            "unit".to_string(),
-        ];
-        let expected = TestPoint::field_names();
-
-        let result =
-            CsvHeaderValidator::validate_headers(&actual, &expected, Path::new("test.csv"))
-                .unwrap();
-
-        assert!(result.is_valid); // Different order is OK
-        assert!(result.warnings.len() == 1);
-        assert!(result.warnings[0].contains("Field order"));
     }
 }

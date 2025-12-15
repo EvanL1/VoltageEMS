@@ -10,12 +10,12 @@
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
+use common::FourRemote;
 use comsrv::storage::{write_batch, PointUpdate};
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_config::FourRemote;
-use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_rtdb::Rtdb;
+use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 /// 最大 C2C 级联深度常量（与 storage.rs 保持一致）
 const MAX_C2C_DEPTH: u8 = 2;
@@ -66,7 +66,7 @@ async fn assert_channel_value(
     expected_value: f64,
 ) {
     let config = KeySpaceConfig::production();
-    let point_type_enum = voltage_config::protocols::PointType::from_str(point_type).unwrap();
+    let point_type_enum = voltage_model::PointType::from_str(point_type).unwrap();
     let channel_key = config.channel_key(channel_id, point_type_enum);
 
     let value = rtdb
@@ -98,7 +98,7 @@ async fn assert_channel_value_missing(
     point_id: u32,
 ) {
     let config = KeySpaceConfig::production();
-    let point_type_enum = voltage_config::protocols::PointType::from_str(point_type).unwrap();
+    let point_type_enum = voltage_model::PointType::from_str(point_type).unwrap();
     let channel_key = config.channel_key(channel_id, point_type_enum);
 
     let value = rtdb
@@ -131,7 +131,7 @@ async fn assert_raw_value(
     expected_raw_value: f64,
 ) {
     let config = KeySpaceConfig::production();
-    let point_type_enum = voltage_config::protocols::PointType::from_str(point_type).unwrap();
+    let point_type_enum = voltage_model::PointType::from_str(point_type).unwrap();
     let channel_key = config.channel_key(channel_id, point_type_enum);
     let raw_key = format!("{}:raw", channel_key);
 
@@ -540,7 +540,7 @@ async fn test_c2c_timestamp_propagation() {
 
     // 验证源通道时间戳存在
     let config = KeySpaceConfig::production();
-    let point_type_enum = voltage_config::protocols::PointType::Telemetry;
+    let point_type_enum = voltage_model::PointType::Telemetry;
     let channel_key_1001 = config.channel_key(1001, point_type_enum);
     let ts_key_1001 = format!("{}:ts", channel_key_1001);
 

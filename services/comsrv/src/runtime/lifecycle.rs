@@ -71,8 +71,8 @@ use tracing::{debug, error, info, warn};
 /// use comsrv::core::channel_manager;
 ///
 /// #[tokio::main]
-/// async fn main() -> voltage_config::error::VoltageResult<()> {
-///     use voltage_config::common::DEFAULT_REDIS_URL;
+/// async fn main() -> errors::VoltageResult<()> {
+///     use common::DEFAULT_REDIS_URL;
 ///
 ///     let config_manager = Arc::new(ConfigManager::load().await?);
 ///     let channel_manager = Arc::new(RwLock::new(ChannelManager::new(

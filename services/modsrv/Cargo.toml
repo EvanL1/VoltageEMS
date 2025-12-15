@@ -17,9 +17,10 @@ test = false
 
 [dependencies]
 # Local dependencies
-common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite"] }
-voltage-config = { path = "../../libs/voltage-config", features = ["axum-support"] }
+common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum"] }
+errors = { path = "../../libs/errors", features = ["axum-support"] }
 voltage-model = { path = "../../libs/voltage-model" }
+voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rules = { path = "../../libs/voltage-rules" }
@@ -63,4 +64,4 @@ http-body-util = "0.1"
 default = ["redis", "sqlite", "swagger-ui"]
 redis = []
 sqlite = []
-swagger-ui = ["utoipa-swagger-ui", "voltage-config/openapi"]  # Swagger UI documentation (enabled by default for development)
+swagger-ui = ["utoipa-swagger-ui"]  # Swagger UI documentation (enabled by default for development)

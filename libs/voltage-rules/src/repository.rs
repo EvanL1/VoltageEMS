@@ -4,9 +4,9 @@
 
 use crate::error::{Result, RuleError};
 use crate::parser::extract_rule_flow;
+use crate::types::{Rule, RuleFlow};
 use serde_json::Value;
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-use voltage_config::rules::{Rule, RuleFlow};
 
 /// List all rules (returns metadata and flow_json for frontend editing)
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<Value>> {

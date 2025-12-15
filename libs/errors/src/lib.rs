@@ -3,7 +3,66 @@
 //! This module provides a comprehensive error system that all services can use,
 //! eliminating the need for service-specific error types.
 
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
+
+// ============================================================================
+// ErrorInfo - API error response type
+// ============================================================================
+
+/// Standard error information for API responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ErrorInfo {
+    /// Error code (HTTP status or custom)
+    pub code: u16,
+    /// Error message
+    pub message: String,
+    /// Detailed error description
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<String>,
+    /// Field-specific errors for validation
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub field_errors: HashMap<String, Vec<String>>,
+}
+
+impl ErrorInfo {
+    /// Create a new ErrorInfo with just a message
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            code: 500,
+            message: message.into(),
+            details: None,
+            field_errors: HashMap::new(),
+        }
+    }
+
+    /// Set the error code
+    pub fn with_code(mut self, code: u16) -> Self {
+        self.code = code;
+        self
+    }
+
+    /// Add details
+    pub fn with_details(mut self, details: impl Into<String>) -> Self {
+        self.details = Some(details.into());
+        self
+    }
+
+    /// Add a field error
+    pub fn add_field_error(mut self, field: impl Into<String>, error: impl Into<String>) -> Self {
+        self.field_errors
+            .entry(field.into())
+            .or_default()
+            .push(error.into());
+        self
+    }
+}
+
+// ============================================================================
+// VoltageError - Main error type
+// ============================================================================
 
 /// Main error type for all VoltageEMS services
 #[derive(Debug, Error)]
@@ -300,9 +359,7 @@ impl VoltageError {
     }
 
     /// Convert to API ErrorInfo for HTTP responses
-    pub fn to_error_info(&self) -> crate::api::ErrorInfo {
-        use crate::api::ErrorInfo;
-
+    pub fn to_error_info(&self) -> ErrorInfo {
         let mut error_info = ErrorInfo::new(self.to_string()).with_code(self.status_code());
 
         // Add details for specific error types
@@ -352,27 +409,27 @@ impl From<std::num::ParseFloatError> for VoltageError {
 #[macro_export]
 macro_rules! config_error {
     ($msg:expr) => {
-        $crate::error::VoltageError::Configuration($msg.to_string())
+        $crate::VoltageError::Configuration($msg.to_string())
     };
     ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::VoltageError::Configuration(format!($fmt, $($arg)*))
+        $crate::VoltageError::Configuration(format!($fmt, $($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! validation_error {
     ($msg:expr) => {
-        $crate::error::VoltageError::Validation($msg.to_string())
+        $crate::VoltageError::Validation($msg.to_string())
     };
     ($fmt:expr, $($arg:tt)*) => {
-        $crate::error::VoltageError::Validation(format!($fmt, $($arg)*))
+        $crate::VoltageError::Validation(format!($fmt, $($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! protocol_error {
     ($protocol:expr, $msg:expr) => {
-        $crate::error::VoltageError::Protocol {
+        $crate::VoltageError::Protocol {
             protocol: $protocol.to_string(),
             message: $msg.to_string(),
         }
@@ -468,46 +525,46 @@ impl VoltageErrorTrait for VoltageError {
 
     fn category(&self) -> ErrorCategory {
         match self {
-            // Configuration → Configuration
+            // Configuration -> Configuration
             Self::Configuration(_)
             | Self::InvalidConfig { .. }
             | Self::MissingConfig(_)
             | Self::DatabaseNotFound { .. } => ErrorCategory::Configuration,
 
-            // Database → Database
+            // Database -> Database
             Self::Database(_) | Self::Sqlite(_) | Self::Redis(_) | Self::QueryFailed { .. } => {
                 ErrorCategory::Database
             },
 
-            // Protocol → Protocol
+            // Protocol -> Protocol
             Self::Protocol { .. } | Self::Modbus(_) | Self::Grpc(_) => ErrorCategory::Protocol,
 
-            // Connection → Connection
+            // Connection -> Connection
             Self::ConnectionFailed { .. } => ErrorCategory::Connection,
 
-            // Communication/Network → Network
+            // Communication/Network -> Network
             Self::Communication(_) | Self::ServiceUnavailable(_) | Self::HttpClient(_) => {
                 ErrorCategory::Network
             },
 
-            // Timeout → Timeout
+            // Timeout -> Timeout
             Self::Timeout(_) => ErrorCategory::Timeout,
 
-            // Calculation → Calculation
+            // Calculation -> Calculation
             Self::Calculation(_)
             | Self::InvalidExpression { .. }
             | Self::DivisionByZero { .. }
             | Self::TypeMismatch { .. }
             | Self::Processing(_) => ErrorCategory::Calculation,
 
-            // Validation → Validation
+            // Validation -> Validation
             Self::Validation(_)
             | Self::InvalidParameter { .. }
             | Self::OutOfRange { .. }
             | Self::PatternMismatch { .. }
             | Self::BadRequest(_) => ErrorCategory::Validation,
 
-            // NotFound → NotFound
+            // NotFound -> NotFound
             Self::NotFound { .. }
             | Self::InstanceNotFound(_)
             | Self::ProductNotFound(_)
@@ -516,40 +573,40 @@ impl VoltageErrorTrait for VoltageError {
             | Self::RuleNotFound(_)
             | Self::FileNotFound(_) => ErrorCategory::NotFound,
 
-            // Conflict → Conflict
+            // Conflict -> Conflict
             Self::Conflict { .. } | Self::AlreadyExists(_) => ErrorCategory::Conflict,
 
-            // Permission → Permission
+            // Permission -> Permission
             Self::Unauthorized(_) | Self::Forbidden(_) => ErrorCategory::Permission,
 
-            // ResourceBusy → ResourceBusy
+            // ResourceBusy -> ResourceBusy
             Self::ResourceBusy(_) => ErrorCategory::ResourceBusy,
 
-            // ResourceExhausted → ResourceExhausted
+            // ResourceExhausted -> ResourceExhausted
             Self::RateLimitExceeded => ErrorCategory::ResourceExhausted,
 
-            // Internal → Internal
+            // Internal -> Internal
             Self::Internal(_)
             | Self::Runtime(_)
             | Self::Api(_)
             | Self::StartupFailed(_)
             | Self::ShutdownError(_) => ErrorCategory::Internal,
 
-            // Routing/Mapping → Internal (mapping errors are considered internal)
+            // Routing/Mapping -> Internal (mapping errors are considered internal)
             Self::MappingNotFound { .. } | Self::RoutingError(_) | Self::CircularDependency(_) => {
                 ErrorCategory::Internal
             },
 
-            // Serialization/IO → Internal
+            // Serialization/IO -> Internal
             Self::Io(_)
             | Self::ParseError { .. }
             | Self::Serialization(_)
             | Self::Deserialization(_) => ErrorCategory::Internal,
 
-            // External Service → Network
+            // External Service -> Network
             Self::ExternalService { .. } => ErrorCategory::Network,
 
-            // Unknown → Unknown
+            // Unknown -> Unknown
             Self::Unknown(_) | Self::Other(_) => ErrorCategory::Unknown,
         }
     }
@@ -740,5 +797,16 @@ mod tests {
             resource: "test".into()
         }
         .is_retryable());
+    }
+
+    #[test]
+    fn test_error_info() {
+        let error = VoltageError::InvalidParameter {
+            param: "name".into(),
+            reason: "too short".into(),
+        };
+        let info = error.to_error_info();
+        assert_eq!(info.code, 400);
+        assert!(info.field_errors.contains_key("name"));
     }
 }

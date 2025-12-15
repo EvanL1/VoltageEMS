@@ -1,13 +1,13 @@
 //! Utility functions for configuration loading and processing
 
 use anyhow::{Context, Result};
+use common::validation::{CsvFields, CsvHeaderValidator};
 use csv::Reader;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::Path;
 use tracing::{debug, warn};
-use voltage_config::validation::{CsvFields, CsvHeaderValidator};
 
 /// Error that occurred while parsing a specific CSV row
 #[derive(Debug, Clone)]

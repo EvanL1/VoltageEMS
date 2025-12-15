@@ -1,14 +1,19 @@
 //! Comsrv service configuration structures
 
-use crate::common::{ApiConfig, BaseServiceConfig, LoggingConfig, RedisConfig};
-use crate::serde_defaults::{deserialize_bool_flexible, deserialize_u8_default_zero};
+use common::serde_helpers::{deserialize_bool_flexible, deserialize_u8_default_zero};
+use common::validation::CsvFields;
+use common::{
+    ApiConfig, BaseServiceConfig, ConfigValidator, LoggingConfig, RedisConfig, ValidationLevel,
+    ValidationResult,
+};
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_schema_macro::Schema;
 
-#[cfg(feature = "schema")]
-use schemars::JsonSchema;
+#[cfg(feature = "openapi")]
+use utoipa::ToSchema;
 
 /// Default API configuration for comsrv (port 6001)
 fn default_comsrv_api() -> ApiConfig {
@@ -18,9 +23,8 @@ fn default_comsrv_api() -> ApiConfig {
     }
 }
 
-/// Comsrv service configuration
+/// Comsrv service configuration (internal config, not exposed via API)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub struct ComsrvConfig {
     /// Base service configuration
     #[serde(flatten, default)]
@@ -48,10 +52,10 @@ pub struct ComsrvConfig {
 // ============================================================================
 
 /// Service configuration table SQL (from common)
-pub use crate::common::SERVICE_CONFIG_TABLE;
+pub use common::SERVICE_CONFIG_TABLE;
 
 /// Sync metadata table SQL (from common)
-pub use crate::common::SYNC_METADATA_TABLE;
+pub use common::SYNC_METADATA_TABLE;
 
 /// Default port for comsrv service
 pub const DEFAULT_PORT: u16 = 6001;
@@ -59,7 +63,7 @@ pub const DEFAULT_PORT: u16 = 6001;
 /// Channel core fields (shared between Config and API responses)
 /// These fields represent the essential channel identity and state
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ChannelCore {
     /// Channel ID
     pub id: u32,
@@ -74,13 +78,13 @@ pub struct ChannelCore {
     pub protocol: String,
 
     /// Whether the channel is enabled
-    #[serde(default = "crate::serde_defaults::bool_true")]
+    #[serde(default = "common::serde_helpers::bool_true")]
     pub enabled: bool,
 }
 
 /// Channel configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ChannelConfig {
     /// Core channel fields
     #[serde(flatten)]
@@ -148,7 +152,7 @@ pub const CHANNELS_TABLE: &str = ChannelRecord::CREATE_TABLE_SQL;
 
 /// Channel-specific logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ChannelLoggingConfig {
     /// Whether logging is enabled for this channel
     #[serde(default)]
@@ -163,7 +167,7 @@ pub struct ChannelLoggingConfig {
 
 /// Base point configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct Point {
     /// Point ID
     pub point_id: u32,
@@ -178,27 +182,44 @@ pub struct Point {
     pub unit: Option<String>,
 }
 
+// Serde default functions
+fn scale_one() -> f64 {
+    1.0
+}
+
+fn deserialize_scale<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    common::serde_helpers::deserialize_scale(deserializer)
+}
+
+fn deserialize_offset<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    common::serde_helpers::deserialize_offset(deserializer)
+}
+
+fn step_one() -> f64 {
+    1.0
+}
+
 /// Telemetry point (T)
 /// For analog measurements like voltage, current, temperature
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct TelemetryPoint {
     /// Base point information
     #[serde(flatten)]
     pub base: Point,
 
     /// Scale factor for value conversion
-    #[serde(
-        default = "crate::serde_defaults::scale_one",
-        deserialize_with = "crate::serde_defaults::deserialize_scale"
-    )]
+    #[serde(default = "scale_one", deserialize_with = "deserialize_scale")]
     pub scale: f64,
 
     /// Offset for value conversion
-    #[serde(
-        default,
-        deserialize_with = "crate::serde_defaults::deserialize_offset"
-    )]
+    #[serde(default, deserialize_with = "deserialize_offset")]
     pub offset: f64,
 
     /// Data type (float32, float64, int16, int32, etc.)
@@ -216,7 +237,7 @@ pub struct TelemetryPoint {
 /// Signal point (S)
 /// For digital/binary status like on/off, open/close
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct SignalPoint {
     /// Base point information
     #[serde(flatten)]
@@ -231,7 +252,7 @@ pub struct SignalPoint {
 /// Control point (C)
 /// For remote control commands
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ControlPoint {
     /// Base point information
     #[serde(flatten)]
@@ -256,7 +277,7 @@ pub struct ControlPoint {
 /// Adjustment point (A)
 /// For remote setpoint adjustments
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct AdjustmentPoint {
     /// Base point information
     #[serde(flatten)]
@@ -269,7 +290,7 @@ pub struct AdjustmentPoint {
     pub max_value: Option<f64>,
 
     /// Step size for adjustments
-    #[serde(default = "crate::serde_defaults::step_one")]
+    #[serde(default = "step_one")]
     pub step: f64,
 
     /// Data type (float32, float64, int16, int32, etc.)
@@ -277,17 +298,11 @@ pub struct AdjustmentPoint {
     pub data_type: String,
 
     /// Scale factor for value conversion
-    #[serde(
-        default = "crate::serde_defaults::scale_one",
-        deserialize_with = "crate::serde_defaults::deserialize_scale"
-    )]
+    #[serde(default = "scale_one", deserialize_with = "deserialize_scale")]
     pub scale: f64,
 
     /// Offset for value conversion
-    #[serde(
-        default,
-        deserialize_with = "crate::serde_defaults::deserialize_offset"
-    )]
+    #[serde(default, deserialize_with = "deserialize_offset")]
     pub offset: f64,
 }
 
@@ -443,6 +458,7 @@ pub const CONTROL_POINTS_TABLE: &str = ControlPointRecord::CREATE_TABLE_SQL;
 
 /// Adjustment points table SQL (generated by Schema macro)
 pub const ADJUSTMENT_POINTS_TABLE: &str = AdjustmentPointRecord::CREATE_TABLE_SQL;
+
 // ────────────────────── Channel Routing Table ──────────────────────
 
 /// Channel routing table record (C2C routing)
@@ -493,16 +509,13 @@ struct ChannelRoutingRecord {
 // Schema SQL constant
 pub const CHANNEL_ROUTING_TABLE: &str = ChannelRoutingRecord::CREATE_TABLE_SQL;
 
-// DEPRECATED: Mapping tables removed - mappings are now stored as JSON in protocol_mappings column of point tables
-// The mapping structures (ModbusMapping, VirtualMapping, etc.) are still used for JSON serialization/deserialization
-
 // ============================================================================
 // Protocol Mapping Structures
 // ============================================================================
 
 /// Modbus protocol mapping (corresponds to modbus_mappings table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct ModbusMapping {
     #[serde(default)] // channel_id from directory context
     pub channel_id: u32,
@@ -521,7 +534,7 @@ pub struct ModbusMapping {
 /// GPIO protocol mapping for DI/DO (corresponds to gpio_mappings table)
 /// Direction is implicit: Signal=input, Control=output
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct GpioMapping {
     #[serde(default)] // channel_id from directory context
     pub channel_id: u32,
@@ -533,7 +546,7 @@ pub struct GpioMapping {
 
 /// Virtual protocol mapping (corresponds to virtual_mappings table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct VirtualMapping {
     #[serde(default)] // channel_id from directory context
     pub channel_id: u32,
@@ -555,7 +568,7 @@ fn default_update_interval() -> Option<u32> {
 
 /// IEC 60870-5-104 protocol mapping (corresponds to iec_mappings table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct IecMapping {
     #[serde(default)] // channel_id from directory context
     pub channel_id: u32,
@@ -577,7 +590,7 @@ fn default_cot() -> i32 {
 
 /// gRPC protocol mapping (corresponds to grpc_mappings table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct GrpcMapping {
     #[serde(default)] // channel_id from directory context
     pub channel_id: u32,
@@ -591,7 +604,7 @@ pub struct GrpcMapping {
 
 /// CAN protocol mapping (corresponds to can_mappings table)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "openapi", derive(ToSchema))]
 pub struct CanMapping {
     #[serde(default)] // channel_id comes from directory context
     pub channel_id: u32,
@@ -611,7 +624,7 @@ pub struct CanMapping {
     pub data_type: String,
     #[serde(default)]
     pub signed: bool,
-    #[serde(default = "crate::serde_defaults::scale_one")]
+    #[serde(default = "scale_one")]
     pub scale: f64,
     #[serde(default)]
     pub offset: f64,
@@ -639,24 +652,9 @@ fn default_data_type() -> String {
 use sqlx::{sqlite::SqliteQueryResult, Executor, Sqlite};
 
 /// Trait for inserting point definitions into database
-///
-/// @trait SqlInsertablePoint
-/// @purpose Auto-insert point definitions (telemetry/signal/control/adjustment)
-/// @implementors TelemetryPoint, SignalPoint, ControlPoint, AdjustmentPoint
 #[allow(async_fn_in_trait)]
 pub trait SqlInsertablePoint {
     /// Execute insertion with automatic parameter binding for points
-    ///
-    /// @input executor: E - Database executor (connection or transaction)
-    /// @input channel_id: u32 - Channel ID this point belongs to
-    /// @output Result<SqliteQueryResult, sqlx::Error> - Rows affected and last insert ID
-    /// @throws sqlx::Error - Foreign key constraints, duplicate keys
-    /// @side-effects Inserts into points table with telemetry_type from implementor
-    /// @example
-    /// ```ignore
-    /// let signal = SignalPoint { base: Point { id: 1, /* other fields */ }, reverse: true };
-    /// signal.insert_with(&pool, 3001).await?;
-    /// ```
     async fn insert_with<'e, E>(
         &self,
         executor: E,
@@ -665,9 +663,6 @@ pub trait SqlInsertablePoint {
     where
         E: Executor<'e, Database = Sqlite>;
 }
-
-// DEPRECATED: SqlInsertable implementations removed - mappings are now stored as JSON in point tables
-// Mapping structures are still used for JSON serialization/deserialization
 
 // ============================================================================
 // Runtime Configuration Structure
@@ -742,6 +737,21 @@ impl RuntimeChannelConfig {
     }
 }
 
+// Implement RuntimeConfig trait from voltage-comlink
+impl voltage_comlink::RuntimeConfig for RuntimeChannelConfig {
+    fn id(&self) -> u32 {
+        self.base.core.id
+    }
+
+    fn name(&self) -> &str {
+        &self.base.core.name
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 // Default value functions
 fn default_control_type() -> String {
     "momentary".to_string()
@@ -778,7 +788,6 @@ impl Default for ComsrvConfig {
 // Validation implementations
 // ============================================================================
 
-use crate::common::{ConfigValidator, ValidationLevel, ValidationResult};
 use anyhow::Result;
 
 impl ConfigValidator for ComsrvConfig {
@@ -912,39 +921,14 @@ impl ChannelConfig {
     }
 }
 
-// Removed YAML-level lua_sync and command_trigger to reduce configuration surface.
-
 /// Type alias for backward compatibility - use GenericValidator directly for new code
-pub type ComsrvValidator = crate::common::GenericValidator<ComsrvConfig>;
+pub type ComsrvValidator = common::GenericValidator<ComsrvConfig>;
 
 // ============================================================================
 // Centralized Configuration Constants for Comsrv
 // ============================================================================
 
 /// Redis key patterns for comsrv data storage and command queues
-///
-/// This struct provides centralized Redis key patterns used by the communication
-/// service for storing channel data and managing command queues. All keys follow
-/// a consistent naming convention: `comsrv:{channel_id}:{type}`
-///
-/// # Key Patterns
-///
-/// - **Channel Data**: `comsrv:{channel_id}:{type}` - Stores real-time data from devices
-///   - Types: T (Telemetry), S (Signal), C (Control), A (Adjustment)
-/// - **Command Queues**: `comsrv:{channel_id}:{C|A}:TODO` - Pending commands to devices
-///
-/// # Example
-/// ```rust
-/// use voltage_config::comsrv::RedisKeys;
-///
-/// // Format a telemetry data key for channel 1001
-/// let key = RedisKeys::channel_data(1001, "T");
-/// assert_eq!(key, "comsrv:1001:T");
-///
-/// // Format a control command queue key
-/// let todo_key = RedisKeys::control_todo(1001);
-/// assert_eq!(todo_key, "comsrv:1001:C:TODO");
-/// ```
 pub struct ChannelRedisKeys;
 
 impl ChannelRedisKeys {
@@ -993,25 +977,6 @@ impl ChannelRedisKeys {
 }
 
 /// Database table names for comsrv
-///
-/// Centralized table names used across the communication service.
-/// These constants ensure consistency when accessing SQLite tables
-/// and prevent typos in table names.
-///
-/// # Tables
-///
-/// - **points**: Main point definition table (signal names, scaling, units)
-/// - **{protocol}_mappings**: Protocol-specific mapping tables
-/// - **channels**: Channel configuration table
-/// - **service_config**: Service-level configuration
-///
-/// # Example
-/// ```rust
-/// use voltage_config::comsrv::TableNames;
-///
-/// // Query from points table
-/// let query = format!("SELECT * FROM {} WHERE channel_id = ?", TableNames::POINTS);
-/// ```
 pub struct TableNames;
 
 impl TableNames {
@@ -1027,21 +992,6 @@ impl TableNames {
 }
 
 /// Configuration file keys for comsrv
-///
-/// Standard keys used in YAML/JSON configuration files and database storage.
-/// These constants ensure consistency across configuration loading and validation code.
-///
-/// # Usage
-/// ```ignore
-/// use voltage_config::comsrv::ConfigKeys;
-/// use std::collections::HashMap;
-///
-/// // Access protocol-specific configuration
-/// let config: HashMap<String, serde_json::Value> = load_config();
-/// if let Some(mappings) = config.get(ConfigKeys::CAN_MAPPINGS) {
-///     // Process CAN mappings
-/// }
-/// ```
 pub struct ConfigKeys;
 
 impl ConfigKeys {
@@ -1057,35 +1007,6 @@ impl ConfigKeys {
 // ============================================================================
 
 /// Protocol-specific SQL queries
-///
-/// Centralized SQL queries for all protocol plugins. Each query retrieves
-/// point definitions joined with protocol-specific mappings. All queries
-/// follow the same structure to ensure consistency across protocols.
-///
-/// # Query Structure
-/// All queries follow this pattern:
-/// 1. SELECT point fields (id, name, scale, offset, unit, etc.)
-/// 2. LEFT JOIN with protocol-specific mapping table
-/// 3. WHERE clause filtering by channel_id
-///
-/// # Design Philosophy
-/// The points table is the authoritative source following the Four Remotes
-/// standard. Protocol-specific details are in separate mapping tables.
-///
-/// # Example
-/// ```no_run
-/// use voltage_config::comsrv::ProtocolQueries;
-/// use sqlx::SqlitePool;
-/// use anyhow::Result;
-///
-/// async fn load_modbus_points(pool: &SqlitePool, channel_id: u32) -> Result<()> {
-///     let points = sqlx::query(ProtocolQueries::MODBUS_TCP_POINTS)
-///         .bind(channel_id)
-///         .fetch_all(pool)
-///         .await?;
-///     Ok(())
-/// }
-/// ```
 pub struct ProtocolQueries;
 
 impl ProtocolQueries {
@@ -1146,8 +1067,6 @@ impl ProtocolQueries {
 // SqlInsertablePoint implementations for Point types
 // ============================================================================
 
-/// @implementor TelemetryPoint for SqlInsertablePoint
-/// @telemetry-type "T" - Telemetry/measurement data
 impl SqlInsertablePoint for TelemetryPoint {
     async fn insert_with<'e, E>(
         &self,
@@ -1178,9 +1097,6 @@ impl SqlInsertablePoint for TelemetryPoint {
     }
 }
 
-/// @implementor SignalPoint for SqlInsertablePoint
-/// @telemetry-type "S" - Signal/status data
-/// @special Handles signal reversal via reverse field
 impl SqlInsertablePoint for SignalPoint {
     async fn insert_with<'e, E>(
         &self,
@@ -1200,19 +1116,17 @@ impl SqlInsertablePoint for SignalPoint {
         .bind(channel_id)
         .bind(self.base.point_id)
         .bind(&self.base.signal_name)
-        .bind(1.0)  // Scale default for signal
-        .bind(0.0)  // Offset default for signal
+        .bind(1.0) // Scale default for signal
+        .bind(0.0) // Offset default for signal
         .bind(&self.base.unit)
-        .bind(self.reverse)  // Use actual reverse value from SignalPoint
-        .bind("uint16")  // Data type default for signal
+        .bind(self.reverse) // Use actual reverse value from SignalPoint
+        .bind("uint16") // Data type default for signal
         .bind(&self.base.description)
         .execute(executor)
         .await
     }
 }
 
-/// @implementor ControlPoint for SqlInsertablePoint
-/// @telemetry-type "C" - Control commands
 impl SqlInsertablePoint for ControlPoint {
     async fn insert_with<'e, E>(
         &self,
@@ -1232,19 +1146,17 @@ impl SqlInsertablePoint for ControlPoint {
         .bind(channel_id)
         .bind(self.base.point_id)
         .bind(&self.base.signal_name)
-        .bind(1.0)  // Scale default for control
-        .bind(0.0)  // Offset default for control
+        .bind(1.0) // Scale default for control
+        .bind(0.0) // Offset default for control
         .bind(&self.base.unit)
-        .bind(false)  // Reverse default for control
-        .bind("uint16")  // Data type default for control
+        .bind(false) // Reverse default for control
+        .bind("uint16") // Data type default for control
         .bind(&self.base.description)
         .execute(executor)
         .await
     }
 }
 
-/// @implementor AdjustmentPoint for SqlInsertablePoint
-/// @telemetry-type "A" - Adjustment/setpoint values
 impl SqlInsertablePoint for AdjustmentPoint {
     async fn insert_with<'e, E>(
         &self,
@@ -1267,7 +1179,7 @@ impl SqlInsertablePoint for AdjustmentPoint {
         .bind(self.scale)
         .bind(self.offset)
         .bind(&self.base.unit)
-        .bind(false)  // Reverse default for adjustment
+        .bind(false) // Reverse default for adjustment
         .bind(&self.data_type)
         .bind(&self.base.description)
         .execute(executor)
@@ -1278,8 +1190,6 @@ impl SqlInsertablePoint for AdjustmentPoint {
 // ============================================================================
 // CSV Header Validation - CsvFields Trait Implementations
 // ============================================================================
-
-use crate::validation::CsvFields;
 
 impl CsvFields for TelemetryPoint {
     fn field_names() -> Vec<String> {

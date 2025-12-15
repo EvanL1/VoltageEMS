@@ -15,11 +15,11 @@
 //! - Monarch handles synchronization: YAML/CSV → SQLite
 
 use super::{AppConfig, ChannelConfig, ServiceConfig};
+#[cfg(test)]
+use crate::core::config::{CHANNELS_TABLE, SERVICE_CONFIG_TABLE};
 use crate::error::{ComSrvError, Result};
 use std::path::Path;
 use tracing::{debug, error, info};
-#[cfg(test)]
-use voltage_config::comsrv::{CHANNELS_TABLE, SERVICE_CONFIG_TABLE};
 
 // ============================================================================
 // Configuration manager

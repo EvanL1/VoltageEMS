@@ -11,9 +11,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::types::FlowCondition;
 use chrono::{Local, Utc};
 use tracing::warn;
-use voltage_config::rules::FlowCondition;
 
 use crate::executor::{ActionResult, RuleExecutionResult};
 

@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::executor::{RuleExecutionResult, RuleExecutor};
 use crate::logger::RuleLoggerManager;
 use crate::repository;
+use crate::types::Rule;
 use bytes::Bytes;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -18,9 +19,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
-use voltage_config::rules::Rule;
-use voltage_config::RoutingCache;
 use voltage_rtdb::traits::Rtdb;
+use voltage_rtdb::RoutingCache;
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;

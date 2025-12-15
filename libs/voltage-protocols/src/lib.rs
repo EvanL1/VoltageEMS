@@ -18,9 +18,6 @@
 #[cfg(feature = "dido")]
 pub mod dido;
 
-#[cfg(feature = "virt")]
-pub mod virt;
-
 #[cfg(feature = "modbus")]
 pub mod modbus;
 

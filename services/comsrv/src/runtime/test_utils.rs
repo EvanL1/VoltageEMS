@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_config::{KeySpaceConfig, RoutingCache};
 use voltage_rtdb::Rtdb;
+use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 // ==================== Basic Test Infrastructure ====================
 
@@ -107,7 +107,7 @@ pub async fn assert_channel_value(
     point_id: u32,
     expected_value: f64,
 ) {
-    use voltage_config::protocols::PointType;
+    use voltage_model::PointType;
 
     let config = KeySpaceConfig::production();
     let point_type_enum = PointType::from_str(point_type).unwrap();

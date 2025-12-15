@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 #[cfg(feature = "lib-mode")]
 use {
     common::redis::RedisClient,
+    common::PointType,
     comsrv::core::channels::ChannelManager,
     modsrv::{InstanceManager, ProductLoader},
     sqlx::SqlitePool,
@@ -210,7 +211,7 @@ impl ComsrvContext {
         let rtdb: Arc<dyn Rtdb> = Arc::new(RedisRtdb::from_client(redis_client.clone()));
 
         // Create empty routing cache (Monarch doesn't use routing)
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
 
         // Create channel manager (no longer needs protocol factory)
         let channel_manager = Arc::new(RwLock::new(ChannelManager::with_sqlite_pool(
@@ -259,7 +260,7 @@ impl ModsrvContext {
 
         // Load routing cache from SQLite (enables direct library calls)
         let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(&sqlite_pool).await?;
-        let routing_cache = Arc::new(voltage_config::RoutingCache::from_maps(
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
             c2m_map,
             m2c_map,
             std::collections::HashMap::new(), // C2C routing not yet implemented
@@ -300,7 +301,7 @@ async fn load_routing_maps_from_sqlite(
     std::collections::HashMap<String, String>,
     std::collections::HashMap<String, String>,
 )> {
-    use voltage_config::KeySpaceConfig;
+    use voltage_rtdb::KeySpaceConfig;
 
     tracing::info!("Loading routing maps from SQLite for monarch");
 
@@ -325,7 +326,7 @@ async fn load_routing_maps_from_sqlite(
         measurement_routing
     {
         // Parse channel type
-        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+        let point_type = PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
         // Build routing keys (no prefix for hash fields)
@@ -355,7 +356,7 @@ async fn load_routing_maps_from_sqlite(
         action_routing
     {
         // Parse channel type (C or A)
-        let point_type = voltage_config::protocols::PointType::from_str(&channel_type)
+        let point_type = PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
         // Build routing keys

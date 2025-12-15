@@ -108,10 +108,10 @@ use common::admin_api::{get_log_level, set_log_level};
             crate::dto::EnergyRequest,
             crate::dto::TimeSeriesRequest,
             crate::api::instance_query_handlers::SetMeasurementRequest,
-            voltage_config::modsrv::Product,
-            voltage_config::modsrv::MeasurementPoint,
-            voltage_config::modsrv::ActionPoint,
-            voltage_config::modsrv::PropertyTemplate,
+            crate::config::Product,
+            crate::config::MeasurementPoint,
+            crate::config::ActionPoint,
+            crate::config::PropertyTemplate,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
             common::admin_api::LogLevelResponse

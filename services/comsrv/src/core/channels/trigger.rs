@@ -2,14 +2,14 @@
 //!
 //! Responsible for subscribing to control commands from Redis and distributing them to corresponding channels for processing
 
+use crate::core::config::ChannelRedisKeys;
+use common::timeouts;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
-use voltage_config::common::timeouts;
-use voltage_config::comsrv::ChannelRedisKeys;
 use voltage_rtdb::Rtdb;
 
 use super::traits::ChannelCommand;

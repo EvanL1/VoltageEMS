@@ -16,8 +16,7 @@ pub use voltage_comlink::{
     PointDataMap, ProtocolValue, TelemetryBatch, TestChannelParams,
 };
 
-// Import FourRemote from voltage_config (via local config module)
-use voltage_config::FourRemote;
+use common::FourRemote;
 
 // ============================================================================
 // Core trait definitions (from traits.rs)

@@ -9,11 +9,10 @@ use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use tracing::{debug, info};
-use voltage_config::{
-    comsrv::{ChannelConfig, ComsrvConfig},
-    modsrv::ModsrvConfig,
-    rules::{RuleConfig, RulesConfig},
-};
+
+// Import types from service libs (lib-mode)
+use comsrv::core::config::{ChannelConfig, ChannelCore, ComsrvConfig};
+use modsrv::config::{ModsrvConfig, RuleConfig, RuleCore, RulesConfig};
 
 /// Result type for export operations
 #[derive(Debug, Default)]
@@ -255,7 +254,7 @@ impl ConfigExporter {
             let config_str: Option<String> = row.try_get("config")?;
 
             let mut channel = ChannelConfig {
-                core: voltage_config::comsrv::ChannelCore {
+                core: ChannelCore {
                     id: channel_id,
                     name,
                     description: None,
@@ -739,7 +738,7 @@ impl ConfigExporter {
             let flow_json = serde_json::from_str(&flow_json_str).unwrap_or(serde_json::Value::Null);
 
             let rule = RuleConfig {
-                core: voltage_config::rules::RuleCore {
+                core: RuleCore {
                     id,
                     name,
                     description,

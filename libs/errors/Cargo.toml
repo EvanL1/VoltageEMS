@@ -1,0 +1,37 @@
+[package]
+name = "errors"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Unified error handling for VoltageEMS services"
+
+[dependencies]
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Serialization (for ErrorInfo)
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Database (for From implementations)
+sqlx = { workspace = true }
+redis = { workspace = true }
+
+# HTTP client (for From implementations)
+reqwest = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Web framework (optional, for http_status and into_http_response)
+axum = { workspace = true, optional = true }
+
+# Schema generation (optional)
+schemars = { version = "0.8", optional = true }
+
+[features]
+default = []
+schema = ["schemars"]
+axum-support = ["axum"]

@@ -1,14 +1,12 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use crate::config::{InstanceRedisKeys, ModsrvQueries};
 use anyhow::{anyhow, Result};
+use common::{ValidationLevel, ValidationResult};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use voltage_config::{
-    common::{ValidationLevel, ValidationResult},
-    modsrv::{InstanceRedisKeys, ModsrvQueries},
-};
 use voltage_model::validate_instance_name;
 use voltage_rtdb::Rtdb;
 
@@ -22,7 +20,7 @@ use crate::routing_loader::{
 pub struct InstanceManager<R: Rtdb> {
     pub pool: SqlitePool,
     pub rtdb: Arc<R>,
-    routing_cache: Arc<voltage_config::RoutingCache>,
+    routing_cache: Arc<voltage_rtdb::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 }
 
@@ -30,7 +28,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub fn new(
         pool: SqlitePool,
         rtdb: Arc<R>,
-        routing_cache: Arc<voltage_config::RoutingCache>,
+        routing_cache: Arc<voltage_rtdb::RoutingCache>,
         product_loader: Arc<ProductLoader>,
     ) -> Self {
         Self {
@@ -45,7 +43,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ///
     /// Returns a reference to the shared routing cache for use in API handlers
     /// that need to refresh the cache after routing management operations.
-    pub fn routing_cache(&self) -> &Arc<voltage_config::RoutingCache> {
+    pub fn routing_cache(&self) -> &Arc<voltage_rtdb::RoutingCache> {
         &self.routing_cache
     }
 
@@ -179,7 +177,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // 8. Return created instance
         Ok(Instance {
-            core: voltage_config::modsrv::InstanceCore {
+            core: crate::config::InstanceCore {
                 instance_id,
                 instance_name,
                 product_name: req.product_name,
@@ -231,7 +229,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             };
 
             instances.push(Instance {
-                core: voltage_config::modsrv::InstanceCore {
+                core: crate::config::InstanceCore {
                     instance_id,
                     instance_name,
                     product_name,
@@ -319,7 +317,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             };
 
             instances.push(Instance {
-                core: voltage_config::modsrv::InstanceCore {
+                core: crate::config::InstanceCore {
                     instance_id,
                     instance_name,
                     product_name,
@@ -423,7 +421,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             };
 
             instances.push(Instance {
-                core: voltage_config::modsrv::InstanceCore {
+                core: crate::config::InstanceCore {
                     instance_id,
                     instance_name,
                     product_name,
@@ -578,7 +576,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         }
 
         Ok(Instance {
-            core: voltage_config::modsrv::InstanceCore {
+            core: crate::config::InstanceCore {
                 instance_id,
                 instance_name,
                 product_name,
@@ -2021,7 +2019,6 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use tempfile::TempDir;
-    // use voltage_config::modsrv::{ActionPoint, MeasurementPoint, PointType};
 
     // Helper: Create test database with all required tables
     async fn create_test_database() -> (TempDir, SqlitePool) {
@@ -2096,7 +2093,7 @@ mod tests {
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
 
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let _manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         // Test passes if InstanceManager::new() doesn't panic
@@ -2109,7 +2106,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         let req = CreateInstanceRequest {
@@ -2139,7 +2136,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         let mut properties = HashMap::new();
@@ -2175,7 +2172,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         let req = CreateInstanceRequest {
@@ -2202,7 +2199,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         let req = CreateInstanceRequest {
@@ -2225,7 +2222,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         // Create multiple instances
@@ -2259,7 +2256,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         // Create instances for different products
@@ -2307,7 +2304,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         // Create instance
@@ -2340,7 +2337,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         let result = manager.get_instance(9999).await;
@@ -2355,7 +2352,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         // Create instance
@@ -2404,7 +2401,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
         // Execute action on non-existent instance - this now succeeds
@@ -2426,7 +2423,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager =
             InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
 
@@ -2455,7 +2452,7 @@ mod tests {
 
         // Verify value was stored in instance action key
         use voltage_rtdb::Rtdb;
-        let config = voltage_config::KeySpaceConfig::production();
+        let config = voltage_rtdb::KeySpaceConfig::production();
         let action_key = config.instance_action_key(1001);
         let stored = rtdb.hash_get(&action_key, "1").await.unwrap();
         assert!(stored.is_some(), "Action value should be stored");
@@ -2473,7 +2470,7 @@ mod tests {
         // Configure M2C route: instance 1001, action point "1" -> channel 2, A, point 5
         let mut m2c_data = HashMap::new();
         m2c_data.insert("1001:A:1".to_string(), "2:A:5".to_string());
-        let routing_cache = Arc::new(voltage_config::RoutingCache::from_maps(
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
             HashMap::new(),
             m2c_data,
             HashMap::new(),
@@ -2507,14 +2504,14 @@ mod tests {
 
         // Verify instance action hash was updated
         use voltage_rtdb::Rtdb;
-        let config = voltage_config::KeySpaceConfig::production();
+        let config = voltage_rtdb::KeySpaceConfig::production();
         let action_key = config.instance_action_key(1001);
         let stored = rtdb.hash_get(&action_key, "1").await.unwrap();
         assert!(stored.is_some(), "Instance action should be stored");
         assert_eq!(stored.unwrap().as_ref(), b"75");
 
         // Verify channel hash was updated
-        use voltage_config::protocols::PointType;
+        use voltage_model::PointType;
         let channel_key = config.channel_key(2, PointType::Adjustment);
         let channel_value = rtdb.hash_get(&channel_key, "5").await.unwrap();
         assert!(channel_value.is_some(), "Channel point should be updated");
@@ -2537,7 +2534,7 @@ mod tests {
         let mut m2c_data = HashMap::new();
         m2c_data.insert("1001:A:1".to_string(), "10:A:1".to_string());
         m2c_data.insert("1001:A:2".to_string(), "10:A:2".to_string());
-        let routing_cache = Arc::new(voltage_config::RoutingCache::from_maps(
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
             HashMap::new(),
             m2c_data,
             HashMap::new(),
@@ -2567,7 +2564,7 @@ mod tests {
 
         // Verify both actions were stored
         use voltage_rtdb::Rtdb;
-        let config = voltage_config::KeySpaceConfig::production();
+        let config = voltage_rtdb::KeySpaceConfig::production();
         let action_key = config.instance_action_key(1001);
         let v1 = rtdb.hash_get(&action_key, "1").await.unwrap().unwrap();
         let v2 = rtdb.hash_get(&action_key, "2").await.unwrap().unwrap();
@@ -2582,7 +2579,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager =
             InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
 
@@ -2604,7 +2601,7 @@ mod tests {
 
         // Verify latest value wins
         use voltage_rtdb::Rtdb;
-        let config = voltage_config::KeySpaceConfig::production();
+        let config = voltage_rtdb::KeySpaceConfig::production();
         let action_key = config.instance_action_key(1001);
         let stored = rtdb.hash_get(&action_key, "1").await.unwrap().unwrap();
         assert_eq!(stored.as_ref(), b"200", "Latest value should overwrite");
@@ -2617,7 +2614,7 @@ mod tests {
 
         let product_loader = create_test_product_loader(pool.clone());
         let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(voltage_config::RoutingCache::new());
+        let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
         let manager =
             InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
 
@@ -2639,7 +2636,7 @@ mod tests {
 
         // Verify negative value was stored correctly
         use voltage_rtdb::Rtdb;
-        let config = voltage_config::KeySpaceConfig::production();
+        let config = voltage_rtdb::KeySpaceConfig::production();
         let action_key = config.instance_action_key(1001);
         let stored = rtdb.hash_get(&action_key, "1").await.unwrap().unwrap();
         assert_eq!(stored.as_ref(), b"-50.5");

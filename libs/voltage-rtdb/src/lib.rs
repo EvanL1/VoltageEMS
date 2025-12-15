@@ -2,6 +2,12 @@
 //!
 //! Provides a unified interface for realtime data storage,
 //! supporting multiple backends (Redis, in-memory, etc.)
+//!
+//! # Key Components
+//!
+//! - **Rtdb trait**: Core trait for realtime database operations
+//! - **KeySpaceConfig**: Redis key naming configuration
+//! - **RoutingCache**: In-memory routing table cache
 
 pub mod traits;
 
@@ -18,9 +24,17 @@ pub mod time;
 
 pub mod write_buffer;
 
+pub mod keyspace;
+
+pub mod routing_cache;
+
 // Re-exports
 pub use bytes::Bytes;
 pub use traits::Rtdb;
+
+// KeySpace and Routing exports
+pub use keyspace::KeySpaceConfig;
+pub use routing_cache::{RoutingCache, RoutingCacheStats};
 
 #[cfg(feature = "redis-backend")]
 pub use redis_impl::RedisRtdb;
@@ -37,10 +51,11 @@ pub use write_buffer::{
 
 /// Helper functions for common operations
 pub mod helpers {
-    use super::{MemoryRtdb, Rtdb};
+    use super::{KeySpaceConfig, MemoryRtdb, Rtdb};
     use anyhow::{Context, Result};
     use bytes::Bytes;
     use std::sync::Arc;
+    use voltage_model::PointType;
 
     // ==================== Test Support ====================
 
@@ -93,9 +108,9 @@ pub mod helpers {
     /// * `Err(anyhow::Error)` - Write error
     pub async fn set_channel_point_with_trigger<R>(
         rtdb: &R,
-        config: &voltage_config::KeySpaceConfig,
+        config: &KeySpaceConfig,
         channel_id: u32,
-        point_type: voltage_config::protocols::PointType,
+        point_type: PointType,
         point_id: u32,
         value: f64,
         timestamp_ms: i64,

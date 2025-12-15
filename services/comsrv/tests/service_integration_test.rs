@@ -178,7 +178,7 @@ logging:
         let monarch_path = project_root.join("target/debug/monarch");
 
         // Always rebuild Monarch to ensure schema consistency with current code
-        // This prevents schema mismatch issues when voltage-config is updated
+
         println!("Building Monarch with latest schema...");
         let build = Command::new("cargo")
             .args(["build", "--package", "monarch"])

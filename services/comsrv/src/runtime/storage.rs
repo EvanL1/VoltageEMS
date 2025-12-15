@@ -4,13 +4,13 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use crate::core::config::ChannelRedisKeys;
 use crate::error::{ComSrvError, Result};
+use common::FourRemote;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{debug, warn};
-use voltage_config::comsrv::ChannelRedisKeys;
-use voltage_config::FourRemote;
 use voltage_rtdb::{Rtdb, WriteBuffer, WriteBufferConfig};
 
 /// Plugin point update for batch operations
@@ -84,7 +84,7 @@ impl StorageStats {
 /// flushing periodically (default: 20ms) for improved throughput.
 pub struct StorageManager {
     rtdb: Arc<dyn Rtdb>,
-    routing_cache: Arc<voltage_config::RoutingCache>,
+    routing_cache: Arc<voltage_rtdb::RoutingCache>,
     stats: Arc<StorageStats>,
     /// Write buffer for aggregating hash writes
     write_buffer: Arc<WriteBuffer>,
@@ -94,7 +94,7 @@ impl StorageManager {
     /// Create new storage manager with default write buffer config
     pub async fn new(
         redis_url: &str,
-        routing_cache: Arc<voltage_config::RoutingCache>,
+        routing_cache: Arc<voltage_rtdb::RoutingCache>,
     ) -> Result<Self> {
         let rtdb = create_rtdb(redis_url).await?;
         Ok(Self::from_rtdb_with_config(
@@ -105,17 +105,14 @@ impl StorageManager {
     }
 
     /// Create storage manager from injected RTDB and routing cache
-    pub fn from_rtdb(
-        rtdb: Arc<dyn Rtdb>,
-        routing_cache: Arc<voltage_config::RoutingCache>,
-    ) -> Self {
+    pub fn from_rtdb(rtdb: Arc<dyn Rtdb>, routing_cache: Arc<voltage_rtdb::RoutingCache>) -> Self {
         Self::from_rtdb_with_config(rtdb, routing_cache, WriteBufferConfig::default())
     }
 
     /// Create storage manager with custom write buffer config
     pub fn from_rtdb_with_config(
         rtdb: Arc<dyn Rtdb>,
-        routing_cache: Arc<voltage_config::RoutingCache>,
+        routing_cache: Arc<voltage_rtdb::RoutingCache>,
         buffer_config: WriteBufferConfig,
     ) -> Self {
         Self {
@@ -272,13 +269,13 @@ pub async fn write_point_with_trigger(
     point_id: u32,
     value: f64,
 ) -> Result<i64> {
-    use voltage_config::protocols::PointType;
+    use voltage_model::PointType;
 
     // Parse point type
     let point_type_enum = PointType::from_str(point_type)
         .ok_or_else(|| ComSrvError::RedisError(format!("Invalid point type: {}", point_type)))?;
 
-    let config = voltage_config::KeySpaceConfig::production();
+    let config = voltage_rtdb::KeySpaceConfig::production();
     let channel_key = config.channel_key(channel_id, point_type_enum);
 
     // Get current timestamp (milliseconds since epoch)
@@ -353,7 +350,7 @@ pub async fn write_point_with_trigger(
 /// * `Err(ComSrvError)` - Storage error
 pub async fn write_batch(
     rtdb: &dyn Rtdb,
-    routing_cache: &voltage_config::RoutingCache,
+    routing_cache: &voltage_rtdb::RoutingCache,
     updates: Vec<PointUpdate>,
 ) -> Result<()> {
     if updates.is_empty() {
@@ -375,11 +372,11 @@ pub async fn write_batch(
         .map_err(|e| ComSrvError::RedisError(format!("Failed to get timestamp: {e}")))?
         .as_millis() as i64;
 
-    let config = voltage_config::KeySpaceConfig::production();
+    let config = voltage_rtdb::KeySpaceConfig::production();
 
     for ((channel_id, four_remote), updates) in grouped {
         // Convert FourRemote to PointType via string (both have same T/S/C/A representation)
-        use voltage_config::protocols::PointType;
+        use voltage_model::PointType;
         let point_type_str = four_remote.as_str();
         let point_type_enum = PointType::from_str(point_type_str)
             .expect("FourRemote and PointType have matching string representations");
@@ -535,7 +532,7 @@ pub async fn write_batch(
 pub async fn write_batch_buffered(
     write_buffer: &WriteBuffer,
     rtdb: &dyn Rtdb,
-    routing_cache: &voltage_config::RoutingCache,
+    routing_cache: &voltage_rtdb::RoutingCache,
     updates: Vec<PointUpdate>,
 ) -> Result<()> {
     if updates.is_empty() {
@@ -556,10 +553,10 @@ pub async fn write_batch_buffered(
         .map_err(|e| ComSrvError::RedisError(format!("Failed to get timestamp: {e}")))?
         .as_millis() as i64;
 
-    let config = voltage_config::KeySpaceConfig::production();
+    let config = voltage_rtdb::KeySpaceConfig::production();
 
     for ((channel_id, four_remote), updates) in grouped {
-        use voltage_config::protocols::PointType;
+        use voltage_model::PointType;
         let point_type_str = four_remote.as_str();
         let point_type_enum = PointType::from_str(point_type_str)
             .expect("FourRemote and PointType have matching string representations");

@@ -292,7 +292,7 @@ mod tests {
 
     fn create_test_channel_config(id: u32) -> ChannelConfig {
         ChannelConfig {
-            core: voltage_config::comsrv::ChannelCore {
+            core: crate::core::config::ChannelCore {
                 id,
                 name: format!("Test Channel {}", id),
                 description: Some("Test virtual protocol".to_string()),

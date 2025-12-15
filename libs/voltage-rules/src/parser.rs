@@ -6,12 +6,12 @@
 //! The parser extracts only execution-necessary information from Vue Flow JSON,
 //! discarding UI-only data like positions, labels, and edge styling.
 
-use serde_json::Value;
-use std::collections::HashMap;
-use voltage_config::rules::{
+use crate::types::{
     CalculationRule, FlowCondition, RuleFlow, RuleNode, RuleSwitchBranch, RuleValueAssignment,
     RuleVariable, RuleWires,
 };
+use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::error::{Result, RuleError};
 

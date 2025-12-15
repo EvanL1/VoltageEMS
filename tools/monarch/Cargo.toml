@@ -5,9 +5,10 @@ edition = "2021"
 license.workspace = true
 
 [dependencies]
-voltage-config = { path = "../../libs/voltage-config" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-routing = { path = "../../libs/voltage-routing" }
+voltage-rules = { path = "../../libs/voltage-rules" }
+voltage-comlink = { path = "../../libs/voltage-comlink" }
 common = { path = "../../libs/common" }
 
 # Service libraries (lib mode)

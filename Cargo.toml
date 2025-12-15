@@ -2,9 +2,9 @@
 resolver = "2"
 members = [
     "libs/common",
+    "libs/errors",
     "libs/voltage-calc",
     "libs/voltage-comlink",
-    "libs/voltage-config",
     "libs/voltage-model",
     "libs/voltage-protocols",
     "libs/voltage-rtdb",

@@ -6,7 +6,7 @@
 use crate::context::ModsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use serde::{Deserialize, Serialize};
-use voltage_config::rules::{Rule, RuleFlow};
+use voltage_rules::{Rule, RuleFlow};
 
 /// Rule summary for list operations
 #[derive(Debug, Clone, Serialize, Deserialize)]

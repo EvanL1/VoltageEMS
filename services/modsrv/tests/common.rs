@@ -6,12 +6,12 @@
 
 use anyhow::Result;
 use common::redis::RedisClient;
+use modsrv::config::ModsrvConfig;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
-use voltage_config::modsrv::ModsrvConfig;
 
 /// Test environment context containing all required resources
 pub struct TestEnv {
@@ -94,7 +94,6 @@ impl TestEnv {
 
 /// Initialize the test database schema
 async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
-    // Use standard modsrv schema from voltage-config
     common::test_utils::schema::init_modsrv_schema(pool).await?;
 
     // Test-specific tables (not in standard schema)
@@ -139,7 +138,7 @@ async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
 
 /// Create a test configuration
 fn create_test_config() -> Result<ModsrvConfig> {
-    use voltage_config::common::{ApiConfig, BaseServiceConfig, RedisConfig};
+    use common::{ApiConfig, BaseServiceConfig, RedisConfig};
 
     let config = ModsrvConfig {
         service: BaseServiceConfig {
@@ -366,7 +365,7 @@ pub mod helpers {
 pub mod routing {
     use super::*;
     use bytes::Bytes;
-    use voltage_config::RoutingCache;
+    use voltage_rtdb::RoutingCache;
     use voltage_rtdb::Rtdb;
 
     /// Create test environment with M2C routing configuration
@@ -448,7 +447,7 @@ pub mod routing {
         point_id: u32,
         expected_value: f64,
     ) {
-        use voltage_config::KeySpaceConfig;
+        use voltage_rtdb::KeySpaceConfig;
 
         let config = KeySpaceConfig::production();
         let inst_key = config.instance_action_key(instance_id);

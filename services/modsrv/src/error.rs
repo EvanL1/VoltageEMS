@@ -174,7 +174,7 @@ pub enum ModSrvError {
 // VoltageErrorTrait Implementation
 // ============================================================================
 
-impl voltage_config::error::VoltageErrorTrait for ModSrvError {
+impl errors::VoltageErrorTrait for ModSrvError {
     fn error_code(&self) -> &'static str {
         match self {
             // Configuration
@@ -242,8 +242,8 @@ impl voltage_config::error::VoltageErrorTrait for ModSrvError {
         }
     }
 
-    fn category(&self) -> voltage_config::error::ErrorCategory {
-        use voltage_config::error::ErrorCategory;
+    fn category(&self) -> errors::ErrorCategory {
+        use errors::ErrorCategory;
 
         match self {
             // Configuration → Configuration
@@ -317,12 +317,10 @@ impl voltage_config::error::VoltageErrorTrait for ModSrvError {
 // ============================================================================
 
 /// Automatically convert ModSrvError to AppError using VoltageErrorTrait for HTTP status mapping
-impl From<ModSrvError> for voltage_config::api::AppError {
+impl From<ModSrvError> for common::AppError {
     fn from(err: ModSrvError) -> Self {
-        use voltage_config::{
-            api::{AppError, ErrorInfo},
-            error::VoltageErrorTrait,
-        };
+        use common::{AppError, ErrorInfo};
+        use errors::VoltageErrorTrait;
 
         let status = err.http_status();
         let error_info = ErrorInfo::new(err.to_string())
@@ -341,7 +339,7 @@ impl From<ModSrvError> for voltage_config::api::AppError {
 /// Implement IntoResponse so ModSrvError can be returned directly from Axum handlers
 impl axum::response::IntoResponse for ModSrvError {
     fn into_response(self) -> axum::response::Response {
-        let app_error: voltage_config::api::AppError = self.into();
+        let app_error: common::AppError = self.into();
         app_error.into_response()
     }
 }
@@ -351,9 +349,9 @@ impl axum::response::IntoResponse for ModSrvError {
 // ============================================================================
 
 /// Convert from VoltageError
-impl From<voltage_config::error::VoltageError> for ModSrvError {
-    fn from(err: voltage_config::error::VoltageError) -> Self {
-        use voltage_config::error::VoltageError as VE;
+impl From<errors::VoltageError> for ModSrvError {
+    fn from(err: errors::VoltageError) -> Self {
+        use errors::VoltageError as VE;
         match err {
             VE::Configuration(msg) => Self::ConfigError(msg),
             VE::InvalidConfig { field, reason } => Self::ConfigurationError {

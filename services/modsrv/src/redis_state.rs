@@ -4,13 +4,13 @@
 //! control-plane read/write for instances/products, keeping business
 //! logic and type safety directly in Rust.
 
+use crate::config::InstanceRedisKeys;
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
+use common::RedisRoutingKeys;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt;
-use voltage_config::common::RedisRoutingKeys;
-use voltage_config::modsrv::InstanceRedisKeys;
 use voltage_rtdb::Rtdb;
 
 use crate::product_loader::{ActionPoint, MeasurementPoint, Product};

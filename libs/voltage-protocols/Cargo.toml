@@ -5,8 +5,7 @@ edition = "2021"
 description = "Protocol implementations for VoltageEMS"
 
 [features]
-default = ["virt", "modbus", "dido"]
-virt = []
+default = ["modbus", "dido"]
 dido = []
 modbus = ["modbus-tcp", "dep:voltage_modbus"]
 modbus-tcp = ["dep:tokio-util", "dep:bytes"]
@@ -14,7 +13,7 @@ modbus-rtu = ["modbus-tcp", "dep:tokio-serial"]
 
 [dependencies]
 voltage-comlink = { path = "../voltage-comlink" }
-voltage-config = { path = "../voltage-config" }
+common = { path = "../common", default-features = false }
 voltage_modbus = { workspace = true, optional = true }
 
 async-trait = { workspace = true }

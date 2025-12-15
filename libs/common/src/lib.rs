@@ -4,6 +4,7 @@
 //! - Redis client
 //! - monitoring and health checking
 //! - logging functions
+//! - service configuration types
 
 #[cfg(feature = "redis")]
 pub mod redis;
@@ -11,18 +12,97 @@ pub mod redis;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
+pub mod service_config;
+
 // Common modules
 pub mod admin_api;
+pub mod api_types;
 pub mod config_loader;
 pub mod logging;
 pub mod serde_helpers;
 pub mod service_bootstrap;
 pub mod shutdown;
 pub mod system_metrics;
+pub mod validation;
 pub mod warning_monitor;
 
 // Re-export commonly used csv types (previously in csv.rs module)
 pub use csv::{Reader, ReaderBuilder, StringRecord, Writer, WriterBuilder};
+
+// Re-export commonly used service_config types at crate root for convenience
+pub use service_config::{
+    // Helpers
+    helpers,
+    parse_four_remote,
+    timeouts,
+    // Config types
+    ApiConfig,
+    BaseServiceConfig,
+    // Reload
+    ChannelReloadResult,
+    // Enums
+    ComparisonOperator,
+    // Validation
+    ConfigValidator,
+    FourRemote,
+    GenericValidator,
+    InstanceReloadResult,
+    InstanceStatus,
+    LogRotationConfig,
+    LoggingConfig,
+    PointRole,
+    PointType,
+    RedisConfig,
+    // Redis keys
+    RedisRoutingKeys,
+    ReloadResult,
+    ReloadableService,
+    ResponseStatus,
+    RuleReloadResult,
+    // Database types
+    ServiceConfigRecord,
+    SyncMetadataRecord,
+    ValidationLevel,
+    ValidationResult,
+    // Constants
+    DEFAULT_API_HOST,
+    DEFAULT_COMSRV_URL,
+    DEFAULT_MODSRV_URL,
+    DEFAULT_REDIS_HOST,
+    DEFAULT_REDIS_PORT,
+    DEFAULT_REDIS_URL,
+    DEFAULT_RULES_URL,
+    ENV_COMSRV_URL,
+    ENV_MODSRV_URL,
+    ENV_RULES_URL,
+    LOCALHOST_HOST,
+    SERVICE_CONFIG_TABLE,
+    SYNC_METADATA_TABLE,
+};
+
+// Re-export commonly used API types
+pub use api_types::{
+    // Response types
+    BatchRequest,
+    BatchResponse,
+    BatchResult,
+    ComponentHealth,
+    ControlAction,
+    ErrorInfo,
+    ErrorResponse,
+    HealthStatus,
+    PaginatedResponse,
+    PaginationParams,
+    ServiceStatus,
+    SortOrder,
+    SuccessResponse,
+    TimeRange,
+    WebSocketMessage,
+};
+
+// Re-export AppError when axum feature is enabled
+#[cfg(feature = "axum")]
+pub use api_types::AppError;
 
 // Bootstrap modules
 pub mod bootstrap_args;

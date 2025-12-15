@@ -8,12 +8,12 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use crate::api::routes::AppState;
+use crate::core::config::ChannelRedisKeys;
 use crate::dto::{AppError, SuccessResponse};
 use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
-use voltage_config::comsrv::ChannelRedisKeys;
 
 /// Get point information including value, timestamp and raw value
 ///
@@ -516,7 +516,7 @@ pub async fn get_point_mapping_with_type_handler(
 // Point CRUD Handlers (Create, Update, Delete)
 // ============================================================================
 
-use voltage_config::comsrv::TelemetryPoint;
+use crate::core::config::TelemetryPoint;
 
 /// Point CRUD operation result
 #[derive(Debug, Clone, serde::Serialize, utoipa::ToSchema)]
@@ -2530,7 +2530,7 @@ async fn process_create_operation(
     item: &PointBatchCreateItem,
     state: &AppState,
 ) -> Result<(), String> {
-    use voltage_config::comsrv::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
+    use crate::core::config::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
 
     let point_type_upper = item.point_type.to_ascii_uppercase();
     let table = match point_type_upper.as_str() {

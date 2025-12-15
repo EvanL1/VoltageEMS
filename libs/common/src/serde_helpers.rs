@@ -8,6 +8,135 @@
 
 use serde::{Deserialize, Deserializer};
 
+// ============================================================================
+// Default Value Functions (for serde #[serde(default = "...")] attributes)
+// ============================================================================
+
+/// Default value: true
+pub fn bool_true() -> bool {
+    true
+}
+
+/// Default value: false
+pub fn bool_false() -> bool {
+    false
+}
+
+/// Default page size for pagination: 20
+pub fn page_size() -> usize {
+    20
+}
+
+/// Default scale factor: 1.0
+pub fn scale_one() -> f64 {
+    1.0
+}
+
+/// Default step value: 1.0
+pub fn step_one() -> f64 {
+    1.0
+}
+
+// ============================================================================
+// Custom Deserializers (for CSV/JSON parsing)
+// ============================================================================
+
+/// Custom deserializer for boolean fields that supports multiple input formats
+///
+/// Supports native JSON booleans, integers, and string values:
+/// - JSON boolean: true, false
+/// - JSON integer: 0 (false), 1 (true)
+/// - CSV string: "1"/"0", "true"/"false", "yes"/"no" (case-insensitive)
+pub fn deserialize_bool_flexible<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrStringOrInt {
+        Bool(bool),
+        Int(i64),
+        String(String),
+    }
+
+    match BoolOrStringOrInt::deserialize(deserializer)? {
+        BoolOrStringOrInt::Bool(b) => Ok(b),
+        BoolOrStringOrInt::Int(i) => match i {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(D::Error::custom(format!(
+                "Invalid integer value {}, expected 0 or 1",
+                i
+            ))),
+        },
+        BoolOrStringOrInt::String(s) => match s.to_lowercase().trim() {
+            "1" | "true" | "yes" => Ok(true),
+            "0" | "false" | "no" | "" => Ok(false),
+            other => Err(D::Error::custom(format!(
+                "Invalid boolean value '{}', expected: 1/0, true/false, yes/no, or boolean",
+                other
+            ))),
+        },
+    }
+}
+
+/// Custom deserializer for u8 fields that treats empty strings as 0
+pub fn deserialize_u8_default_zero<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    let s = String::deserialize(deserializer)?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        Ok(0)
+    } else {
+        trimmed.parse::<u8>().map_err(D::Error::custom)
+    }
+}
+
+/// Custom deserializer for f64 that treats empty strings as default value (0.0)
+pub fn deserialize_f64_or_default<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrFloat {
+        String(String),
+        Float(f64),
+    }
+
+    match StringOrFloat::deserialize(deserializer)? {
+        StringOrFloat::Float(f) => Ok(f),
+        StringOrFloat::String(s) => {
+            if s.trim().is_empty() {
+                Ok(0.0) // Empty string => 0.0 (offset default)
+            } else {
+                s.trim().parse::<f64>().map_err(serde::de::Error::custom)
+            }
+        },
+    }
+}
+
+/// Deserialize scale with default 1.0 for empty strings
+pub fn deserialize_scale<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_f64_or_default(deserializer).map(|v| if v == 0.0 { 1.0 } else { v })
+}
+
+/// Deserialize offset with default 0.0 for empty strings
+pub fn deserialize_offset<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_f64_or_default(deserializer)
+}
+
 /// 反序列化可选 i32
 ///
 /// 支持以下输入格式：

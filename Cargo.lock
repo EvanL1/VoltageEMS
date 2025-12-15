@@ -483,11 +483,13 @@ dependencies = [
  "chrono",
  "clap",
  "csv",
+ "errors",
  "flate2",
  "futures",
  "rand 0.8.5",
  "redis",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -502,7 +504,8 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "utoipa",
- "voltage-config",
+ "voltage-model",
+ "voltage-schema-macro",
 ]
 
 [[package]]
@@ -519,6 +522,7 @@ dependencies = [
  "common",
  "csv",
  "dashmap",
+ "errors",
  "figment",
  "futures",
  "http-body-util",
@@ -547,9 +551,10 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "voltage-comlink",
- "voltage-config",
+ "voltage-model",
  "voltage-protocols",
  "voltage-rtdb",
+ "voltage-schema-macro",
  "voltage_modbus",
 ]
 
@@ -903,6 +908,23 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "errors"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "redis",
+ "reqwest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]
@@ -1813,6 +1835,7 @@ dependencies = [
  "cron",
  "csv",
  "dashmap",
+ "errors",
  "evalexpr",
  "futures",
  "http-body-util",
@@ -1833,11 +1856,11 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
- "voltage-config",
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
  "voltage-rules",
+ "voltage-schema-macro",
 ]
 
 [[package]]
@@ -1862,9 +1885,10 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "voltage-config",
+ "voltage-comlink",
  "voltage-routing",
  "voltage-rtdb",
+ "voltage-rules",
 ]
 
 [[package]]
@@ -3922,34 +3946,9 @@ dependencies = [
  "tokio-serial",
  "tokio-util",
  "tracing",
- "voltage-config",
+ "voltage-model",
  "voltage-rtdb",
  "voltage_modbus",
-]
-
-[[package]]
-name = "voltage-config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "csv",
- "dashmap",
- "redis",
- "reqwest",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "utoipa",
- "voltage-model",
- "voltage-schema-macro",
 ]
 
 [[package]]
@@ -3973,6 +3972,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
+ "common",
  "serde",
  "serde_json",
  "tokio",
@@ -3980,7 +3980,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "voltage-comlink",
- "voltage-config",
  "voltage_modbus",
 ]
 
@@ -3993,7 +3992,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "voltage-config",
+ "voltage-model",
  "voltage-rtdb",
 ]
 
@@ -4017,7 +4016,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "voltage-config",
+ "voltage-model",
 ]
 
 [[package]]
@@ -4035,7 +4034,6 @@ dependencies = [
  "tokio",
  "tracing",
  "voltage-calc",
- "voltage-config",
  "voltage-routing",
  "voltage-rtdb",
 ]

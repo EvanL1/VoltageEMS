@@ -7,13 +7,11 @@ use serde_json::json;
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-// Import shared API types from voltage-config
-pub use voltage_config::api::{
+pub use crate::core::config::{ChannelConfig, ChannelCore};
+pub use common::{
     AppError, ComponentHealth, ErrorInfo, ErrorResponse, HealthStatus, PaginatedResponse,
     ServiceStatus as SharedServiceStatus, SuccessResponse,
 };
-// Import Core types for zero-duplication architecture
-pub use voltage_config::comsrv::{ChannelConfig, ChannelCore};
 
 // ============================================================================
 // New simplified API models
@@ -531,9 +529,6 @@ pub struct RoutingReloadResult {
     #[schema(example = 25)]
     pub duration_ms: u64,
 }
-
-// API response is now directly from voltage-config
-// The shared version includes metadata field for extended functionality
 
 // ============================================================================
 // Phase 1: Channel Detail and Pagination
