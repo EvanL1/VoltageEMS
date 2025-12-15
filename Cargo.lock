@@ -478,8 +478,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "bb8",
- "bb8-redis",
  "chrono",
  "clap",
  "csv",
@@ -504,6 +502,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "utoipa",
+ "voltage-infra",
  "voltage-model",
  "voltage-schema-macro",
 ]
@@ -3952,6 +3951,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "voltage-infra"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bb8",
+ "bb8-redis",
+ "redis",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "voltage-model"
 version = "0.1.0"
 dependencies = [
@@ -4003,7 +4018,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
- "common",
  "dashmap",
  "parking_lot",
  "redis",
@@ -4015,6 +4029,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+ "voltage-infra",
  "voltage-model",
 ]
 

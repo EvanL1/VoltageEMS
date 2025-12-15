@@ -26,12 +26,12 @@ tokio = { workspace = true }
 voltage-model = { path = "../voltage-model" }
 
 # Optional dependencies
-common = { path = "../common", optional = true }
+voltage-infra = { path = "../voltage-infra", optional = true, default-features = false, features = ["redis"] }
 redis = { workspace = true, optional = true }
 
 [features]
 default = ["redis-backend", "memory-backend"]
-redis-backend = ["common", "redis"]
+redis-backend = ["voltage-infra", "redis"]
 memory-backend = []
 
 [dev-dependencies]

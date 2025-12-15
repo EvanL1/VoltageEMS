@@ -6,11 +6,12 @@
 //! - logging functions
 //! - service configuration types
 
+// Re-export from voltage-infra for backward compatibility
 #[cfg(feature = "redis")]
-pub mod redis;
+pub use voltage_infra::redis;
 
 #[cfg(feature = "sqlite")]
-pub mod sqlite;
+pub use voltage_infra::sqlite;
 
 pub mod service_config;
 

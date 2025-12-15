@@ -4,9 +4,9 @@ use crate::traits::*;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use common::redis::RedisClient;
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_infra::redis::RedisClient;
 
 /// Redis-backed RTDB implementation
 ///

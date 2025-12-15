@@ -6,8 +6,8 @@ license.workspace = true
 
 [features]
 default = ["redis", "sqlite", "axum", "openapi"]
-redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
-sqlite = ["dep:sqlx"]
+redis = ["voltage-infra/redis", "dep:redis"]
+sqlite = ["voltage-infra/sqlite", "dep:sqlx"]
 cli = ["dep:clap", "dep:reqwest"]
 axum = ["dep:axum"]
 openapi = ["dep:utoipa"]
@@ -15,6 +15,7 @@ schema = ["dep:schemars"]
 
 [dependencies]
 errors = { path = "../errors" }
+voltage-infra = { path = "../voltage-infra", default-features = false }
 voltage-model = { path = "../voltage-model" }
 voltage-schema-macro = { path = "../voltage-schema-macro" }
 tokio = { workspace = true, features = ["full"] }
@@ -44,12 +45,10 @@ sysinfo = "0.32"
 clap = { workspace = true, features = ["derive", "env", "cargo"], optional = true }
 reqwest = { workspace = true, features = ["json"], optional = true }
 
-# Redis
+# Redis - kept for direct usage in warning_monitor and service_config helpers
 redis = { workspace = true, optional = true }
-bb8 = { workspace = true, optional = true }
-bb8-redis = { workspace = true, optional = true }
 
-# SQLite
+# SQLite - kept for direct usage in test_utils and service_config
 sqlx = { workspace = true, optional = true }
 
 # Schema generation

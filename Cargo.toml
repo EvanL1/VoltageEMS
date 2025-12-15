@@ -5,6 +5,7 @@ members = [
     "libs/errors",
     "libs/voltage-calc",
     "libs/voltage-comlink",
+    "libs/voltage-infra",
     "libs/voltage-model",
     "libs/voltage-protocols",
     "libs/voltage-rtdb",
