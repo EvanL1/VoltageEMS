@@ -4,6 +4,7 @@
 //! database connections, and component setup.
 
 use crate::config::{ModsrvConfig, ModsrvQueries};
+use common::bootstrap_args::ServiceArgs;
 use common::bootstrap_database::{setup_redis_connection, setup_sqlite_pool};
 use common::bootstrap_system::{check_system_requirements_with, SystemRequirements};
 use common::redis::RedisClient;
@@ -53,11 +54,7 @@ pub fn init_environment(service_info: &ServiceInfo) -> Result<()> {
 
 /// Load configuration from SQLite database
 pub async fn load_configuration(service_info: &ServiceInfo) -> Result<ModsrvConfig> {
-    let db_path = if let Ok(dir) = std::env::var("DATABASE_DIR") {
-        format!("{}/voltage.db", dir)
-    } else {
-        std::env::var("VOLTAGE_DB_PATH").unwrap_or_else(|_| "data/voltage.db".to_string())
-    };
+    let db_path = ServiceArgs::default().get_db_path("modsrv");
 
     if !std::path::Path::new(&db_path).exists() {
         error!("DB not found: {}", db_path);
@@ -169,8 +166,7 @@ async fn setup_redis_with_config(config: &ModsrvConfig) -> Result<(String, Arc<R
 
 /// Wrapper for SQLite setup with modsrv defaults
 async fn setup_sqlite() -> Result<SqlitePool> {
-    let db_path =
-        std::env::var("VOLTAGE_DB_PATH").unwrap_or_else(|_| "data/voltage.db".to_string());
+    let db_path = ServiceArgs::default().get_db_path("modsrv");
     info!("SQLite: {}", db_path);
     setup_sqlite_pool(&db_path).await.map_err(Into::into)
 }

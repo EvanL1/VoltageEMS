@@ -65,8 +65,7 @@ async fn main() -> VoltageResult<()> {
     }
 
     // Load configuration from unified database
-    let db_path =
-        std::env::var("VOLTAGE_DB_PATH").unwrap_or_else(|_| "data/voltage.db".to_string());
+    let db_path = service_args.get_db_path("comsrv");
     info!(
         "Loading configuration from unified SQLite database: {}",
         db_path
