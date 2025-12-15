@@ -1,13 +1,13 @@
 //! Product Configuration Loader for ModSrv
-//! Loads product templates from code definitions (ProductType::definition())
+//!
+//! Products are loaded from database at runtime (via cloud sync API or Monarch import).
+//! This loader provides database schema initialization and product query methods.
 
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
-
-use voltage_model::products::{ProductDef, ProductType};
 
 // Re-export types from local config for other modules
 pub use crate::config::{
@@ -102,16 +102,18 @@ impl ProductLoader {
         .execute(&self.pool)
         .await?;
 
-        // Create instances table
+        // Create instances table with parent_id for topology hierarchy
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS instances (
                 instance_id INTEGER PRIMARY KEY,
                 instance_name TEXT UNIQUE NOT NULL,
                 product_name TEXT NOT NULL,
+                parent_id INTEGER,
                 properties TEXT,  -- JSON format
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (product_name) REFERENCES products(product_name)
+                FOREIGN KEY (product_name) REFERENCES products(product_name),
+                FOREIGN KEY (parent_id) REFERENCES instances(instance_id) ON DELETE SET NULL
             )
             "#,
         )
@@ -199,41 +201,35 @@ impl ProductLoader {
         .execute(&self.pool)
         .await?;
 
+        // Product library metadata for cloud sync versioning
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS product_library_meta (
+                version TEXT PRIMARY KEY
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         debug!("Product tables ready");
         Ok(())
     }
 
-    /// Load all products from code definitions
+    /// Verify products exist in database
     ///
-    /// This replaces the previous CSV-based loading with compile-time constant definitions
-    /// from `ProductType::definition()`. Benefits:
-    /// - Compile-time type checking for point definitions
-    /// - Zero runtime parsing overhead
-    /// - No configuration files to manage
+    /// Products are now loaded from database at runtime (via cloud sync API or Monarch import).
+    /// This method verifies the database has product definitions.
     pub async fn load_all(&self) -> Result<()> {
-        debug!("Loading products from code definitions");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(&self.pool)
+            .await?;
 
-        // Check if force reload is enabled
-        let force_reload = std::env::var("MODSRV_FORCE_RELOAD")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
-
-        if force_reload {
-            warn!("Force reload: clearing products");
-            self.clear_all_products().await?;
-            debug!("Products cleared");
+        if count == 0 {
+            warn!("No products in database. Use /api/products/sync or monarch to import.");
+        } else {
+            info!("Database has {} products", count);
         }
-
-        // Load all products from code definitions
-        for product_type in ProductType::all() {
-            self.load_product_from_code(*product_type).await?;
-        }
-
-        info!(
-            "Loaded {} products from code definitions",
-            ProductType::all().len()
-        );
         Ok(())
     }
 
@@ -253,131 +249,6 @@ impl ProductLoader {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok(())
-    }
-
-    /// Load a single product from code definition
-    async fn load_product_from_code(&self, product_type: ProductType) -> Result<()> {
-        let def = product_type.definition();
-        let product_name = product_type.as_str();
-
-        // Get parent name from valid_parents (first parent if exists)
-        let parent_name = product_type.valid_parents().first().map(|p| p.as_str());
-
-        debug!(
-            "Loading product {} (parent: {:?})",
-            product_name, parent_name
-        );
-
-        // Insert product into database
-        sqlx::query(
-            r#"
-            INSERT INTO products (product_name, parent_name)
-            VALUES (?, ?)
-            ON CONFLICT(product_name) DO UPDATE SET
-                parent_name = excluded.parent_name
-            "#,
-        )
-        .bind(product_name)
-        .bind(parent_name)
-        .execute(&self.pool)
-        .await?;
-
-        // Load measurements from code definition
-        self.load_measurements_from_def(product_name, def).await?;
-
-        // Load actions from code definition
-        self.load_actions_from_def(product_name, def).await?;
-
-        // Load properties from code definition
-        self.load_properties_from_def(product_name, def).await?;
-
-        Ok(())
-    }
-
-    /// Load measurement points from product definition
-    async fn load_measurements_from_def(&self, product_name: &str, def: &ProductDef) -> Result<()> {
-        for m in def.measurements {
-            sqlx::query(
-                r#"
-                INSERT INTO measurement_points
-                (product_name, measurement_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(product_name, measurement_id) DO UPDATE SET
-                    name = excluded.name,
-                    unit = excluded.unit,
-                    description = excluded.description
-                "#,
-            )
-            .bind(product_name)
-            .bind(m.id as i32)
-            .bind(m.name)
-            .bind(m.unit)
-            .bind(m.description)
-            .execute(&self.pool)
-            .await?;
-        }
-        debug!(
-            "Loaded {} measurements for {}",
-            def.measurements.len(),
-            product_name
-        );
-        Ok(())
-    }
-
-    /// Load action points from product definition
-    async fn load_actions_from_def(&self, product_name: &str, def: &ProductDef) -> Result<()> {
-        for a in def.actions {
-            sqlx::query(
-                r#"
-                INSERT INTO action_points
-                (product_name, action_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(product_name, action_id) DO UPDATE SET
-                    name = excluded.name,
-                    unit = excluded.unit,
-                    description = excluded.description
-                "#,
-            )
-            .bind(product_name)
-            .bind(a.id as i32)
-            .bind(a.name)
-            .bind(a.unit)
-            .bind(a.description)
-            .execute(&self.pool)
-            .await?;
-        }
-        debug!("Loaded {} actions for {}", def.actions.len(), product_name);
-        Ok(())
-    }
-
-    /// Load property templates from product definition
-    async fn load_properties_from_def(&self, product_name: &str, def: &ProductDef) -> Result<()> {
-        for p in def.properties {
-            sqlx::query(
-                r#"
-                INSERT INTO property_templates
-                (product_name, property_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(product_name, property_id) DO UPDATE SET
-                    name = excluded.name,
-                    unit = excluded.unit,
-                    description = excluded.description
-                "#,
-            )
-            .bind(product_name)
-            .bind(p.id as i32)
-            .bind(p.name)
-            .bind(p.unit)
-            .bind(p.description)
-            .execute(&self.pool)
-            .await?;
-        }
-        debug!(
-            "Loaded {} properties for {}",
-            def.properties.len(),
-            product_name
-        );
         Ok(())
     }
 
@@ -532,6 +403,23 @@ impl ProductLoader {
         Ok(rows)
     }
 
+    /// Reload product definitions from database
+    ///
+    /// Called after cloud sync to refresh any cached state.
+    /// Currently ProductLoader queries database directly without caching,
+    /// so this method just logs the reload event for auditing.
+    ///
+    /// @output Result<()> - Success or error
+    pub async fn reload(&self) -> Result<()> {
+        // Verify database connectivity by counting products
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(&self.pool)
+            .await?;
+
+        info!("Product library reloaded: {} products", count);
+        Ok(())
+    }
+
     /// Add a measurement point to a product
     pub async fn add_measurement(
         &self,
@@ -586,6 +474,20 @@ mod tests {
         Ok(loader)
     }
 
+    /// Insert a test product fixture into database
+    async fn insert_test_product(
+        loader: &ProductLoader,
+        name: &str,
+        parent: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO products (product_name, parent_name) VALUES (?, ?)")
+            .bind(name)
+            .bind(parent)
+            .execute(&loader.pool)
+            .await?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_init_database() {
         let loader = setup_test_env().await.expect("Failed to setup test env");
@@ -608,27 +510,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_load_and_get_product() -> Result<()> {
+    async fn test_load_all_empty_database() -> Result<()> {
         let loader = setup_test_env().await.expect("Failed to setup test env");
 
-        // Load all products from code definitions
-        loader.load_all().await.expect("Failed to load products");
+        // load_all should succeed even with empty database (just logs warning)
+        loader.load_all().await.expect("load_all should not fail");
 
-        // Get a specific product
-        let product = loader
-            .get_product("pv_inverter")
-            .await
-            .expect("Failed to get product");
+        // Verify no products
+        let products = loader.get_all_products().await?;
+        assert!(products.is_empty());
 
-        // Verify product structure
-        assert_eq!(product.product_name, "pv_inverter");
-        assert_eq!(product.parent_name, Some("station".to_string())); // From valid_parents()
+        Ok(())
+    }
 
-        // Check measurements exist (from code definition)
-        assert!(!product.measurements.is_empty());
+    #[tokio::test]
+    async fn test_get_product_with_fixture() -> Result<()> {
+        let loader = setup_test_env().await.expect("Failed to setup test env");
 
-        // Check properties exist
-        assert!(!product.properties.is_empty());
+        // Insert test product
+        insert_test_product(&loader, "test_inverter", Some("station")).await?;
+
+        // Add a measurement point
+        let point = MeasurementPoint {
+            measurement_id: 1,
+            name: "Power".to_string(),
+            unit: Some("kW".to_string()),
+            description: Some("Active power output".to_string()),
+        };
+        loader.add_measurement("test_inverter", &point).await?;
+
+        // Get product
+        let product = loader.get_product("test_inverter").await?;
+
+        assert_eq!(product.product_name, "test_inverter");
+        assert_eq!(product.parent_name, Some("station".to_string()));
+        assert_eq!(product.measurements.len(), 1);
+        assert_eq!(product.measurements[0].name, "Power");
 
         Ok(())
     }
@@ -637,10 +554,10 @@ mod tests {
     async fn test_add_measurement() -> Result<()> {
         let loader = setup_test_env().await.expect("Failed to setup test env");
 
-        // Load products
-        loader.load_all().await?;
+        // Insert test product
+        insert_test_product(&loader, "test_product", None).await?;
 
-        // Add additional measurement
+        // Add measurement
         let new_point = MeasurementPoint {
             measurement_id: 999,
             name: "Custom Measurement".to_string(),
@@ -648,10 +565,10 @@ mod tests {
             description: Some("Custom calculated power".to_string()),
         };
 
-        loader.add_measurement("pv_inverter", &new_point).await?;
+        loader.add_measurement("test_product", &new_point).await?;
 
         // Get product and verify point was added
-        let product = loader.get_product("pv_inverter").await?;
+        let product = loader.get_product("test_product").await?;
 
         let added_point = product
             .measurements
@@ -676,50 +593,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_products_loaded() -> Result<()> {
+    async fn test_get_all_products() -> Result<()> {
         let loader = setup_test_env().await.expect("Failed to setup test env");
 
-        // Load products
-        loader.load_all().await?;
+        // Insert test products
+        insert_test_product(&loader, "station", None).await?;
+        insert_test_product(&loader, "inverter", Some("station")).await?;
+        insert_test_product(&loader, "battery", Some("station")).await?;
 
         // Get all products
         let products = loader.get_all_products().await?;
+        assert_eq!(products.len(), 3);
 
-        // Should have all product types
-        assert_eq!(products.len(), ProductType::all().len());
-
-        // Verify specific products exist
         let product_names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
         assert!(product_names.contains(&"station"));
-        assert!(product_names.contains(&"pv_inverter"));
-        assert!(product_names.contains(&"battery_stack"));
-        assert!(product_names.contains(&"battery_cell"));
+        assert!(product_names.contains(&"inverter"));
+        assert!(product_names.contains(&"battery"));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_bms_hierarchy_loaded() -> Result<()> {
+    async fn test_product_hierarchy() -> Result<()> {
         let loader = setup_test_env().await.expect("Failed to setup test env");
 
-        // Load products
-        loader.load_all().await?;
+        // Insert hierarchical products
+        insert_test_product(&loader, "station", None).await?;
+        insert_test_product(&loader, "battery_stack", Some("station")).await?;
+        insert_test_product(&loader, "battery_cluster", Some("battery_stack")).await?;
 
-        // Verify BMS hierarchy
+        // Verify hierarchy
         let stack = loader.get_product("battery_stack").await?;
         assert_eq!(stack.parent_name, Some("station".to_string()));
 
         let cluster = loader.get_product("battery_cluster").await?;
         assert_eq!(cluster.parent_name, Some("battery_stack".to_string()));
-
-        let pack = loader.get_product("battery_pack").await?;
-        assert_eq!(pack.parent_name, Some("battery_cluster".to_string()));
-
-        let module = loader.get_product("battery_module").await?;
-        assert_eq!(module.parent_name, Some("battery_pack".to_string()));
-
-        let cell = loader.get_product("battery_cell").await?;
-        assert_eq!(cell.parent_name, Some("battery_module".to_string()));
 
         Ok(())
     }

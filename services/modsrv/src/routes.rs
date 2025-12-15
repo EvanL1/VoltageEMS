@@ -14,6 +14,7 @@ use utoipa::OpenApi;
 use crate::app_state::AppState;
 
 // Import handlers from api module
+use crate::api::cloud_sync::{export_instances, sync_products};
 use crate::api::health_handlers::health_check;
 use crate::api::product_handlers::{create_product, get_product_points, list_products};
 
@@ -88,6 +89,9 @@ use common::admin_api::{get_log_level, set_log_level};
         crate::api::product_handlers::list_products,
         crate::api::product_handlers::get_product_points,
         crate::api::product_handlers::create_product,
+        // Cloud sync endpoints
+        crate::api::cloud_sync::sync_products,
+        crate::api::cloud_sync::export_instances,
         // Admin endpoints
         common::admin_api::set_log_level,
         common::admin_api::get_log_level
@@ -199,6 +203,9 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         // Product management endpoints
         .route("/api/products", get(list_products).post(create_product))
         .route("/api/products/{product_name}/points", get(get_product_points))
+        // Cloud sync endpoints
+        .route("/api/products/sync", post(sync_products))
+        .route("/api/instances/export", get(export_instances))
         // Admin endpoints (log level management)
         .route(
             "/api/admin/logs/level",

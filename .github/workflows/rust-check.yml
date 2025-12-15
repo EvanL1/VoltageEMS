@@ -19,6 +19,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # Free disk space by removing unnecessary pre-installed software
+    - name: Free Disk Space
+      run: |
+        echo "=== Before cleanup ==="
+        df -h /
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/swift
+        sudo apt-get clean
+        docker system prune -af || true
+        echo "=== After cleanup ==="
+        df -h /
+
     # Install protoc for gRPC compilation (required by cargo check)
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
@@ -29,12 +44,10 @@ jobs:
     # Setup Rust toolchain
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
-
-    # No host redis-cli required; tests use containerized redis-cli via docker compose exec
       with:
         components: rustfmt, clippy
 
-    # Cache Cargo dependencies
+    # Cache Cargo dependencies (unified key, no target/ to save space)
     - name: Cache Dependencies
       uses: actions/cache@v4
       with:
@@ -43,10 +56,8 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-quality-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-quality-
           ${{ runner.os }}-cargo-
 
     # Rust quality checks
@@ -68,6 +79,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # Free disk space by removing unnecessary pre-installed software
+    - name: Free Disk Space
+      run: |
+        echo "=== Before cleanup ==="
+        df -h /
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/swift
+        sudo apt-get clean
+        docker system prune -af || true
+        echo "=== After cleanup ==="
+        df -h /
+
     # Install protoc for gRPC compilation
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
@@ -79,7 +105,7 @@ jobs:
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
 
-    # Cache Cargo dependencies
+    # Cache Cargo dependencies (unified key, no target/ to save space)
     - name: Cache Dependencies
       uses: actions/cache@v4
       with:
@@ -88,10 +114,8 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-unit-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-unit-
           ${{ runner.os }}-cargo-
 
     # Run all unit tests
@@ -109,11 +133,26 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # Free disk space by removing unnecessary pre-installed software
+    - name: Free Disk Space
+      run: |
+        echo "=== Before cleanup ==="
+        df -h /
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/swift
+        sudo apt-get clean
+        docker system prune -af || true
+        echo "=== After cleanup ==="
+        df -h /
+
     # Setup Rust toolchain
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
 
-    # Cache Cargo dependencies
+    # Cache Cargo dependencies (unified key, no target/ to save space)
     - name: Cache Dependencies
       uses: actions/cache@v4
       with:
@@ -122,10 +161,8 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-config-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-config-
           ${{ runner.os }}-cargo-
 
     # Build and install Monarch
@@ -221,6 +258,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # Free disk space by removing unnecessary pre-installed software
+    - name: Free Disk Space
+      run: |
+        echo "=== Before cleanup ==="
+        df -h /
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/swift
+        sudo apt-get clean
+        docker system prune -af || true
+        echo "=== After cleanup ==="
+        df -h /
+
     # Install protoc for gRPC compilation
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
@@ -232,7 +284,7 @@ jobs:
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
 
-    # Cache Cargo dependencies
+    # Cache Cargo dependencies (unified key, no target/ to save space)
     - name: Cache Dependencies
       uses: actions/cache@v4
       with:
@@ -241,10 +293,8 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-integration-
           ${{ runner.os }}-cargo-
 
     # Clean Monarch Binary Cache (prevent schema mismatch)
@@ -288,4 +338,6 @@ jobs:
     # Cleanup Docker resources
     - name: Stop Redis
       if: always()
-      run: docker compose down -v
+      run: |
+        docker compose down -v --rmi local
+        docker system prune -f
