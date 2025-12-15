@@ -2,8 +2,20 @@
 //!
 //! Contains simplified Modbus point definitions, polling configuration and batch processing configuration
 
-use common::timeouts;
 use serde::{Deserialize, Serialize};
+
+// ============================================================
+// Protocol timeout constants (previously from common::timeouts)
+// Inlined to remove unnecessary dependency on common library
+// ============================================================
+
+/// Default connection timeout in milliseconds
+const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5000;
+/// Default read/request timeout in milliseconds
+const DEFAULT_READ_TIMEOUT_MS: u64 = 3000;
+/// Cooldown period after max consecutive failures in milliseconds
+const RECONNECT_COOLDOWN_MS: u64 = 60000;
+
 use std::collections::HashMap;
 
 /// Simplified Modbus point mapping
@@ -93,7 +105,7 @@ fn default_reconnect_retries() -> u32 {
     5 // After 5 consecutive failures, wait cooldown period before trying again
 }
 fn default_reconnect_cooldown_ms() -> u64 {
-    timeouts::RECONNECT_COOLDOWN_MS
+    RECONNECT_COOLDOWN_MS
 }
 
 // Helper functions for skip_serializing_if
@@ -155,15 +167,15 @@ impl Default for ModbusPollingConfig {
         Self {
             enabled: true,
             default_interval_ms: 1000,
-            connection_timeout_ms: timeouts::DEFAULT_CONNECT_TIMEOUT_MS,
-            read_timeout_ms: timeouts::DEFAULT_READ_TIMEOUT_MS,
+            connection_timeout_ms: DEFAULT_CONNECT_TIMEOUT_MS,
+            read_timeout_ms: DEFAULT_READ_TIMEOUT_MS,
             max_retries: 3,
             retry_interval_ms: 1000,
             batch_config: ModbusBatchConfig::default(),
             slaves: HashMap::new(),
             reconnect_enabled: default_reconnect_enabled(),
             reconnect_max_consecutive: default_reconnect_retries(),
-            reconnect_cooldown_ms: timeouts::RECONNECT_COOLDOWN_MS,
+            reconnect_cooldown_ms: RECONNECT_COOLDOWN_MS,
             error_threshold: default_error_threshold(),
         }
     }
@@ -205,7 +217,6 @@ impl Default for DeviceLimit {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use common::timeouts;
 
     // ========== ModbusPollingConfig Default tests ==========
 
@@ -215,11 +226,8 @@ mod tests {
 
         assert!(config.enabled);
         assert_eq!(config.default_interval_ms, 1000);
-        assert_eq!(
-            config.connection_timeout_ms,
-            timeouts::DEFAULT_CONNECT_TIMEOUT_MS
-        );
-        assert_eq!(config.read_timeout_ms, timeouts::DEFAULT_READ_TIMEOUT_MS);
+        assert_eq!(config.connection_timeout_ms, DEFAULT_CONNECT_TIMEOUT_MS);
+        assert_eq!(config.read_timeout_ms, DEFAULT_READ_TIMEOUT_MS);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_interval_ms, 1000);
         assert!(config.slaves.is_empty());
@@ -227,10 +235,7 @@ mod tests {
         // Reconnection defaults
         assert!(config.reconnect_enabled);
         assert_eq!(config.reconnect_max_consecutive, 5);
-        assert_eq!(
-            config.reconnect_cooldown_ms,
-            timeouts::RECONNECT_COOLDOWN_MS
-        );
+        assert_eq!(config.reconnect_cooldown_ms, RECONNECT_COOLDOWN_MS);
     }
 
     #[test]

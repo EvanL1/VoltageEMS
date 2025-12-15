@@ -13,7 +13,6 @@ modbus-rtu = ["modbus-tcp", "dep:tokio-serial"]
 
 [dependencies]
 voltage-comlink = { path = "../voltage-comlink" }
-common = { path = "../common", default-features = false }
 voltage_modbus = { workspace = true, optional = true }
 
 async-trait = { workspace = true }

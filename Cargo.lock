@@ -3972,7 +3972,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
- "common",
  "serde",
  "serde_json",
  "tokio",
