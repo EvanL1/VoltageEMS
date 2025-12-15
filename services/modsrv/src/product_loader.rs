@@ -11,9 +11,10 @@ use tracing::{debug, info, warn};
 
 // Re-export types from local config for other modules
 pub use crate::config::{
-    ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, PointType, Product,
-    ProductHierarchy, PropertyTemplate,
+    ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, Product, ProductHierarchy,
+    PropertyTemplate,
 };
+pub use voltage_model::PointRole;
 
 /// Product loader that populates database from code-defined product types
 #[derive(Clone)]
@@ -449,9 +450,8 @@ impl ProductLoader {
     }
 
     /// Generate Redis key for a point
-    pub fn get_redis_key(instance: &str, point_type: PointType, id: i32) -> String {
-        // Use the as_str() method from PointRole (aliased as PointType)
-        let type_prefix = point_type.as_str();
+    pub fn get_redis_key(instance: &str, point_role: PointRole, id: i32) -> String {
+        let type_prefix = point_role.as_str();
         format!("modsrv:{}:{}:{}", instance, type_prefix, id)
     }
 }
@@ -585,10 +585,10 @@ mod tests {
 
     #[test]
     fn test_redis_key_generation() {
-        let key = ProductLoader::get_redis_key("pv_inv_001", PointType::Measurement, 1);
+        let key = ProductLoader::get_redis_key("pv_inv_001", PointRole::Measurement, 1);
         assert_eq!(key, "modsrv:pv_inv_001:M:1");
 
-        let key = ProductLoader::get_redis_key("pv_inv_001", PointType::Action, 1);
+        let key = ProductLoader::get_redis_key("pv_inv_001", PointRole::Action, 1);
         assert_eq!(key, "modsrv:pv_inv_001:A:1");
     }
 

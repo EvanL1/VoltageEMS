@@ -902,51 +902,8 @@ impl LogRotationConfig {
 // Shared enum types
 // ============================================================================
 
-/// Point role types (Measurement/Action)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum PointRole {
-    /// Measurement point (M)
-    #[serde(rename = "M")]
-    Measurement,
-    /// Action point (A)
-    #[serde(rename = "A")]
-    Action,
-}
-
-impl PointRole {
-    /// Convert to string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Measurement => "M",
-            Self::Action => "A",
-        }
-    }
-}
-
-impl FromStr for PointRole {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "M" | "MEASUREMENT" => Ok(Self::Measurement),
-            "A" | "ACTION" => Ok(Self::Action),
-            _ => Err(format!("Unknown point role: {}", s)),
-        }
-    }
-}
-
-impl fmt::Display for PointRole {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for PointRole {
-    fn default() -> Self {
-        Self::Measurement
-    }
-}
+// Re-export PointRole from voltage-model for backward compatibility
+pub use voltage_model::PointRole;
 
 /// Instance status enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]

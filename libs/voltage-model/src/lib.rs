@@ -5,7 +5,7 @@
 //!
 //! # Modules
 //!
-//! - `types`: Core domain types (PointType, etc.)
+//! - `types`: Core domain types (PointType, PointRole, etc.)
 //! - `validation`: Input validation utilities for instance names, product names, etc.
 //!
 //! # Note
@@ -19,5 +19,5 @@ pub mod validation;
 
 // Re-exports for convenience
 pub use error::{ModelError, Result};
-pub use types::PointType;
+pub use types::{PointRole, PointType};
 pub use validation::{validate_calculation_id, validate_instance_name, validate_product_name};

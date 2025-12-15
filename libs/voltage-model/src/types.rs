@@ -256,3 +256,99 @@ mod tests {
         );
     }
 }
+
+// ============================================================================
+// Point Role Types (数据流方向)
+// ============================================================================
+
+/// Point role types indicating data flow direction
+///
+/// Unlike `PointType` which describes the type of data (T/S/C/A),
+/// `PointRole` describes the direction of data flow:
+/// - M (Measurement): Data flows from device → model (上行)
+/// - A (Action): Data flows from model → device (下行)
+///
+/// # Usage
+/// ```
+/// # use voltage_model::PointRole;
+/// let role = PointRole::Measurement;
+/// assert_eq!(role.as_str(), "M");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub enum PointRole {
+    /// Measurement point (M) - data flows from device to model
+    #[serde(rename = "M")]
+    Measurement,
+    /// Action point (A) - data flows from model to device
+    #[serde(rename = "A")]
+    Action,
+}
+
+impl PointRole {
+    /// Convert to string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Measurement => "M",
+            Self::Action => "A",
+        }
+    }
+}
+
+impl std::str::FromStr for PointRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "M" | "MEASUREMENT" => Ok(Self::Measurement),
+            "A" | "ACTION" => Ok(Self::Action),
+            _ => Err(format!("Unknown point role: {}", s)),
+        }
+    }
+}
+
+impl fmt::Display for PointRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl Default for PointRole {
+    fn default() -> Self {
+        Self::Measurement
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod point_role_tests {
+    use super::*;
+
+    #[test]
+    fn test_point_role_as_str() {
+        assert_eq!(PointRole::Measurement.as_str(), "M");
+        assert_eq!(PointRole::Action.as_str(), "A");
+    }
+
+    #[test]
+    fn test_point_role_from_str() {
+        assert_eq!("M".parse::<PointRole>().unwrap(), PointRole::Measurement);
+        assert_eq!("A".parse::<PointRole>().unwrap(), PointRole::Action);
+        assert_eq!(
+            "measurement".parse::<PointRole>().unwrap(),
+            PointRole::Measurement
+        );
+        assert!("X".parse::<PointRole>().is_err());
+    }
+
+    #[test]
+    fn test_point_role_display() {
+        assert_eq!(format!("{}", PointRole::Measurement), "M");
+        assert_eq!(format!("{}", PointRole::Action), "A");
+    }
+
+    #[test]
+    fn test_point_role_default() {
+        assert_eq!(PointRole::default(), PointRole::Measurement);
+    }
+}

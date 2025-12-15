@@ -50,7 +50,6 @@ pub use service_config::{
     InstanceStatus,
     LogRotationConfig,
     LoggingConfig,
-    PointRole,
     PointType,
     RedisConfig,
     // Redis keys
@@ -103,6 +102,9 @@ pub use api_types::{
 // Re-export AppError when axum feature is enabled
 #[cfg(feature = "axum")]
 pub use api_types::AppError;
+
+// Re-export PointRole from voltage-model (canonical location)
+pub use voltage_model::PointRole;
 
 // Bootstrap modules
 pub mod bootstrap_args;

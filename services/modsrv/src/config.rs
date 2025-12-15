@@ -462,9 +462,8 @@ pub struct CreateInstanceRequest {
 /// Product hierarchy using tuples (following CLAUDE.md)
 pub type ProductHierarchy = Vec<(String, Option<String>)>;
 
-/// Re-export PointRole as PointType for backwards compatibility
-/// PointRole provides the same functionality with additional features like as_str() and FromStr
-pub use common::PointRole as PointType;
+// Note: For point role (M/A), use voltage_model::PointRole
+// For point type (T/S/C/A), use voltage_model::PointType
 
 // ============================================================================
 // Validation implementations

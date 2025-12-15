@@ -61,7 +61,7 @@ pub use voltage_routing::{set_action_point, ActionRouteOutcome, RouteContext};
 pub use error::{ModSrvError, Result};
 pub use instance_manager::InstanceManager;
 pub use product_loader::{
-    ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, PointType, Product,
+    ActionPoint, CreateInstanceRequest, Instance, MeasurementPoint, PointRole, Product,
     ProductHierarchy, ProductLoader, PropertyTemplate,
 };
 pub use routing_loader::{
