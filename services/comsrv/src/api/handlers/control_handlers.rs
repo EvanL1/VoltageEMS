@@ -14,6 +14,8 @@ use axum::{
     extract::{Path, State},
     response::Json,
 };
+use voltage_model::PointType;
+use voltage_rtdb::KeySpaceConfig;
 
 /// Control channel operation (start/stop/restart)
 ///
@@ -195,15 +197,18 @@ pub async fn write_channel_point(
     let point_type = normalize_point_type(&request.r#type)?;
 
     // Handle single vs batch based on request data
+    let config = KeySpaceConfig::production();
+
     match &request.data {
         WritePointData::Single { id, value } => {
-            // Single point write using application layer function
+            // Single point write using voltage-rtdb helper
             let point_id = id
                 .parse::<u32>()
                 .map_err(|_| AppError::bad_request(format!("Invalid point ID: {}", id)))?;
 
-            let timestamp_ms = crate::storage::write_point_with_trigger(
+            let timestamp_ms = voltage_rtdb::helpers::write_point_auto_trigger(
                 rtdb.as_ref(),
+                &config,
                 channel_id,
                 point_type,
                 point_id,
@@ -211,12 +216,12 @@ pub async fn write_channel_point(
             )
             .await
             .map_err(|e| {
-                tracing::error!("Write Ch{}:{}:{}: {}", channel_id, point_type, id, e);
+                tracing::error!("Write Ch{}:{:?}:{}: {}", channel_id, point_type, id, e);
                 AppError::internal_error(format!("Failed to write point value: {}", e))
             })?;
 
             tracing::debug!(
-                "Write Ch{}:{}:{} = {} @{}",
+                "Write Ch{}:{:?}:{} = {} @{}",
                 channel_id,
                 point_type,
                 id,
@@ -226,7 +231,7 @@ pub async fn write_channel_point(
 
             let response = crate::dto::WritePointResponse {
                 channel_id,
-                point_type: point_type.to_string(),
+                point_type: point_type.as_str().to_string(),
                 point_id,
                 value: *value,
                 timestamp_ms,
@@ -254,9 +259,10 @@ pub async fn write_channel_point(
                     },
                 };
 
-                // Write point using application layer function
-                match crate::storage::write_point_with_trigger(
+                // Write point using voltage-rtdb helper
+                match voltage_rtdb::helpers::write_point_auto_trigger(
                     rtdb.as_ref(),
+                    &config,
                     channel_id,
                     point_type,
                     point_id,
@@ -268,7 +274,13 @@ pub async fn write_channel_point(
                         succeeded += 1;
                     },
                     Err(e) => {
-                        tracing::warn!("Write Ch{}:{}:{}: {}", channel_id, point_type, point.id, e);
+                        tracing::warn!(
+                            "Write Ch{}:{:?}:{}: {}",
+                            channel_id,
+                            point_type,
+                            point.id,
+                            e
+                        );
                         errors.push(BatchCommandError {
                             point_id,
                             error: format!("Failed to write: {}", e),
@@ -278,7 +290,7 @@ pub async fn write_channel_point(
             }
 
             tracing::debug!(
-                "Batch Ch{}:{}: {}/{} ok",
+                "Batch Ch{}:{:?}: {}/{} ok",
                 channel_id,
                 point_type,
                 succeeded,
@@ -298,12 +310,12 @@ pub async fn write_channel_point(
 }
 
 /// Normalize point type from full name or short name to single letter
-fn normalize_point_type(type_str: &str) -> Result<&'static str, AppError> {
+fn normalize_point_type(type_str: &str) -> Result<PointType, AppError> {
     match type_str {
-        "T" | "t" | "Telemetry" | "telemetry" | "TELEMETRY" => Ok("T"),
-        "S" | "s" | "Signal" | "signal" | "SIGNAL" => Ok("S"),
-        "C" | "c" | "Control" | "control" | "CONTROL" => Ok("C"),
-        "A" | "a" | "Adjustment" | "adjustment" | "ADJUSTMENT" => Ok("A"),
+        "T" | "t" | "Telemetry" | "telemetry" | "TELEMETRY" => Ok(PointType::Telemetry),
+        "S" | "s" | "Signal" | "signal" | "SIGNAL" => Ok(PointType::Signal),
+        "C" | "c" | "Control" | "control" | "CONTROL" => Ok(PointType::Control),
+        "A" | "a" | "Adjustment" | "adjustment" | "ADJUSTMENT" => Ok(PointType::Adjustment),
         _ => Err(AppError::bad_request(format!(
             "Invalid point type '{}'. Must be one of: T/Telemetry, S/Signal, C/Control, A/Adjustment",
             type_str

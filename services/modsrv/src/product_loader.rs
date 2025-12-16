@@ -28,12 +28,7 @@ impl ProductLoader {
         Self { pool }
     }
 
-    /// Legacy constructor for backward compatibility
-    /// The products_dir parameter is ignored since we load from code
-    #[deprecated(note = "Use new(pool) instead - products are now loaded from code definitions")]
-    pub fn with_dir(_products_dir: impl Into<std::path::PathBuf>, pool: SqlitePool) -> Self {
-        Self { pool }
-    }
+    // with_dir() removed - was deprecated wrapper around new()
 
     /// Initialize database tables with separate tables for each point type
     pub async fn init_database(&self) -> Result<()> {
@@ -234,24 +229,7 @@ impl ProductLoader {
         Ok(())
     }
 
-    /// Clear all product data from database
-    async fn clear_all_products(&self) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM property_templates")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM action_points")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM measurement_points")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM products")
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    }
+    // clear_all_products() removed - was never called
 
     /// Get a complete product with nested structure
     ///

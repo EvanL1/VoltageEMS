@@ -85,10 +85,9 @@ pub async fn handle_command(
         #[cfg(feature = "lib-mode")]
         {
             // Offline mode: use lib API
-            // Note: rules have been merged into modsrv, but we use modsrv context for rules
+            // Note: rules have been merged into modsrv
             let ctx = service_ctx.expect("ServiceContext should be available in lib-mode");
-            #[allow(deprecated)]
-            let modsrv = ctx.rules()?; // rules() now returns modsrv context
+            let modsrv = ctx.modsrv()?;
             let service = lib_api::rules::RulesService::new(modsrv);
 
             match cmd {

@@ -608,12 +608,14 @@ impl ChannelManager {
                 existing_point_ids.len()
             );
 
-            // Build PointUpdate vector for missing points (using application-layer storage)
-            let updates: Vec<crate::storage::PointUpdate> = missing_point_ids
+            // Build ChannelPointUpdate vector for missing points (using voltage-routing)
+            let point_type = voltage_model::PointType::from_str(four_remote.as_str())
+                .unwrap_or(voltage_model::PointType::Telemetry);
+            let updates: Vec<voltage_routing::ChannelPointUpdate> = missing_point_ids
                 .iter()
-                .map(|point_id| crate::storage::PointUpdate {
+                .map(|point_id| voltage_routing::ChannelPointUpdate {
                     channel_id,
-                    point_type: four_remote,
+                    point_type,
                     point_id: *point_id,
                     value: 0.0,           // Initialize with 0
                     raw_value: Some(0.0), // Initialize with 0
@@ -621,8 +623,8 @@ impl ChannelManager {
                 })
                 .collect();
 
-            // Call application-layer batch write
-            crate::storage::write_batch(rtdb.as_ref(), &self.routing_cache, updates)
+            // Call voltage-routing batch write
+            voltage_routing::write_channel_batch(rtdb.as_ref(), &self.routing_cache, updates)
                 .await
                 .map_err(|e| {
                     ComSrvError::RedisError(format!(

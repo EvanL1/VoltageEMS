@@ -7,10 +7,10 @@
 //!
 //! Uses MemoryRtdb (no external dependencies) for fast, isolated testing.
 
-use common::FourRemote;
-use comsrv::storage::{write_batch, PointUpdate};
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_model::PointType;
+use voltage_routing::{write_channel_batch, ChannelPointUpdate};
 use voltage_rtdb::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
@@ -153,16 +153,16 @@ async fn test_c2m_basic_routing() {
     let (rtdb, routing_cache) = setup_c2m_routing(vec![("1001:T:1", "23:M:1")]).await;
 
     // When: 写入通道点位
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 230.5,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 
@@ -180,16 +180,16 @@ async fn test_c2m_three_layer_architecture() {
     let (rtdb, routing_cache) = setup_c2m_routing(vec![("1001:T:1", "23:M:1")]).await;
 
     // When: 写入通道点位（包含原始值）
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 230.5,            // 工程值
         raw_value: Some(2305.0), // 原始值
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 
@@ -219,25 +219,25 @@ async fn test_c2m_routing_to_multiple_instances() {
 
     // When: 写入多个通道点位
     let updates = vec![
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 1,
             value: 100.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 2,
             value: 200.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 3,
             value: 300.0,
             raw_value: None,
@@ -245,7 +245,7 @@ async fn test_c2m_routing_to_multiple_instances() {
         },
     ];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 
@@ -267,16 +267,16 @@ async fn test_c2m_no_routing() {
     let routing_cache = Arc::new(RoutingCache::new()); // 空路由缓存
 
     // When: 写入通道点位
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 100.0,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 
@@ -301,41 +301,41 @@ async fn test_c2m_batch_updates() {
 
     // When: 批量写入 5 个点位
     let updates = vec![
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 1,
             value: 10.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 2,
             value: 20.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 3,
             value: 30.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 4,
             value: 40.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 5,
             value: 50.0,
             raw_value: None,
@@ -343,7 +343,7 @@ async fn test_c2m_batch_updates() {
         },
     ];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 
@@ -374,33 +374,33 @@ async fn test_c2m_different_point_types() {
 
     // When: 写入不同类型的点位
     let updates = vec![
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry, // 遥测
+            point_type: PointType::Telemetry, // 遥测
             point_id: 1,
             value: 230.5,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Signal, // 遥信
+            point_type: PointType::Signal, // 遥信
             point_id: 2,
             value: 1.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Control, // 遥控
+            point_type: PointType::Control, // 遥控
             point_id: 3,
             value: 0.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Adjustment, // 遥调
+            point_type: PointType::Adjustment, // 遥调
             point_id: 4,
             value: 50.0,
             raw_value: None,
@@ -408,7 +408,7 @@ async fn test_c2m_different_point_types() {
         },
     ];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 
@@ -441,17 +441,17 @@ async fn test_c2m_routing_with_different_point_ids() {
 
     // When: 写入通道点位
     let updates = vec![
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 10,
             value: 100.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 20,
             value: 200.0,
             raw_value: None,
@@ -459,7 +459,7 @@ async fn test_c2m_routing_with_different_point_ids() {
         },
     ];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 
@@ -483,25 +483,25 @@ async fn test_c2m_routing_with_multiple_channels() {
 
     // When: 写入多个通道的点位
     let updates = vec![
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 1,
             value: 100.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1002,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 1,
             value: 200.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1003,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 1,
             value: 300.0,
             raw_value: None,
@@ -509,7 +509,7 @@ async fn test_c2m_routing_with_multiple_channels() {
         },
     ];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("Failed to write batch");
 

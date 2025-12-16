@@ -360,13 +360,12 @@ impl ChannelManager {
     ) -> anyhow::Result<(usize, usize, usize)> {
         use tracing::debug;
 
-        // 1. Load routing data from SQLite via bootstrap function
-        let (c2m_data, m2c_data, c2c_data) =
-            crate::core::bootstrap::load_routing_maps_from_sqlite(sqlite_pool).await?;
+        // 1. Load routing data from SQLite via shared library
+        let maps = voltage_routing::load_routing_maps(sqlite_pool).await?;
 
-        let c2m_count = c2m_data.len();
-        let m2c_count = m2c_data.len();
-        let c2c_count = c2c_data.len();
+        let c2m_count = maps.c2m.len();
+        let m2c_count = maps.m2c.len();
+        let c2c_count = maps.c2c.len();
 
         debug!(
             "Loaded routing maps: {} C2M, {} M2C, {} C2C",
@@ -374,7 +373,7 @@ impl ChannelManager {
         );
 
         // 2. Atomic update of cache (thread-safe, lock-free swap)
-        routing_cache.update(c2m_data, m2c_data, c2c_data);
+        routing_cache.update(maps.c2m, maps.m2c, maps.c2c);
 
         debug!("Routing cache updated successfully");
 

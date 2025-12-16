@@ -445,16 +445,63 @@ impl ChannelLogger {
         }
     }
 
-    /// Log with dual output (channel + service)
+    /// Log with structured fields (channel_id + channel_name)
+    ///
+    /// Uses tracing macros directly. Service layer can configure
+    /// tracing subscriber to route logs to channel-specific files.
     fn log_dual(&self, level: tracing::Level, message: String) {
-        common::log_to_channel!(self.channel_id, &self.channel_name, level, "{}", message);
-        common::log_to_service!(self.channel_id, level, "{}", message);
+        match level {
+            tracing::Level::ERROR => {
+                tracing::error!(
+                    target: "channel",
+                    channel_id = %self.channel_id,
+                    channel_name = %self.channel_name,
+                    "{}",
+                    message
+                );
+            },
+            tracing::Level::WARN => {
+                tracing::warn!(
+                    target: "channel",
+                    channel_id = %self.channel_id,
+                    channel_name = %self.channel_name,
+                    "{}",
+                    message
+                );
+            },
+            tracing::Level::INFO => {
+                tracing::info!(
+                    target: "channel",
+                    channel_id = %self.channel_id,
+                    channel_name = %self.channel_name,
+                    "{}",
+                    message
+                );
+            },
+            tracing::Level::DEBUG => {
+                tracing::debug!(
+                    target: "channel",
+                    channel_id = %self.channel_id,
+                    channel_name = %self.channel_name,
+                    "{}",
+                    message
+                );
+            },
+            tracing::Level::TRACE => {
+                tracing::trace!(
+                    target: "channel",
+                    channel_id = %self.channel_id,
+                    channel_name = %self.channel_name,
+                    "{}",
+                    message
+                );
+            },
+        }
     }
 
-    /// Log channel only
-    #[allow(unused_variables)]
+    /// Log channel only (same as log_dual, kept for API compatibility)
     fn log_channel_only(&self, level: tracing::Level, message: String) {
-        common::log_to_channel!(self.channel_id, &self.channel_name, level, "{}", message);
+        self.log_dual(level, message);
     }
 
     /// Log initialization step

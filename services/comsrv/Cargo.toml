@@ -14,11 +14,12 @@ path = "src/main.rs"
 
 [dependencies]
 # Local dependencies
-common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum"] }
+common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum", "openapi"] }
 errors = { path = "../../libs/errors", features = ["axum-support"] }
 voltage-comlink = { path = "../../libs/voltage-comlink" }
 voltage-model = { path = "../../libs/voltage-model" }
 voltage-protocols = { path = "../../libs/voltage-protocols", features = ["modbus", "modbus-rtu", "dido"] }
+voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 
@@ -74,13 +75,8 @@ sqlx = { workspace = true }
 
 # WebSocket and UUID dependencies removed - not currently used
 
-# Industrial GPIO and hardware interfaces
-i2cdev = { version = "0.6", optional = true } # I2C device support
-spidev = { version = "0.6", optional = true } # SPI device support
-
-# Platform-specific dependencies
-[target.'cfg(target_os = "linux")'.dependencies]
-rppal = { version = "0.17", optional = true } # Raspberry Pi GPIO (Linux only)
+# Industrial GPIO and hardware interfaces - removed (i2cdev, spidev, rppal)
+# These can be re-added when hardware support is implemented
 
 [dev-dependencies]
 tracing-test = { workspace = true }
@@ -94,8 +90,7 @@ redis = { workspace = true }  # For integration tests only
 [features]
 default = ["modbus", "swagger-ui", "openapi"]
 modbus = []
-gpio = ["rppal"]                     # GPIO support for embedded systems (Raspberry Pi)
-industrial-io = ["i2cdev", "spidev"] # Industrial I/O support
+# gpio and industrial-io features removed - hardware dependencies not yet implemented
 swagger-ui = ["utoipa-swagger-ui"]   # Swagger UI documentation (enabled by default for development)
 openapi = []                         # OpenAPI schema generation for types
 integration = []                     # Integration tests requiring real Redis and voltage.db

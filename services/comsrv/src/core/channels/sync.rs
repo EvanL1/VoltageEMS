@@ -2,6 +2,9 @@
 //!
 //! Handles background synchronization of telemetry data to Redis,
 //! and provides unified data transformation interface for all four-telemetry types.
+//!
+//! This module directly uses voltage-routing and voltage-rtdb for storage operations,
+//! eliminating the need for the intermediate storage.rs layer.
 
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -11,8 +14,10 @@ use tracing::{debug, error, info};
 use super::point_config::RuntimeConfigProvider;
 use crate::core::channels::traits::TelemetryBatch;
 use crate::error::{ComSrvError, Result};
-use crate::storage::PluginPointUpdate;
 use common::FourRemote;
+use voltage_model::PointType;
+use voltage_routing::ChannelPointUpdate;
+use voltage_rtdb::{WriteBuffer, WriteBufferConfig};
 
 // ============================================================================
 // Point Transformation (merged from point_transformer.rs)
@@ -125,11 +130,12 @@ impl PointTransformer {
 
 /// Transform telemetry batch using provided config provider
 ///
-/// Internal helper function for code reuse between public API and async task
+/// Internal helper function for code reuse between public API and async task.
+/// Returns `ChannelPointUpdate` directly (no intermediate PluginPointUpdate).
 fn transform_telemetry_batch(
     config_provider: &Arc<RuntimeConfigProvider>,
     telemetry_batch: TelemetryBatch,
-) -> Vec<PluginPointUpdate> {
+) -> Vec<ChannelPointUpdate> {
     let channel_id = telemetry_batch.channel_id;
     let mut updates = Vec::new();
 
@@ -146,13 +152,14 @@ fn transform_telemetry_batch(
             point_id, raw_value, processed_value
         );
 
-        let update = PluginPointUpdate {
-            telemetry_type: crate::core::config::FourRemote::Telemetry,
+        updates.push(ChannelPointUpdate {
+            channel_id,
+            point_type: PointType::Telemetry,
             point_id,
             value: processed_value,
             raw_value: Some(raw_value),
-        };
-        updates.push(update);
+            cascade_depth: 0,
+        });
     }
 
     // Process signal data with boolean transformation
@@ -168,13 +175,14 @@ fn transform_telemetry_batch(
             point_id, raw_value, processed_value
         );
 
-        let update = PluginPointUpdate {
-            telemetry_type: crate::core::config::FourRemote::Signal,
+        updates.push(ChannelPointUpdate {
+            channel_id,
+            point_type: PointType::Signal,
             point_id,
             value: processed_value,
             raw_value: Some(raw_value),
-        };
-        updates.push(update);
+            cascade_depth: 0,
+        });
     }
 
     updates
@@ -220,15 +228,20 @@ impl TelemetrySync {
         self.sync_task_handle.clone()
     }
 
-    /// Transform telemetry batch to plugin point updates
+    /// Transform telemetry batch to channel point updates
     ///
     /// This method applies configured transformations (scale/offset/reverse) to raw data.
     /// Extracted for reusability and testing.
-    pub fn transform_batch(&self, telemetry_batch: TelemetryBatch) -> Vec<PluginPointUpdate> {
+    pub fn transform_batch(&self, telemetry_batch: TelemetryBatch) -> Vec<ChannelPointUpdate> {
         transform_telemetry_batch(&self.config_provider, telemetry_batch)
     }
 
     /// Start telemetry sync task
+    ///
+    /// Uses WriteBuffer directly for high-performance batch writes to Redis.
+    /// No intermediate StorageManager layer - direct composition of:
+    /// - WriteBuffer: aggregates writes in memory, flushes periodically
+    /// - voltage_routing: handles C2M routing and batch writes
     pub async fn start_telemetry_sync_task(&self) -> Result<()> {
         debug!("Sync starting");
 
@@ -254,33 +267,41 @@ impl TelemetrySync {
         let task_handle = tokio::spawn(async move {
             debug!("Sync task running");
 
-            // Create storage manager from existing rtdb and routing cache
-            let storage = crate::storage::StorageManager::from_rtdb(rtdb, routing_cache);
+            // Create WriteBuffer directly (no StorageManager intermediate layer)
+            let write_buffer = Arc::new(WriteBuffer::new(WriteBufferConfig::default()));
 
             // Start the WriteBuffer flush task (runs in background)
-            let _flush_handle = storage.start_flush_task();
+            let _flush_handle = {
+                let buffer = Arc::clone(&write_buffer);
+                let rtdb_clone = Arc::clone(&rtdb);
+                tokio::spawn(async move {
+                    buffer.flush_loop(&*rtdb_clone).await;
+                })
+            };
             info!(
                 "WriteBuffer flush task started (interval: {}ms)",
-                storage.write_buffer().config().flush_interval_ms
+                write_buffer.config().flush_interval_ms
             );
 
             while let Some(telemetry_batch) = receiver.recv().await {
-                let channel_id = telemetry_batch.channel_id;
-
                 // Transform batch using shared logic
                 let updates = transform_telemetry_batch(&config_provider, telemetry_batch);
 
-                // Batch update if there are updates (now buffered, not direct to Redis)
+                // Batch update if there are updates (buffered write via voltage_routing)
                 if !updates.is_empty() {
-                    if let Err(e) = storage.batch_update_and_publish(channel_id, updates).await {
-                        error!("Ch{} sync err: {}", channel_id, e);
-                    }
+                    // Use voltage-routing's buffered batch write directly
+                    // Returns BatchRoutingResult (statistics), not Result
+                    let _stats = voltage_routing::write_channel_batch_buffered(
+                        &write_buffer,
+                        &routing_cache,
+                        updates,
+                    );
                 }
             }
 
             // Graceful shutdown: flush any remaining buffered writes
             debug!("Sync task ending, flushing remaining writes...");
-            match storage.shutdown().await {
+            match write_buffer.flush_now(&*rtdb).await {
                 Ok(flushed) => {
                     if flushed > 0 {
                         info!("WriteBuffer final flush: {} fields", flushed);

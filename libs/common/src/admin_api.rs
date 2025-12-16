@@ -14,10 +14,10 @@
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
 
 /// Request to set log level
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct SetLogLevelRequest {
     /// Log level string (e.g., "debug", "info", "warn", "error", "trace")
     /// or full filter spec (e.g., "info,service=debug")
@@ -25,7 +25,8 @@ pub struct SetLogLevelRequest {
 }
 
 /// Response for log level operations
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 pub struct LogLevelResponse {
     /// Current log level
     pub level: String,
@@ -41,7 +42,7 @@ pub struct LogLevelResponse {
 ///
 /// POST /api/admin/logs/level
 /// Body: {"level": "debug"}
-#[utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     post,
     path = "/api/admin/logs/level",
     request_body = SetLogLevelRequest,
@@ -50,7 +51,7 @@ pub struct LogLevelResponse {
         (status = 400, description = "Invalid log level", body = LogLevelResponse)
     ),
     tag = "admin"
-)]
+))]
 pub async fn set_log_level(Json(req): Json<SetLogLevelRequest>) -> impl IntoResponse {
     match crate::logging::set_log_level(&req.level) {
         Ok(_) => (
@@ -75,14 +76,14 @@ pub async fn set_log_level(Json(req): Json<SetLogLevelRequest>) -> impl IntoResp
 /// Get current log level
 ///
 /// GET /api/admin/logs/level
-#[utoipa::path(
+#[cfg_attr(feature = "openapi", utoipa::path(
     get,
     path = "/api/admin/logs/level",
     responses(
         (status = 200, description = "Current log level", body = LogLevelResponse)
     ),
     tag = "admin"
-)]
+))]
 pub async fn get_log_level() -> impl IntoResponse {
     Json(LogLevelResponse {
         level: crate::logging::get_log_level(),

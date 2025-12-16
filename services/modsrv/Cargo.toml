@@ -49,12 +49,12 @@ utoipa-swagger-ui = { workspace = true, optional = true }
 tokio-util = { workspace = true }
 sqlx = { workspace = true }
 csv = { workspace = true }  # For loading product CSV files
-cron = { workspace = true }  # For time series scheduling
+# cron removed - not currently used
 evalexpr = { workspace = true }  # For expression evaluation
 dashmap = { workspace = true }  # For high-performance concurrent name→id cache
 
 [dev-dependencies]
-criterion = { workspace = true }
+# criterion removed - no benchmarks
 futures = { workspace = true }
 tempfile = { workspace = true }
 tower = { workspace = true }

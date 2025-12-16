@@ -31,5 +31,5 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-tokio-test = "0.4"
+# tokio-test removed - not used in tests
 

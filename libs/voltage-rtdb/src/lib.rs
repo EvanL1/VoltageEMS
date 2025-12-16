@@ -24,17 +24,15 @@ pub mod time;
 
 pub mod write_buffer;
 
-pub mod keyspace;
-
 pub mod routing_cache;
 
 // Re-exports
 pub use bytes::Bytes;
 pub use traits::Rtdb;
 
-// KeySpace and Routing exports
-pub use keyspace::KeySpaceConfig;
+// KeySpace (canonical location: voltage_model) and Routing exports
 pub use routing_cache::{RoutingCache, RoutingCacheStats};
+pub use voltage_model::KeySpaceConfig;
 
 #[cfg(feature = "redis-backend")]
 pub use redis_impl::RedisRtdb;
@@ -164,5 +162,198 @@ pub mod helpers {
             .context("Failed to trigger TODO queue")?;
 
         Ok(())
+    }
+
+    // ==================== Batch Helpers ====================
+
+    /// Batch write channel points with 3-layer architecture (value + timestamp + raw)
+    ///
+    /// This function efficiently writes multiple points to a channel hash using
+    /// the 3-layer data architecture:
+    /// - Layer 1: Engineering values (comsrv:{channel_id}:{type})
+    /// - Layer 2: Timestamps (comsrv:{channel_id}:{type}:ts)
+    /// - Layer 3: Raw values (comsrv:{channel_id}:{type}:raw)
+    ///
+    /// # Arguments
+    /// * `rtdb` - RTDB trait object
+    /// * `channel_key` - Base channel key (e.g. "comsrv:1001:T")
+    /// * `points` - Vector of (point_id, value, raw_value) tuples
+    /// * `timestamp_ms` - Timestamp in milliseconds (shared by all points)
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - Number of points written
+    /// * `Err(anyhow::Error)` - Write error
+    pub async fn set_channel_points_3layer<R>(
+        rtdb: &R,
+        channel_key: &str,
+        points: Vec<(u32, f64, f64)>, // (point_id, value, raw_value)
+        timestamp_ms: i64,
+    ) -> Result<usize>
+    where
+        R: Rtdb + ?Sized,
+    {
+        if points.is_empty() {
+            return Ok(0);
+        }
+
+        let count = points.len();
+
+        // Pre-convert timestamp to Bytes once (clone is O(1) for Bytes)
+        let timestamp_bytes = Bytes::from(timestamp_ms.to_string());
+
+        // Prepare 3-layer data
+        let mut values = Vec::with_capacity(count);
+        let mut timestamps = Vec::with_capacity(count);
+        let mut raw_values = Vec::with_capacity(count);
+
+        for (point_id, value, raw_value) in points {
+            let point_id_str = point_id.to_string();
+
+            // Layer 1: Engineering values
+            values.push((point_id_str.clone(), Bytes::from(value.to_string())));
+
+            // Layer 2: Timestamps
+            timestamps.push((point_id_str.clone(), timestamp_bytes.clone()));
+
+            // Layer 3: Raw values
+            raw_values.push((point_id_str, Bytes::from(raw_value.to_string())));
+        }
+
+        // Write all 3 layers
+        let ts_key = format!("{}:ts", channel_key);
+        let raw_key = format!("{}:raw", channel_key);
+
+        rtdb.hash_mset(channel_key, values)
+            .await
+            .context("Failed to write channel values")?;
+
+        rtdb.hash_mset(&ts_key, timestamps)
+            .await
+            .context("Failed to write channel timestamps")?;
+
+        rtdb.hash_mset(&raw_key, raw_values)
+            .await
+            .context("Failed to write channel raw values")?;
+
+        Ok(count)
+    }
+
+    /// Buffer channel points with 3-layer architecture (for WriteBuffer)
+    ///
+    /// This is a synchronous version that buffers writes instead of sending them
+    /// directly to Redis. Used with WriteBuffer for high-frequency updates.
+    ///
+    /// # Arguments
+    /// * `write_buffer` - WriteBuffer for aggregating writes
+    /// * `channel_key` - Base channel key (e.g. "comsrv:1001:T")
+    /// * `points` - Vector of (point_id, value, raw_value) tuples
+    /// * `timestamp_ms` - Timestamp in milliseconds
+    ///
+    /// # Returns
+    /// Number of points buffered
+    pub fn buffer_channel_points_3layer(
+        write_buffer: &super::WriteBuffer,
+        channel_key: &str,
+        points: Vec<(u32, f64, f64)>, // (point_id, value, raw_value)
+        timestamp_ms: i64,
+    ) -> usize {
+        if points.is_empty() {
+            return 0;
+        }
+
+        let count = points.len();
+
+        // Pre-convert timestamp to Bytes once
+        let timestamp_bytes = Bytes::from(timestamp_ms.to_string());
+
+        // Prepare 3-layer data
+        let mut values = Vec::with_capacity(count);
+        let mut timestamps = Vec::with_capacity(count);
+        let mut raw_values = Vec::with_capacity(count);
+
+        for (point_id, value, raw_value) in points {
+            let point_id_str = point_id.to_string();
+
+            values.push((point_id_str.clone(), Bytes::from(value.to_string())));
+            timestamps.push((point_id_str.clone(), timestamp_bytes.clone()));
+            raw_values.push((point_id_str, Bytes::from(raw_value.to_string())));
+        }
+
+        // Buffer all 3 layers
+        let ts_key = format!("{}:ts", channel_key);
+        let raw_key = format!("{}:raw", channel_key);
+
+        write_buffer.buffer_hash_mset(channel_key, values);
+        write_buffer.buffer_hash_mset(&ts_key, timestamps);
+        write_buffer.buffer_hash_mset(&raw_key, raw_values);
+
+        count
+    }
+
+    /// Write a single point with automatic TODO queue trigger based on point type
+    ///
+    /// This function automatically determines whether to trigger the TODO queue:
+    /// - **Control/Adjustment types**: Write 3-layer data + trigger TODO queue
+    /// - **Telemetry/Signal types**: Write 3-layer data only (no TODO trigger)
+    ///
+    /// This implements the Write-Triggers-Routing pattern for downlink commands
+    /// while avoiding unnecessary TODO triggers for uplink (read-only) data.
+    ///
+    /// # Arguments
+    /// * `rtdb` - RTDB trait object
+    /// * `config` - KeySpace configuration
+    /// * `channel_id` - Channel ID
+    /// * `point_type` - Point type (determines TODO trigger behavior)
+    /// * `point_id` - Point ID
+    /// * `value` - Point value
+    ///
+    /// # Returns
+    /// * `Ok(i64)` - Timestamp in milliseconds
+    /// * `Err(anyhow::Error)` - Write error
+    pub async fn write_point_auto_trigger<R>(
+        rtdb: &R,
+        config: &KeySpaceConfig,
+        channel_id: u32,
+        point_type: PointType,
+        point_id: u32,
+        value: f64,
+    ) -> Result<i64>
+    where
+        R: Rtdb + ?Sized,
+    {
+        // Get current timestamp (milliseconds since epoch)
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .context("Failed to get system time")?
+            .as_millis() as i64;
+
+        match point_type {
+            PointType::Control | PointType::Adjustment => {
+                // Write 3-layer data + trigger TODO queue (Write-Triggers-Routing pattern)
+                set_channel_point_with_trigger(
+                    rtdb,
+                    config,
+                    channel_id,
+                    point_type,
+                    point_id,
+                    value,
+                    timestamp_ms,
+                )
+                .await?;
+            },
+            PointType::Telemetry | PointType::Signal => {
+                // Write 3-layer data only (no TODO trigger for uplink data)
+                let channel_key = config.channel_key(channel_id, point_type);
+                set_channel_points_3layer(
+                    rtdb,
+                    &channel_key,
+                    vec![(point_id, value, value)], // (point_id, value, raw_value)
+                    timestamp_ms,
+                )
+                .await?;
+            },
+        }
+
+        Ok(timestamp_ms)
     }
 }

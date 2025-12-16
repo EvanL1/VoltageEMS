@@ -37,6 +37,10 @@ pub mod cleanup_provider;
 pub mod dto;
 pub mod error;
 pub mod instance_manager;
+// Extension impl blocks for InstanceManager (split for maintainability)
+mod instance_data;
+mod instance_redis_sync;
+mod instance_routing;
 pub mod product_loader;
 pub mod redis_state;
 pub mod reload;

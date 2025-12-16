@@ -47,7 +47,7 @@ tempfile = { workspace = true }
 
 # Output formatting
 colored = { workspace = true }
-indicatif = { workspace = true }
+# indicatif removed - not currently used
 
 # HTTP client
 reqwest = { workspace = true }

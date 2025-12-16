@@ -572,20 +572,7 @@ impl ConfigSyncer {
         Ok(count)
     }
 
-    // Deprecated: This function is no longer used - all points are channel-specific
-    // Kept for reference but marked as deprecated
-    #[allow(dead_code)]
-    #[deprecated(note = "All points are channel-specific, there are no global points")]
-    async fn insert_comsrv_points(
-        &self,
-        _tx: &mut Transaction<'_, Sqlite>,
-        _telemetry_type: &str,
-        _points: &[HashMap<String, String>],
-    ) -> Result<usize> {
-        // This function should never be called
-        // All points belong to specific channels
-        Ok(0)
-    }
+    // insert_comsrv_points() removed - all points are channel-specific
 
     /// Insert channels
     async fn insert_channels(

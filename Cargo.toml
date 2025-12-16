@@ -111,12 +111,12 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace"] }
 
 # Dev dependencies
-criterion = { version = "0.5", features = ["async_tokio"] }
+# criterion = { version = "0.5", features = ["async_tokio"] }  # removed - no benchmarks
 tracing-test = "0.2"
 
 # UI dependencies for CLI tools
 colored = "2.0"
-indicatif = "0.17"
+# indicatif = "0.17"  # removed - not currently used
 
 # Performance optimization profiles
 [profile.release]

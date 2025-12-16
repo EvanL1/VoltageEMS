@@ -1,10 +1,25 @@
-//! Voltage M2C Routing Library
+//! Voltage Routing Library
 //!
-//! Provides unified M2C (Model to Channel) routing functionality for modsrv and rules engine.
-//! This library implements the Write-Triggers-Routing pattern, ensuring all action writes
-//! automatically trigger downstream channel updates and TODO queues.
+//! Provides unified routing functionality for VoltageEMS services:
+//! - M2C (Model to Channel) routing for action writes (downlink)
+//! - C2M (Channel to Model) routing for measurement reads (uplink)
+//! - C2C (Channel to Channel) routing for data forwarding
+//! - Batch routing execution with 3-layer data architecture
+//! - SQLite routing loader for service initialization
+//! - Write-Triggers-Routing pattern implementation
 
 #![allow(clippy::disallowed_methods)] // Used in specific contexts
+
+pub mod batch;
+pub mod loader;
+
+pub use batch::{
+    write_channel_batch, write_channel_batch_buffered, BatchRoutingResult, ChannelPointUpdate,
+};
+pub use loader::{load_routing_maps, RoutingMaps};
+
+// Re-export RoutingCache for convenience
+pub use voltage_rtdb::RoutingCache;
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
@@ -267,6 +282,138 @@ fn value_to_string(value: serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     }
+}
+
+// ============================================================================
+// C2M (Channel to Model) Routing - Uplink
+// ============================================================================
+
+/// C2M route target - result of looking up channel point routing to instance
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct C2MRouteTarget {
+    /// Target instance ID
+    pub instance_id: u32,
+    /// Target measurement point ID in the instance
+    pub measurement_id: u32,
+}
+
+/// Look up C2M (Channel to Model) routing target
+///
+/// Queries the routing cache to find which instance measurement point
+/// should receive data from a channel point.
+///
+/// # Arguments
+/// * `routing_cache` - C2M routing cache
+/// * `channel_id` - Source channel ID
+/// * `point_type` - Point type (T/S/C/A)
+/// * `point_id` - Source point ID
+///
+/// # Returns
+/// * `Some(C2MRouteTarget)` - Target instance and measurement ID
+/// * `None` - No routing configured for this channel point
+///
+/// # Example
+/// ```ignore
+/// if let Some(target) = lookup_c2m_target(&cache, 1001, "T", 1) {
+///     // Write value to inst:{target.instance_id}:M hash, field {target.measurement_id}
+/// }
+/// ```
+pub fn lookup_c2m_target(
+    routing_cache: &RoutingCache,
+    channel_id: u32,
+    point_type: &str,
+    point_id: u32,
+) -> Option<C2MRouteTarget> {
+    // Build routing key: "channel_id:type:point_id"
+    let route_key = format!("{}:{}:{}", channel_id, point_type, point_id);
+
+    // Lookup in cache
+    let target = routing_cache.lookup_c2m(&route_key)?;
+
+    // Parse target: "instance_id:M:measurement_id"
+    let parts: Vec<&str> = target.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let instance_id = parts[0].parse::<u32>().ok()?;
+    let measurement_id = parts[2].parse::<u32>().ok()?;
+
+    Some(C2MRouteTarget {
+        instance_id,
+        measurement_id,
+    })
+}
+
+// ============================================================================
+// C2C (Channel to Channel) Routing - Data Forwarding
+// ============================================================================
+
+/// Maximum cascade depth for C2C routing to prevent infinite loops
+pub const MAX_C2C_CASCADE_DEPTH: u8 = 2;
+
+/// C2C route target - result of looking up channel-to-channel routing
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct C2CRouteTarget {
+    /// Target channel ID
+    pub channel_id: u32,
+    /// Target point type (T/S/C/A)
+    pub point_type: String,
+    /// Target point ID
+    pub point_id: u32,
+}
+
+/// Look up C2C (Channel to Channel) routing target
+///
+/// Queries the routing cache to find if a channel point should be
+/// forwarded to another channel point.
+///
+/// # Arguments
+/// * `routing_cache` - C2C routing cache
+/// * `source_channel_id` - Source channel ID
+/// * `source_point_type` - Source point type (T/S/C/A)
+/// * `source_point_id` - Source point ID
+///
+/// # Returns
+/// * `Some(C2CRouteTarget)` - Target channel, point type, and point ID
+/// * `None` - No C2C routing configured for this source point
+///
+/// # Example
+/// ```ignore
+/// if let Some(target) = lookup_c2c_target(&cache, 1001, "T", 1) {
+///     // Forward value to channel {target.channel_id}, type {target.point_type}, point {target.point_id}
+/// }
+/// ```
+pub fn lookup_c2c_target(
+    routing_cache: &RoutingCache,
+    source_channel_id: u32,
+    source_point_type: &str,
+    source_point_id: u32,
+) -> Option<C2CRouteTarget> {
+    // Build routing key: "channel_id:type:point_id"
+    let route_key = format!(
+        "{}:{}:{}",
+        source_channel_id, source_point_type, source_point_id
+    );
+
+    // Lookup in cache
+    let target = routing_cache.lookup_c2c(&route_key)?;
+
+    // Parse target: "channel_id:type:point_id"
+    let parts: Vec<&str> = target.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let channel_id = parts[0].parse::<u32>().ok()?;
+    let point_type = parts[1].to_string();
+    let point_id = parts[2].parse::<u32>().ok()?;
+
+    Some(C2CRouteTarget {
+        channel_id,
+        point_type,
+        point_id,
+    })
 }
 
 #[cfg(test)]

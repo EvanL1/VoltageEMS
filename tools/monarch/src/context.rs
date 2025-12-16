@@ -123,15 +123,7 @@ impl ServiceContext {
         Ok(())
     }
 
-    /// Initialize rules context (deprecated - now uses modsrv)
-    /// Rules functionality has been merged into modsrv (port 6002)
-    #[cfg(feature = "lib-mode")]
-    #[allow(dead_code)]
-    #[deprecated(note = "rules merged into modsrv. Use init_modsrv() instead.")]
-    pub async fn init_rules(&mut self) -> Result<()> {
-        // Rules are now part of modsrv, so just initialize modsrv
-        self.init_modsrv().await
-    }
+    // init_rules() removed - rules merged into modsrv
 
     /// Initialize all services
     #[cfg(feature = "lib-mode")]
@@ -166,15 +158,7 @@ impl ServiceContext {
             .context("Modsrv not initialized. Call init_modsrv() first.")
     }
 
-    /// Get rules context (deprecated - now returns modsrv context)
-    /// Rules functionality has been merged into modsrv
-    #[cfg(feature = "lib-mode")]
-    #[deprecated(note = "rules merged into modsrv. Use modsrv() instead.")]
-    pub fn rules(&self) -> Result<&ModsrvContext> {
-        self.modsrv
-            .as_ref()
-            .context("Modsrv not initialized. Call init_modsrv() first. (rules merged into modsrv)")
-    }
+    // rules() removed - rules merged into modsrv, use modsrv() instead
 
     /// Get configuration (public API)
     #[allow(dead_code)]

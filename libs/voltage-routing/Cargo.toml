@@ -9,6 +9,8 @@ anyhow = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = { workspace = true }
+sqlx = { workspace = true }
 voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 

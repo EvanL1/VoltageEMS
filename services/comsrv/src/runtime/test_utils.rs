@@ -22,21 +22,7 @@ pub fn create_test_routing_cache() -> Arc<RoutingCache> {
     Arc::new(RoutingCache::new())
 }
 
-/// Create a mock Redis client for testing (DEPRECATED - use create_test_rtdb instead)
-///
-/// This creates a real Redis client connection for testing purposes.
-/// Tests using this function require a Redis server running at localhost:6379.
-///
-/// **DEPRECATED**: For unit tests, use `create_test_rtdb()` instead, which doesn't
-/// require external services. Only use this for integration tests.
-#[deprecated(note = "Use create_test_rtdb() for unit tests instead")]
-pub async fn create_test_redis_client() -> Arc<common::redis::RedisClient> {
-    Arc::new(
-        common::redis::RedisClient::new("redis://localhost:6379")
-            .await
-            .expect("Failed to create test Redis client - ensure Redis is running"),
-    )
-}
+// create_test_redis_client() removed - use create_test_rtdb() instead
 
 // ==================== Routing Test Setup Functions ====================
 

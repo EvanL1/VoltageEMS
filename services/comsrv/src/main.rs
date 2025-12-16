@@ -26,7 +26,7 @@ use comsrv::{
     api::routes::{create_api_routes, set_service_start_time},
     cleanup_provider::ComsrvCleanupProvider,
     core::{
-        bootstrap::{self, load_routing_maps_from_sqlite, Args},
+        bootstrap::{self, Args},
         channels::ChannelManager,
         config::ConfigManager,
     },
@@ -34,6 +34,7 @@ use comsrv::{
     runtime::{start_cleanup_task, start_communication_service},
     shutdown_services, wait_for_shutdown,
 };
+use voltage_routing::load_routing_maps;
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -118,24 +119,16 @@ async fn main() -> VoltageResult<()> {
     // ============ Phase 2: Load routing configuration from unified database ============
     info!("Loading routing cache from unified database...");
     let routing_cache = {
-        // Load routing maps directly from the same SQLite pool
-        let (c2m_data, m2c_data, c2c_data) = load_routing_maps_from_sqlite(&sqlite_pool)
+        // Load routing maps from shared library
+        let maps = load_routing_maps(&sqlite_pool)
             .await
             .map_err(|e| ComSrvError::ConfigError(format!("Failed to load routing: {}", e)))?;
 
-        let c2m_len = c2m_data.len();
-        let m2c_len = m2c_data.len();
-        let c2c_len = c2c_data.len();
-        let cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
-            c2m_data, m2c_data, c2c_data,
-        ));
+        info!("Loaded routing cache: {} total routes", maps.total_routes());
 
-        info!(
-            "Loaded routing cache: {} C2M routes, {} M2C routes, {} C2C routes",
-            c2m_len, m2c_len, c2c_len
-        );
-
-        cache
+        Arc::new(voltage_rtdb::RoutingCache::from_maps(
+            maps.c2m, maps.m2c, maps.c2c,
+        ))
     };
 
     // RTDB is a pure storage abstraction

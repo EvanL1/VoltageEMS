@@ -285,92 +285,6 @@ pub async fn setup_instance_manager(
     Ok(instance_manager)
 }
 
-/// Load routing maps directly from SQLite (bypassing Redis)
-///
-/// This is the preferred method for service initialization as it avoids
-/// unnecessary Redis round-trips and provides faster startup.
-///
-/// Returns (c2m_map, m2c_map) where:
-/// - c2m_map: Channel to Model routing (uplink)
-/// - m2c_map: Model to Channel routing (downlink)
-pub async fn load_routing_maps_from_sqlite(
-    sqlite_pool: &SqlitePool,
-) -> Result<(
-    std::collections::HashMap<String, String>,
-    std::collections::HashMap<String, String>,
-)> {
-    use voltage_rtdb::KeySpaceConfig;
-
-    debug!("Loading routing maps");
-
-    let keyspace = KeySpaceConfig::production();
-    let mut c2m_map = std::collections::HashMap::new();
-    let mut m2c_map = std::collections::HashMap::new();
-
-    // Fetch all enabled measurement routing (C2M - uplink)
-    let measurement_routing = sqlx::query_as::<_, (u32, String, u32, String, u32, u32)>(
-        r#"
-        SELECT
-            instance_id, instance_name, channel_id, channel_type, channel_point_id,
-            measurement_id
-        FROM measurement_routing
-        WHERE enabled = TRUE
-        "#,
-    )
-    .fetch_all(sqlite_pool)
-    .await?;
-
-    for (instance_id, _instance_name, channel_id, channel_type, channel_point_id, measurement_id) in
-        measurement_routing
-    {
-        // Parse channel type
-        let point_type = voltage_model::PointType::from_str(&channel_type)
-            .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
-
-        // Build routing keys (no prefix for hash fields)
-        // From: channel_id:type:point_id → To: instance_id:M:point_id
-        let from_key =
-            keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
-        // Note: Target uses "M" (Measurement role), not a PointType enum
-        let to_key = format!("{}:M:{}", instance_id, measurement_id);
-
-        c2m_map.insert(from_key.to_string(), to_key);
-    }
-
-    // Fetch all enabled action routing (M2C - downlink)
-    let action_routing = sqlx::query_as::<_, (u32, String, u32, u32, String, u32)>(
-        r#"
-        SELECT
-            instance_id, instance_name, action_id, channel_id, channel_type,
-            channel_point_id
-        FROM action_routing
-        WHERE enabled = TRUE
-        "#,
-    )
-    .fetch_all(sqlite_pool)
-    .await?;
-
-    for (instance_id, _instance_name, action_id, channel_id, channel_type, channel_point_id) in
-        action_routing
-    {
-        // Parse channel type (A or C)
-        let point_type = voltage_model::PointType::from_str(&channel_type)
-            .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
-
-        // Build routing keys (no prefix for hash fields)
-        // From: instance_id:A:point_id → To: channel_id:type:point_id
-        // Note: Source uses "A" (Action role), not a PointType enum
-        let from_key = format!("{}:A:{}", instance_id, action_id);
-        let to_key = keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
-
-        m2c_map.insert(from_key, to_key.to_string());
-    }
-
-    info!("Routes: {} C2M, {} M2C", c2m_map.len(), m2c_map.len());
-
-    Ok((c2m_map, m2c_map))
-}
-
 /// Validate routing integrity and check for orphan records
 ///
 /// This function validates that all routing table entries point to existing
@@ -490,14 +404,13 @@ pub async fn refresh_routing_cache(
 ) -> anyhow::Result<usize> {
     debug!("Refreshing routes");
 
-    // Load fresh routing data from database
-    let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(sqlite_pool).await?;
+    // Load fresh routing data from database via shared library
+    let maps = voltage_routing::load_routing_maps(sqlite_pool).await?;
 
-    let total_routes = c2m_map.len() + m2c_map.len();
+    let total_routes = maps.c2m.len() + maps.m2c.len();
 
     // Update cache atomically (clears old data and loads new)
-    // Note: C2C routing is not yet implemented, passing empty HashMap
-    routing_cache.update(c2m_map, m2c_map, std::collections::HashMap::new());
+    routing_cache.update(maps.c2m, maps.m2c, maps.c2c);
 
     info!("Routes refreshed: {}", total_routes);
 
@@ -581,17 +494,15 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     validate_routing_integrity(&sqlite_pool).await?;
 
     let routing_cache = {
-        // Load routing maps directly from the same SQLite pool
-        let (c2m_map, m2c_map) = load_routing_maps_from_sqlite(&sqlite_pool).await?;
+        // Load routing maps directly from the same SQLite pool via shared library
+        let maps = voltage_routing::load_routing_maps(&sqlite_pool).await?;
 
         // Save lengths before moving maps
-        let c2m_len = c2m_map.len();
-        let m2c_len = m2c_map.len();
+        let c2m_len = maps.c2m.len();
+        let m2c_len = maps.m2c.len();
 
         let cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
-            c2m_map,
-            m2c_map,
-            std::collections::HashMap::new(), // C2C routing not yet implemented
+            maps.c2m, maps.m2c, maps.c2c,
         ));
 
         info!("Routes: {} C2M, {} M2C", c2m_len, m2c_len);

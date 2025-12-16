@@ -10,10 +10,10 @@
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
-use common::FourRemote;
-use comsrv::storage::{write_batch, PointUpdate};
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_model::PointType;
+use voltage_routing::{write_channel_batch, ChannelPointUpdate};
 use voltage_rtdb::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
@@ -160,16 +160,16 @@ async fn test_c2c_basic_routing() {
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:T:5")]).await;
 
     // 写入源通道
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 100.0,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -191,16 +191,16 @@ async fn test_c2c_cascade_two_levels() {
         setup_c2c_routing(vec![("1001:T:1", "1002:T:2"), ("1002:T:2", "1003:T:3")]).await;
 
     // 写入源通道（第一级，cascade_depth = 0）
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 50.0,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -230,16 +230,16 @@ async fn test_c2c_cascade_max_depth() {
     .await;
 
     // 写入源通道
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 200.0,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -272,16 +272,16 @@ async fn test_c2c_infinite_loop_prevention() {
     .await;
 
     // 写入源通道
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 75.0,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -304,16 +304,16 @@ async fn test_c2c_preserve_raw_values() {
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:T:2")]).await;
 
     // 写入源通道（带原始值）
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 100.0,
         raw_value: Some(1000.0),
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -342,33 +342,33 @@ async fn test_c2c_different_point_types() {
 
     // 写入四种类型的点位
     let updates = vec![
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 1,
             value: 10.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Signal,
+            point_type: PointType::Signal,
             point_id: 2,
             value: 1.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Control,
+            point_type: PointType::Control,
             point_id: 3,
             value: 0.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Adjustment,
+            point_type: PointType::Adjustment,
             point_id: 4,
             value: 50.5,
             raw_value: None,
@@ -376,7 +376,7 @@ async fn test_c2c_different_point_types() {
         },
     ];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -416,17 +416,17 @@ async fn test_c2c_one_to_many() {
 
     // 写入两个源点位
     let updates = vec![
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 1,
             value: 123.0,
             raw_value: None,
             cascade_depth: 0,
         },
-        PointUpdate {
+        ChannelPointUpdate {
             channel_id: 1001,
-            point_type: FourRemote::Telemetry,
+            point_type: PointType::Telemetry,
             point_id: 2,
             value: 123.0,
             raw_value: None,
@@ -434,7 +434,7 @@ async fn test_c2c_one_to_many() {
         },
     ];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -457,16 +457,16 @@ async fn test_c2c_no_routing() {
     let (rtdb, routing_cache) = setup_c2c_routing(vec![]).await; // 空路由
 
     // 写入源通道
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 99.0,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -487,16 +487,16 @@ async fn test_c2c_cross_type_routing() {
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:S:1")]).await;
 
     // 写入遥测点位
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 88.0,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 
@@ -525,16 +525,16 @@ async fn test_c2c_timestamp_propagation() {
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:T:2")]).await;
 
     // 写入源通道
-    let updates = vec![PointUpdate {
+    let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
-        point_type: FourRemote::Telemetry,
+        point_type: PointType::Telemetry,
         point_id: 1,
         value: 66.6,
         raw_value: None,
         cascade_depth: 0,
     }];
 
-    write_batch(rtdb.as_ref(), &routing_cache, updates)
+    write_channel_batch(rtdb.as_ref(), &routing_cache, updates)
         .await
         .expect("write_batch should succeed");
 

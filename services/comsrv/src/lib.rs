@@ -45,12 +45,11 @@ pub mod runtime {
     //! Runtime Orchestration Layer
     //!
     //! Provides runtime lifecycle management, service orchestration, reconnection mechanisms,
-    //! maintenance tasks, and data storage utilities for the communication service.
+    //! and maintenance tasks for the communication service.
 
     pub mod cleanup_provider;
     pub mod lifecycle;
     pub mod reconnect;
-    pub mod storage;
 
     #[cfg(test)]
     pub mod test_utils;
@@ -62,7 +61,6 @@ pub mod runtime {
         wait_for_shutdown,
     };
     pub use reconnect::{ReconnectContext, ReconnectError, ReconnectHelper, ReconnectPolicy};
-    pub use storage::{PluginPointUpdate, StorageManager};
 }
 
 // Re-export dto at crate root for compatibility
@@ -70,7 +68,6 @@ pub use crate::api::dto;
 
 // Re-export commonly used types
 pub use error::{ComSrvError, ErrorExt, Result};
-pub use runtime::storage::PluginPointUpdate;
 
 // Re-export core functionality
 pub use core::bootstrap::ServiceArgs;
@@ -79,7 +76,6 @@ pub use core::config::ConfigManager;
 
 // Re-export runtime helpers for convenience
 pub use runtime::cleanup_provider;
-pub use runtime::storage;
 pub use runtime::{shutdown_services, wait_for_shutdown};
 
 #[cfg(test)]

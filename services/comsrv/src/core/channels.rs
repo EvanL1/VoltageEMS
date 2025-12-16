@@ -27,8 +27,6 @@ pub use channel_manager::{
 };
 pub use point_config::RuntimeConfigProvider;
 pub use sync::{PointTransformer, TransformDirection};
-
-// Storage now in unified module at crate::storage
 pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand};
 
 /// Initialize channels module

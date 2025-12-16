@@ -9,7 +9,6 @@ description = "Communication link library for VoltageEMS - protocol abstractions
 # Local dependencies
 voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
-common = { path = "../common", default-features = false }
 
 # Modbus library (for error conversion)
 voltage_modbus = { workspace = true }
@@ -40,7 +39,7 @@ bytes = { workspace = true }
 
 # Utils
 chrono = { workspace = true }
-rand = { workspace = true }
+# rand removed - not currently used
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
