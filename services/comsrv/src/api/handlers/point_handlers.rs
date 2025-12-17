@@ -207,11 +207,11 @@ pub async fn get_channel_points_handler(
                 table
             ),
             "signal_points" => format!(
-                "SELECT point_id, signal_name, 1.0 AS scale, 0.0 AS offset, unit, data_type, reverse, description, protocol_mappings FROM {} WHERE channel_id = ? ORDER BY point_id",
+                "SELECT point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings FROM {} WHERE channel_id = ? ORDER BY point_id",
                 table
             ),
             "control_points" => format!(
-                "SELECT point_id, signal_name, 1.0 AS scale, 0.0 AS offset, unit, data_type, 0 AS reverse, description, protocol_mappings FROM {} WHERE channel_id = ? ORDER BY point_id",
+                "SELECT point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings FROM {} WHERE channel_id = ? ORDER BY point_id",
                 table
             ),
             "adjustment_points" => format!(
@@ -219,7 +219,7 @@ pub async fn get_channel_points_handler(
                 table
             ),
             _ => format!(
-                "SELECT point_id, signal_name, 1.0 AS scale, 0.0 AS offset, unit, data_type, 0 AS reverse, description, protocol_mappings FROM {} WHERE channel_id = ? ORDER BY point_id",
+                "SELECT point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings FROM {} WHERE channel_id = ? ORDER BY point_id",
                 table
             ),
         };
