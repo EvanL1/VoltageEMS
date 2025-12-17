@@ -777,6 +777,17 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
     let mut errors = Vec::new();
 
     for mapping in mappings {
+        // Allow clearing mapping (unbind operation)
+        // null or {} means clear the mapping - skip validation
+        if mapping.protocol_data.is_null()
+            || mapping
+                .protocol_data
+                .as_object()
+                .is_some_and(|o| o.is_empty())
+        {
+            continue;
+        }
+
         match protocol.to_lowercase().as_str() {
             "modbus_tcp" | "modbus_rtu" | "modbus" => {
                 // Attempt strong-typed deserialization - automatic type/range validation
