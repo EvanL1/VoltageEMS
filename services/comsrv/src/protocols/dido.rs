@@ -475,6 +475,7 @@ mod tests {
                 description: Some("Start command output".to_string()),
                 unit: None,
             },
+            reverse: false,
             control_type: "momentary".to_string(),
             on_value: 1,
             off_value: 0,

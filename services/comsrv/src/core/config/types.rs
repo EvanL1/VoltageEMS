@@ -258,6 +258,11 @@ pub struct ControlPoint {
     #[serde(flatten)]
     pub base: Point,
 
+    /// Whether to reverse the control logic (like SignalPoint)
+    /// Supports: 1/0, true/false, yes/no in CSV files
+    #[serde(default, deserialize_with = "deserialize_bool_flexible")]
+    pub reverse: bool,
+
     /// Control type (momentary, latching, etc.)
     #[serde(default = "default_control_type")]
     pub control_type: String,

@@ -235,12 +235,10 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     Json(req): Json<CreateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Get next sequential ID
-    let next_id: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) + 1 FROM rules")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(1);
-    let rule_id = next_id.to_string();
+    let next_id: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) + 1 FROM rules")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(1);
 
     // Insert empty rule record (metadata only, no flow)
     if let Err(e) = sqlx::query(
@@ -249,13 +247,13 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
         VALUES (?, ?, ?, '{}', NULL, 'vue-flow', FALSE, 0, 0)
         "#,
     )
-    .bind(&rule_id)
+    .bind(next_id)
     .bind(&req.name)
     .bind(&req.description)
     .execute(&state.pool)
     .await
     {
-        error!("Create rule {}: {}", rule_id, e);
+        error!("Create rule {}: {}", next_id, e);
         return Err(ModSrvError::InternalError(
             "Failed to create rule".to_string(),
         ));
@@ -266,9 +264,9 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
         warn!("Reload scheduler: {}", e);
     }
 
-    debug!("Rule created: {} ({})", req.name, rule_id);
+    debug!("Rule created: {} ({})", req.name, next_id);
     Ok(Json(SuccessResponse::new(json!({
-        "id": rule_id,
+        "id": next_id,
         "name": req.name,
         "status": "created"
     }))))

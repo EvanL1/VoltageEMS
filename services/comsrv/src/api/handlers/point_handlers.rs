@@ -2623,13 +2623,15 @@ async fn process_create_operation(
             let point: ControlPoint = serde_json::from_value(data_with_id.clone())
                 .map_err(|e| format!("Invalid control point data: {}", e))?;
 
+            // Note: control_points table has same schema as telemetry_points
+            // ControlPoint's control-specific fields (control_type, on_value, etc.) are not persisted
             let sql = if item.force {
                 "INSERT OR REPLACE INTO control_points
-                 (channel_id, point_id, signal_name, unit, description, control_type, on_value, off_value, pulse_duration_ms, protocol_mappings)
+                 (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
             } else {
                 "INSERT INTO control_points
-                 (channel_id, point_id, signal_name, unit, description, control_type, on_value, off_value, pulse_duration_ms, protocol_mappings)
+                 (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
             };
 
@@ -2637,12 +2639,12 @@ async fn process_create_operation(
                 .bind(channel_id as i64)
                 .bind(item.point_id as i64)
                 .bind(&point.base.signal_name)
+                .bind(1.0f64) // scale: default for control points
+                .bind(0.0f64) // offset: default for control points
                 .bind(&point.base.unit)
+                .bind(point.reverse)
+                .bind("bool") // data_type: default for control points
                 .bind(&point.base.description)
-                .bind(&point.control_type)
-                .bind(point.on_value)
-                .bind(point.off_value)
-                .bind(point.pulse_duration_ms)
                 .execute(&state.sqlite_pool)
                 .await
                 .map_err(|e| format!("Failed to insert: {}", e))?;

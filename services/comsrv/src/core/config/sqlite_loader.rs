@@ -442,6 +442,7 @@ impl ComsrvSqliteLoader {
                 ComSrvError::ConfigError(format!("Failed to get signal_name: {}", e))
             })?;
             let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
+            let reverse: bool = row.try_get("reverse").unwrap_or(false);
             let _data_type: String = row
                 .try_get("data_type")
                 .unwrap_or_else(|_| "bool".to_string());
@@ -460,6 +461,7 @@ impl ComsrvSqliteLoader {
 
             let point = ControlPoint {
                 base: base_point,
+                reverse,
                 control_type: "momentary".to_string(),
                 on_value: 1,
                 off_value: 0,

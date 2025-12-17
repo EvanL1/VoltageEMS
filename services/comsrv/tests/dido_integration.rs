@@ -180,6 +180,7 @@ fn create_test_config(id: u32, gpio_base_path: &str) -> RuntimeChannelConfig {
             description: Some("Test DO point 1".to_string()),
             unit: None,
         },
+        reverse: false,
         control_type: "momentary".to_string(),
         on_value: 1,
         off_value: 0,
