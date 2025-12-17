@@ -111,7 +111,6 @@ pub use voltage_model::PointRole;
 pub mod bootstrap_args;
 pub mod bootstrap_database;
 pub mod bootstrap_system;
-pub mod bootstrap_validation;
 
 // Test utilities (for use in test code only)
 pub mod test_utils;

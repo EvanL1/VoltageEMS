@@ -1194,6 +1194,10 @@ impl ComClient for ModbusProtocol {
                 let mut telemetry_batch = Vec::with_capacity(1024);
                 let mut signal_batch = Vec::with_capacity(1024);
 
+                // Consecutive zero-result cycle counter for connection loss detection
+                let mut consecutive_zero_cycles = 0u32;
+                const MAX_ZERO_CYCLES: u32 = 5; // Trigger reconnect after 5 consecutive zero-data cycles
+
                 loop {
                     interval.tick().await;
 
@@ -1403,6 +1407,34 @@ impl ComClient for ModbusProtocol {
                         "Ch{} poll: {} ok/{} err",
                         channel_id, success_count, error_count
                     );
+
+                    // Zero-cycle detection: if no data received but points were configured
+                    if success_count == 0 && error_count > 0 {
+                        consecutive_zero_cycles += 1;
+                        warn!(
+                            "Ch{} zero data cycle {}/{} (err={})",
+                            channel_id, consecutive_zero_cycles, MAX_ZERO_CYCLES, error_count
+                        );
+
+                        if consecutive_zero_cycles >= MAX_ZERO_CYCLES {
+                            error!(
+                                "Ch{} connection presumed lost after {} zero cycles, triggering reconnect",
+                                channel_id, consecutive_zero_cycles
+                            );
+                            is_connected.store(false, Ordering::Relaxed);
+                            consecutive_zero_cycles = 0; // Reset counter
+                                                         // Next iteration will detect is_connected=false and trigger reconnect
+                        }
+                    } else if success_count > 0 {
+                        // Got some data, reset the counter
+                        if consecutive_zero_cycles > 0 {
+                            debug!(
+                                "Ch{} connection recovered, resetting zero cycle counter",
+                                channel_id
+                            );
+                        }
+                        consecutive_zero_cycles = 0;
+                    }
 
                     // Update status - only last_update is maintained
                     status.write().await.last_update = chrono::Utc::now().timestamp();

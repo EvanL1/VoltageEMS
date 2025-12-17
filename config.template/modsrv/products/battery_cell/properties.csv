@@ -1,9 +1,0 @@
-property_id,name,unit,description
-1,Nominal Capacity,Ah,标称容量
-2,Nominal Voltage,V,标称电压
-3,Chemistry Type,,化学类型
-4,Max Charge Current,A,最大充电电流
-5,Max Discharge Current,A,最大放电电流
-6,Operating Temperature,°C,工作温度范围
-7,Cycle Life,,循环寿命
-8,Manufacturing Date,,生产日期

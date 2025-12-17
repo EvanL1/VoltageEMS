@@ -93,6 +93,53 @@ copy_docker_images() {
     fi
 }
 
+# Build Python service Docker image for ARM64
+build_python_service() {
+    local service=$1
+    local context="$ROOT_DIR/services/$service"
+    local tag="voltage-$service:latest"
+    local output="$BUILD_DIR/docker/$service.tar.gz"
+
+    if [[ ! -f "$context/Dockerfile" ]]; then
+        echo -e "${YELLOW}Warning: Dockerfile not found for $service, skipping${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Building $tag for ARM64...${NC}"
+    docker buildx build --platform linux/arm64 --load \
+        -f "$context/Dockerfile" \
+        -t "$tag" \
+        "$context"
+
+    if [ $? -eq 0 ]; then
+        docker save "$tag" | gzip > "$output"
+        local size=$(ls -lh "$output" | awk '{print $5}')
+        echo -e "${GREEN}✓ Saved $service.tar.gz ($size)${NC}"
+    else
+        echo -e "${RED}Error: Failed to build $tag${NC}"
+        return 1
+    fi
+}
+
+# Pull and save official Docker image for ARM64
+pull_and_save_image() {
+    local image=$1
+    local output_name=$2
+
+    echo -e "${BLUE}Pulling $image for ARM64...${NC}"
+    docker pull --platform linux/arm64 "$image"
+
+    if [ $? -eq 0 ]; then
+        echo "Saving $image..."
+        docker save "$image" | gzip > "$BUILD_DIR/docker/$output_name"
+        local size=$(ls -lh "$BUILD_DIR/docker/$output_name" | awk '{print $5}')
+        echo -e "${GREEN}✓ Saved $output_name ($size)${NC}"
+    else
+        echo -e "${RED}Error: Failed to pull $image${NC}"
+        return 1
+    fi
+}
+
 # Clean and create build directory
 echo -e "${YELLOW}Preparing build directory...${NC}"
 rm -rf "$BUILD_DIR"
@@ -217,32 +264,30 @@ else
     exit 1
 fi
 
-# Pull official Redis image for ARM64
-echo -e "${BLUE}Pulling official Redis 8 Alpine for ARM64...${NC}"
+# Build Python auxiliary services
+echo ""
+echo -e "${BLUE}Building Python auxiliary services for ARM64...${NC}"
+for service in hissrv apigateway netsrv alarmsrv; do
+    build_python_service "$service"
+done
 
-docker pull --platform linux/arm64 redis:8-alpine
-
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✓ Redis image pulled successfully${NC}"
-
-    # Save Redis image (using official tag)
-    echo "Saving Redis image..."
-    docker save redis:8-alpine | gzip > "$BUILD_DIR/docker/voltage-redis.tar.gz"
-    echo -e "${GREEN}✓ Saved voltage-redis.tar.gz${NC}"
-else
-    echo -e "${RED}Error: Failed to pull Redis image${NC}"
-    exit 1
-fi
+# Pull and save official images (Redis, InfluxDB)
+echo ""
+echo -e "${BLUE}Pulling official images for ARM64...${NC}"
+pull_and_save_image "redis:8-alpine" "voltage-redis.tar.gz"
+pull_and_save_image "influxdb:2-alpine" "voltage-influxdb.tar.gz"
 
 # Verify we have the required images
-if [[ ! -f "$BUILD_DIR/docker/voltageems.tar.gz" ]]; then
-    echo -e "${RED}voltageems.tar.gz not found!${NC}"
-    exit 1
-fi
-if [[ ! -f "$BUILD_DIR/docker/voltage-redis.tar.gz" ]]; then
-    echo -e "${RED}voltage-redis.tar.gz not found!${NC}"
-    exit 1
-fi
+echo ""
+echo -e "${YELLOW}Verifying Docker images...${NC}"
+REQUIRED_IMAGES="voltageems voltage-redis voltage-influxdb hissrv apigateway netsrv alarmsrv"
+for img in $REQUIRED_IMAGES; do
+    if [[ ! -f "$BUILD_DIR/docker/$img.tar.gz" ]]; then
+        echo -e "${RED}$img.tar.gz not found!${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ $img.tar.gz${NC}"
+done
 
 # Copy docker-compose.yml
 if [[ -f "$ROOT_DIR/docker-compose.yml" ]]; then

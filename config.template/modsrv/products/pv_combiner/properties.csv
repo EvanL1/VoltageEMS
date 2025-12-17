@@ -1,9 +1,0 @@
-property_id,name,unit,description
-1,Input Channels,,输入路数
-2,Rated Current,A,额定电流
-3,Max Voltage,V,最大电压
-4,Protection Level,,防护等级
-5,SPD Type,,防雷器类型
-6,Monitoring Type,,监测类型
-7,Communication Protocol,,通信协议
-8,Installation Location,,安装位置

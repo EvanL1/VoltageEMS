@@ -1,6 +1,0 @@
-action_id,name,unit,description
-1,Load Connect,,
-2,Load Disconnect,,
-3,Load Transfer,,
-4,Power Limit,kW,
-5,Emergency Shed,,

@@ -1,8 +1,0 @@
-action_id,name,unit,description
-1,Start Inverter,,
-2,Stop Inverter,,
-3,Reset Inverter,,
-4,Clear Fault,,
-5,Power Setpoint,kW,
-6,Power Factor Setting,,
-7,Reactive Power Setting,kVar,

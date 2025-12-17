@@ -1,9 +1,0 @@
-action_id,name,unit,description
-1,Enable Converter,,
-2,Disable Converter,,
-3,Reset Converter,,
-4,Clear Fault,,
-5,Output Voltage Setpoint,V,
-6,Current Limit,A,
-7,MPPT Enable,,
-8,Operation Mode Selection,,
