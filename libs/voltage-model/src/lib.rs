@@ -8,14 +8,11 @@
 //! - `types`: Core domain types (PointType, PointRole, etc.)
 //! - `keyspace`: Redis key generation configuration
 //! - `validation`: Input validation utilities for instance names, product names, etc.
-//!
-//! # Note
-//!
-//! Product definitions are now loaded from database at runtime.
-//! See `modsrv::config` for runtime Product/Instance structures.
+//! - `product_lib`: Built-in product definitions (embedded at compile time)
 
 pub mod error;
 pub mod keyspace;
+pub mod product_lib;
 pub mod types;
 pub mod validation;
 

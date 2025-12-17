@@ -3595,6 +3595,7 @@ name = "voltage-model"
 version = "0.1.0"
 dependencies = [
  "csv",
+ "once_cell",
  "schemars",
  "serde",
  "serde_json",

@@ -24,6 +24,9 @@ utoipa = { workspace = true, optional = true }
 # Error handling
 thiserror = { workspace = true }
 
+# Lazy initialization
+once_cell = "1.19"
+
 # Parsing (for error conversion compatibility)
 csv = { workspace = true }
 
