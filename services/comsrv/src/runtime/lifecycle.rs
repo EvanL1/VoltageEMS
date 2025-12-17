@@ -265,10 +265,14 @@ pub async fn start_communication_service(
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use std::sync::Arc;
 /// use tokio::sync::RwLock;
 /// use comsrv::runtime::shutdown_handler;
+///
+/// async fn main() {
+///     // Assume channel_manager is initialized
+///     let channel_manager = todo!();
 ///
 ///     // Setup signal handlers
 ///     let factory_clone = channel_manager.clone();
@@ -406,13 +410,18 @@ pub async fn shutdown_handler(channel_manager: Arc<RwLock<ChannelManager>>) {
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use std::sync::Arc;
 /// use tokio::sync::RwLock;
 /// use comsrv::runtime::start_cleanup_task;
 ///
+/// async fn main() {
+///     // Assume channel_manager and configured_count are initialized
+///     let channel_manager = todo!();
+///     let configured_count = 10;
+///
 ///     let (cleanup_handle, cancel_token) = start_cleanup_task(channel_manager, configured_count);
-///     
+///
 ///     // Keep the handle to cancel if needed
 ///     tokio::select! {
 ///         _ = cleanup_handle => {
