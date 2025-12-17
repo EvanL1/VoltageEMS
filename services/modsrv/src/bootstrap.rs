@@ -564,7 +564,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
 ///
 /// @input pool: SQLite connection pool
 /// @input rtdb: Redis RTDB instance
-/// @output Result<usize> - Number of instances indexed
+/// @output `Result<usize>` - Number of instances indexed
 async fn rebuild_instance_name_index(
     pool: &SqlitePool,
     rtdb: &dyn voltage_rtdb::Rtdb,

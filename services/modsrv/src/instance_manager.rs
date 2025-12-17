@@ -53,7 +53,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Create a new instance based on a product template
     ///
     /// @input req: CreateInstanceRequest - Instance configuration
-    /// @output Result<Instance> - Created instance with all point routings
+    /// @output `Result<Instance>` - Created instance with all point routings
     /// @throws anyhow::Error - Instance exists, product not found, database error
     /// @side-effects Creates instance in SQLite, initializes Redis keys
     /// @transaction Full creation is atomic

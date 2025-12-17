@@ -27,7 +27,7 @@ use tracing_subscriber::{
     EnvFilter, Layer,
 };
 
-/// Custom format for log level with brackets: [INFO], [WARN], etc.
+/// Custom format for log level with brackets: `[INFO]`, `[WARN]`, etc.
 fn format_level(level: &Level) -> &'static str {
     match *level {
         Level::TRACE => "[TRACE]",

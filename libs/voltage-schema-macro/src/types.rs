@@ -1,7 +1,7 @@
 //! Rust type to SQLite type mapping
 //!
 //! This module provides automatic type mapping from Rust types to SQLite types,
-//! handling both basic types and complex cases like Option<T>.
+//! handling both basic types and complex cases like `Option<T>`.
 
 use crate::utils::*;
 use syn::Type;
@@ -19,7 +19,7 @@ use syn::Type;
 /// | DateTime, NaiveDateTime | TIMESTAMP |
 /// | Date, NaiveDate | DATE |
 /// | serde_json::Value, HashMap, BTreeMap | TEXT (stored as JSON) |
-/// | Vec<u8> | BLOB |
+/// | `Vec<u8>` | BLOB |
 /// | Other | TEXT (default) |
 ///
 /// # Examples
@@ -69,7 +69,7 @@ pub fn rust_to_sqlite_type(ty: &Type) -> String {
     }
 }
 
-/// Handle Optional types (Option<T>)
+/// Handle Optional types (`Option<T>`)
 ///
 /// Returns: (SQL type, is_optional)
 ///

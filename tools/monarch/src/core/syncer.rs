@@ -176,7 +176,7 @@ impl ConfigSyncer {
     /// Sync configuration for a specific service
     ///
     /// @input service: &str - Service name ("comsrv", "modsrv", "global")
-    /// @output Result<SyncResult> - Sync statistics (items synced, deleted, errors)
+    /// @output `Result<SyncResult>` - Sync statistics (items synced, deleted, errors)
     /// @throws anyhow::Error - Unknown service, database errors, file I/O errors
     /// @side-effects Clears and repopulates service database from YAML/CSV files
     pub async fn sync_service(&self, service: &str) -> Result<SyncResult> {
@@ -193,7 +193,7 @@ impl ConfigSyncer {
     /// Sync global configuration (shared across all services)
     ///
     /// @input self - Syncer with config and db paths
-    /// @output Result<SyncResult> - Items synced count
+    /// @output `Result<SyncResult>` - Items synced count
     /// @side-effects Database operations: DELETE global config, INSERT from config/global.yaml
     /// @transaction Full transaction - all or nothing
     pub async fn sync_global(&self) -> Result<SyncResult> {
@@ -241,7 +241,7 @@ impl ConfigSyncer {
     /// Sync comsrv configuration
     ///
     /// @input self - Syncer with config and db paths
-    /// @output Result<SyncResult> - Items synced/deleted counts
+    /// @output `Result<SyncResult>` - Items synced/deleted counts
     /// @side-effects Database operations: DELETE all, INSERT from config
     /// @transaction Full transaction - all or nothing
     /// @order 1. Delete mappings, 2. Delete points, 3. Delete channels, 4. Insert new data
@@ -386,7 +386,7 @@ impl ConfigSyncer {
     /// Sync modsrv configuration
     ///
     /// @input self - Syncer with config and db paths
-    /// @output Result<SyncResult> - Items synced/deleted counts with errors
+    /// @output `Result<SyncResult>` - Items synced/deleted counts with errors
     /// @side-effects Database operations: products, instances, point definitions
     /// @error-recovery Continues on individual item failures, collects all errors
     async fn sync_modsrv(&self) -> Result<SyncResult> {
@@ -1013,7 +1013,7 @@ impl ConfigSyncer {
     ///
     /// @input tx: &mut Transaction - Active database transaction
     /// @input config_dir: &Path - Directory containing product definitions
-    /// @output Result<usize> - Number of items successfully synced
+    /// @output `Result<usize>` - Number of items successfully synced
     /// @loads products.yaml - Product hierarchy definitions
     /// @loads {product}/measurements.csv - Measurement point definitions
     /// @loads {product}/actions.csv - Action point definitions

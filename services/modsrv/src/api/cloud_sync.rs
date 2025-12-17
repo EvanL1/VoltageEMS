@@ -191,7 +191,7 @@ pub async fn sync_products(
 /// Used for edge → cloud synchronization.
 ///
 /// @route GET /api/instances/export
-/// @output Json<SuccessResponse<InstanceTopology>> - Instance topology
+/// @output `Json<SuccessResponse<InstanceTopology>>` - Instance topology
 /// @status 200 - Success with instances
 /// @status 500 - Database error
 #[cfg_attr(feature = "swagger-ui", utoipa::path(

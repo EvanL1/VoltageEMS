@@ -43,8 +43,8 @@ pub trait ComBase: Send + Sync {
 
     /// Initialize channel (load point configuration)
     ///
-    /// @input runtime_config: Arc<RuntimeChannelConfig> - Point definitions and mappings
-    /// @output Result<()> - Success or initialization error
+    /// @input runtime_config: `Arc<RuntimeChannelConfig>` - Point definitions and mappings
+    /// @output `Result<()>` - Success or initialization error
     /// @side-effects Loads protocol mappings into memory
     /// @lifecycle Called once during channel creation
     async fn initialize(&mut self, runtime_config: Arc<RuntimeChannelConfig>) -> Result<()>;
@@ -53,7 +53,7 @@ pub trait ComBase: Send + Sync {
     /// Each telemetry type should be handled independently with its own configuration
     ///
     /// @input telemetry_type: FourRemote - T|S|C|A type to read
-    /// @output Result<PointDataMap> - Point ID to value mapping
+    /// @output `Result<PointDataMap>` - Point ID to value mapping
     /// @redis-read comsrv:{channel}:{type} - Cached telemetry data
     /// @philosophy Four-telemetry isolation for clean data management
     async fn read_four_telemetry(&self, telemetry_type: FourRemote) -> Result<PointDataMap>;
@@ -83,7 +83,7 @@ pub trait ComClient: ComBase {
 
     /// Connect to target system
     ///
-    /// @output Result<()> - Connection success or error
+    /// @output `Result<()>` - Connection success or error
     /// @side-effects Establishes TCP/Serial/gRPC connection
     /// @retry Automatic reconnection on failure
     async fn connect(&mut self) -> Result<()>;
@@ -93,16 +93,16 @@ pub trait ComClient: ComBase {
 
     /// Execute control command (actively send)
     ///
-    /// @input commands: Vec<(u32, ProtocolValue)> - Point ID and value pairs
-    /// @output Result<Vec<(u32, bool)>> - Execution results per point
+    /// @input commands: `Vec<(u32, ProtocolValue)>` - Point ID and value pairs
+    /// @output `Result<Vec<(u32, bool)>>` - Execution results per point
     /// @protocol-write Send YK control commands to device
     /// @redis-write comsrv:{channel}:C - Control status
     async fn control(&mut self, commands: Vec<(u32, ProtocolValue)>) -> Result<Vec<(u32, bool)>>;
 
     /// Execute adjustment command (actively send)
     ///
-    /// @input adjustments: Vec<(u32, ProtocolValue)> - Point ID and value pairs
-    /// @output Result<Vec<(u32, bool)>> - Execution results per point
+    /// @input adjustments: `Vec<(u32, ProtocolValue)>` - Point ID and value pairs
+    /// @output `Result<Vec<(u32, bool)>>` - Execution results per point
     /// @protocol-write Send YT adjustment commands to device
     /// @redis-write comsrv:{channel}:A - Adjustment status
     async fn adjustment(
@@ -137,7 +137,7 @@ pub trait ComClient: ComBase {
     /// Try to reconnect when connection is lost
     /// Default implementation: disconnect and reconnect with delay
     ///
-    /// @output Result<()> - Reconnection success or error
+    /// @output `Result<()>` - Reconnection success or error
     /// @side-effects Drops old connection and creates new one
     /// @delay 1000ms between disconnect and reconnect
     async fn try_reconnect(&mut self) -> Result<()> {

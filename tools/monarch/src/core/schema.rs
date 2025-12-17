@@ -52,8 +52,8 @@ const RULE_HISTORY_TABLE: &str = r#"
 /// Creates all tables, indexes, and triggers needed by VoltageEMS services.
 /// This is a unified initialization that replaces the old per-service approach.
 ///
-/// @input db_path: impl AsRef<Path> - Path to SQLite database file
-/// @output Result<()> - Success or initialization error
+/// @input db_path: `impl AsRef<Path>` - Path to SQLite database file
+/// @output `Result<()>` - Success or initialization error
 /// @throws anyhow::Error - Database connection or schema creation failure
 /// @side-effects Creates database file if not exists, creates all tables/indexes/triggers
 pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {

@@ -13,7 +13,7 @@ use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
 ///
 /// @route GET /api/status
 /// @input State(state): AppState - Application state with factory
-/// @output Json<SuccessResponse<ServiceStatus>> - Service status including channels
+/// @output `Json<SuccessResponse<ServiceStatus>>` - Service status including channels
 /// @status 200 - Success with {total_channels, active_channels, uptime, version}
 /// @status 500 - Internal server error
 #[utoipa::path(
@@ -52,7 +52,7 @@ pub async fn get_service_status(
 ///
 /// @route GET /health
 /// @input None
-/// @output Json<SuccessResponse<HealthStatus>> - Health status metrics
+/// @output `Json<SuccessResponse<HealthStatus>>` - Health status metrics
 /// @status 200 - Service is healthy
 /// @status 503 - Service is unhealthy
 #[utoipa::path(

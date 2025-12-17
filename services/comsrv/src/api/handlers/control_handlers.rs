@@ -23,7 +23,7 @@ use voltage_rtdb::KeySpaceConfig;
 /// @input State(state): AppState - Application state with factory
 /// @input Path(id): String - Channel identifier
 /// @input Json(operation): ChannelOperation - Operation to perform (start/stop/restart)
-/// @output Json<ApiResponse<String>> - Operation result message
+/// @output `Json<ApiResponse<String>>` - Operation result message
 /// @status 200 - Operation completed successfully
 /// @status 404 - Channel not found
 /// @status 500 - Operation failed

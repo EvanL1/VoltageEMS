@@ -42,7 +42,7 @@ struct RoutingEntry {
 /// Returns all routing entries in the system, categorized by type.
 ///
 /// @route GET /api/routing
-/// @output Json<SuccessResponse<Value>> - All routing configurations
+/// @output `Json<SuccessResponse<Value>>` - All routing configurations
 /// @status 200 - Success with all routing entries
 /// @status 500 - Database error
 #[utoipa::path(
@@ -165,7 +165,7 @@ pub async fn get_all_routing_handler(
 ///
 /// @route DELETE /api/routing?confirm=true
 /// @input Query(confirm): bool - Confirmation flag (must be true)
-/// @output Json<SuccessResponse<Value>> - Deletion result
+/// @output `Json<SuccessResponse<Value>>` - Deletion result
 /// @status 200 - Success with deletion counts
 /// @status 400 - Confirmation not provided
 /// @status 500 - Database error
@@ -243,7 +243,7 @@ pub async fn delete_all_routing_handler(
 ///
 /// @route GET /api/routing/by-channel/{channel_id}
 /// @input Path(channel_id): u16 - Channel ID
-/// @output Json<SuccessResponse<Value>> - Channel routing entries
+/// @output `Json<SuccessResponse<Value>>` - Channel routing entries
 /// @status 200 - Success with uplink and downlink routing
 /// @status 500 - Database error
 #[utoipa::path(
@@ -333,7 +333,7 @@ pub async fn get_routing_by_channel_handler(
 ///
 /// @route DELETE /api/routing/instances/{instance_name}
 /// @input Path(instance_name): String - Instance name
-/// @output Json<SuccessResponse<Value>> - Deletion result
+/// @output `Json<SuccessResponse<Value>>` - Deletion result
 /// @status 200 - Success with deletion counts
 /// @status 500 - Database error
 #[utoipa::path(
@@ -409,7 +409,7 @@ pub async fn delete_instance_routing_handler(
 ///
 /// @route DELETE /api/routing/channels/{channel_id}
 /// @input Path(channel_id): u16 - Channel ID
-/// @output Json<SuccessResponse<Value>> - Deletion result
+/// @output `Json<SuccessResponse<Value>>` - Deletion result
 /// @status 200 - Success with deletion counts
 /// @status 500 - Database error
 #[utoipa::path(

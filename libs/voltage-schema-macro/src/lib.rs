@@ -77,8 +77,8 @@ mod utils;
 /// | DateTime, NaiveDateTime | TIMESTAMP |
 /// | Date, NaiveDate | DATE |
 /// | serde_json::Value, HashMap | TEXT (JSON) |
-/// | Vec<u8> | BLOB |
-/// | Option<T> | (nullable) |
+/// | `Vec<u8>` | BLOB |
+/// | `Option<T>` | (nullable) |
 ///
 /// # Example with Foreign Keys
 ///

@@ -213,7 +213,7 @@ async fn perform_hot_reload(
 /// @route POST /api/channels
 /// @input State(state): AppState - Application state with manager and SQLite
 /// @input Json(req): ChannelCreateRequest - Channel configuration
-/// @output Json<ApiResponse<ChannelCrudResult>> - Creation result
+/// @output `Json<ApiResponse<ChannelCrudResult>>` - Creation result
 /// @status 200 - Channel created and started successfully
 /// @status 400 - Invalid request or validation error
 /// @status 500 - Database or runtime error
@@ -472,7 +472,7 @@ pub async fn create_channel_handler(
 /// @input Path(id): u16 - Channel ID to update
 /// @input State(state): AppState - Application state
 /// @input Json(req): ChannelConfigUpdateRequest - Update parameters
-/// @output Json<ApiResponse<ChannelCrudResult>> - Update result
+/// @output `Json<ApiResponse<ChannelCrudResult>>` - Update result
 /// @status 200 - Channel updated successfully
 /// @status 404 - Channel not found
 /// @status 500 - Database or runtime error
@@ -731,7 +731,7 @@ pub async fn update_channel_handler(
 /// @input Path(id): u16 - Channel ID
 /// @input State(state): AppState - Application state
 /// @input Json(req): ChannelEnabledRequest - Enabled state
-/// @output Json<ApiResponse<ChannelCrudResult>> - Operation result
+/// @output `Json<ApiResponse<ChannelCrudResult>>` - Operation result
 /// @status 200 - State changed successfully
 /// @status 404 - Channel not found
 /// @status 500 - Database or runtime error
@@ -923,7 +923,7 @@ pub async fn set_channel_enabled_handler(
 /// @route DELETE /api/channels/{id}
 /// @input Path(id): u16 - Channel ID to delete
 /// @input State(state): AppState - Application state
-/// @output Json<ApiResponse<String>> - Deletion result
+/// @output `Json<ApiResponse<String>>` - Deletion result
 /// @status 200 - Channel deleted successfully
 /// @status 404 - Channel not found
 /// @status 500 - Database or runtime error
@@ -996,7 +996,7 @@ pub async fn delete_channel_handler(
 ///
 /// @route POST /api/channels/reload
 /// @input State(state): AppState - Application state
-/// @output Json<ApiResponse<ReloadConfigResult>> - Reload result
+/// @output `Json<ApiResponse<ReloadConfigResult>>` - Reload result
 /// @status 200 - Reload completed (may have errors)
 /// @side-effects Synchronizes runtime with SQLite configuration
 #[utoipa::path(
@@ -1205,7 +1205,7 @@ pub async fn reload_configuration_handler(
 ///
 /// @route POST /api/routing/reload
 /// @input State(state): AppState - Application state
-/// @output Json<ApiResponse<RoutingReloadResult>> - Routing reload result
+/// @output `Json<ApiResponse<RoutingReloadResult>>` - Routing reload result
 /// @status 200 - Routing cache refreshed successfully
 /// @status 500 - Internal server error
 /// @side-effects Updates in-memory routing cache with latest data from SQLite

@@ -44,7 +44,7 @@ fn default_page_size() -> u32 {
 /// List instances with optional product filter and pagination
 ///
 /// @route GET /api/instances?product_name={optional}&page={optional}&page_size={optional}
-/// @input State(state): Arc<AppState> - Application state
+/// @input State(state): `Arc<AppState>` - Application state
 /// @input Query(query): PaginationQuery - Pagination and filter parameters
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, AppError> - Paginated instances
 /// @status 200 - Success with total, list, page, page_size
@@ -125,8 +125,8 @@ pub async fn list_instances(
 /// - Empty keyword returns all instances
 ///
 /// @route GET /api/instances/search?{keyword}
-/// @input State(state): Arc<AppState> - Application state
-/// @input RawQuery(raw_query): Option<String> - Raw query string as keyword
+/// @input State(state): `Arc<AppState>` - Application state
+/// @input RawQuery(raw_query): `Option<String>` - Raw query string as keyword
 /// @output Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> - Matching instances
 /// @status 200 - Success with list of matching instances
 /// @status 500 - Database error
@@ -447,7 +447,7 @@ pub async fn get_instance_data(
 ///
 /// @route GET /api/instances/{id}/points
 /// @input Path(id): u16 - Instance ID
-/// @output Result<Json<SuccessResponse<InstancePointsResponse>>, AppError> - Points with routing
+/// @output `Result<Json<SuccessResponse<InstancePointsResponse>>, AppError>` - Points with routing
 /// @status 200 - Success with point definitions
 /// @status 404 - Instance not found
 /// @status 500 - Database error

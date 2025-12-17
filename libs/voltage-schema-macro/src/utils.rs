@@ -24,9 +24,9 @@ pub fn extract_type_name(ty: &Type) -> String {
     }
 }
 
-/// Extract inner type from Option<T>
+/// Extract inner type from `Option<T>`
 ///
-/// Returns Some(&T) if the type is Option<T>, None otherwise
+/// Returns `Some(&T)` if the type is `Option<T>`, None otherwise
 pub fn extract_option_inner(ty: &Type) -> Option<&Type> {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {
@@ -42,7 +42,7 @@ pub fn extract_option_inner(ty: &Type) -> Option<&Type> {
     None
 }
 
-/// Check if type is Vec<u8>
+/// Check if type is `Vec<u8>`
 pub fn is_u8_vec(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = ty {
         if let Some(segment) = path.segments.last() {

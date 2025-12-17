@@ -224,7 +224,7 @@ pub async fn create_instance_routing(
 ///
 /// @route PUT /api/instances/{id}/routing
 /// @input Path(id): u16 - Instance ID
-/// @input Json(routings): Vec<RoutingRequest> - Routings to upsert
+/// @input Json(routings): `Vec<RoutingRequest>` - Routings to upsert
 /// @output Json<SuccessResponse<serde_json::Value>> - Update result
 /// @status 200 - Success with count
 /// @status 400 - Validation errors
@@ -457,7 +457,7 @@ pub async fn update_instance_routing(
 /// Delete all routings for an instance
 ///
 /// @route DELETE /api/instances/{id}/routing
-/// @input id: Path<u32> - Instance ID
+/// @input id: `Path<u32>` - Instance ID
 /// @output Json<SuccessResponse<serde_json::Value>> - Success status with deleted count
 /// @throws sqlx::Error - Database deletion error
 /// @redis-delete route:c2m - Removes all routings for instance
@@ -512,8 +512,8 @@ pub async fn delete_instance_routing(
 /// Validate routing for an instance
 ///
 /// @route POST /api/instances/{id}/routing/validate
-/// @input id: Path<u32> - Instance ID
-/// @input routings: Json<Vec<RoutingRequest>> - Routings to validate
+/// @input id: `Path<u32>` - Instance ID
+/// @input routings: `Json<Vec<RoutingRequest>>` - Routings to validate
 /// @output Json<SuccessResponse<serde_json::Value>> - Validation results for each routing
 /// @throws None - Validation errors are returned in response
 /// @redis-read Products and instance configurations

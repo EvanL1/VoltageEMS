@@ -351,7 +351,7 @@ pub trait ComBase: Send + Sync {
 
     /// Initialize channel (load point configuration)
     ///
-    /// @input runtime_config: Arc<dyn RuntimeConfig> - Point definitions and mappings
+    /// @input runtime_config: `Arc<dyn RuntimeConfig>` - Point definitions and mappings
     /// @output Result<()> - Success or initialization error
     /// @side-effects Loads protocol mappings into memory
     /// @lifecycle Called once during channel creation
@@ -361,7 +361,7 @@ pub trait ComBase: Send + Sync {
     /// Each telemetry type should be handled independently with its own configuration
     ///
     /// @input telemetry_type: FourRemote - T|S|C|A type to read
-    /// @output Result<PointDataMap> - Point ID to value mapping
+    /// @output `Result<PointDataMap>` - Point ID to value mapping
     /// @redis-read comsrv:{channel}:{type} - Cached telemetry data
     /// @philosophy Four-telemetry isolation for clean data management
     async fn read_four_telemetry(&self, telemetry_type: FourRemote) -> Result<PointDataMap>;

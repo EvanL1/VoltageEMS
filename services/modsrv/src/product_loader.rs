@@ -234,7 +234,7 @@ impl ProductLoader {
     /// Get a complete product with nested structure
     ///
     /// @input product_name: &str - Product identifier to retrieve
-    /// @output Result<Product> - Product with all point definitions
+    /// @output `Result<Product>` - Product with all point definitions
     /// @throws anyhow::Error - Product not found or database error
     /// @loads measurement_points, action_points, property_templates tables
     /// @side-effects None (read-only)
@@ -325,7 +325,7 @@ impl ProductLoader {
     /// Get all products
     ///
     /// @input None
-    /// @output Result<Vec<Product>> - All products with complete definitions
+    /// @output `Result<Vec<Product>>` - All products with complete definitions
     /// @throws anyhow::Error - Database query error
     /// @side-effects None (read-only)
     /// @performance O(n*m) where n=products, m=points per product
@@ -347,7 +347,7 @@ impl ProductLoader {
     /// Get product hierarchy
     ///
     /// @input None
-    /// @output Result<ProductHierarchy> - Vec<(product_name, parent_name)> tuples
+    /// @output `Result<ProductHierarchy>` - `Vec<(product_name, parent_name)>` tuples
     /// @throws anyhow::Error - Database query error
     /// @side-effects None (read-only)
     /// @returns Flat list of parent-child relationships
@@ -368,7 +368,7 @@ impl ProductLoader {
     /// Ideal for frontend dropdown lists or selection interfaces.
     ///
     /// @input None
-    /// @output Result<Vec<(String, Option<String>)>> - Vec of (product_name, parent_name) tuples
+    /// @output `Result<Vec<(String, Option<String>)>>` - Vec of (product_name, parent_name) tuples
     /// @throws anyhow::Error - Database query error
     /// @side-effects None (read-only)
     /// @performance O(n) where n=product count - much faster than get_all_products()

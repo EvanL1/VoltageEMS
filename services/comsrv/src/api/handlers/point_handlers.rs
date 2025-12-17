@@ -20,7 +20,7 @@ use axum::{
 /// @route GET /api/channels/{channel_id}/{telemetry_type}/{point_id}
 /// @input State(state): AppState - Application state with Redis client
 /// @input Path((channel_id, telemetry_type, point_id)): (u16, String, u32) - Identifiers
-/// @output Json<ApiResponse<Value>> - Point information JSON
+/// @output `Json<ApiResponse<Value>>` - Point information JSON
 /// @status 200 - Point information retrieved
 /// @status 400 - Invalid telemetry type
 /// @status 500 - Redis operation failed
@@ -113,9 +113,9 @@ pub async fn get_point_info_handler(
 ///
 /// @route GET /api/channels/{id}/points
 /// @input Path(id): u16 - Channel ID
-/// @input Query(query): Option<String> - Point type filter (T/S/C/A)
+/// @input Query(query): `Option<String>` - Point type filter (T/S/C/A)
 /// @input State(state): AppState - Application state
-/// @output Json<ApiResponse<GroupedPoints>> - Grouped point definitions by type
+/// @output `Json<ApiResponse<GroupedPoints>>` - Grouped point definitions by type
 /// @status 200 - Points retrieved successfully
 /// @status 404 - Channel not found
 /// @status 500 - Database error
@@ -683,7 +683,7 @@ pub struct PointBatchError {
 /// @route POST /api/channels/{channel_id}/T/points/{point_id}
 /// @input Path((channel_id, point_id)): (u16, u32) - Channel and point identifiers
 /// @input Json(point): TelemetryPoint - Point configuration
-/// @output Json<ApiResponse<PointCrudResult>> - Creation result
+/// @output `Json<ApiResponse<PointCrudResult>>` - Creation result
 /// @status 201 - Point created successfully
 /// @status 400 - Invalid request
 /// @status 404 - Channel not found
@@ -1229,7 +1229,7 @@ pub struct PointUpdateRequest {
 /// @route PUT /api/channels/{channel_id}/{type}/points/{point_id}
 /// @input Path((channel_id, point_type, point_id)): (u16, String, u32) - Identifiers
 /// @input Json(update): PointUpdateRequest - Fields to update
-/// @output Json<ApiResponse<PointCrudResult>> - Update result
+/// @output `Json<ApiResponse<PointCrudResult>>` - Update result
 /// @status 200 - Point updated successfully
 /// @status 400 - Invalid point type
 /// @status 404 - Channel or point not found
@@ -1448,7 +1448,7 @@ pub async fn update_point_handler(
 ///
 /// @route GET /api/channels/{channel_id}/{type}/points/{point_id}/config
 /// @input Path((channel_id, point_type, point_id)): (u16, String, u32) - Identifiers
-/// @output Json<ApiResponse<PointDefinition>> - Complete point configuration
+/// @output `Json<ApiResponse<PointDefinition>>` - Complete point configuration
 /// @status 200 - Point configuration retrieved
 /// @status 400 - Invalid point type
 /// @status 404 - Channel or point not found
@@ -1632,7 +1632,7 @@ pub async fn get_adjustment_point_config_handler(
 ///
 /// @route DELETE /api/channels/{channel_id}/{type}/points/{point_id}
 /// @input Path((channel_id, point_type, point_id)): (u16, String, u32) - Identifiers
-/// @output Json<ApiResponse<PointCrudResult>> - Deletion result
+/// @output `Json<ApiResponse<PointCrudResult>>` - Deletion result
 /// @status 200 - Point deleted successfully
 /// @status 400 - Invalid point type
 /// @status 404 - Channel or point not found
@@ -1908,7 +1908,7 @@ pub async fn delete_adjustment_point_handler(
 /// @route GET /api/channels/{id}/unmapped-points
 /// @input Path(channel_id): u16 - Channel ID
 /// @input Query(params): type filter (T/S/C/A, optional)
-/// @output Json<ApiResponse<GroupedPoints>> - Unmapped points grouped by type
+/// @output `Json<ApiResponse<GroupedPoints>>` - Unmapped points grouped by type
 /// @status 200 - Unmapped points retrieved successfully
 /// @status 404 - Channel not found
 /// @status 500 - Database error
@@ -2201,7 +2201,7 @@ pub async fn get_unmapped_points_handler(
 /// @route POST /api/channels/{channel_id}/points/batch
 /// @input Path(channel_id): u16 - Channel identifier
 /// @input Json(request): PointBatchRequest - Batch operations request
-/// @output Json<SuccessResponse<PointBatchResult>> - Batch operation results
+/// @output `Json<SuccessResponse<PointBatchResult>>` - Batch operation results
 /// @status 200 - Batch operation completed (may contain partial failures)
 /// @status 400 - Invalid request (empty operations)
 /// @status 404 - Channel not found

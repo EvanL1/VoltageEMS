@@ -76,7 +76,7 @@ struct GpioMappingValidator {
 /// @route GET /api/channels/{id}/mappings
 /// @input Path(channel_id): u16 - Channel ID
 /// @input State(state): AppState - Application state
-/// @output Json<ApiResponse<GroupedMappings>> - Grouped point mappings by type
+/// @output `Json<ApiResponse<GroupedMappings>>` - Grouped point mappings by type
 /// @status 200 - Mappings retrieved successfully
 /// @status 404 - Channel not found
 /// @status 500 - Database error
@@ -194,7 +194,7 @@ pub async fn get_channel_mappings_handler(
 /// @input Path(channel_id): u16 - Channel ID
 /// @input State(state): AppState - Application state
 /// @input Json(req): MappingBatchUpdateRequest - Batch mapping update request
-/// @output Json<ApiResponse<MappingBatchUpdateResult>> - Update result
+/// @output `Json<ApiResponse<MappingBatchUpdateResult>>` - Update result
 /// @status 200 - Mappings updated successfully
 /// @status 400 - Validation error
 /// @status 404 - Channel not found
