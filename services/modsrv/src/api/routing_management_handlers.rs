@@ -19,22 +19,6 @@ use crate::dto::{PointType, RoutingRequest};
 use crate::error::ModSrvError;
 use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 
-/// Internal routing type for handler logic
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum RoutingType {
-    Measurement,
-    Action,
-}
-
-impl From<PointType> for RoutingType {
-    fn from(pt: PointType) -> Self {
-        match pt {
-            PointType::Measurement => RoutingType::Measurement,
-            PointType::Action => RoutingType::Action,
-        }
-    }
-}
-
 /// Create a new routing for an instance
 ///
 /// Creates a new channel-to-instance point routing. Validates that both
@@ -111,11 +95,11 @@ pub async fn create_instance_routing(
     let instance_name = &instance.core.instance_name;
 
     // Get routing type from request (explicit M/A specification)
-    let routing_type: RoutingType = routing.point_type.into();
+    let routing_type = routing.point_type;
 
     // Validate based on routing type (determined by point_id, not four_remote)
     let validation_result = match routing_type {
-        RoutingType::Measurement => {
+        PointType::Measurement => {
             let routing_row = MeasurementRoutingRow {
                 channel_id: routing.channel_id,
                 channel_type: routing.four_remote,
@@ -127,7 +111,7 @@ pub async fn create_instance_routing(
                 .validate_measurement_routing(&routing_row, instance_name)
                 .await
         },
-        RoutingType::Action => {
+        PointType::Action => {
             let routing_row = ActionRoutingRow {
                 action_id: routing.point_id,
                 channel_id: routing.channel_id,
@@ -160,7 +144,7 @@ pub async fn create_instance_routing(
 
     // Insert into database based on routing type (M or A)
     let insert_result = match routing_type {
-        RoutingType::Measurement => {
+        PointType::Measurement => {
             sqlx::query(
                 r#"
                 INSERT INTO measurement_routing
@@ -178,7 +162,7 @@ pub async fn create_instance_routing(
             .execute(&state.instance_manager.pool)
             .await
         },
-        RoutingType::Action => {
+        PointType::Action => {
             sqlx::query(
                 r#"
                 INSERT INTO action_routing
@@ -296,20 +280,20 @@ pub async fn update_instance_routing(
 
     for routing in routings {
         // Get routing type from request (explicit M/A specification)
-        let routing_type: RoutingType = routing.point_type.into();
+        let routing_type = routing.point_type;
 
         // Handle unbind routing: when channel_id is None, DELETE instead of UPSERT
         // This supports: null, "", or omitted field → None → DELETE
         if routing.channel_id.is_none() {
             let result = match routing_type {
-                RoutingType::Measurement => sqlx::query(
+                PointType::Measurement => sqlx::query(
                     "DELETE FROM measurement_routing WHERE instance_id = ? AND measurement_id = ?",
                 )
                 .bind(id)
                 .bind(routing.point_id)
                 .execute(&mut *tx)
                 .await,
-                RoutingType::Action => {
+                PointType::Action => {
                     sqlx::query(
                         "DELETE FROM action_routing WHERE instance_id = ? AND action_id = ?",
                     )
@@ -342,7 +326,7 @@ pub async fn update_instance_routing(
 
         // Validate based on routing type (determined by point_id, not four_remote)
         let validation_result = match routing_type {
-            RoutingType::Measurement => {
+            PointType::Measurement => {
                 let routing_row = MeasurementRoutingRow {
                     channel_id: routing.channel_id,
                     channel_type: routing.four_remote,
@@ -354,7 +338,7 @@ pub async fn update_instance_routing(
                     .validate_measurement_routing(&routing_row, instance_name)
                     .await
             },
-            RoutingType::Action => {
+            PointType::Action => {
                 let routing_row = ActionRoutingRow {
                     action_id: routing.point_id,
                     channel_id: routing.channel_id,
@@ -383,7 +367,7 @@ pub async fn update_instance_routing(
 
         // UPSERT into appropriate table based on routing type (M or A)
         let result = match routing_type {
-            RoutingType::Measurement => {
+            PointType::Measurement => {
                 sqlx::query(
                     r#"
                     INSERT INTO measurement_routing
@@ -407,7 +391,7 @@ pub async fn update_instance_routing(
                 .execute(&mut *tx)
                 .await
             },
-            RoutingType::Action => {
+            PointType::Action => {
                 sqlx::query(
                     r#"
                     INSERT INTO action_routing
@@ -599,11 +583,11 @@ pub async fn validate_instance_routing(
         }
 
         // Get routing type from request (explicit M/A specification)
-        let routing_type: RoutingType = routing.point_type.into();
+        let routing_type = routing.point_type;
 
         // Validate based on routing type
         let validation_result = match routing_type {
-            RoutingType::Measurement => {
+            PointType::Measurement => {
                 // Measurement routing (T/S → M)
                 let routing_row = MeasurementRoutingRow {
                     channel_id: routing.channel_id,
@@ -616,7 +600,7 @@ pub async fn validate_instance_routing(
                     .validate_measurement_routing(&routing_row, instance_name)
                     .await
             },
-            RoutingType::Action => {
+            PointType::Action => {
                 // Action routing (A → C/A)
                 let routing_row = ActionRoutingRow {
                     action_id: routing.point_id,

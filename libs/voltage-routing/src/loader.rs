@@ -19,11 +19,6 @@ pub struct RoutingMaps {
 }
 
 impl RoutingMaps {
-    /// Create empty routing maps
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Get total route count
     pub fn total_routes(&self) -> usize {
         self.c2m.len() + self.m2c.len() + self.c2c.len()
@@ -52,7 +47,7 @@ pub async fn load_routing_maps(sqlite_pool: &sqlx::SqlitePool) -> Result<Routing
     debug!("Loading routing maps from SQLite");
 
     let keyspace = KeySpaceConfig::production();
-    let mut maps = RoutingMaps::new();
+    let mut maps = RoutingMaps::default();
 
     // Load C2M routing (measurement_routing table)
     load_c2m_routes(sqlite_pool, &keyspace, &mut maps.c2m).await?;
@@ -204,8 +199,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_routing_maps_new() {
-        let maps = RoutingMaps::new();
+    fn test_routing_maps_default() {
+        let maps = RoutingMaps::default();
         assert!(maps.c2m.is_empty());
         assert!(maps.m2c.is_empty());
         assert!(maps.c2c.is_empty());

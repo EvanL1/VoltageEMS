@@ -431,18 +431,19 @@ async fn test_m2c_write_triggers_routing_order() -> Result<()> {
 /// Given: 配置格式错误的路由目标（缺少字段）
 /// When: 设置动作点
 /// Then:
-///   - 路由失败但操作成功
-///   - 实例 Hash 未写入（因为路由解析失败导致提前返回）
-///   - route_result 指示错误
+///   - 无效条目在加载时被过滤（fail-fast）
+///   - lookup 返回 None，走 no_route 分支
+///   - 操作成功但未路由
 #[tokio::test]
 async fn test_m2c_invalid_route_target() -> Result<()> {
     // Given: 配置无效的路由目标（格式错误）
+    // 注意: RoutingCache::from_maps 会在加载时过滤掉无效条目
     let rtdb = Arc::new(MemoryRtdb::new());
     rtdb.hash_set("inst:name:index", "inverter_01", Bytes::from("23"))
         .await?;
 
     let mut m2c_map = HashMap::new();
-    m2c_map.insert("23:A:1".to_string(), "invalid_target".to_string()); // 错误格式
+    m2c_map.insert("23:A:1".to_string(), "invalid_target".to_string()); // 错误格式，会被过滤
     let routing_cache = Arc::new(RoutingCache::from_maps(
         HashMap::new(),
         m2c_map,
@@ -452,23 +453,19 @@ async fn test_m2c_invalid_route_target() -> Result<()> {
     // When: 设置动作点
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 50.0).await?;
 
-    // Then: 操作成功但路由失败
+    // Then: 操作成功但未路由（无效条目在加载时已被过滤）
     assert!(outcome.is_success(), "Operation should succeed");
     assert!(!outcome.routed, "Routing should fail for invalid target");
 
-    // 验证 route_result 指示了无效的路由目标
+    // 验证 route_result 指示无路由（因为无效条目在加载时被过滤）
     if let Some(route_result) = &outcome.route_result {
-        assert!(
-            route_result.starts_with("invalid_route_target"),
-            "Should indicate invalid route target, got: {}",
-            route_result
+        assert_eq!(
+            route_result, "no_route",
+            "Should indicate no_route since invalid entries are filtered at load time"
         );
     } else {
-        panic!("Expected route_result with error message, got None");
+        panic!("Expected route_result with no_route, got None");
     }
-
-    // 注意: 由于路由解析失败,实例 Hash 不会被写入（提前返回）
-    // 这是预期行为,保护数据一致性
 
     Ok(())
 }

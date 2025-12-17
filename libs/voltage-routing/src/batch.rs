@@ -10,7 +10,7 @@ use tracing::debug;
 use voltage_model::PointType;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, WriteBuffer};
 
-use crate::{lookup_c2c_target, lookup_c2m_target, MAX_C2C_CASCADE_DEPTH};
+use crate::MAX_C2C_CASCADE_DEPTH;
 
 /// Channel point update for batch operations
 #[derive(Debug, Clone)]
@@ -127,34 +127,29 @@ where
             let raw_value = update.raw_value.unwrap_or(update.value);
             points_3layer.push((update.point_id, update.value, raw_value));
 
-            // C2M routing lookup
-            if let Some(target) =
-                lookup_c2m_target(routing_cache, channel_id, point_type_str, update.point_id)
-            {
+            // C2M routing lookup - directly use RoutingCache
+            let route_key = format!("{}:{}:{}", channel_id, point_type_str, update.point_id);
+            if let Some(target) = routing_cache.lookup_c2m(&route_key) {
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
                     .push((
-                        target.measurement_id.to_string(),
+                        target.point_id.to_string(),
                         bytes::Bytes::from(update.value.to_string()),
                     ));
             }
 
-            // C2C routing lookup
+            // C2C routing lookup - directly use RoutingCache
             if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
-                if let Some(target) =
-                    lookup_c2c_target(routing_cache, channel_id, point_type_str, update.point_id)
-                {
-                    if let Some(target_point_type) = PointType::from_str(&target.point_type) {
-                        c2c_forwards.push(ChannelPointUpdate {
-                            channel_id: target.channel_id,
-                            point_type: target_point_type,
-                            point_id: target.point_id,
-                            value: update.value,
-                            raw_value: update.raw_value,
-                            cascade_depth: update.cascade_depth + 1,
-                        });
-                    }
+                if let Some(target) = routing_cache.lookup_c2c(&route_key) {
+                    c2c_forwards.push(ChannelPointUpdate {
+                        channel_id: target.channel_id,
+                        point_type: target.point_type,
+                        point_id: target.point_id,
+                        value: update.value,
+                        raw_value: update.raw_value,
+                        cascade_depth: update.cascade_depth + 1,
+                    });
                 }
             }
         }
@@ -249,34 +244,29 @@ pub fn write_channel_batch_buffered(
             let raw_value = update.raw_value.unwrap_or(update.value);
             points_3layer.push((update.point_id, update.value, raw_value));
 
-            // C2M routing lookup
-            if let Some(target) =
-                lookup_c2m_target(routing_cache, channel_id, point_type_str, update.point_id)
-            {
+            // C2M routing lookup - directly use RoutingCache
+            let route_key = format!("{}:{}:{}", channel_id, point_type_str, update.point_id);
+            if let Some(target) = routing_cache.lookup_c2m(&route_key) {
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
                     .push((
-                        target.measurement_id.to_string(),
+                        target.point_id.to_string(),
                         bytes::Bytes::from(update.value.to_string()),
                     ));
             }
 
-            // C2C routing lookup
+            // C2C routing lookup - directly use RoutingCache
             if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
-                if let Some(target) =
-                    lookup_c2c_target(routing_cache, channel_id, point_type_str, update.point_id)
-                {
-                    if let Some(target_point_type) = PointType::from_str(&target.point_type) {
-                        c2c_forwards.push(ChannelPointUpdate {
-                            channel_id: target.channel_id,
-                            point_type: target_point_type,
-                            point_id: target.point_id,
-                            value: update.value,
-                            raw_value: update.raw_value,
-                            cascade_depth: update.cascade_depth + 1,
-                        });
-                    }
+                if let Some(target) = routing_cache.lookup_c2c(&route_key) {
+                    c2c_forwards.push(ChannelPointUpdate {
+                        channel_id: target.channel_id,
+                        point_type: target.point_type,
+                        point_id: target.point_id,
+                        value: update.value,
+                        raw_value: update.raw_value,
+                        cascade_depth: update.cascade_depth + 1,
+                    });
                 }
             }
         }

@@ -21,9 +21,8 @@ pub use loader::{load_routing_maps, RoutingMaps};
 // Re-export RoutingCache for convenience
 pub use voltage_rtdb::RoutingCache;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
-use serde::Deserialize;
 use voltage_rtdb::Rtdb;
 
 /// Structured representation of an action routing outcome.
@@ -61,80 +60,6 @@ pub struct RouteContext {
     pub queue_key: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawActionRouteOutcome {
-    status: String,
-    #[serde(deserialize_with = "deserialize_instance_id")]
-    instance: u32,
-    point: String,
-    value: serde_json::Value,
-    #[serde(default)]
-    routed: bool,
-    #[serde(default, rename = "route_result")]
-    route_result: Option<serde_json::Value>,
-    #[serde(default, rename = "route_context")]
-    route_context: Option<RawRouteContext>,
-}
-
-fn deserialize_instance_id<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match value {
-        serde_json::Value::Number(n) => n
-            .as_u64()
-            .and_then(|v| u32::try_from(v).ok())
-            .ok_or_else(|| D::Error::custom("invalid instance id")),
-        serde_json::Value::String(s) => s
-            .parse::<u32>()
-            .map_err(|_| D::Error::custom("invalid instance id string")),
-        _ => Err(D::Error::custom("expected number or string for instance")),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct RawRouteContext {
-    channel_id: serde_json::Value,
-    point_type: serde_json::Value,
-    #[serde(default)]
-    comsrv_point_id: serde_json::Value,
-    queue_key: serde_json::Value,
-}
-
-impl TryFrom<RawActionRouteOutcome> for ActionRouteOutcome {
-    type Error = anyhow::Error;
-
-    fn try_from(raw: RawActionRouteOutcome) -> Result<Self, Self::Error> {
-        Ok(Self {
-            status: raw.status,
-            instance_id: raw.instance,
-            point_id: raw.point,
-            value: value_to_string(raw.value),
-            routed: raw.routed,
-            route_result: raw.route_result.map(value_to_string),
-            route_context: match raw.route_context {
-                Some(ctx) => Some(RouteContext::try_from(ctx)?),
-                None => None,
-            },
-        })
-    }
-}
-
-impl TryFrom<RawRouteContext> for RouteContext {
-    type Error = anyhow::Error;
-
-    fn try_from(raw: RawRouteContext) -> Result<Self, Self::Error> {
-        Ok(Self {
-            channel_id: value_to_string(raw.channel_id),
-            point_type: value_to_string(raw.point_type),
-            comsrv_point_id: value_to_string(raw.comsrv_point_id),
-            queue_key: value_to_string(raw.queue_key),
-        })
-    }
-}
-
 /// Execute action routing with application-layer cache
 ///
 /// This function implements the unified M2C routing logic:
@@ -168,25 +93,10 @@ where
     // Build M2C routing key and lookup target
     let route_key = format!("{}:A:{}", instance_id, point_id);
     let routed = if let Some(target) = routing_cache.lookup_m2c(&route_key) {
-        // Parse target: "2:A:1" -> channel_id=2, point_type=A, point_id=1
-        let parts: Vec<&str> = target.split(':').collect();
-        if parts.len() != 3 {
-            return Ok(ActionRouteOutcome {
-                status: "success".to_string(),
-                instance_id,
-                point_id: point_id.to_string(),
-                value: value.to_string(),
-                routed: false,
-                route_result: Some(format!("invalid_route_target:{}", target)),
-                route_context: None,
-            });
-        }
-
-        let channel_id = parts[0]
-            .parse::<u32>()
-            .context("Failed to parse channel_id from route target")?;
-        let point_type = parts[1];
-        let comsrv_point_id = parts[2];
+        // M2CTarget is now a structured type - no parsing needed
+        let channel_id = target.channel_id;
+        let point_type_enum = target.point_type;
+        let comsrv_point_id = target.point_id;
 
         // Step 3: Write to instance Action Hash (state storage)
         let instance_action_key = config.instance_action_key(instance_id);
@@ -200,10 +110,6 @@ where
             .context("Failed to write instance action point")?;
 
         // Step 4: Write to channel Hash + auto-trigger TODO queue (Write-Triggers-Routing pattern)
-        use voltage_model::PointType;
-        let point_type_enum = PointType::from_str(point_type)
-            .ok_or_else(|| anyhow!("Invalid point type: {}", point_type))?;
-
         // Get current timestamp (milliseconds)
         let timestamp_ms = redis.time_millis().await.unwrap_or_else(|_| {
             std::time::SystemTime::now()
@@ -212,17 +118,13 @@ where
                 .as_millis() as i64
         });
 
-        let comsrv_point_id_u32 = comsrv_point_id
-            .parse::<u32>()
-            .context("Failed to parse comsrv point_id")?;
-
         // Use unified helper: writes channel Hash (value/ts/raw) + triggers TODO queue
         voltage_rtdb::helpers::set_channel_point_with_trigger(
             redis,
             &config,
             channel_id,
             point_type_enum,
-            comsrv_point_id_u32,
+            comsrv_point_id,
             value,
             timestamp_ms,
         )
@@ -234,7 +136,7 @@ where
         // Build route context
         let route_context = RouteContext {
             channel_id: channel_id.to_string(),
-            point_type: point_type.to_string(),
+            point_type: point_type_enum.as_str().to_string(),
             comsrv_point_id: comsrv_point_id.to_string(),
             queue_key: todo_key.to_string(),
         };
@@ -274,147 +176,12 @@ where
     routed
 }
 
-fn value_to_string(value: serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
-    }
-}
-
 // ============================================================================
-// C2M (Channel to Model) Routing - Uplink
-// ============================================================================
-
-/// C2M route target - result of looking up channel point routing to instance
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct C2MRouteTarget {
-    /// Target instance ID
-    pub instance_id: u32,
-    /// Target measurement point ID in the instance
-    pub measurement_id: u32,
-}
-
-/// Look up C2M (Channel to Model) routing target
-///
-/// Queries the routing cache to find which instance measurement point
-/// should receive data from a channel point.
-///
-/// # Arguments
-/// * `routing_cache` - C2M routing cache
-/// * `channel_id` - Source channel ID
-/// * `point_type` - Point type (T/S/C/A)
-/// * `point_id` - Source point ID
-///
-/// # Returns
-/// * `Some(C2MRouteTarget)` - Target instance and measurement ID
-/// * `None` - No routing configured for this channel point
-///
-/// # Example
-/// ```ignore
-/// if let Some(target) = lookup_c2m_target(&cache, 1001, "T", 1) {
-///     // Write value to inst:{target.instance_id}:M hash, field {target.measurement_id}
-/// }
-/// ```
-pub fn lookup_c2m_target(
-    routing_cache: &RoutingCache,
-    channel_id: u32,
-    point_type: &str,
-    point_id: u32,
-) -> Option<C2MRouteTarget> {
-    // Build routing key: "channel_id:type:point_id"
-    let route_key = format!("{}:{}:{}", channel_id, point_type, point_id);
-
-    // Lookup in cache
-    let target = routing_cache.lookup_c2m(&route_key)?;
-
-    // Parse target: "instance_id:M:measurement_id"
-    let parts: Vec<&str> = target.split(':').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    let instance_id = parts[0].parse::<u32>().ok()?;
-    let measurement_id = parts[2].parse::<u32>().ok()?;
-
-    Some(C2MRouteTarget {
-        instance_id,
-        measurement_id,
-    })
-}
-
-// ============================================================================
-// C2C (Channel to Channel) Routing - Data Forwarding
+// C2C Routing Constants
 // ============================================================================
 
 /// Maximum cascade depth for C2C routing to prevent infinite loops
 pub const MAX_C2C_CASCADE_DEPTH: u8 = 2;
-
-/// C2C route target - result of looking up channel-to-channel routing
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct C2CRouteTarget {
-    /// Target channel ID
-    pub channel_id: u32,
-    /// Target point type (T/S/C/A)
-    pub point_type: String,
-    /// Target point ID
-    pub point_id: u32,
-}
-
-/// Look up C2C (Channel to Channel) routing target
-///
-/// Queries the routing cache to find if a channel point should be
-/// forwarded to another channel point.
-///
-/// # Arguments
-/// * `routing_cache` - C2C routing cache
-/// * `source_channel_id` - Source channel ID
-/// * `source_point_type` - Source point type (T/S/C/A)
-/// * `source_point_id` - Source point ID
-///
-/// # Returns
-/// * `Some(C2CRouteTarget)` - Target channel, point type, and point ID
-/// * `None` - No C2C routing configured for this source point
-///
-/// # Example
-/// ```ignore
-/// if let Some(target) = lookup_c2c_target(&cache, 1001, "T", 1) {
-///     // Forward value to channel {target.channel_id}, type {target.point_type}, point {target.point_id}
-/// }
-/// ```
-pub fn lookup_c2c_target(
-    routing_cache: &RoutingCache,
-    source_channel_id: u32,
-    source_point_type: &str,
-    source_point_id: u32,
-) -> Option<C2CRouteTarget> {
-    // Build routing key: "channel_id:type:point_id"
-    let route_key = format!(
-        "{}:{}:{}",
-        source_channel_id, source_point_type, source_point_id
-    );
-
-    // Lookup in cache
-    let target = routing_cache.lookup_c2c(&route_key)?;
-
-    // Parse target: "channel_id:type:point_id"
-    let parts: Vec<&str> = target.split(':').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    let channel_id = parts[0].parse::<u32>().ok()?;
-    let point_type = parts[1].to_string();
-    let point_id = parts[2].parse::<u32>().ok()?;
-
-    Some(C2CRouteTarget {
-        channel_id,
-        point_type,
-        point_id,
-    })
-}
 
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable

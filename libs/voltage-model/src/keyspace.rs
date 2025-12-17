@@ -25,9 +25,6 @@ use std::borrow::Cow;
 /// // Test environment (fully isolated keyspace)
 /// let test_config = KeySpaceConfig::test();
 ///
-/// // C2M routing configuration
-/// let c2m_config = prod_config.for_c2m();
-///
 /// // M2C routing configuration
 /// let m2c_config = prod_config.for_m2c();
 ///
@@ -98,14 +95,6 @@ impl KeySpaceConfig {
             target_prefix: Some("test:comsrv".to_string()),
             inst_name_pattern: Some("test:inst:*:name".to_string()),
         }
-    }
-
-    /// C2M (Channel to Model) routing configuration
-    ///
-    /// Used by comsrv.batch_update to route channel data to model instances.
-    /// Returns a clone of the current configuration (no extra settings needed for C2M).
-    pub fn for_c2m(&self) -> Self {
-        self.clone()
     }
 
     /// M2C (Model to Channel) routing configuration
@@ -226,6 +215,66 @@ impl KeySpaceConfig {
         Cow::Owned(format!("{}:{}:status", self.inst_prefix, instance_id))
     }
 
+    /// Build instance config key: inst:{instance_id}:config
+    pub fn instance_config_key(&self, instance_id: u32) -> Cow<'static, str> {
+        Cow::Owned(format!("{}:{}:config", self.inst_prefix, instance_id))
+    }
+
+    /// Build instance measurement points key: inst:{instance_id}:measurement_points
+    pub fn instance_measurement_points_key(&self, instance_id: u32) -> Cow<'static, str> {
+        Cow::Owned(format!(
+            "{}:{}:measurement_points",
+            self.inst_prefix, instance_id
+        ))
+    }
+
+    /// Build instance action points key: inst:{instance_id}:action_points
+    pub fn instance_action_points_key(&self, instance_id: u32) -> Cow<'static, str> {
+        Cow::Owned(format!(
+            "{}:{}:action_points",
+            self.inst_prefix, instance_id
+        ))
+    }
+
+    /// Build instance measurement point key: inst:{instance_id}:M:{point_id}
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    /// let config = KeySpaceConfig::production();
+    /// assert_eq!(config.instance_measurement_point_key(1, "101").as_ref(), "inst:1:M:101");
+    /// ```
+    pub fn instance_measurement_point_key(
+        &self,
+        instance_id: u32,
+        point_id: &str,
+    ) -> Cow<'static, str> {
+        Cow::Owned(format!(
+            "{}:{}:M:{}",
+            self.inst_prefix, instance_id, point_id
+        ))
+    }
+
+    /// Build instance action point key: inst:{instance_id}:A:{point_id}
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    /// let config = KeySpaceConfig::production();
+    /// assert_eq!(config.instance_action_point_key(1, "1").as_ref(), "inst:1:A:1");
+    /// ```
+    pub fn instance_action_point_key(&self, instance_id: u32, point_id: &str) -> Cow<'static, str> {
+        Cow::Owned(format!(
+            "{}:{}:A:{}",
+            self.inst_prefix, instance_id, point_id
+        ))
+    }
+
+    /// Build instance pattern for SCAN/KEYS: inst:{instance_id}:*
+    pub fn instance_pattern(&self, instance_id: u32) -> Cow<'static, str> {
+        Cow::Owned(format!("{}:{}:*", self.inst_prefix, instance_id))
+    }
+
     /// Build C2M route key: {channel_id}:{type}:{point_id}
     ///
     /// Used as hash field in route:c2m routing table
@@ -287,13 +336,6 @@ mod tests {
             config.inst_name_pattern,
             Some("test:inst:*:name".to_string())
         );
-    }
-
-    #[test]
-    fn test_for_c2m() {
-        let config = KeySpaceConfig::production().for_c2m();
-        assert_eq!(config.routing_table, "route:c2m");
-        assert_eq!(config.data_prefix, "comsrv");
     }
 
     #[test]
@@ -393,6 +435,43 @@ mod tests {
         assert_eq!(config.instance_action_key(1).as_ref(), "inst:1:A");
         assert_eq!(config.instance_name_key(1).as_ref(), "inst:1:name");
         assert_eq!(config.instance_status_key(1).as_ref(), "inst:1:status");
+        assert_eq!(config.instance_config_key(1).as_ref(), "inst:1:config");
+        assert_eq!(
+            config.instance_measurement_points_key(1).as_ref(),
+            "inst:1:measurement_points"
+        );
+        assert_eq!(
+            config.instance_action_points_key(1).as_ref(),
+            "inst:1:action_points"
+        );
+        assert_eq!(config.instance_pattern(1).as_ref(), "inst:1:*");
+    }
+
+    #[test]
+    fn test_instance_point_keys() {
+        let config = KeySpaceConfig::production();
+
+        assert_eq!(
+            config.instance_measurement_point_key(1, "101").as_ref(),
+            "inst:1:M:101"
+        );
+        assert_eq!(
+            config.instance_action_point_key(1, "1").as_ref(),
+            "inst:1:A:1"
+        );
+
+        // Test environment
+        let test_config = KeySpaceConfig::test();
+        assert_eq!(
+            test_config
+                .instance_measurement_point_key(1, "101")
+                .as_ref(),
+            "test:inst:1:M:101"
+        );
+        assert_eq!(
+            test_config.instance_action_point_key(1, "1").as_ref(),
+            "test:inst:1:A:1"
+        );
     }
 
     #[test]

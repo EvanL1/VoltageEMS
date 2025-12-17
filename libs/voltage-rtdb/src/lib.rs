@@ -31,7 +31,7 @@ pub use bytes::Bytes;
 pub use traits::Rtdb;
 
 // KeySpace (canonical location: voltage_model) and Routing exports
-pub use routing_cache::{RoutingCache, RoutingCacheStats};
+pub use routing_cache::{C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats};
 pub use voltage_model::KeySpaceConfig;
 
 #[cfg(feature = "redis-backend")]
@@ -219,21 +219,17 @@ pub mod helpers {
             raw_values.push((point_id_str, Bytes::from(raw_value.to_string())));
         }
 
-        // Write all 3 layers
+        // Write all 3 layers in a single pipeline
         let ts_key = format!("{}:ts", channel_key);
         let raw_key = format!("{}:raw", channel_key);
 
-        rtdb.hash_mset(channel_key, values)
-            .await
-            .context("Failed to write channel values")?;
-
-        rtdb.hash_mset(&ts_key, timestamps)
-            .await
-            .context("Failed to write channel timestamps")?;
-
-        rtdb.hash_mset(&raw_key, raw_values)
-            .await
-            .context("Failed to write channel raw values")?;
+        rtdb.pipeline_hash_mset(vec![
+            (channel_key.to_string(), values),
+            (ts_key, timestamps),
+            (raw_key, raw_values),
+        ])
+        .await
+        .context("Failed to write channel 3-layer data")?;
 
         Ok(count)
     }
