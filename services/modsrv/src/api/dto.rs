@@ -63,6 +63,20 @@ pub enum RoutingType {
     Action,
 }
 
+/// Point type for routing requests (M=Measurement, A=Action)
+///
+/// Used in RoutingRequest to explicitly specify whether the point_id
+/// refers to a measurement point or an action point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum PointType {
+    /// Measurement point routing
+    #[serde(rename = "M")]
+    Measurement,
+    /// Action point routing
+    #[serde(rename = "A")]
+    Action,
+}
+
 // === Routing Management ===
 
 /// Request to create or update a channel-to-instance point routing
@@ -73,6 +87,12 @@ pub enum RoutingType {
 /// Supports null, empty string "", or omitted fields to indicate "unbind routing".
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct RoutingRequest {
+    /// Point type: "M" for measurement, "A" for action
+    #[schema(example = "M")]
+    pub point_type: PointType,
+    /// Point ID (measurement_id or action_id based on point_type)
+    #[schema(example = 101)]
+    pub point_id: u32,
     #[schema(example = 1)]
     #[serde(default, deserialize_with = "deserialize_optional_i32")]
     pub channel_id: Option<i32>,
@@ -82,8 +102,6 @@ pub struct RoutingRequest {
     #[schema(example = 101)]
     #[serde(default, deserialize_with = "deserialize_optional_u32")]
     pub channel_point_id: Option<u32>,
-    #[schema(example = 101)]
-    pub point_id: u32, // Either measurement_id or action_id based on channel_type
 }
 
 /// Request to create or update routing for a single point
@@ -356,9 +374,9 @@ mod tests {
     /// Test null values are deserialized as None
     #[test]
     fn test_routing_request_with_null_values() {
-        let json =
-            r#"{"channel_id": null, "channel_point_id": null, "four_remote": null, "point_id": 3}"#;
+        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": null, "channel_point_id": null, "four_remote": null}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.point_type, PointType::Measurement);
         assert!(req.channel_id.is_none());
         assert!(req.four_remote.is_none());
         assert!(req.channel_point_id.is_none());
@@ -368,20 +386,21 @@ mod tests {
     /// Test empty strings are deserialized as None
     #[test]
     fn test_routing_request_with_empty_strings() {
-        let json =
-            r#"{"channel_id": "", "channel_point_id": "", "four_remote": "", "point_id": 3}"#;
+        let json = r#"{"point_type": "A", "point_id": 3, "channel_id": "", "channel_point_id": "", "four_remote": ""}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.point_type, PointType::Action);
         assert!(req.channel_id.is_none());
         assert!(req.four_remote.is_none());
         assert!(req.channel_point_id.is_none());
         assert_eq!(req.point_id, 3);
     }
 
-    /// Test omitted fields default to None (requires #[serde(default)])
+    /// Test omitted optional fields default to None (requires #[serde(default)])
     #[test]
     fn test_routing_request_with_omitted_fields() {
-        let json = r#"{"point_id": 3}"#;
+        let json = r#"{"point_type": "M", "point_id": 3}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.point_type, PointType::Measurement);
         assert!(req.channel_id.is_none());
         assert!(req.four_remote.is_none());
         assert!(req.channel_point_id.is_none());
@@ -391,9 +410,9 @@ mod tests {
     /// Test valid values are deserialized correctly
     #[test]
     fn test_routing_request_with_valid_values() {
-        let json =
-            r#"{"channel_id": 1, "channel_point_id": 101, "four_remote": "T", "point_id": 3}"#;
+        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": 1, "channel_point_id": 101, "four_remote": "T"}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.point_type, PointType::Measurement);
         assert_eq!(req.channel_id, Some(1));
         assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
         assert_eq!(req.channel_point_id, Some(101));
@@ -403,9 +422,9 @@ mod tests {
     /// Test mixed null and empty string (original failing scenario)
     #[test]
     fn test_routing_request_mixed_null_and_empty() {
-        let json =
-            r#"{"channel_id": null, "channel_point_id": null, "four_remote": "", "point_id": 3}"#;
+        let json = r#"{"point_type": "A", "point_id": 3, "channel_id": null, "channel_point_id": null, "four_remote": ""}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.point_type, PointType::Action);
         assert!(req.channel_id.is_none());
         assert!(req.four_remote.is_none());
         assert!(req.channel_point_id.is_none());
@@ -415,9 +434,9 @@ mod tests {
     /// Test string numbers are parsed correctly ("123" → 123)
     #[test]
     fn test_routing_request_string_numbers() {
-        let json =
-            r#"{"channel_id": "1", "channel_point_id": "101", "four_remote": "T", "point_id": 3}"#;
+        let json = r#"{"point_type": "M", "point_id": 3, "channel_id": "1", "channel_point_id": "101", "four_remote": "T"}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.point_type, PointType::Measurement);
         assert_eq!(req.channel_id, Some(1));
         assert_eq!(req.channel_point_id, Some(101));
         assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
@@ -427,23 +446,44 @@ mod tests {
     #[test]
     fn test_routing_request_four_remote_variants() {
         // Telemetry (T, YC, telemetry, yc)
-        let json = r#"{"four_remote": "T", "point_id": 1}"#;
+        let json = r#"{"point_type": "M", "point_id": 1, "four_remote": "T"}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.four_remote, Some(FourRemote::Telemetry));
 
         // Signal (S, YX, signal, yx)
-        let json = r#"{"four_remote": "S", "point_id": 1}"#;
+        let json = r#"{"point_type": "M", "point_id": 1, "four_remote": "S"}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.four_remote, Some(FourRemote::Signal));
 
         // Control (C, YK, control, yk)
-        let json = r#"{"four_remote": "C", "point_id": 1}"#;
+        let json = r#"{"point_type": "A", "point_id": 1, "four_remote": "C"}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.four_remote, Some(FourRemote::Control));
 
         // Adjustment (A, YT, adjustment, setpoint, yt)
-        let json = r#"{"four_remote": "A", "point_id": 1}"#;
+        let json = r#"{"point_type": "A", "point_id": 1, "four_remote": "A"}"#;
         let req: RoutingRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.four_remote, Some(FourRemote::Adjustment));
+    }
+
+    /// Test point_type serialization and deserialization
+    #[test]
+    fn test_point_type_serde() {
+        // Test Measurement
+        assert_eq!(
+            serde_json::to_string(&PointType::Measurement).unwrap(),
+            "\"M\""
+        );
+        assert_eq!(
+            serde_json::from_str::<PointType>("\"M\"").unwrap(),
+            PointType::Measurement
+        );
+
+        // Test Action
+        assert_eq!(serde_json::to_string(&PointType::Action).unwrap(), "\"A\"");
+        assert_eq!(
+            serde_json::from_str::<PointType>("\"A\"").unwrap(),
+            PointType::Action
+        );
     }
 }

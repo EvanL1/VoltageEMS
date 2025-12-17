@@ -12,70 +12,27 @@ use axum::{
 };
 use common::SuccessResponse;
 use serde_json::json;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::app_state::AppState;
-use crate::dto::RoutingRequest;
+use crate::dto::{PointType, RoutingRequest};
 use crate::error::ModSrvError;
 use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 
-/// Routing type determined by point_id lookup
+/// Internal routing type for handler logic
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum RoutingType {
     Measurement,
     Action,
 }
 
-/// Determine routing type by querying database for point_id
-///
-/// Checks if point_id exists in measurement_points or action_points tables
-/// for the given instance's product.
-async fn determine_routing_type(
-    pool: &SqlitePool,
-    instance_id: u32,
-    point_id: u32,
-) -> Result<RoutingType, ModSrvError> {
-    // Get product_name for the instance
-    let product_name: String =
-        sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
-            .bind(instance_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| ModSrvError::InternalError(format!("Failed to get instance: {}", e)))?;
-
-    // Check if point_id exists in measurement_points
-    let is_measurement: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM measurement_points WHERE product_name = ? AND measurement_id = ?)",
-    )
-    .bind(&product_name)
-    .bind(point_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ModSrvError::InternalError(format!("Database error: {}", e)))?;
-
-    if is_measurement {
-        return Ok(RoutingType::Measurement);
+impl From<PointType> for RoutingType {
+    fn from(pt: PointType) -> Self {
+        match pt {
+            PointType::Measurement => RoutingType::Measurement,
+            PointType::Action => RoutingType::Action,
+        }
     }
-
-    // Check if point_id exists in action_points
-    let is_action: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM action_points WHERE product_name = ? AND action_id = ?)",
-    )
-    .bind(&product_name)
-    .bind(point_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| ModSrvError::InternalError(format!("Database error: {}", e)))?;
-
-    if is_action {
-        return Ok(RoutingType::Action);
-    }
-
-    Err(ModSrvError::InvalidData(format!(
-        "point_id {} not found in measurement_points or action_points for product {}",
-        point_id, product_name
-    )))
 }
 
 /// Create a new routing for an instance
@@ -153,9 +110,8 @@ pub async fn create_instance_routing(
         .map_err(|e| ModSrvError::InternalError(format!("Failed to get instance: {}", e)))?;
     let instance_name = &instance.core.instance_name;
 
-    // Determine routing type by point_id (measurement or action)
-    let routing_type =
-        determine_routing_type(&state.instance_manager.pool, id, routing.point_id).await?;
+    // Get routing type from request (explicit M/A specification)
+    let routing_type: RoutingType = routing.point_type.into();
 
     // Validate based on routing type (determined by point_id, not four_remote)
     let validation_result = match routing_type {
@@ -339,20 +295,8 @@ pub async fn update_instance_routing(
     let mut errors = Vec::new();
 
     for routing in routings {
-        // Determine routing type by point_id (measurement or action)
-        let routing_type = match determine_routing_type(
-            &state.instance_manager.pool,
-            id,
-            routing.point_id,
-        )
-        .await
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                errors.push(e.to_string());
-                continue;
-            },
-        };
+        // Get routing type from request (explicit M/A specification)
+        let routing_type: RoutingType = routing.point_type.into();
 
         // Handle unbind routing: when channel_id is None, DELETE instead of UPSERT
         // This supports: null, "", or omitted field → None → DELETE
@@ -654,24 +598,8 @@ pub async fn validate_instance_routing(
             continue;
         }
 
-        // Determine routing type by point_id lookup
-        let routing_type = match determine_routing_type(
-            &state.instance_manager.pool,
-            id,
-            routing.point_id,
-        )
-        .await
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                results.push(json!({
-                    "channel": &channel_info,
-                    "valid": false,
-                    "errors": vec![e.to_string()]
-                }));
-                continue;
-            },
-        };
+        // Get routing type from request (explicit M/A specification)
+        let routing_type: RoutingType = routing.point_type.into();
 
         // Validate based on routing type
         let validation_result = match routing_type {
