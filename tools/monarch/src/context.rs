@@ -39,12 +39,6 @@ impl ServiceConfig {
         self.db_path.join("voltage.db")
     }
 
-    /// Get configuration path for a specific service
-    #[allow(dead_code)]
-    pub fn service_config_path(&self, service: &str) -> PathBuf {
-        self.config_path.join(service)
-    }
-
     /// Auto-detect paths from environment or defaults
     pub fn auto_detect() -> Self {
         // Detect database path
@@ -97,19 +91,6 @@ impl ServiceContext {
         }
     }
 
-    /// Initialize comsrv context
-    #[cfg(feature = "lib-mode")]
-    #[allow(dead_code)]
-    pub async fn init_comsrv(&mut self) -> Result<()> {
-        if self.comsrv.is_some() {
-            return Ok(()); // Already initialized
-        }
-
-        let comsrv = ComsrvContext::new(&self.config).await?;
-        self.comsrv = Some(comsrv);
-        Ok(())
-    }
-
     /// Initialize modsrv context (public API for lib-mode users)
     #[cfg(feature = "lib-mode")]
     #[allow(dead_code)]
@@ -124,23 +105,6 @@ impl ServiceContext {
     }
 
     // init_rules() removed - rules merged into modsrv
-
-    /// Initialize all services
-    #[cfg(feature = "lib-mode")]
-    #[allow(dead_code)]
-    pub async fn init_all(&mut self) -> Result<()> {
-        // Parallel initialization for faster startup
-        // Note: rules have been merged into modsrv
-        let (comsrv_result, modsrv_result) = tokio::join!(
-            ComsrvContext::new(&self.config),
-            ModsrvContext::new(&self.config),
-        );
-
-        self.comsrv = Some(comsrv_result?);
-        self.modsrv = Some(modsrv_result?);
-
-        Ok(())
-    }
 
     /// Get comsrv context
     #[cfg(feature = "lib-mode")]
@@ -159,12 +123,6 @@ impl ServiceContext {
     }
 
     // rules() removed - rules merged into modsrv, use modsrv() instead
-
-    /// Get configuration (public API)
-    #[allow(dead_code)]
-    pub fn config(&self) -> &ServiceConfig {
-        &self.config
-    }
 }
 
 #[cfg(feature = "lib-mode")]
@@ -177,6 +135,7 @@ pub struct ComsrvContext {
 
 #[cfg(feature = "lib-mode")]
 impl ComsrvContext {
+    #[allow(dead_code)] // Reserved for future channel offline support
     async fn new(config: &ServiceConfig) -> Result<Self> {
         // Initialize SQLite connection (unified database)
         let db_path = config.unified_db_path();

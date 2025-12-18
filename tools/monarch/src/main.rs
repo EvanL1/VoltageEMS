@@ -37,11 +37,6 @@ pub mod lib_api {
     /// Error type for lib API operations
     #[derive(Debug, thiserror::Error)]
     pub enum LibApiError {
-        /// Error type for improved service initialization errors
-        #[allow(dead_code)]
-        #[error("Service not initialized: {0}")]
-        ServiceNotInitialized(String),
-
         #[cfg(feature = "lib-mode")]
         #[error("Comsrv error: {0}")]
         Comsrv(#[from] comsrv::ComSrvError),
