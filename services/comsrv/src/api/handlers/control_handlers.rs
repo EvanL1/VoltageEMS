@@ -136,7 +136,7 @@ pub async fn control_channel(
 ///
 /// ## Example Requests
 ///
-/// **Single Control (遥控)**:
+/// **Single Control**:
 /// ```json
 /// POST /api/channels/1001/write
 /// {
@@ -146,7 +146,7 @@ pub async fn control_channel(
 /// }
 /// ```
 ///
-/// **Single Adjustment (遥调)** with full type name:
+/// **Single Adjustment** with full type name:
 /// ```json
 /// POST /api/channels/1001/write
 /// {

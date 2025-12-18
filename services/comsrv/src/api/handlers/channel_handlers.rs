@@ -35,7 +35,7 @@ use crate::dto::{
                         "id": 1,
                         "name": "PCS#1",
                         "protocol": "modbus_tcp",
-                        "description": "变流器 #1",
+                        "description": "Power Converter #1",
                         "enabled": true,
                         "connected": true,
                         "last_update": "2025-10-15T10:30:00Z"
@@ -44,7 +44,7 @@ use crate::dto::{
                         "id": 2,
                         "name": "BAMS#1",
                         "protocol": "modbus_tcp",
-                        "description": "电池管理系统 #1",
+                        "description": "Battery Management System #1",
                         "enabled": true,
                         "connected": true,
                         "last_update": "2025-10-15T10:28:15Z"
@@ -53,7 +53,7 @@ use crate::dto::{
                         "id": 3,
                         "name": "GENSET#1",
                         "protocol": "modbus_rtu",
-                        "description": "柴油发电机组 #1",
+                        "description": "Diesel Generator #1",
                         "enabled": true,
                         "connected": false,
                         "last_update": "2025-10-15T10:25:00Z"
@@ -62,7 +62,7 @@ use crate::dto::{
                         "id": 4,
                         "name": "ECU1170_GPIO",
                         "protocol": "di_do",
-                        "description": "ECU-1170 本机 DI/DO",
+                        "description": "ECU-1170 Onboard DI/DO",
                         "enabled": false,
                         "connected": false,
                         "last_update": "2025-10-15T10:30:05Z"
@@ -250,7 +250,7 @@ pub async fn get_channel_status(
                 "data": {
                     "id": 1,
                     "name": "PCS#1",
-                    "description": "变流器 #1",
+                    "description": "Power Converter #1",
                     "protocol": "modbus_tcp",
                     "enabled": true,
                     "parameters": {
@@ -434,7 +434,7 @@ pub async fn get_channel_detail_handler(
                     {
                         "id": 1,
                         "name": "PCS#1",
-                        "description": "变流器 #1",
+                        "description": "Power Converter #1",
                         "protocol": "modbus_tcp",
                         "enabled": true,
                         "connected": true

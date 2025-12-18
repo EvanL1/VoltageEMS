@@ -14,18 +14,18 @@ use voltage_routing::{write_channel_batch, ChannelPointUpdate};
 use voltage_rtdb::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
-/// 创建测试用的内存 RTDB
+/// Creates a memory RTDB for testing
 fn create_test_rtdb() -> Arc<dyn Rtdb> {
     Arc::new(voltage_rtdb::MemoryRtdb::new())
 }
 
-/// 创建带路由配置的测试环境
+/// Creates a test environment with routing configuration
 ///
 /// # Arguments
-/// * `c2m_routes` - C2M 路由配置，格式: [("1001:T:1", "23:M:1"), ...]
+/// * `c2m_routes` - C2M routing config, format: [("1001:T:1", "23:M:1"), ...]
 ///
 /// # Returns
-/// * `(Arc<dyn Rtdb>, Arc<RoutingCache>)` - RTDB 和路由缓存
+/// * `(Arc<dyn Rtdb>, Arc<RoutingCache>)` - RTDB and routing cache
 async fn setup_c2m_routing(c2m_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
     let rtdb = create_test_rtdb();
     let mut c2m_map = HashMap::new();
@@ -40,7 +40,7 @@ async fn setup_c2m_routing(c2m_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc
     (rtdb, routing_cache)
 }
 
-/// 辅助函数：验证通道数据（工程值层）
+/// Helper: Asserts channel data (engineering value layer)
 async fn assert_channel_value(
     rtdb: &dyn Rtdb,
     channel_id: u32,
@@ -64,7 +64,7 @@ async fn assert_channel_value(
     assert_eq!(value_f64, expected_value);
 }
 
-/// 辅助函数：验证通道时间戳
+/// Helper: Asserts channel timestamp exists
 async fn assert_channel_timestamp_exists(
     rtdb: &dyn Rtdb,
     channel_id: u32,
@@ -88,7 +88,7 @@ async fn assert_channel_timestamp_exists(
     assert!(ts_i64 > 0, "Timestamp should be positive");
 }
 
-/// 辅助函数：验证通道原始值
+/// Helper: Asserts channel raw value
 async fn assert_channel_raw_value(
     rtdb: &dyn Rtdb,
     channel_id: u32,
@@ -113,7 +113,7 @@ async fn assert_channel_raw_value(
     assert_eq!(raw_f64, expected_raw);
 }
 
-/// 辅助函数：验证实例测量值
+/// Helper: Asserts instance measurement value
 async fn assert_instance_measurement(
     rtdb: &dyn Rtdb,
     instance_id: u16,
@@ -134,7 +134,7 @@ async fn assert_instance_measurement(
     assert_eq!(value_f64, expected_value);
 }
 
-/// 辅助函数：验证实例测量值不存在
+/// Helper: Asserts instance measurement does not exist
 async fn assert_instance_measurement_not_exists(rtdb: &dyn Rtdb, instance_id: u16, point_id: u32) {
     let config = KeySpaceConfig::production();
     let instance_key = config.instance_measurement_key(instance_id.into());
@@ -149,10 +149,10 @@ async fn assert_instance_measurement_not_exists(rtdb: &dyn Rtdb, instance_id: u1
 
 #[tokio::test]
 async fn test_c2m_basic_routing() {
-    // Given: 路由配置 1001:T:1 -> inst:23:M:1
+    // Given: Routing config 1001:T:1 -> inst:23:M:1
     let (rtdb, routing_cache) = setup_c2m_routing(vec![("1001:T:1", "23:M:1")]).await;
 
-    // When: 写入通道点位
+    // When: Write channel point
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -166,26 +166,26 @@ async fn test_c2m_basic_routing() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证通道数据写入成功
+    // Then: Verify channel data written successfully
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 230.5).await;
     assert_channel_timestamp_exists(rtdb.as_ref(), 1001, "T", 1).await;
 
-    // Then: 验证实例数据路由成功
+    // Then: Verify instance data routed successfully
     assert_instance_measurement(rtdb.as_ref(), 23, 1, 230.5).await;
 }
 
 #[tokio::test]
 async fn test_c2m_three_layer_architecture() {
-    // Given: 路由配置
+    // Given: Routing config
     let (rtdb, routing_cache) = setup_c2m_routing(vec![("1001:T:1", "23:M:1")]).await;
 
-    // When: 写入通道点位（包含原始值）
+    // When: Write channel point (with raw value)
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
         point_id: 1,
-        value: 230.5,            // 工程值
-        raw_value: Some(2305.0), // 原始值
+        value: 230.5,            // Engineering value
+        raw_value: Some(2305.0), // Raw value
         cascade_depth: 0,
     }];
 
@@ -193,31 +193,31 @@ async fn test_c2m_three_layer_architecture() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证三层架构都正确写入
-    // Layer 1: 工程值
+    // Then: Verify three-layer architecture all written correctly
+    // Layer 1: Engineering value
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 230.5).await;
 
-    // Layer 2: 时间戳
+    // Layer 2: Timestamp
     assert_channel_timestamp_exists(rtdb.as_ref(), 1001, "T", 1).await;
 
-    // Layer 3: 原始值
+    // Layer 3: Raw value
     assert_channel_raw_value(rtdb.as_ref(), 1001, "T", 1, 2305.0).await;
 
-    // Then: 验证实例数据路由成功（使用工程值）
+    // Then: Verify instance data routed successfully (uses engineering value)
     assert_instance_measurement(rtdb.as_ref(), 23, 1, 230.5).await;
 }
 
 #[tokio::test]
 async fn test_c2m_routing_to_multiple_instances() {
-    // Given: 多个通道点位路由到不同实例
+    // Given: Multiple channel points routed to different instances
     let (rtdb, routing_cache) = setup_c2m_routing(vec![
-        ("1001:T:1", "23:M:1"), // 通道 1001 点位 1 -> 实例 23
-        ("1001:T:2", "24:M:1"), // 通道 1001 点位 2 -> 实例 24
-        ("1001:T:3", "25:M:1"), // 通道 1001 点位 3 -> 实例 25
+        ("1001:T:1", "23:M:1"), // Channel 1001 point 1 -> Instance 23
+        ("1001:T:2", "24:M:1"), // Channel 1001 point 2 -> Instance 24
+        ("1001:T:3", "25:M:1"), // Channel 1001 point 3 -> Instance 25
     ])
     .await;
 
-    // When: 写入多个通道点位
+    // When: Write multiple channel points
     let updates = vec![
         ChannelPointUpdate {
             channel_id: 1001,
@@ -249,12 +249,12 @@ async fn test_c2m_routing_to_multiple_instances() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证通道数据写入成功
+    // Then: Verify channel data written successfully
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 100.0).await;
     assert_channel_value(rtdb.as_ref(), 1001, "T", 2, 200.0).await;
     assert_channel_value(rtdb.as_ref(), 1001, "T", 3, 300.0).await;
 
-    // Then: 验证数据路由到不同的实例
+    // Then: Verify data routed to different instances
     assert_instance_measurement(rtdb.as_ref(), 23, 1, 100.0).await;
     assert_instance_measurement(rtdb.as_ref(), 24, 1, 200.0).await;
     assert_instance_measurement(rtdb.as_ref(), 25, 1, 300.0).await;
@@ -262,11 +262,11 @@ async fn test_c2m_routing_to_multiple_instances() {
 
 #[tokio::test]
 async fn test_c2m_no_routing() {
-    // Given: 不配置路由
+    // Given: No routing configured
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(RoutingCache::new()); // 空路由缓存
+    let routing_cache = Arc::new(RoutingCache::new()); // Empty routing cache
 
-    // When: 写入通道点位
+    // When: Write channel point
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -280,16 +280,16 @@ async fn test_c2m_no_routing() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证通道数据写入成功
+    // Then: Verify channel data written successfully
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 100.0).await;
 
-    // Then: 验证实例数据不存在（因为没有路由）
+    // Then: Verify instance data does not exist (no routing)
     assert_instance_measurement_not_exists(rtdb.as_ref(), 23, 1).await;
 }
 
 #[tokio::test]
 async fn test_c2m_batch_updates() {
-    // Given: 批量路由配置
+    // Given: Batch routing config
     let (rtdb, routing_cache) = setup_c2m_routing(vec![
         ("1001:T:1", "23:M:1"),
         ("1001:T:2", "23:M:2"),
@@ -299,7 +299,7 @@ async fn test_c2m_batch_updates() {
     ])
     .await;
 
-    // When: 批量写入 5 个点位
+    // When: Batch write 5 points
     let updates = vec![
         ChannelPointUpdate {
             channel_id: 1001,
@@ -347,7 +347,7 @@ async fn test_c2m_batch_updates() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证所有点位都正确路由
+    // Then: Verify all points routed correctly
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 10.0).await;
     assert_channel_value(rtdb.as_ref(), 1001, "T", 2, 20.0).await;
     assert_channel_value(rtdb.as_ref(), 1001, "T", 3, 30.0).await;
@@ -363,20 +363,20 @@ async fn test_c2m_batch_updates() {
 
 #[tokio::test]
 async fn test_c2m_different_point_types() {
-    // Given: 四遥类型路由配置
+    // Given: Four Remote types routing config
     let (rtdb, routing_cache) = setup_c2m_routing(vec![
-        ("1001:T:1", "23:M:1"), // 遥测 (Telemetry)
-        ("1001:S:2", "23:M:2"), // 遥信 (Signal)
-        ("1001:C:3", "23:M:3"), // 遥控 (Control)
-        ("1001:A:4", "23:M:4"), // 遥调 (Adjustment)
+        ("1001:T:1", "23:M:1"), // Telemetry
+        ("1001:S:2", "23:M:2"), // Signal
+        ("1001:C:3", "23:M:3"), // Control
+        ("1001:A:4", "23:M:4"), // Adjustment
     ])
     .await;
 
-    // When: 写入不同类型的点位
+    // When: Write different types of points
     let updates = vec![
         ChannelPointUpdate {
             channel_id: 1001,
-            point_type: PointType::Telemetry, // 遥测
+            point_type: PointType::Telemetry, // Telemetry
             point_id: 1,
             value: 230.5,
             raw_value: None,
@@ -384,7 +384,7 @@ async fn test_c2m_different_point_types() {
         },
         ChannelPointUpdate {
             channel_id: 1001,
-            point_type: PointType::Signal, // 遥信
+            point_type: PointType::Signal, // Signal
             point_id: 2,
             value: 1.0,
             raw_value: None,
@@ -392,7 +392,7 @@ async fn test_c2m_different_point_types() {
         },
         ChannelPointUpdate {
             channel_id: 1001,
-            point_type: PointType::Control, // 遥控
+            point_type: PointType::Control, // Control
             point_id: 3,
             value: 0.0,
             raw_value: None,
@@ -400,7 +400,7 @@ async fn test_c2m_different_point_types() {
         },
         ChannelPointUpdate {
             channel_id: 1001,
-            point_type: PointType::Adjustment, // 遥调
+            point_type: PointType::Adjustment, // Adjustment
             point_id: 4,
             value: 50.0,
             raw_value: None,
@@ -412,34 +412,34 @@ async fn test_c2m_different_point_types() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证四遥类型都正确路由
-    // 遥测 (Telemetry)
+    // Then: Verify all four types routed correctly
+    // Telemetry
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 230.5).await;
     assert_instance_measurement(rtdb.as_ref(), 23, 1, 230.5).await;
 
-    // 遥信 (Signal)
+    // Signal
     assert_channel_value(rtdb.as_ref(), 1001, "S", 2, 1.0).await;
     assert_instance_measurement(rtdb.as_ref(), 23, 2, 1.0).await;
 
-    // 遥控 (Control)
+    // Control
     assert_channel_value(rtdb.as_ref(), 1001, "C", 3, 0.0).await;
     assert_instance_measurement(rtdb.as_ref(), 23, 3, 0.0).await;
 
-    // 遥调 (Adjustment)
+    // Adjustment
     assert_channel_value(rtdb.as_ref(), 1001, "A", 4, 50.0).await;
     assert_instance_measurement(rtdb.as_ref(), 23, 4, 50.0).await;
 }
 
 #[tokio::test]
 async fn test_c2m_routing_with_different_point_ids() {
-    // Given: 路由配置（源点位和目标点位 ID 不同）
+    // Given: Routing config (source and target point IDs differ)
     let (rtdb, routing_cache) = setup_c2m_routing(vec![
-        ("1001:T:10", "23:M:1"), // 通道点位 10 -> 实例点位 1
-        ("1001:T:20", "23:M:5"), // 通道点位 20 -> 实例点位 5
+        ("1001:T:10", "23:M:1"), // Channel point 10 -> Instance point 1
+        ("1001:T:20", "23:M:5"), // Channel point 20 -> Instance point 5
     ])
     .await;
 
-    // When: 写入通道点位
+    // When: Write channel points
     let updates = vec![
         ChannelPointUpdate {
             channel_id: 1001,
@@ -463,25 +463,25 @@ async fn test_c2m_routing_with_different_point_ids() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证路由到正确的实例点位
+    // Then: Verify routed to correct instance points
     assert_channel_value(rtdb.as_ref(), 1001, "T", 10, 100.0).await;
     assert_channel_value(rtdb.as_ref(), 1001, "T", 20, 200.0).await;
 
-    assert_instance_measurement(rtdb.as_ref(), 23, 1, 100.0).await; // 点位 10 -> 1
-    assert_instance_measurement(rtdb.as_ref(), 23, 5, 200.0).await; // 点位 20 -> 5
+    assert_instance_measurement(rtdb.as_ref(), 23, 1, 100.0).await; // Point 10 -> 1
+    assert_instance_measurement(rtdb.as_ref(), 23, 5, 200.0).await; // Point 20 -> 5
 }
 
 #[tokio::test]
 async fn test_c2m_routing_with_multiple_channels() {
-    // Given: 多个通道路由到同一实例
+    // Given: Multiple channels routed to same instance
     let (rtdb, routing_cache) = setup_c2m_routing(vec![
-        ("1001:T:1", "23:M:1"), // 通道 1001
-        ("1002:T:1", "23:M:2"), // 通道 1002
-        ("1003:T:1", "23:M:3"), // 通道 1003
+        ("1001:T:1", "23:M:1"), // Channel 1001
+        ("1002:T:1", "23:M:2"), // Channel 1002
+        ("1003:T:1", "23:M:3"), // Channel 1003
     ])
     .await;
 
-    // When: 写入多个通道的点位
+    // When: Write points from multiple channels
     let updates = vec![
         ChannelPointUpdate {
             channel_id: 1001,
@@ -513,7 +513,7 @@ async fn test_c2m_routing_with_multiple_channels() {
         .await
         .expect("Failed to write batch");
 
-    // Then: 验证所有通道数据都正确路由到实例
+    // Then: Verify all channel data routed to instance correctly
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 100.0).await;
     assert_channel_value(rtdb.as_ref(), 1002, "T", 1, 200.0).await;
     assert_channel_value(rtdb.as_ref(), 1003, "T", 1, 300.0).await;

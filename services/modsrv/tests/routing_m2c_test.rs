@@ -1,8 +1,8 @@
-//! M2C (Model to Channel) 路由端到端测试
+//! M2C (Model to Channel) Routing End-to-End Tests
 //!
-//! 测试从实例动作点到通道 TODO 队列的完整数据流
+//! Tests the complete data flow from instance action points to channel TODO queues
 
-#![allow(clippy::disallowed_methods)] // 测试代码 - unwrap 是可接受的
+#![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -12,49 +12,49 @@ use voltage_routing::set_action_point;
 use voltage_rtdb::RoutingCache;
 use voltage_rtdb::{MemoryRtdb, Rtdb};
 
-// ==================== 测试辅助函数 ====================
+// ==================== Test Helper Functions ====================
 
-/// 创建带 M2C 路由和实例映射的测试环境
+/// Creates a test environment with M2C routing and instance mappings
 ///
 /// # Arguments
-/// * `m2c_routes` - M2C 路由表 [("23:A:1", "1001:A:1"), ...]
-/// * `instance_mappings` - 实例名称映射 [("inverter_01", 23), ...]
+/// * `m2c_routes` - M2C routing table [("23:A:1", "1001:A:1"), ...]
+/// * `instance_mappings` - Instance name mappings [("inverter_01", 23), ...]
 ///
 /// # Returns
-/// (Rtdb 实例, RoutingCache 实例)
+/// (Rtdb instance, RoutingCache instance)
 async fn setup_m2c_routing(
     m2c_routes: Vec<(&str, &str)>,
     instance_mappings: Vec<(&str, u32)>,
 ) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
     let rtdb = Arc::new(MemoryRtdb::new());
 
-    // Step 1: 设置实例名称索引（inst:name:index Hash）
+    // Step 1: Set up instance name index (inst:name:index Hash)
     for (name, id) in instance_mappings {
         rtdb.hash_set("inst:name:index", name, Bytes::from(id.to_string()))
             .await
             .unwrap();
     }
 
-    // Step 2: 配置 M2C 路由表
+    // Step 2: Configure M2C routing table
     let mut m2c_map = HashMap::new();
     for (source, target) in m2c_routes {
         m2c_map.insert(source.to_string(), target.to_string());
     }
 
     let routing_cache = Arc::new(RoutingCache::from_maps(
-        HashMap::new(), // C2M routing (空)
+        HashMap::new(), // C2M routing (empty)
         m2c_map,        // M2C routing
-        HashMap::new(), // C2C routing (空)
+        HashMap::new(), // C2C routing (empty)
     ));
 
     (rtdb, routing_cache)
 }
 
-/// 验证 TODO 队列有触发消息
+/// Asserts TODO queue has trigger messages
 ///
 /// # Arguments
-/// * `rtdb` - RTDB 实例
-/// * `queue_key` - TODO 队列键（如 "comsrv:1001:A:TODO"）
+/// * `rtdb` - RTDB instance
+/// * `queue_key` - TODO queue key (e.g. "comsrv:1001:A:TODO")
 async fn assert_todo_queue_triggered(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
     let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
     assert!(
@@ -64,7 +64,7 @@ async fn assert_todo_queue_triggered(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
     );
 }
 
-/// 验证 TODO 队列为空
+/// Asserts TODO queue is empty
 async fn assert_todo_queue_empty(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
     let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
     assert!(
@@ -74,7 +74,7 @@ async fn assert_todo_queue_empty(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
     );
 }
 
-/// 解析 TODO 队列中的触发消息
+/// Parses trigger message from TODO queue
 async fn parse_todo_message(rtdb: &Arc<dyn Rtdb>, queue_key: &str) -> serde_json::Value {
     let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
     assert!(!messages.is_empty(), "TODO queue should have messages");
@@ -84,36 +84,36 @@ async fn parse_todo_message(rtdb: &Arc<dyn Rtdb>, queue_key: &str) -> serde_json
     serde_json::from_str(&message_str).unwrap()
 }
 
-// ==================== 测试用例 ====================
+// ==================== Test Cases ====================
 
-/// 测试 1: 基础 M2C 路由
+/// Test 1: Basic M2C routing
 ///
-/// Given: 配置路由 23:A:1 → 1001:A:1，实例名称 "inverter_01" → 23
-/// When: 调用 set_action_point("inverter_01", "1", 12.3)
+/// Given: Configure routing 23:A:1 -> 1001:A:1, instance name "inverter_01" -> 23
+/// When: Call set_action_point("inverter_01", "1", 12.3)
 /// Then:
-///   - 实例 Action Hash 写入: inst:23:A["1"] = "12.3"
-///   - TODO 队列触发: comsrv:1001:A:TODO 有消息
-///   - 路由结果: routed=true, route_result=Some("1001")
+///   - Instance Action Hash written: inst:23:A["1"] = "12.3"
+///   - TODO queue triggered: comsrv:1001:A:TODO has message
+///   - Routing result: routed=true, route_result=Some("1001")
 #[tokio::test]
 async fn test_m2c_basic_routing() -> Result<()> {
-    // Given: 配置 M2C 路由和实例映射
+    // Given: Configure M2C routing and instance mapping
     let (rtdb, routing_cache) = setup_m2c_routing(
-        vec![("23:A:1", "1001:A:1")], // M2C 路由: 实例23动作点1 → 通道1001调节点1
-        vec![("inverter_01", 23)],    // 实例名称映射
+        vec![("23:A:1", "1001:A:1")], // M2C routing: Instance 23 action point 1 -> Channel 1001 adjustment point 1
+        vec![("inverter_01", 23)],    // Instance name mapping
     )
     .await;
 
-    // When: 设置实例动作点
+    // When: Set instance action point
     let outcome = set_action_point(
         rtdb.as_ref(),
         &routing_cache,
-        23,   // 实例 ID
-        "1",  // 动作点ID
-        12.3, // 值
+        23,   // Instance ID
+        "1",  // Action point ID
+        12.3, // Value
     )
     .await?;
 
-    // Then: 验证路由结果
+    // Then: Verify routing result
     assert!(outcome.is_success(), "Routing should succeed");
     assert!(outcome.routed, "Action should be routed to channel");
     assert_eq!(
@@ -122,14 +122,14 @@ async fn test_m2c_basic_routing() -> Result<()> {
         "Should route to channel 1001"
     );
 
-    // 验证路由上下文
+    // Verify routing context
     let route_ctx = outcome.route_context.as_ref().unwrap();
     assert_eq!(route_ctx.channel_id, "1001");
     assert_eq!(route_ctx.point_type, "A");
     assert_eq!(route_ctx.comsrv_point_id, "1");
     assert_eq!(route_ctx.queue_key, "comsrv:1001:A:TODO");
 
-    // 验证实例 Action Hash 写入
+    // Verify instance Action Hash written
     let value = rtdb
         .hash_get("inst:23:A", "1")
         .await?
@@ -140,20 +140,20 @@ async fn test_m2c_basic_routing() -> Result<()> {
         "Action value should match"
     );
 
-    // 验证 TODO 队列触发
+    // Verify TODO queue triggered
     assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
 
     Ok(())
 }
 
-/// 测试 2: 实例名称解析
+/// Test 2: Instance name resolution
 ///
-/// Given: 多个实例名称映射
-/// When: 使用不同实例名称调用 set_action_point
-/// Then: 正确解析为对应的实例 ID
+/// Given: Multiple instance name mappings
+/// When: Call set_action_point with different instance names
+/// Then: Correctly resolved to corresponding instance IDs
 #[tokio::test]
 async fn test_m2c_instance_name_resolution() -> Result<()> {
-    // Given: 配置多个实例映射
+    // Given: Configure multiple instance mappings
     let (rtdb, routing_cache) = setup_m2c_routing(
         vec![
             ("10:A:1", "1001:A:1"),
@@ -168,16 +168,16 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     )
     .await;
 
-    // When & Then: 测试第一个实例
+    // When & Then: Test first instance
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 100.0).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1001".to_string()));
 
-    // 验证写入到正确的实例 Hash
+    // Verify written to correct instance Hash
     let value = rtdb.hash_get("inst:10:A", "1").await?.unwrap();
     assert_eq!(String::from_utf8(value.to_vec())?, "100");
 
-    // When & Then: 测试第二个实例
+    // When & Then: Test second instance
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 50.0).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1002".to_string()));
@@ -185,7 +185,7 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     let value = rtdb.hash_get("inst:20:A", "1").await?.unwrap();
     assert_eq!(String::from_utf8(value.to_vec())?, "50");
 
-    // 测试没有路由配置的实例 ID - 应该成功但返回 no_route
+    // Test instance ID without routing config - should succeed but return no_route
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 9999, "1", 0.0).await?;
     assert!(!outcome.routed, "Should not be routed");
     assert_eq!(
@@ -197,27 +197,27 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     Ok(())
 }
 
-/// 测试 3: 无路由配置
+/// Test 3: No routing configuration
 ///
-/// Given: 不配置 M2C 路由
-/// When: 调用 set_action_point
+/// Given: No M2C routing configured
+/// When: Call set_action_point
 /// Then:
-///   - 实例 Action Hash 仍然写入
-///   - TODO 队列为空（无触发）
-///   - 路由结果: routed=false, route_result=Some("no_route")
+///   - Instance Action Hash still written
+///   - TODO queue empty (no trigger)
+///   - Routing result: routed=false, route_result=Some("no_route")
 #[tokio::test]
 async fn test_m2c_no_routing() -> Result<()> {
-    // Given: 无 M2C 路由配置
+    // Given: No M2C routing config
     let (rtdb, routing_cache) = setup_m2c_routing(
-        vec![],                    // 空路由表
-        vec![("inverter_01", 23)], // 只有实例映射
+        vec![],                    // Empty routing table
+        vec![("inverter_01", 23)], // Only instance mapping
     )
     .await;
 
-    // When: 设置动作点
+    // When: Set action point
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 15.5).await?;
 
-    // Then: 验证路由结果
+    // Then: Verify routing result
     assert!(outcome.is_success(), "Operation should succeed");
     assert!(!outcome.routed, "Should not be routed");
     assert_eq!(
@@ -227,27 +227,27 @@ async fn test_m2c_no_routing() -> Result<()> {
     );
     assert!(outcome.route_context.is_none(), "No route context");
 
-    // 验证实例 Action Hash 仍然写入
+    // Verify instance Action Hash still written
     let value = rtdb
         .hash_get("inst:23:A", "1")
         .await?
         .expect("Action point should still be written");
     assert_eq!(String::from_utf8(value.to_vec())?, "15.5");
 
-    // 验证 TODO 队列为空
+    // Verify TODO queue empty
     assert_todo_queue_empty(&rtdb, "comsrv:1001:A:TODO").await;
 
     Ok(())
 }
 
-/// 测试 4: 批量动作触发
+/// Test 4: Batch action trigger
 ///
-/// Given: 配置多个点位的 M2C 路由
-/// When: 批量设置多个动作点位
-/// Then: 所有 TODO 队列都有触发消息
+/// Given: Multiple points M2C routing configured
+/// When: Batch set multiple action points
+/// Then: All TODO queues have trigger messages
 #[tokio::test]
 async fn test_m2c_batch_actions() -> Result<()> {
-    // Given: 配置多个点位路由
+    // Given: Configure multiple point routing
     let (rtdb, routing_cache) = setup_m2c_routing(
         vec![
             ("23:A:1", "1001:A:1"),
@@ -258,7 +258,7 @@ async fn test_m2c_batch_actions() -> Result<()> {
     )
     .await;
 
-    // When: 批量设置动作点
+    // When: Batch set action points
     let actions = vec![("1", 10.0), ("2", 20.0), ("3", 30.0)];
 
     for (point_id, value) in actions {
@@ -266,7 +266,7 @@ async fn test_m2c_batch_actions() -> Result<()> {
         assert!(outcome.routed, "Point {} should be routed", point_id);
     }
 
-    // Then: 验证所有点位都写入实例 Hash
+    // Then: Verify all points written to instance Hash
     for (point_id, expected_value) in [("1", "10"), ("2", "20"), ("3", "30")] {
         let value = rtdb.hash_get("inst:23:A", point_id).await?.unwrap();
         assert_eq!(
@@ -277,34 +277,34 @@ async fn test_m2c_batch_actions() -> Result<()> {
         );
     }
 
-    // 验证 TODO 队列有 3 条消息
+    // Verify TODO queue has 3 messages
     let messages = rtdb.list_range("comsrv:1001:A:TODO", 0, -1).await?;
     assert_eq!(messages.len(), 3, "Should have 3 messages in TODO queue");
 
     Ok(())
 }
 
-/// 测试 5: 控制/调节路由（C/A 类型）
+/// Test 5: Control/Adjustment routing (C/A types)
 ///
-/// Given: 配置 C(遥控) 和 A(遥调) 两种路由
-/// When: 分别设置动作点
-/// Then: 路由到 comsrv:{channel_id}:C:TODO 和 :A:TODO
+/// Given: Configure C(Control) and A(Adjustment) two types of routing
+/// When: Set action points separately
+/// Then: Route to comsrv:{channel_id}:C:TODO and :A:TODO
 #[tokio::test]
 async fn test_m2c_different_channel_types() -> Result<()> {
-    // Given: 配置控制和调节路由
+    // Given: Configure control and adjustment routing
     let (rtdb, routing_cache) = setup_m2c_routing(
         vec![
-            ("23:A:1", "1001:C:5"), // 动作点1 → 控制点5
-            ("23:A:2", "1001:A:6"), // 动作点2 → 调节点6
+            ("23:A:1", "1001:C:5"), // Action point 1 -> Control point 5
+            ("23:A:2", "1001:A:6"), // Action point 2 -> Adjustment point 6
         ],
         vec![("inverter_01", 23)],
     )
     .await;
 
-    // When: 设置控制类型动作点
+    // When: Set control type action point
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 1.0).await?;
 
-    // Then: 验证路由到 C(控制) TODO 队列
+    // Then: Verify routed to C(Control) TODO queue
     assert!(outcome.routed);
     let route_ctx = outcome.route_context.as_ref().unwrap();
     assert_eq!(route_ctx.point_type, "C", "Should route to Control type");
@@ -314,10 +314,10 @@ async fn test_m2c_different_channel_types() -> Result<()> {
     );
     assert_todo_queue_triggered(&rtdb, "comsrv:1001:C:TODO").await;
 
-    // When: 设置调节类型动作点
+    // When: Set adjustment type action point
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "2", 2.0).await?;
 
-    // Then: 验证路由到 A(调节) TODO 队列
+    // Then: Verify routed to A(Adjustment) TODO queue
     assert!(outcome.routed);
     let route_ctx = outcome.route_context.as_ref().unwrap();
     assert_eq!(route_ctx.point_type, "A", "Should route to Adjustment type");
@@ -330,28 +330,28 @@ async fn test_m2c_different_channel_types() -> Result<()> {
     Ok(())
 }
 
-/// 测试 6: 触发消息格式验证
+/// Test 6: Trigger message format validation
 ///
-/// Given: 配置 M2C 路由
-/// When: 设置动作点
-/// Then: TODO 队列的 JSON 格式正确，包含 point_id, value, timestamp
+/// Given: Configure M2C routing
+/// When: Set action point
+/// Then: TODO queue JSON format correct, contains point_id, value, timestamp
 #[tokio::test]
 async fn test_m2c_trigger_message_format() -> Result<()> {
-    // Given: 配置路由
+    // Given: Configure routing
     let (rtdb, routing_cache) = setup_m2c_routing(
-        vec![("23:A:1", "1001:A:7")], // 实例点1 → 通道点7
+        vec![("23:A:1", "1001:A:7")], // Instance point 1 -> Channel point 7
         vec![("inverter_01", 23)],
     )
     .await;
 
-    // When: 设置动作点
+    // When: Set action point
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 42.5).await?;
     assert!(outcome.routed);
 
-    // Then: 解析 TODO 队列消息
+    // Then: Parse TODO queue message
     let message = parse_todo_message(&rtdb, "comsrv:1001:A:TODO").await;
 
-    // 验证 JSON 字段
+    // Verify JSON fields
     assert!(message.is_object(), "Message should be JSON object");
     assert!(
         message.get("point_id").is_some(),
@@ -363,7 +363,7 @@ async fn test_m2c_trigger_message_format() -> Result<()> {
         "Should have timestamp field"
     );
 
-    // 验证字段值
+    // Verify field values
     assert_eq!(
         message["point_id"].as_u64().unwrap(),
         7,
@@ -375,7 +375,7 @@ async fn test_m2c_trigger_message_format() -> Result<()> {
         "value should match"
     );
 
-    // 验证时间戳是合理的（近期时间）
+    // Verify timestamp is reasonable (recent time)
     let timestamp = message["timestamp"].as_i64().unwrap();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -389,33 +389,33 @@ async fn test_m2c_trigger_message_format() -> Result<()> {
     Ok(())
 }
 
-/// 测试 7: Write-Triggers-Routing 执行顺序验证
+/// Test 7: Write-Triggers-Routing execution order validation
 ///
-/// Given: 配置 M2C 路由
-/// When: 设置动作点
+/// Given: Configure M2C routing
+/// When: Set action point
 /// Then:
-///   - 先写入 inst:{id}:A Hash（状态存储）
-///   - 后写入 comsrv TODO 队列（触发器）
-///   - 两者都必须成功
+///   - First write to inst:{id}:A Hash (state storage)
+///   - Then write to comsrv TODO queue (trigger)
+///   - Both must succeed
 #[tokio::test]
 async fn test_m2c_write_triggers_routing_order() -> Result<()> {
-    // Given: 配置路由
+    // Given: Configure routing
     let (rtdb, routing_cache) =
         setup_m2c_routing(vec![("23:A:1", "1001:A:1")], vec![("inverter_01", 23)]).await;
 
-    // When: 设置动作点
+    // When: Set action point
     set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 99.9).await?;
 
-    // Then: 验证执行顺序 - Hash 先写入
+    // Then: Verify execution order - Hash written first
     let hash_value = rtdb.hash_get("inst:23:A", "1").await?;
     assert!(hash_value.is_some(), "Instance Hash must be written first");
     assert_eq!(String::from_utf8(hash_value.unwrap().to_vec())?, "99.9");
 
-    // 验证 TODO 队列后写入
+    // Verify TODO queue written after
     let messages = rtdb.list_range("comsrv:1001:A:TODO", 0, -1).await?;
     assert_eq!(messages.len(), 1, "TODO queue should have one message");
 
-    // 验证两者数据一致性
+    // Verify data consistency between both
     let message = parse_todo_message(&rtdb, "comsrv:1001:A:TODO").await;
     assert_eq!(
         message["value"].as_f64().unwrap(),
@@ -426,38 +426,38 @@ async fn test_m2c_write_triggers_routing_order() -> Result<()> {
     Ok(())
 }
 
-/// 测试 8: 无效路由目标处理
+/// Test 8: Invalid route target handling
 ///
-/// Given: 配置格式错误的路由目标（缺少字段）
-/// When: 设置动作点
+/// Given: Configure malformed route target (missing fields)
+/// When: Set action point
 /// Then:
-///   - 无效条目在加载时被过滤（fail-fast）
-///   - lookup 返回 None，走 no_route 分支
-///   - 操作成功但未路由
+///   - Invalid entries filtered at load time (fail-fast)
+///   - lookup returns None, goes to no_route branch
+///   - Operation succeeds but not routed
 #[tokio::test]
 async fn test_m2c_invalid_route_target() -> Result<()> {
-    // Given: 配置无效的路由目标（格式错误）
-    // 注意: RoutingCache::from_maps 会在加载时过滤掉无效条目
+    // Given: Configure invalid route target (malformed format)
+    // Note: RoutingCache::from_maps filters out invalid entries at load time
     let rtdb = Arc::new(MemoryRtdb::new());
     rtdb.hash_set("inst:name:index", "inverter_01", Bytes::from("23"))
         .await?;
 
     let mut m2c_map = HashMap::new();
-    m2c_map.insert("23:A:1".to_string(), "invalid_target".to_string()); // 错误格式，会被过滤
+    m2c_map.insert("23:A:1".to_string(), "invalid_target".to_string()); // Wrong format, will be filtered
     let routing_cache = Arc::new(RoutingCache::from_maps(
         HashMap::new(),
         m2c_map,
         HashMap::new(),
     ));
 
-    // When: 设置动作点
+    // When: Set action point
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 50.0).await?;
 
-    // Then: 操作成功但未路由（无效条目在加载时已被过滤）
+    // Then: Operation succeeds but not routed (invalid entry filtered at load time)
     assert!(outcome.is_success(), "Operation should succeed");
     assert!(!outcome.routed, "Routing should fail for invalid target");
 
-    // 验证 route_result 指示无路由（因为无效条目在加载时被过滤）
+    // Verify route_result indicates no route (invalid entries filtered at load time)
     if let Some(route_result) = &outcome.route_result {
         assert_eq!(
             route_result, "no_route",
@@ -470,43 +470,43 @@ async fn test_m2c_invalid_route_target() -> Result<()> {
     Ok(())
 }
 
-/// 测试 9: 多实例多通道路由
+/// Test 9: Multiple instances multiple channels routing
 ///
-/// Given: 多个实例路由到不同通道
-/// When: 批量设置不同实例的动作点
-/// Then: 每个实例正确路由到对应通道
+/// Given: Multiple instances routed to different channels
+/// When: Batch set different instance action points
+/// Then: Each instance correctly routed to corresponding channel
 #[tokio::test]
 async fn test_m2c_multiple_instances_multiple_channels() -> Result<()> {
-    // Given: 配置多实例多通道路由
+    // Given: Configure multi-instance multi-channel routing
     let (rtdb, routing_cache) = setup_m2c_routing(
         vec![
-            ("10:A:1", "1001:A:1"), // 实例10 → 通道1001
-            ("20:A:1", "1002:A:1"), // 实例20 → 通道1002
-            ("30:A:1", "1003:A:1"), // 实例30 → 通道1003
+            ("10:A:1", "1001:A:1"), // Instance 10 -> Channel 1001
+            ("20:A:1", "1002:A:1"), // Instance 20 -> Channel 1002
+            ("30:A:1", "1003:A:1"), // Instance 30 -> Channel 1003
         ],
         vec![("inverter_a", 10), ("inverter_b", 20), ("inverter_c", 30)],
     )
     .await;
 
-    // When & Then: 测试实例 A → 通道 1001
+    // When & Then: Test instance A -> Channel 1001
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 111.1).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1001".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
 
-    // When & Then: 测试实例 B → 通道 1002
+    // When & Then: Test instance B -> Channel 1002
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 222.2).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1002".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1002:A:TODO").await;
 
-    // When & Then: 测试实例 C → 通道 1003
+    // When & Then: Test instance C -> Channel 1003
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 30, "1", 333.3).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1003".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1003:A:TODO").await;
 
-    // 验证三个实例的 Hash 都正确写入
+    // Verify all three instance Hashes written correctly
     assert_eq!(
         String::from_utf8(rtdb.hash_get("inst:10:A", "1").await?.unwrap().to_vec())?,
         "111.1"

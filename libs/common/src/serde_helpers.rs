@@ -1,10 +1,11 @@
-//! 共享 Serde 反序列化器
+//! Shared Serde deserializers
 //!
-//! 用于处理 API 请求中的可选字段，支持多种输入格式：
+//! Custom deserializers for handling optional fields in API requests.
+//! Supports multiple input formats:
 //! - `null` → None
-//! - `""` (空字符串) → None
-//! - 字符串数字 `"123"` → Some(123)
-//! - 原生数字 `123` → Some(123)
+//! - `""` (empty string) → None
+//! - String number `"123"` → Some(123)
+//! - Native number `123` → Some(123)
 
 use serde::{Deserialize, Deserializer};
 
@@ -137,12 +138,12 @@ where
     deserialize_f64_or_default(deserializer)
 }
 
-/// 反序列化可选 i32
+/// Deserialize optional i32
 ///
-/// 支持以下输入格式：
+/// Supports the following input formats:
 /// - `null` → `None`
 /// - `""` → `None`
-/// - `123` 或 `"123"` → `Some(123)`
+/// - `123` or `"123"` → `Some(123)`
 ///
 /// # Example
 /// ```ignore
@@ -178,12 +179,12 @@ where
     }
 }
 
-/// 反序列化可选 u32
+/// Deserialize optional u32
 ///
-/// 支持以下输入格式：
+/// Supports the following input formats:
 /// - `null` → `None`
 /// - `""` → `None`
-/// - `123` 或 `"123"` → `Some(123)`
+/// - `123` or `"123"` → `Some(123)`
 ///
 /// # Example
 /// ```ignore

@@ -93,7 +93,6 @@ impl ServiceContext {
 
     /// Initialize modsrv context (public API for lib-mode users)
     #[cfg(feature = "lib-mode")]
-    #[allow(dead_code)]
     pub async fn init_modsrv(&mut self) -> Result<()> {
         if self.modsrv.is_some() {
             return Ok(()); // Already initialized

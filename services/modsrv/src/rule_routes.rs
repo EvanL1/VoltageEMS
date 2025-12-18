@@ -215,17 +215,17 @@ pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
 
 /// Create a new rule (metadata only)
 ///
-/// 创建规则元数据。ID 由后端自动生成（顺序递增：1, 2, 3...）。
-/// 规则的执行拓扑（flow_json）后续通过 PUT 接口更新。
+/// Creates rule metadata. ID is auto-generated (sequential: 1, 2, 3...).
+/// The execution topology (flow_json) is updated later via PUT endpoint.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules",
     request_body(
         content = CreateRuleRequest,
-        description = "规则元数据（ID 自动生成）"
+        description = "Rule metadata (ID auto-generated)"
     ),
     responses(
-        (status = 200, description = "规则创建成功", body = serde_json::Value,
+        (status = 200, description = "Rule created successfully", body = serde_json::Value,
          example = json!({ "success": true, "data": { "id": "1", "name": "Battery Protection", "status": "created" } }))
     ),
     tag = "rules"
@@ -297,19 +297,19 @@ pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 
 /// Update rule metadata
 ///
-/// 更新规则元数据。只有提供的字段会被更新（部分更新）。
+/// Updates rule metadata. Only provided fields are updated (partial update).
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     put,
     path = "/api/rules/{id}",
-    params(("id" = i64, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "Rule ID")),
     request_body(
         content = UpdateRuleRequest,
-        description = "要更新的字段（只有提供的字段会被更新）"
+        description = "Fields to update (only provided fields are updated)"
     ),
     responses(
-        (status = 200, description = "规则更新成功", body = serde_json::Value,
+        (status = 200, description = "Rule updated successfully", body = serde_json::Value,
          example = json!({ "success": true, "data": { "id": "1", "status": "updated" } })),
-        (status = 404, description = "规则不存在")
+        (status = 404, description = "Rule not found")
     ),
     tag = "rules"
 ))]
@@ -508,13 +508,13 @@ pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
 
 /// Execute rule immediately (manual trigger)
 ///
-/// 手动触发规则执行，返回执行结果和已执行的动作列表。
+/// Manually trigger rule execution, returns execution result and list of executed actions.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/execute",
-    params(("id" = i64, Path, description = "规则标识符")),
+    params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "规则执行结果", body = serde_json::Value,
+        (status = 200, description = "Rule execution result", body = serde_json::Value,
          example = json!({
              "success": true,
              "data": {

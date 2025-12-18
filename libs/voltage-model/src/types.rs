@@ -6,36 +6,32 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 // ============================================================================
-// Four Remote Point Types (四遥点类型)
+// Four Remote Point Types
 // ============================================================================
 
 /// Four Remote Point Types used in industrial SCADA systems
 ///
-/// These types correspond to the standard "Four Remote" (四遥) classification:
-/// - T (Telemetry/遥测): Analog measurements
-/// - S (Signal/遥信): Digital status
-/// - C (Control/遥控): Digital commands
-/// - A (Adjustment/遥调): Analog setpoints
+/// These types correspond to the standard IEC "Four Remote" classification:
+/// - T (Telemetry): Analog measurements (YC in Chinese standards)
+/// - S (Signal): Digital status (YX in Chinese standards)
+/// - C (Control): Digital commands (YK in Chinese standards)
+/// - A (Adjustment): Analog setpoints (YT in Chinese standards)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum PointType {
-    /// T - Telemetry (遥测) - Analog measurements
-    /// Also known as YC (遥测) in IEC standards
+    /// T - Telemetry - Analog measurements (YC in IEC standards)
     #[serde(rename = "T", alias = "YC", alias = "yc", alias = "telemetry")]
     Telemetry,
 
-    /// S - Signal (遥信) - Digital status
-    /// Also known as YX (遥信) in IEC standards
+    /// S - Signal - Digital status (YX in IEC standards)
     #[serde(rename = "S", alias = "YX", alias = "yx", alias = "signal")]
     Signal,
 
-    /// C - Control (遥控) - Digital commands
-    /// Also known as YK (遥控) in IEC standards
+    /// C - Control - Digital commands (YK in IEC standards)
     #[serde(rename = "C", alias = "YK", alias = "yk", alias = "control")]
     Control,
 
-    /// A - Adjustment (遥调) - Analog setpoints
-    /// Also known as YT (遥调) in IEC standards
+    /// A - Adjustment - Analog setpoints (YT in IEC standards)
     #[serde(
         rename = "A",
         alias = "YT",
@@ -258,15 +254,15 @@ mod tests {
 }
 
 // ============================================================================
-// Point Role Types (数据流方向)
+// Point Role Types (Data Flow Direction)
 // ============================================================================
 
 /// Point role types indicating data flow direction
 ///
 /// Unlike `PointType` which describes the type of data (T/S/C/A),
 /// `PointRole` describes the direction of data flow:
-/// - M (Measurement): Data flows from device → model (上行)
-/// - A (Action): Data flows from model → device (下行)
+/// - M (Measurement): Data flows from device → model (uplink)
+/// - A (Action): Data flows from model → device (downlink)
 ///
 /// # Usage
 /// ```

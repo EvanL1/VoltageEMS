@@ -1,12 +1,12 @@
-//! C2C (Channel to Channel) 路由端到端测试
+//! C2C (Channel to Channel) Routing End-to-End Tests
 //!
-//! 测试 comsrv 的 C2C 直通转发功能，包括：
-//! - 基础单级转发
-//! - 多级级联转发
-//! - 循环检测与深度限制
-//! - 原始值传递
-//! - 不同点位类型转发
-//! - 一对多转发
+//! Tests comsrv's C2C passthrough forwarding functionality:
+//! - Basic single-level forwarding
+//! - Multi-level cascade forwarding
+//! - Cycle detection and depth limiting
+//! - Raw value passthrough
+//! - Different point type forwarding
+//! - One-to-many forwarding
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
@@ -17,22 +17,22 @@ use voltage_routing::{write_channel_batch, ChannelPointUpdate};
 use voltage_rtdb::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
-/// 最大 C2C 级联深度常量（与 storage.rs 保持一致）
+/// Maximum C2C cascade depth constant (consistent with storage.rs)
 const MAX_C2C_DEPTH: u8 = 2;
 
-/// 创建内存 RTDB 用于测试（无外部依赖）
+/// Creates a memory RTDB for testing (no external dependencies)
 fn create_test_rtdb() -> Arc<dyn Rtdb> {
     Arc::new(voltage_rtdb::MemoryRtdb::new())
 }
 
-/// 创建带 C2C 路由的测试环境
+/// Creates a test environment with C2C routing
 ///
-/// # 参数
-/// - `c2c_routes`: C2C 路由映射列表，格式为 [("源通道:类型:点位", "目标通道:类型:点位"), ...]
+/// # Arguments
+/// - `c2c_routes`: C2C routing mappings, format: [("source_channel:type:point", "target_channel:type:point"), ...]
 ///
-/// # 返回
-/// - RTDB 实例（内存实现）
-/// - RoutingCache 实例（包含 C2C 路由配置）
+/// # Returns
+/// - RTDB instance (memory implementation)
+/// - RoutingCache instance (with C2C routing configuration)
 async fn setup_c2c_routing(c2c_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
     let rtdb = create_test_rtdb();
 
@@ -42,22 +42,22 @@ async fn setup_c2c_routing(c2c_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc
     }
 
     let routing_cache = Arc::new(RoutingCache::from_maps(
-        HashMap::new(), // C2M 路由（本测试不需要）
-        HashMap::new(), // M2C 路由（本测试不需要）
-        c2c_map,        // C2C 路由
+        HashMap::new(), // C2M routing (not needed for this test)
+        HashMap::new(), // M2C routing (not needed for this test)
+        c2c_map,        // C2C routing
     ));
 
     (rtdb, routing_cache)
 }
 
-/// 验证通道点位的值
+/// Asserts channel point value
 ///
-/// # 参数
-/// - `rtdb`: RTDB 实例
-/// - `channel_id`: 通道 ID
-/// - `point_type`: 点位类型（T/S/C/A）
-/// - `point_id`: 点位 ID
-/// - `expected_value`: 期望的值
+/// # Arguments
+/// - `rtdb`: RTDB instance
+/// - `channel_id`: Channel ID
+/// - `point_type`: Point type (T/S/C/A)
+/// - `point_id`: Point ID
+/// - `expected_value`: Expected value
 async fn assert_channel_value(
     rtdb: &dyn Rtdb,
     channel_id: u32,
@@ -84,13 +84,13 @@ async fn assert_channel_value(
     );
 }
 
-/// 验证通道点位不存在
+/// Asserts channel point does not exist
 ///
-/// # 参数
-/// - `rtdb`: RTDB 实例
-/// - `channel_id`: 通道 ID
-/// - `point_type`: 点位类型（T/S/C/A）
-/// - `point_id`: 点位 ID
+/// # Arguments
+/// - `rtdb`: RTDB instance
+/// - `channel_id`: Channel ID
+/// - `point_type`: Point type (T/S/C/A)
+/// - `point_id`: Point ID
 async fn assert_channel_value_missing(
     rtdb: &dyn Rtdb,
     channel_id: u32,
@@ -115,14 +115,14 @@ async fn assert_channel_value_missing(
     );
 }
 
-/// 验证原始值传递
+/// Asserts raw value passthrough
 ///
-/// # 参数
-/// - `rtdb`: RTDB 实例
-/// - `channel_id`: 通道 ID
-/// - `point_type`: 点位类型（T/S/C/A）
-/// - `point_id`: 点位 ID
-/// - `expected_raw_value`: 期望的原始值
+/// # Arguments
+/// - `rtdb`: RTDB instance
+/// - `channel_id`: Channel ID
+/// - `point_type`: Point type (T/S/C/A)
+/// - `point_id`: Point ID
+/// - `expected_raw_value`: Expected raw value
 async fn assert_raw_value(
     rtdb: &dyn Rtdb,
     channel_id: u32,
@@ -152,14 +152,14 @@ async fn assert_raw_value(
 
 #[tokio::test]
 async fn test_c2c_basic_routing() {
-    // 测试场景：基础 C2C 直通转发
-    // 配置：1001:T:1 -> 1002:T:5
-    // 写入：1001:T:1 = 100.0
-    // 验证：源通道和目标通道都有正确数据
+    // Scenario: Basic C2C passthrough forwarding
+    // Config: 1001:T:1 -> 1002:T:5
+    // Write: 1001:T:1 = 100.0
+    // Verify: Both source and target channels have correct data
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:T:5")]).await;
 
-    // 写入源通道
+    // Write to source channel
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -173,24 +173,24 @@ async fn test_c2c_basic_routing() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证源通道
+    // Verify source channel
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 100.0).await;
 
-    // 验证目标通道
+    // Verify target channel
     assert_channel_value(rtdb.as_ref(), 1002, "T", 5, 100.0).await;
 }
 
 #[tokio::test]
 async fn test_c2c_cascade_two_levels() {
-    // 测试场景：两级级联转发
-    // 配置：1001:T:1 -> 1002:T:2 -> 1003:T:3
-    // 写入：1001:T:1 = 50.0
-    // 验证：三个通道都有正确数据，cascade_depth 依次为 0 → 1 → 2（停止）
+    // Scenario: Two-level cascade forwarding
+    // Config: 1001:T:1 -> 1002:T:2 -> 1003:T:3
+    // Write: 1001:T:1 = 50.0
+    // Verify: All three channels have correct data, cascade_depth: 0 -> 1 -> 2 (stops)
 
     let (rtdb, routing_cache) =
         setup_c2c_routing(vec![("1001:T:1", "1002:T:2"), ("1002:T:2", "1003:T:3")]).await;
 
-    // 写入源通道（第一级，cascade_depth = 0）
+    // Write to source channel (first level, cascade_depth = 0)
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -204,23 +204,23 @@ async fn test_c2c_cascade_two_levels() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证第一级：1001:T:1（cascade_depth = 0）
+    // Verify level 1: 1001:T:1 (cascade_depth = 0)
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 50.0).await;
 
-    // 验证第二级：1002:T:2（cascade_depth = 1）
+    // Verify level 2: 1002:T:2 (cascade_depth = 1)
     assert_channel_value(rtdb.as_ref(), 1002, "T", 2, 50.0).await;
 
-    // 验证第三级：1003:T:3（cascade_depth = 2，达到 MAX_C2C_DEPTH，停止转发）
-    // 注意：cascade_depth = 2 时还会写入，但不会再继续转发
+    // Verify level 3: 1003:T:3 (cascade_depth = 2, reaches MAX_C2C_DEPTH, stops forwarding)
+    // Note: cascade_depth = 2 still writes data, but doesn't forward further
     assert_channel_value(rtdb.as_ref(), 1003, "T", 3, 50.0).await;
 }
 
 #[tokio::test]
 async fn test_c2c_cascade_max_depth() {
-    // 测试场景：三级级联（验证最大深度限制）
-    // 配置：1001:T:1 -> 1002:T:2 -> 1003:T:3 -> 1004:T:4
-    // 写入：1001:T:1 = 200.0
-    // 验证：前三级有数据，第四级没有数据（超过 MAX_C2C_DEPTH）
+    // Scenario: Three-level cascade (verifies max depth limit)
+    // Config: 1001:T:1 -> 1002:T:2 -> 1003:T:3 -> 1004:T:4
+    // Write: 1001:T:1 = 200.0
+    // Verify: First three levels have data, fourth level has no data (exceeds MAX_C2C_DEPTH)
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![
         ("1001:T:1", "1002:T:2"),
@@ -229,7 +229,7 @@ async fn test_c2c_cascade_max_depth() {
     ])
     .await;
 
-    // 写入源通道
+    // Write to source channel
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -243,35 +243,35 @@ async fn test_c2c_cascade_max_depth() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证第一级：1001:T:1（cascade_depth = 0，转发）
+    // Verify level 1: 1001:T:1 (cascade_depth = 0, forwards)
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 200.0).await;
 
-    // 验证第二级：1002:T:2（cascade_depth = 1，转发）
+    // Verify level 2: 1002:T:2 (cascade_depth = 1, forwards)
     assert_channel_value(rtdb.as_ref(), 1002, "T", 2, 200.0).await;
 
-    // 验证第三级：1003:T:3（cascade_depth = 2，写入但不转发）
-    // 注意：MAX_C2C_DEPTH = 2，cascade_depth < 2 时才转发
-    // cascade_depth = 2 时写入数据但不再转发
+    // Verify level 3: 1003:T:3 (cascade_depth = 2, writes but doesn't forward)
+    // Note: MAX_C2C_DEPTH = 2, forwards only when cascade_depth < 2
+    // cascade_depth = 2 writes data but doesn't forward further
     assert_channel_value(rtdb.as_ref(), 1003, "T", 3, 200.0).await;
 
-    // 验证第四级：1004:T:4（不应该有数据，因为上一级没有转发）
+    // Verify level 4: 1004:T:4 (should have no data, previous level didn't forward)
     assert_channel_value_missing(rtdb.as_ref(), 1004, "T", 4).await;
 }
 
 #[tokio::test]
 async fn test_c2c_infinite_loop_prevention() {
-    // 测试场景：无限循环检测
-    // 配置循环：1001:T:1 -> 1002:T:1 -> 1001:T:1
-    // 写入：1001:T:1 = 75.0
-    // 验证：cascade_depth 达到 MAX_C2C_DEPTH 后停止，不会无限循环
+    // Scenario: Infinite loop detection
+    // Config cycle: 1001:T:1 -> 1002:T:1 -> 1001:T:1
+    // Write: 1001:T:1 = 75.0
+    // Verify: Stops when cascade_depth reaches MAX_C2C_DEPTH, no infinite loop
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![
         ("1001:T:1", "1002:T:1"),
-        ("1002:T:1", "1001:T:1"), // 循环路由
+        ("1002:T:1", "1001:T:1"), // Circular route
     ])
     .await;
 
-    // 写入源通道
+    // Write to source channel
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -285,25 +285,25 @@ async fn test_c2c_infinite_loop_prevention() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证源通道（会被覆盖两次：cascade_depth=0 和 cascade_depth=2）
+    // Verify source channel (overwritten twice: cascade_depth=0 and cascade_depth=2)
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 75.0).await;
 
-    // 验证目标通道（cascade_depth = 1）
+    // Verify target channel (cascade_depth = 1)
     assert_channel_value(rtdb.as_ref(), 1002, "T", 1, 75.0).await;
 
-    // 重要：测试应该能正常完成，证明没有无限循环
+    // Important: Test should complete normally, proving no infinite loop
 }
 
 #[tokio::test]
 async fn test_c2c_preserve_raw_values() {
-    // 测试场景：原始值在级联中正确传递
-    // 配置：1001:T:1 -> 1002:T:2
-    // 写入：value = 100.0, raw_value = 1000
-    // 验证：目标通道的工程值和原始值都正确
+    // Scenario: Raw values correctly passed through cascade
+    // Config: 1001:T:1 -> 1002:T:2
+    // Write: value = 100.0, raw_value = 1000
+    // Verify: Target channel has correct engineering value and raw value
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:T:2")]).await;
 
-    // 写入源通道（带原始值）
+    // Write to source channel (with raw value)
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -317,30 +317,30 @@ async fn test_c2c_preserve_raw_values() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证源通道工程值和原始值
+    // Verify source channel engineering value and raw value
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 100.0).await;
     assert_raw_value(rtdb.as_ref(), 1001, "T", 1, 1000.0).await;
 
-    // 验证目标通道工程值和原始值
+    // Verify target channel engineering value and raw value
     assert_channel_value(rtdb.as_ref(), 1002, "T", 2, 100.0).await;
     assert_raw_value(rtdb.as_ref(), 1002, "T", 2, 1000.0).await;
 }
 
 #[tokio::test]
 async fn test_c2c_different_point_types() {
-    // 测试场景：不同点位类型的转发
-    // 测试 T→T, S→S, C→C, A→A 四种类型
-    // 验证类型转换正确
+    // Scenario: Forwarding different point types
+    // Test T->T, S->S, C->C, A->A for all four types
+    // Verify type conversion works correctly
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![
-        ("1001:T:1", "1002:T:1"), // 遥测 → 遥测
-        ("1001:S:2", "1002:S:2"), // 遥信 → 遥信
-        ("1001:C:3", "1002:C:3"), // 遥控 → 遥控
-        ("1001:A:4", "1002:A:4"), // 遥调 → 遥调
+        ("1001:T:1", "1002:T:1"), // Telemetry -> Telemetry
+        ("1001:S:2", "1002:S:2"), // Signal -> Signal
+        ("1001:C:3", "1002:C:3"), // Control -> Control
+        ("1001:A:4", "1002:A:4"), // Adjustment -> Adjustment
     ])
     .await;
 
-    // 写入四种类型的点位
+    // Write four types of points
     let updates = vec![
         ChannelPointUpdate {
             channel_id: 1001,
@@ -380,41 +380,41 @@ async fn test_c2c_different_point_types() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证遥测（T）
+    // Verify Telemetry (T)
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 10.0).await;
     assert_channel_value(rtdb.as_ref(), 1002, "T", 1, 10.0).await;
 
-    // 验证遥信（S）
+    // Verify Signal (S)
     assert_channel_value(rtdb.as_ref(), 1001, "S", 2, 1.0).await;
     assert_channel_value(rtdb.as_ref(), 1002, "S", 2, 1.0).await;
 
-    // 验证遥控（C）
+    // Verify Control (C)
     assert_channel_value(rtdb.as_ref(), 1001, "C", 3, 0.0).await;
     assert_channel_value(rtdb.as_ref(), 1002, "C", 3, 0.0).await;
 
-    // 验证遥调（A）
+    // Verify Adjustment (A)
     assert_channel_value(rtdb.as_ref(), 1001, "A", 4, 50.5).await;
     assert_channel_value(rtdb.as_ref(), 1002, "A", 4, 50.5).await;
 }
 
 #[tokio::test]
 async fn test_c2c_one_to_many() {
-    // 测试场景：一对多转发
-    // 配置：1001:T:1 -> 1002:T:1 和 1001:T:1 -> 1003:T:1
-    // 写入：1001:T:1 = 123.0
-    // 验证：两个目标通道都收到数据
+    // Scenario: One-to-many forwarding
+    // Config: 1001:T:1 -> 1002:T:1 and 1001:T:1 -> 1003:T:1
+    // Write: 1001:T:1 = 123.0
+    // Verify: Both target channels receive data
 
-    // 注意：RoutingCache 的 DashMap 只能存储一个目标
-    // 实际场景中，一对多需要在配置层面实现（多个路由条目）
-    // 这里测试两个不同的源点位分别转发
+    // Note: RoutingCache's DashMap can only store one target per source
+    // In practice, one-to-many requires multiple routing entries at config level
+    // Here we test two different source points forwarding separately
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![
         ("1001:T:1", "1002:T:1"),
-        ("1001:T:2", "1003:T:1"), // 不同源点位
+        ("1001:T:2", "1003:T:1"), // Different source point
     ])
     .await;
 
-    // 写入两个源点位
+    // Write two source points
     let updates = vec![
         ChannelPointUpdate {
             channel_id: 1001,
@@ -438,25 +438,25 @@ async fn test_c2c_one_to_many() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证源通道
+    // Verify source channels
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 123.0).await;
     assert_channel_value(rtdb.as_ref(), 1001, "T", 2, 123.0).await;
 
-    // 验证两个目标通道都收到数据
+    // Verify both target channels receive data
     assert_channel_value(rtdb.as_ref(), 1002, "T", 1, 123.0).await;
     assert_channel_value(rtdb.as_ref(), 1003, "T", 1, 123.0).await;
 }
 
 #[tokio::test]
 async fn test_c2c_no_routing() {
-    // 测试场景：无 C2C 路由配置
-    // 不配置 C2C 路由
-    // 写入通道数据
-    // 验证：只有源通道有数据，无转发
+    // Scenario: No C2C routing configured
+    // No C2C routing config
+    // Write channel data
+    // Verify: Only source channel has data, no forwarding
 
-    let (rtdb, routing_cache) = setup_c2c_routing(vec![]).await; // 空路由
+    let (rtdb, routing_cache) = setup_c2c_routing(vec![]).await; // Empty routing
 
-    // 写入源通道
+    // Write to source channel
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -470,23 +470,23 @@ async fn test_c2c_no_routing() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证源通道
+    // Verify source channel
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 99.0).await;
 
-    // 验证其他通道没有数据
+    // Verify other channels have no data
     assert_channel_value_missing(rtdb.as_ref(), 1002, "T", 1).await;
     assert_channel_value_missing(rtdb.as_ref(), 1003, "T", 1).await;
 }
 
 #[tokio::test]
 async fn test_c2c_cross_type_routing() {
-    // 测试场景：跨类型转发（边界测试）
-    // 配置：1001:T:1 -> 1002:S:1（遥测 → 遥信）
-    // 验证：不同类型间的转发也能正常工作
+    // Scenario: Cross-type forwarding (edge case)
+    // Config: 1001:T:1 -> 1002:S:1 (Telemetry -> Signal)
+    // Verify: Cross-type forwarding works correctly
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:S:1")]).await;
 
-    // 写入遥测点位
+    // Write telemetry point
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -500,16 +500,16 @@ async fn test_c2c_cross_type_routing() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证源通道（遥测）
+    // Verify source channel (Telemetry)
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 88.0).await;
 
-    // 验证目标通道（遥信）
+    // Verify target channel (Signal)
     assert_channel_value(rtdb.as_ref(), 1002, "S", 1, 88.0).await;
 }
 
 #[test]
 fn test_max_c2c_depth_constant() {
-    // 验证常量定义与代码一致
+    // Verify constant definition matches code
     assert_eq!(
         MAX_C2C_DEPTH, 2,
         "MAX_C2C_DEPTH should be 2 (consistent with storage.rs)"
@@ -518,13 +518,13 @@ fn test_max_c2c_depth_constant() {
 
 #[tokio::test]
 async fn test_c2c_timestamp_propagation() {
-    // 测试场景：时间戳在级联中正确生成
-    // 配置：1001:T:1 -> 1002:T:2
-    // 验证：源通道和目标通道都有时间戳
+    // Scenario: Timestamps correctly generated in cascade
+    // Config: 1001:T:1 -> 1002:T:2
+    // Verify: Both source and target channels have timestamps
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:T:2")]).await;
 
-    // 写入源通道
+    // Write to source channel
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -538,7 +538,7 @@ async fn test_c2c_timestamp_propagation() {
         .await
         .expect("write_batch should succeed");
 
-    // 验证源通道时间戳存在
+    // Verify source channel timestamp exists
     let config = KeySpaceConfig::production();
     let point_type_enum = voltage_model::PointType::Telemetry;
     let channel_key_1001 = config.channel_key(1001, point_type_enum);
@@ -552,7 +552,7 @@ async fn test_c2c_timestamp_propagation() {
 
     assert!(!ts_1001.is_empty(), "Timestamp should not be empty");
 
-    // 验证目标通道时间戳存在
+    // Verify target channel timestamp exists
     let channel_key_1002 = config.channel_key(1002, point_type_enum);
     let ts_key_1002 = format!("{}:ts", channel_key_1002);
 
@@ -564,8 +564,8 @@ async fn test_c2c_timestamp_propagation() {
 
     assert!(!ts_1002.is_empty(), "Timestamp should not be empty");
 
-    // 验证两个时间戳应该接近（允许微小差异，因为级联写入是顺序执行的）
-    // 每次 write_batch 调用都生成新的时间戳，所以可能有 1-2ms 的差异
+    // Verify timestamps should be close (allow small difference since cascade writes execute sequentially)
+    // Each write_batch call generates new timestamp, so there may be 1-2ms difference
     let ts_1001_value: u64 = String::from_utf8(ts_1001.to_vec())
         .unwrap()
         .parse()
@@ -578,7 +578,7 @@ async fn test_c2c_timestamp_propagation() {
     let time_diff = ts_1001_value.abs_diff(ts_1002_value);
 
     assert!(
-        time_diff <= 10, // 允许最多 10ms 的时间差
+        time_diff <= 10, // Allow up to 10ms time difference
         "Timestamps should be close (diff: {}ms)",
         time_diff
     );

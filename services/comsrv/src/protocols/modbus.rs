@@ -1299,7 +1299,7 @@ impl ComClient for ModbusProtocol {
                         {
                             Ok(values) => {
                                 success_count += values.len();
-                                // ✅ 统计实际失败的点位数（总数 - 成功数）/ Count actual failed points (total - success)
+                                // Count actual failed points (total - success)
                                 let failed_in_group = group_points.len() - values.len();
                                 error_count += failed_in_group;
                                 // Log result: errors go to main log, success only to channel log
@@ -1923,7 +1923,7 @@ async fn read_modbus_batch_indexed(
         };
 
         // Parse value based on data type
-        // ✅ 错误隔离：单个点位解码失败不影响其他点位 / Error isolation: a single point decode failure does not affect other points
+        // Error isolation: a single point decode failure does not affect other points
         let value = match decode_register_value(
             &registers,
             &point.data_type,
@@ -1937,7 +1937,7 @@ async fn read_modbus_batch_indexed(
                     "pt{} decode err: {} (type={} FC{})",
                     point.point_id, e, point.data_type, function_code
                 );
-                // ✅ 继续处理下一个点位，不中断批次 / Continue processing the next point without aborting the batch
+                // Continue processing the next point without aborting the batch
                 continue;
             },
         };

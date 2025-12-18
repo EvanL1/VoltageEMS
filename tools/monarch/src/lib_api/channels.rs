@@ -120,7 +120,7 @@ impl<'a> ChannelsService<'a> {
         })
     }
 
-    /// Send control command (遥控 C/YK)
+    /// Send control command (C)
     ///
     /// Sends a control command to a specific point on a channel.
     /// Value should be 0 or 1 for digital control.
@@ -156,7 +156,7 @@ impl<'a> ChannelsService<'a> {
         Ok(())
     }
 
-    /// Send adjustment command (遥调 A/YT)
+    /// Send adjustment command (A)
     ///
     /// Sends an analog adjustment value to a specific point on a channel.
     #[allow(clippy::disallowed_methods)] // serde_json::json! macro uses unwrap internally
@@ -196,7 +196,7 @@ impl<'a> ChannelsService<'a> {
         Ok("Channel reload not yet implemented in lib mode".to_string())
     }
 
-    /// Get telemetry points (遥测 T/YC)
+    /// Get telemetry points (T)
     ///
     /// Retrieves all telemetry point values for a channel.
     /// Public API for data access.
@@ -213,7 +213,7 @@ impl<'a> ChannelsService<'a> {
         Ok(result)
     }
 
-    /// Get signal points (遥信 S/YX)
+    /// Get signal points (S)
     ///
     /// Retrieves all signal point values for a channel.
     /// Public API for data access.
