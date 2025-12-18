@@ -2438,7 +2438,27 @@ pub async fn batch_point_operations_handler(
     let mut delete_stat = OperationStat::default();
     let mut errors = Vec::new();
 
-    // Process CREATE operations
+    // Process operations in order: DELETE → CREATE → UPDATE
+    // This order prevents ID conflicts when replacing a point (delete old, create new)
+
+    // 1. Process DELETE operations first (free up IDs for potential re-creation)
+    delete_stat.total = request.delete.len();
+    for item in request.delete {
+        match process_delete_operation(channel_id, &item, &state).await {
+            Ok(_) => delete_stat.succeeded += 1,
+            Err(e) => {
+                delete_stat.failed += 1;
+                errors.push(PointBatchError {
+                    operation: "delete".to_string(),
+                    point_type: item.point_type.to_uppercase(),
+                    point_id: item.point_id,
+                    error: e.to_string(),
+                });
+            },
+        }
+    }
+
+    // 2. Process CREATE operations (can now use IDs freed by deletions)
     create_stat.total = request.create.len();
     for item in request.create {
         match process_create_operation(channel_id, &item, &state).await {
@@ -2455,7 +2475,7 @@ pub async fn batch_point_operations_handler(
         }
     }
 
-    // Process UPDATE operations
+    // 3. Process UPDATE operations last (may reference newly created points)
     update_stat.total = request.update.len();
     for item in request.update {
         match process_update_operation(channel_id, &item, &state).await {
@@ -2464,23 +2484,6 @@ pub async fn batch_point_operations_handler(
                 update_stat.failed += 1;
                 errors.push(PointBatchError {
                     operation: "update".to_string(),
-                    point_type: item.point_type.to_uppercase(),
-                    point_id: item.point_id,
-                    error: e.to_string(),
-                });
-            },
-        }
-    }
-
-    // Process DELETE operations
-    delete_stat.total = request.delete.len();
-    for item in request.delete {
-        match process_delete_operation(channel_id, &item, &state).await {
-            Ok(_) => delete_stat.succeeded += 1,
-            Err(e) => {
-                delete_stat.failed += 1;
-                errors.push(PointBatchError {
-                    operation: "delete".to_string(),
                     point_type: item.point_type.to_uppercase(),
                     point_id: item.point_id,
                     error: e.to_string(),
