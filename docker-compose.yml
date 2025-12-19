@@ -147,11 +147,13 @@ services:
       - REDIS_URL=redis://localhost:6379
       - COMSRV_URL=http://localhost:6001
       - MODSRV_URL=http://localhost:6002
+      - VOLTAGE_DB_PATH=/app/data/voltage.db
       - LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
       - /opt/MonarchEdge/config/apigateway:/app/config:ro
+      - /opt/MonarchEdge/data:/app/data:rw
       - /opt/MonarchEdge/logs:/app/logs
     depends_on:
       voltage-redis:
@@ -189,11 +191,13 @@ services:
       - SERVICE_NAME=alarmsrv
       - SERVICE_PORT=6007
       - REDIS_URL=redis://localhost:6379
+      - VOLTAGE_DB_PATH=/app/data/voltage.db
       - LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
       - /opt/MonarchEdge/config/alarmsrv:/app/config:ro
+      - /opt/MonarchEdge/data:/app/data:rw
       - /opt/MonarchEdge/logs:/app/logs
     depends_on:
       voltage-redis:

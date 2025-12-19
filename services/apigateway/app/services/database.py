@@ -18,11 +18,14 @@ class DatabaseManager:
     
     def __init__(self, db_path: str = None):
         if db_path is None:
-            # 自动检测环境：容器内使用/app/config，本机开发使用临时目录
-            if os.path.exists("/app/config"):
-                self.db_path = "/app/config/voltageems.db"
+            # 优先使用环境变量（与 Rust 服务一致）
+            env_path = os.environ.get("VOLTAGE_DB_PATH")
+            if env_path:
+                self.db_path = env_path
+            elif os.path.exists("/app/data"):
+                self.db_path = "/app/data/voltage.db"
             else:
-                # 在WSL环境下使用/tmp目录避免权限问题
+                # 本机开发使用临时目录
                 import tempfile
                 temp_dir = os.path.join(tempfile.gettempdir(), "voltageems")
                 os.makedirs(temp_dir, exist_ok=True)

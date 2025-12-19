@@ -19,7 +19,7 @@ class DatabaseManager:
     """数据库管理器"""
     
     def __init__(self):
-        self.db_path = settings.DATABASE_PATH
+        self.db_path = settings.VOLTAGE_DB_PATH
         self.timeout = settings.DATABASE_TIMEOUT
         self._connection: Optional[sqlite3.Connection] = None
     
