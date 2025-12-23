@@ -1375,6 +1375,22 @@ impl ConfigSyncer {
                 .and_then(|v| v.parse::<i32>().ok())
                 .unwrap_or(0);
             let channel_type = mapping.get("channel_type").cloned().unwrap_or_default();
+
+            // Validate channel_type before inserting
+            if !["T", "S", "C", "A"].contains(&channel_type.as_str()) {
+                errors.push(SyncError {
+                    item: format!(
+                        "Routing {}:{} for {}",
+                        channel_id, channel_type, instance_name
+                    ),
+                    error: format!(
+                        "Invalid channel_type '{}': must be T, S, C, or A",
+                        channel_type
+                    ),
+                });
+                continue;
+            }
+
             let channel_point_id = mapping
                 .get("channel_point_id")
                 .and_then(|v| v.parse::<i32>().ok())
