@@ -24,7 +24,8 @@ use tracing::{debug, error, warn};
 
 use igw::core::data::DataType;
 use igw::core::point::{
-    ByteOrder, DataFormat, ModbusAddress, PointConfig, ProtocolAddress, VirtualAddress,
+    ByteOrder, DataFormat, ModbusAddress, PointConfig, ProtocolAddress, TransformConfig,
+    VirtualAddress,
 };
 use igw::core::traits::{AdjustmentCommand, ControlCommand, ProtocolClient};
 use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
@@ -193,10 +194,16 @@ impl IgwChannelWrapper {
 }
 
 /// Convert RuntimeChannelConfig to IGW PointConfig list.
+///
+/// This function sets up TransformConfig for each point type:
+/// - Telemetry: scale/offset transformation
+/// - Signal: reverse boolean transformation
+/// - Control: reverse boolean transformation
+/// - Adjustment: scale/offset transformation
 pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
     let mut configs = Vec::new();
 
-    // Convert telemetry points
+    // Convert telemetry points with scale/offset transformation
     for pt in &runtime_config.telemetry_points {
         configs.push(
             PointConfig::new(
@@ -204,11 +211,17 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
                 DataType::Telemetry,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
-            .with_name(&pt.base.signal_name),
+            .with_name(&pt.base.signal_name)
+            .with_transform(TransformConfig {
+                scale: pt.scale,
+                offset: pt.offset,
+                reverse: pt.reverse,
+                ..Default::default()
+            }),
         );
     }
 
-    // Convert signal points
+    // Convert signal points with reverse transformation
     for pt in &runtime_config.signal_points {
         configs.push(
             PointConfig::new(
@@ -216,11 +229,15 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
                 DataType::Signal,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
-            .with_name(&pt.base.signal_name),
+            .with_name(&pt.base.signal_name)
+            .with_transform(TransformConfig {
+                reverse: pt.reverse,
+                ..Default::default()
+            }),
         );
     }
 
-    // Convert control points
+    // Convert control points with reverse transformation
     for pt in &runtime_config.control_points {
         configs.push(
             PointConfig::new(
@@ -228,11 +245,15 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
                 DataType::Control,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
-            .with_name(&pt.base.signal_name),
+            .with_name(&pt.base.signal_name)
+            .with_transform(TransformConfig {
+                reverse: pt.reverse,
+                ..Default::default()
+            }),
         );
     }
 
-    // Convert adjustment points
+    // Convert adjustment points with scale/offset transformation
     for pt in &runtime_config.adjustment_points {
         configs.push(
             PointConfig::new(
@@ -240,7 +261,12 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
                 DataType::Adjustment,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
-            .with_name(&pt.base.signal_name),
+            .with_name(&pt.base.signal_name)
+            .with_transform(TransformConfig {
+                scale: pt.scale,
+                offset: pt.offset,
+                ..Default::default()
+            }),
         );
     }
 
@@ -265,6 +291,7 @@ pub fn create_virtual_channel(
 ///
 /// Unlike the virtual channel conversion which uses point IDs as addresses,
 /// this function uses the actual Modbus mappings (slave_id, function_code, register_address).
+/// It also looks up the corresponding point to get scale/offset/reverse for TransformConfig.
 pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
     let mut configs = Vec::with_capacity(runtime_config.modbus_mappings.len());
 
@@ -298,11 +325,55 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
             },
         };
 
+        // Look up the corresponding point to get transform parameters
+        let transform = match data_type {
+            DataType::Telemetry => runtime_config
+                .telemetry_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    scale: p.scale,
+                    offset: p.offset,
+                    reverse: p.reverse,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+            DataType::Signal => runtime_config
+                .signal_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    reverse: p.reverse,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+            DataType::Control => runtime_config
+                .control_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    reverse: p.reverse,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+            DataType::Adjustment => runtime_config
+                .adjustment_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    scale: p.scale,
+                    offset: p.offset,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+        };
+
         let point_config = PointConfig::new(
             mapping.point_id,
             data_type,
             ProtocolAddress::Modbus(modbus_addr),
-        );
+        )
+        .with_transform(transform);
 
         configs.push(point_config);
     }

@@ -5,16 +5,18 @@
 //! # Architecture
 //!
 //! ```text
-//! IGW Protocol Layer
-//!       ↓ igw::DataStore trait
+//! IGW Protocol Layer (with TransformConfig)
+//!       ↓ poll_once() returns already-transformed DataBatch
 //! RedisDataStore
 //!       ↓
 //! ┌─────────────────────────────────┐
 //! │  voltage-routing (C2M/C2C)      │
 //! │  voltage-rtdb (Redis access)    │
-//! │  RuntimeConfigProvider (xform)  │
 //! └─────────────────────────────────┘
 //! ```
+//!
+//! Note: Data transformation (scale/offset/reverse) is now handled by IGW's
+//! TransformConfig in poll_once(), so RedisDataStore receives pre-transformed values.
 
 mod redis_store;
 

@@ -1139,7 +1139,7 @@ impl SqlInsertablePoint for ControlPoint {
         .bind(1.0) // Scale default for control
         .bind(0.0) // Offset default for control
         .bind(&self.base.unit)
-        .bind(false) // Reverse default for control
+        .bind(self.reverse) // Use configured reverse value
         .bind("uint16") // Data type default for control
         .bind(&self.base.description)
         .execute(executor)

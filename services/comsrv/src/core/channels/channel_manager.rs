@@ -14,9 +14,7 @@ use crate::core::channels::igw_bridge::{
     convert_to_igw_point_configs, convert_to_modbus_point_configs, create_modbus_channel,
     create_modbus_rtu_channel, create_virtual_channel, ChannelImpl, IgwChannelWrapper,
 };
-use crate::core::channels::point_config::RuntimeConfigProvider;
-use crate::core::channels::sync::TelemetrySync;
-use crate::core::channels::traits::TelemetryBatch;
+
 use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
@@ -120,12 +118,8 @@ pub struct ChannelManager {
     rtdb: Arc<dyn voltage_rtdb::Rtdb>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
     pub routing_cache: Arc<voltage_rtdb::RoutingCache>,
-    /// Telemetry sync manager
-    telemetry_sync: TelemetrySync,
     /// SQLite connection pool for configuration loading
     sqlite_pool: Option<sqlx::SqlitePool>,
-    /// Point configuration provider for data transformation
-    config_provider: Arc<RuntimeConfigProvider>,
 }
 
 impl std::fmt::Debug for ChannelManager {
@@ -142,19 +136,11 @@ impl ChannelManager {
         rtdb: Arc<dyn voltage_rtdb::Rtdb>,
         routing_cache: Arc<voltage_rtdb::RoutingCache>,
     ) -> Self {
-        // Create point configuration provider for data transformation
-        let config_provider = Arc::new(RuntimeConfigProvider::new());
-
-        let telemetry_sync =
-            TelemetrySync::new(rtdb.clone(), routing_cache.clone(), config_provider.clone());
-
         Self {
             channels: DashMap::with_hasher(ahash::RandomState::default()),
             rtdb,
             routing_cache,
-            telemetry_sync,
             sqlite_pool: None,
-            config_provider,
         }
     }
 
@@ -164,19 +150,11 @@ impl ChannelManager {
         routing_cache: Arc<voltage_rtdb::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
     ) -> Self {
-        // Create point configuration provider for data transformation
-        let config_provider = Arc::new(RuntimeConfigProvider::new());
-
-        let telemetry_sync =
-            TelemetrySync::new(rtdb.clone(), routing_cache.clone(), config_provider.clone());
-
         Self {
             channels: DashMap::with_hasher(ahash::RandomState::default()),
             rtdb,
             routing_cache,
-            telemetry_sync,
             sqlite_pool: Some(sqlite_pool),
-            config_provider,
         }
     }
 
@@ -202,12 +180,6 @@ impl ChannelManager {
             runtime_config.control_points.len(),
             runtime_config.adjustment_points.len()
         );
-
-        // Load point transformers into config provider for data transformation
-        self.config_provider
-            .load_channel_config(&runtime_config)
-            .await;
-        debug!("Ch{} transformers loaded", channel_id);
 
         // Get protocol using normalized name
         let protocol_name = crate::utils::normalize_protocol_name(runtime_config.protocol());
@@ -272,7 +244,6 @@ impl ChannelManager {
         let store = Arc::new(RedisDataStore::new(
             Arc::clone(&self.rtdb),
             Arc::clone(&self.routing_cache),
-            Arc::clone(&self.config_provider),
         ));
 
         // 2. Convert point configs to IGW format and register with store
@@ -311,7 +282,6 @@ impl ChannelManager {
         let store = Arc::new(RedisDataStore::new(
             Arc::clone(&self.rtdb),
             Arc::clone(&self.routing_cache),
-            Arc::clone(&self.config_provider),
         ));
 
         // 2. Convert Modbus point configs to IGW format
@@ -362,7 +332,6 @@ impl ChannelManager {
         let store = Arc::new(RedisDataStore::new(
             Arc::clone(&self.rtdb),
             Arc::clone(&self.routing_cache),
-            Arc::clone(&self.config_provider),
         ));
 
         // 2. Convert Modbus point configs to IGW format
@@ -541,27 +510,9 @@ impl ChannelManager {
         }
     }
 
-    /// Start telemetry sync task
-    pub async fn start_telemetry_sync_task(&self) -> Result<()> {
-        self.telemetry_sync.start_telemetry_sync_task().await
-    }
-
-    /// Stop telemetry sync task
-    pub async fn stop_telemetry_sync_task(&self) -> Result<()> {
-        self.telemetry_sync.stop_telemetry_sync_task().await
-    }
-
-    /// Get telemetry data sender
-    pub fn get_telemetry_sender(&self) -> tokio::sync::mpsc::Sender<TelemetryBatch> {
-        self.telemetry_sync.get_sender()
-    }
-
     /// Cleanup all resources
     pub async fn cleanup(&self) -> Result<()> {
         info!("Cleanup started");
-
-        // Stop telemetry sync task
-        let _ = self.stop_telemetry_sync_task().await;
 
         // Remove all channels
         let channel_ids: Vec<u32> = self.get_channel_ids();

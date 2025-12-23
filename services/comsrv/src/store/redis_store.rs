@@ -25,27 +25,25 @@ use dashmap::DashMap;
 use tokio::sync::{mpsc, RwLock};
 use tracing::debug;
 
-use igw::core::data::{DataBatch, DataPoint, DataType, Value};
+use igw::core::data::{DataBatch, DataPoint, DataType};
 use igw::core::error::Result as IgwResult;
 use igw::core::point::PointConfig;
 use igw::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
-use common::FourRemote;
 use voltage_model::KeySpaceConfig;
 use voltage_model::PointType;
 use voltage_routing::ChannelPointUpdate;
 use voltage_rtdb::{RoutingCache, Rtdb, WriteBuffer, WriteBufferConfig};
-
-use crate::core::channels::point_config::RuntimeConfigProvider;
-use crate::core::channels::sync::TransformDirection;
 
 /// Redis-backed data store for VoltageEMS.
 ///
 /// This is the bridge between IGW protocols and the VoltageEMS Redis storage.
 /// Called by IgwChannelWrapper after protocol.poll_once() to persist data.
 ///
+/// IGW handles all data transformations (scale/offset/reverse) in poll_once(),
+/// so this store receives already-transformed data and writes it directly.
+///
 /// It handles:
-/// - Data transformation (scale/offset/reverse) via RuntimeConfigProvider
 /// - Redis Hash writes via WriteBuffer (high-performance buffered writes)
 /// - C2M routing to forward data to model instances
 pub struct RedisDataStore {
@@ -55,8 +53,6 @@ pub struct RedisDataStore {
     routing_cache: Arc<RoutingCache>,
     /// Write buffer for aggregating Redis writes
     write_buffer: Arc<WriteBuffer>,
-    /// Point configuration provider for transformations
-    config_provider: Arc<RuntimeConfigProvider>,
     /// Point configurations cache (channel_id -> configs)
     point_configs: DashMap<u32, Vec<PointConfig>>,
     /// Event subscribers
@@ -72,17 +68,11 @@ impl RedisDataStore {
     ///
     /// * `rtdb` - Redis connection
     /// * `routing_cache` - C2M/M2C routing cache
-    /// * `config_provider` - Point configuration provider for transformations
-    pub fn new(
-        rtdb: Arc<dyn Rtdb>,
-        routing_cache: Arc<RoutingCache>,
-        config_provider: Arc<RuntimeConfigProvider>,
-    ) -> Self {
+    pub fn new(rtdb: Arc<dyn Rtdb>, routing_cache: Arc<RoutingCache>) -> Self {
         Self {
             rtdb,
             routing_cache,
             write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
-            config_provider,
             point_configs: DashMap::new(),
             subscribers: Arc::new(RwLock::new(Vec::new())),
             key_config: KeySpaceConfig::production(),
@@ -109,56 +99,30 @@ impl RedisDataStore {
         }
     }
 
-    /// Convert igw DataType to FourRemote for transformation lookup.
-    fn to_four_remote(data_type: DataType) -> FourRemote {
-        match data_type {
-            DataType::Telemetry => FourRemote::Telemetry,
-            DataType::Signal => FourRemote::Signal,
-            DataType::Control => FourRemote::Control,
-            DataType::Adjustment => FourRemote::Adjustment,
-        }
-    }
-
-    /// Convert igw Value to f64 for Redis storage.
-    fn value_to_f64(value: &Value) -> f64 {
-        value.as_f64().unwrap_or(0.0)
-    }
-
-    /// Transform a DataPoint using configured transformations.
-    fn transform_point(&self, channel_id: u32, point: &DataPoint) -> (f64, f64) {
-        let raw_value = Self::value_to_f64(&point.value);
-        let four_remote = Self::to_four_remote(point.data_type);
-
-        let transformer = self
-            .config_provider
-            .get_transformer(channel_id, &four_remote, point.id);
-
-        let processed_value = transformer.transform(raw_value, TransformDirection::DeviceToSystem);
-
-        debug!(
-            "[{}] Point {}: raw={:.2} → value={:.2}",
-            point.data_type.as_str(),
-            point.id,
-            raw_value,
-            processed_value
-        );
-
-        (processed_value, raw_value)
-    }
-
     /// Convert DataBatch to ChannelPointUpdates for voltage-routing.
+    ///
+    /// Note: IGW has already applied transformations (scale/offset/reverse) in poll_once(),
+    /// so point.value is already the final transformed value.
     fn batch_to_updates(&self, channel_id: u32, batch: &DataBatch) -> Vec<ChannelPointUpdate> {
         let mut updates = Vec::with_capacity(batch.len());
 
         for point in batch.iter() {
-            let (value, raw_value) = self.transform_point(channel_id, point);
+            // IGW returns already-transformed values
+            let value = point.value.as_f64().unwrap_or(0.0);
+
+            debug!(
+                "[{}] Point {}: value={:.2}",
+                point.data_type.as_str(),
+                point.id,
+                value
+            );
 
             updates.push(ChannelPointUpdate {
                 channel_id,
                 point_type: Self::to_point_type(point.data_type),
                 point_id: point.id,
                 value,
-                raw_value: Some(raw_value),
+                raw_value: None, // IGW doesn't expose pre-transform values
                 cascade_depth: 0,
             });
         }
@@ -175,15 +139,17 @@ impl RedisDataStore {
     }
 }
 
-// Data storage methods (no longer implementing igw::DataStore trait)
+// Data storage methods
 impl RedisDataStore {
-    /// Write a batch of data points to Redis with transformations and routing.
+    /// Write a batch of data points to Redis and route to model instances.
+    ///
+    /// Note: Data is already transformed by IGW in poll_once().
     pub async fn write_batch(&self, channel_id: u32, batch: &DataBatch) -> IgwResult<()> {
         if batch.is_empty() {
             return Ok(());
         }
 
-        // Convert to ChannelPointUpdates with transformations
+        // Convert to ChannelPointUpdates (values already transformed by IGW)
         let updates = self.batch_to_updates(channel_id, batch);
 
         // Write via voltage-routing (handles Redis + C2M routing)
@@ -314,9 +280,8 @@ mod tests {
     async fn test_redis_store_write_read() {
         let rtdb = create_test_rtdb();
         let routing_cache = Arc::new(RoutingCache::new());
-        let config_provider = Arc::new(RuntimeConfigProvider::new());
 
-        let store = RedisDataStore::new(rtdb, routing_cache, config_provider);
+        let store = RedisDataStore::new(rtdb, routing_cache);
 
         // Create a batch
         let mut batch = DataBatch::default();
@@ -334,9 +299,8 @@ mod tests {
     async fn test_point_configs() {
         let rtdb = create_test_rtdb();
         let routing_cache = Arc::new(RoutingCache::new());
-        let config_provider = Arc::new(RuntimeConfigProvider::new());
 
-        let store = RedisDataStore::new(rtdb, routing_cache, config_provider);
+        let store = RedisDataStore::new(rtdb, routing_cache);
 
         // Set configs
         let configs = vec![PointConfig::new(
