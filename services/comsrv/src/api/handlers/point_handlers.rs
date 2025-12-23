@@ -2796,7 +2796,7 @@ async fn perform_channel_reload(channel_id: u32, state: &AppState) -> anyhow::Re
 
     // 3. Create new channel with updated config
     let manager = state.channel_manager.write().await;
-    let channel_arc = manager
+    let channel_impl = manager
         .create_channel(std::sync::Arc::new(config))
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create channel: {}", e))?;
@@ -2804,8 +2804,8 @@ async fn perform_channel_reload(channel_id: u32, state: &AppState) -> anyhow::Re
 
     // 4. Connect in background (non-blocking)
     tokio::spawn(async move {
-        let mut channel = channel_arc.write().await;
-        match channel.connect().await {
+        // Use ChannelImpl's unified connect interface
+        match channel_impl.write().await.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", channel_id),
             Err(e) => tracing::warn!("Ch{} connect: {}", channel_id, e),
         }

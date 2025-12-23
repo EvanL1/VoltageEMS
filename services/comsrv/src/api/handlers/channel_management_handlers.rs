@@ -188,17 +188,16 @@ async fn perform_hot_reload(
     }
 
     // 2. Create new channel
-    let channel_arc = manager
+    let channel_impl = manager
         .create_channel(Arc::new(new_config))
         .await
         .map_err(|e| format!("Failed to create channel: {}", e))?;
 
     drop(manager);
 
-    // 3. Async connection (don't wait)
+    // 3. Async connection (don't wait) using ChannelImpl's unified interface
     tokio::spawn(async move {
-        let mut channel = channel_arc.write().await;
-        match channel.connect().await {
+        match channel_impl.write().await.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", id),
             Err(e) => tracing::warn!("Ch{} connect: {}", id, e),
         }
@@ -394,12 +393,11 @@ pub async fn create_channel_handler(
         // enabled = true: Create runtime channel and connect in background (non-blocking)
         let manager = state.channel_manager.write().await;
         match manager.create_channel(Arc::new(channel_config)).await {
-            Ok(channel_arc) => {
+            Ok(channel_impl) => {
                 // Spawn background connection to avoid failing API on initial connect error
                 let channel_id_for_log = channel_id;
                 tokio::spawn(async move {
-                    let mut channel = channel_arc.write().await;
-                    if let Err(e) = channel.connect().await {
+                    if let Err(e) = channel_impl.write().await.connect().await {
                         tracing::warn!("Ch{} connect: {}", channel_id_for_log, e);
                     } else {
                         tracing::debug!("Ch{} connected", channel_id_for_log);
@@ -818,14 +816,12 @@ pub async fn set_channel_enabled_handler(
 
         let manager = state.channel_manager.write().await;
         match manager.create_channel(Arc::new(config)).await {
-            Ok(channel_arc) => {
+            Ok(channel_impl) => {
                 // Trigger asynchronous connection in background
                 // Don't wait for connection result - let reconnection mechanism handle failures
-                let channel_clone = channel_arc.clone();
                 let channel_id_for_log = id;
                 tokio::spawn(async move {
-                    let mut channel = channel_clone.write().await;
-                    match channel.connect().await {
+                    match channel_impl.write().await.connect().await {
                         Ok(_) => tracing::debug!("Ch{} connected", channel_id_for_log),
                         Err(e) => tracing::warn!("Ch{} connect: {}", channel_id_for_log, e),
                     }
@@ -1097,10 +1093,9 @@ pub async fn reload_configuration_handler(
             if *enabled {
                 let manager = state.channel_manager.write().await;
                 match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(channel_arc) => {
-                        // Try to connect
-                        let mut channel = channel_arc.write().await;
-                        if let Err(e) = channel.connect().await {
+                    Ok(channel_impl) => {
+                        // Try to connect using ChannelImpl's unified interface
+                        if let Err(e) = channel_impl.write().await.connect().await {
                             tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_added.push(*id);
@@ -1162,9 +1157,9 @@ pub async fn reload_configuration_handler(
                 };
 
                 match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(channel_arc) => {
-                        let mut channel = channel_arc.write().await;
-                        if let Err(e) = channel.connect().await {
+                    Ok(channel_impl) => {
+                        // Connect using ChannelImpl's unified interface
+                        if let Err(e) = channel_impl.write().await.connect().await {
                             tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_updated.push(*id);

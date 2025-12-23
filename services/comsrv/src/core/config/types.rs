@@ -742,21 +742,6 @@ impl RuntimeChannelConfig {
     }
 }
 
-// Implement RuntimeConfig trait from voltage-comlink
-impl voltage_comlink::RuntimeConfig for RuntimeChannelConfig {
-    fn id(&self) -> u32 {
-        self.base.core.id
-    }
-
-    fn name(&self) -> &str {
-        &self.base.core.name
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
 // Default value functions
 fn default_control_type() -> String {
     "momentary".to_string()

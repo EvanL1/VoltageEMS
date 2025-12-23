@@ -728,14 +728,13 @@ pub async fn update_channel_mappings_handler(
             // Trigger channel reload by calling reload handler internally
             tracing::debug!("Ch{} auto-reload", channel_id);
 
-            // Simple reload: disconnect and reconnect
+            // Simple reload: disconnect and reconnect using ChannelImpl's unified interface
             let factory = state.factory.read().await;
-            if let Some(channel_arc) = factory.get_channel(channel_id) {
-                let mut channel = channel_arc.write().await;
-                if let Err(e) = channel.disconnect().await {
+            if let Some(channel_impl) = factory.get_channel(channel_id) {
+                if let Err(e) = channel_impl.disconnect().await {
                     tracing::warn!("Ch{} disconnect: {}", channel_id, e);
                 }
-                if let Err(e) = channel.connect().await {
+                if let Err(e) = channel_impl.connect().await {
                     tracing::error!("Ch{} reconnect: {}", channel_id, e);
                     return Err(AppError::internal_error(format!(
                         "Mappings updated but channel reload failed: {}",

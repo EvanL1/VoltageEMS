@@ -33,13 +33,15 @@ pub mod core {
     pub mod reload;
 }
 
-pub mod protocols {
-    pub mod dido;
-    #[cfg(feature = "modbus")]
-    pub mod modbus;
-    pub mod registry;
-    pub mod virt;
-}
+pub mod store;
+
+// Re-export IGW DataStore implementation
+pub use store::RedisDataStore;
+
+// Legacy protocols module removed - all protocols now use igw path:
+// - modbus_tcp: igw::ModbusChannel (TCP mode)
+// - modbus_rtu: igw::ModbusChannel (RTU mode)
+// - virtual: igw::VirtualChannel
 
 pub mod runtime {
     //! Runtime Orchestration Layer

@@ -6,12 +6,79 @@
 //! # Features
 //!
 //! - Protocol name normalization
-//! - Bytes utilities (re-exported from voltage_comlink)
+//! - Protocol type parsing
 
-use voltage_comlink::ProtocolType;
+use std::fmt;
 
-// Re-export bytes utilities from voltage_comlink
-pub use voltage_comlink::bytes::*;
+// ============================================================================
+// Protocol Types (inlined from voltage-comlink)
+// ============================================================================
+
+/// Supported protocol types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtocolType {
+    // Modbus variants
+    ModbusTcp,
+    ModbusRtu,
+    ModbusAscii,
+    // IEC protocols
+    Iec60870_5_104,
+    Iec61850,
+    // Other protocols
+    Mqtt,
+    Opcua,
+    Bacnet,
+    Dnp3,
+    Virtual,
+    Grpc,
+}
+
+impl ProtocolType {
+    /// Parse from string
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_lowercase().replace('-', "_").as_str() {
+            "modbus_tcp" => Some(Self::ModbusTcp),
+            "modbus_rtu" => Some(Self::ModbusRtu),
+            "modbus_ascii" => Some(Self::ModbusAscii),
+            "iec60870_5_104" | "iec104" => Some(Self::Iec60870_5_104),
+            "iec61850" => Some(Self::Iec61850),
+            "mqtt" => Some(Self::Mqtt),
+            "opcua" | "opc_ua" => Some(Self::Opcua),
+            "bacnet" => Some(Self::Bacnet),
+            "dnp3" => Some(Self::Dnp3),
+            "virtual" => Some(Self::Virtual),
+            "grpc" => Some(Self::Grpc),
+            _ => None,
+        }
+    }
+
+    /// Convert to string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ModbusTcp => "modbus_tcp",
+            Self::ModbusRtu => "modbus_rtu",
+            Self::ModbusAscii => "modbus_ascii",
+            Self::Iec60870_5_104 => "iec60870_5_104",
+            Self::Iec61850 => "iec61850",
+            Self::Mqtt => "mqtt",
+            Self::Opcua => "opcua",
+            Self::Bacnet => "bacnet",
+            Self::Dnp3 => "dnp3",
+            Self::Virtual => "virtual",
+            Self::Grpc => "grpc",
+        }
+    }
+}
+
+impl fmt::Display for ProtocolType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+// ============================================================================
+// Protocol Name Utilities
+// ============================================================================
 
 /// Normalize protocol name to standard format (lowercase underscore)
 /// This ensures consistency across configuration files, plugins, and database

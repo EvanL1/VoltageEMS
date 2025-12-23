@@ -1,41 +1,13 @@
-//! Core Communication Traits
+//! Channel communication types
 //!
-//! This module defines the fundamental traits for communication protocols.
-//! All protocol implementations (Modbus, CAN, Virtual) depend on these traits.
+//! Core data types for channel communication in comsrv.
+//! These types were previously in voltage-comlink but are now owned by comsrv.
 
-#![allow(clippy::disallowed_methods)] // json! macro used in trait default methods
-
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use crate::error::Result;
-use crate::protocols::FourRemote;
-
-// ============================================================================
-// Runtime Configuration Trait
-// ============================================================================
-
-/// Trait for runtime channel configuration
-///
-/// This trait abstracts the runtime configuration needed by protocol implementations.
-/// It allows different services to define their own concrete configuration types
-/// while sharing the communication trait definitions.
-///
-/// Protocol implementations that need access to the full concrete configuration type
-/// can use `as_any()` to downcast.
-pub trait RuntimeConfig: Send + Sync {
-    /// Get channel ID
-    fn id(&self) -> u32;
-
-    /// Get channel name
-    fn name(&self) -> &str;
-
-    /// Downcast support for accessing the concrete type
-    fn as_any(&self) -> &dyn std::any::Any;
-}
+use crate::core::config::FourRemote;
 
 // ============================================================================
 // Connection State
@@ -94,7 +66,7 @@ impl std::fmt::Display for ConnectionState {
 }
 
 // ============================================================================
-// Redis Value Type
+// Protocol Value Type
 // ============================================================================
 
 /// Value type for protocol data exchange
@@ -327,105 +299,6 @@ impl Default for TestChannelParams {
 }
 
 // ============================================================================
-// Core Traits
-// ============================================================================
-
-/// Base communication trait - defines common four-telemetry data model
-///
-/// This trait defines the core data interface shared by both clients and servers.
-///
-/// @trait ComBase
-/// @purpose Define core four-telemetry data model interface
-/// @implementors All protocol plugins (Modbus, Virtual, CAN, IEC)
-/// @philosophy Four-telemetry separation (T/S/C/A) for clean data flow
-#[async_trait]
-pub trait ComBase: Send + Sync {
-    /// Get implementation name
-    fn name(&self) -> &str;
-
-    /// Get channel ID
-    fn get_channel_id(&self) -> u32;
-
-    /// Get channel status
-    async fn get_status(&self) -> ChannelStatus;
-
-    /// Initialize channel (load point configuration)
-    ///
-    /// @input runtime_config: `Arc<dyn RuntimeConfig>` - Point definitions and mappings
-    /// @output Result<()> - Success or initialization error
-    /// @side-effects Loads protocol mappings into memory
-    /// @lifecycle Called once during channel creation
-    async fn initialize(&mut self, runtime_config: Arc<dyn RuntimeConfig>) -> Result<()>;
-
-    /// Read four-telemetry data (from cache or Redis)
-    /// Each telemetry type should be handled independently with its own configuration
-    ///
-    /// @input telemetry_type: FourRemote - T|S|C|A type to read
-    /// @output `Result<PointDataMap>` - Point ID to value mapping
-    /// @redis-read comsrv:{channel}:{type} - Cached telemetry data
-    /// @philosophy Four-telemetry isolation for clean data management
-    async fn read_four_telemetry(&self, telemetry_type: FourRemote) -> Result<PointDataMap>;
-
-    /// Get diagnostic information
-    async fn get_diagnostics(&self) -> Result<serde_json::Value> {
-        Ok(serde_json::json!({
-            "name": self.name(),
-        }))
-    }
-}
-
-/// Client communication trait - for active data collection
-#[async_trait]
-pub trait ComClient: ComBase {
-    /// Check connection status
-    fn is_connected(&self) -> bool;
-
-    /// Connect to target system
-    async fn connect(&mut self) -> Result<()>;
-
-    /// Disconnect
-    async fn disconnect(&mut self) -> Result<()>;
-
-    /// Execute control command
-    async fn control(&mut self, commands: Vec<(u32, ProtocolValue)>) -> Result<Vec<(u32, bool)>>;
-
-    /// Execute adjustment command
-    async fn adjustment(
-        &mut self,
-        adjustments: Vec<(u32, ProtocolValue)>,
-    ) -> Result<Vec<(u32, bool)>>;
-
-    /// Start periodic tasks (polling, etc.)
-    async fn start_periodic_tasks(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Stop periodic tasks
-    async fn stop_periodic_tasks(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Set data channel for sending telemetry data
-    fn set_data_channel(&mut self, _tx: tokio::sync::mpsc::Sender<TelemetryBatch>) {
-        // Default implementation does nothing
-    }
-
-    /// Set command receiver for receiving control commands
-    fn set_command_receiver(&mut self, _rx: tokio::sync::mpsc::Receiver<ChannelCommand>) {
-        // Default implementation does nothing
-    }
-
-    /// Try to reconnect when connection is lost
-    async fn try_reconnect(&mut self) -> Result<()> {
-        use tokio::time::{sleep, Duration};
-
-        let _ = self.disconnect().await;
-        sleep(Duration::from_millis(1000)).await;
-        self.connect().await
-    }
-}
-
-// ============================================================================
 // Channel Logger
 // ============================================================================
 
@@ -446,9 +319,6 @@ impl ChannelLogger {
     }
 
     /// Log with structured fields (channel_id + channel_name)
-    ///
-    /// Uses tracing macros directly. Service layer can configure
-    /// tracing subscriber to route logs to channel-specific files.
     fn log_dual(&self, level: tracing::Level, message: String) {
         match level {
             tracing::Level::ERROR => {
@@ -582,7 +452,6 @@ impl ChannelLogger {
             .collect::<Vec<_>>()
             .join(" ");
 
-        // TRACE level for parsed data details
         self.log_channel_only(
             tracing::Level::TRACE,
             format!(
@@ -619,7 +488,6 @@ impl ChannelLogger {
             )
         };
 
-        // DEBUG level for raw frames - visible in normal debug mode
         self.log_channel_only(tracing::Level::DEBUG, message);
     }
 
@@ -647,13 +515,11 @@ impl ChannelLogger {
     /// Log poll result (channel only for success, dual for failures)
     pub fn log_poll_result(&self, slave_id: u8, func: u8, ok: usize, err: usize) {
         if err > 0 {
-            // Errors go to main log as well
             self.log_dual(
                 tracing::Level::WARN,
                 format!("[poll] s{}f{} ok={} err={}", slave_id, func, ok, err),
             );
         } else {
-            // Success only to channel log
             self.log_channel_only(
                 tracing::Level::DEBUG,
                 format!("[poll] s{}f{} ok={}", slave_id, func, ok),
@@ -686,7 +552,7 @@ impl ChannelLogger {
 // ============================================================================
 
 #[cfg(test)]
-#[allow(clippy::approx_constant)] // Test values like 3.14 are intentional
+#[allow(clippy::approx_constant)]
 mod tests {
     use super::*;
 
@@ -696,7 +562,7 @@ mod tests {
         assert_eq!(v.as_i64(), Some(42));
         assert_eq!(v.as_f64(), Some(42.0));
 
-        let v = ProtocolValue::from(3.1415f64); // Use distinct test value
+        let v = ProtocolValue::from(3.1415f64);
         assert_eq!(v.as_f64(), Some(3.1415));
         assert_eq!(v.as_i64(), Some(3));
 

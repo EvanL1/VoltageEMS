@@ -130,10 +130,9 @@ impl ReloadableService for ChannelManager {
                     // Only create and connect if enabled
                     if channel_config.is_enabled() {
                         match self.create_channel(Arc::new(channel_config)).await {
-                            Ok(channel_arc) => {
-                                // Try to connect
-                                let mut channel = channel_arc.write().await;
-                                if let Err(e) = channel.connect().await {
+                            Ok(channel_impl) => {
+                                // Try to connect using ChannelImpl's unified interface
+                                if let Err(e) = channel_impl.write().await.connect().await {
                                     warn!("Channel {} added but failed to connect: {}", id, e);
                                     errors.push(format!("Channel {} connection failed: {}", id, e));
                                 } else {
@@ -174,9 +173,8 @@ impl ReloadableService for ChannelManager {
                     // Only create and connect if enabled
                     if new_config.is_enabled() {
                         match self.create_channel(Arc::new(new_config)).await {
-                            Ok(channel_arc) => {
-                                let mut channel = channel_arc.write().await;
-                                if let Err(e) = channel.connect().await {
+                            Ok(channel_impl) => {
+                                if let Err(e) = channel_impl.write().await.connect().await {
                                     warn!("Channel {} updated but failed to connect: {}", id, e);
                                     errors.push(format!("Channel {} connection failed: {}", id, e));
                                 } else {
@@ -257,11 +255,10 @@ impl ReloadableService for ChannelManager {
         self.remove_channel(channel_id).await?;
 
         // Create new channel with updated config
-        let channel_arc = self.create_channel(Arc::new(config)).await?;
+        let channel_impl = self.create_channel(Arc::new(config)).await?;
 
-        // Connect if enabled
-        let mut channel = channel_arc.write().await;
-        channel.connect().await?;
+        // Connect if enabled using ChannelImpl's unified interface
+        channel_impl.write().await.connect().await?;
 
         Ok("running".to_string())
     }
@@ -278,11 +275,10 @@ impl ReloadableService for ChannelManager {
         let _ = self.remove_channel(channel_id).await;
 
         // Restore previous configuration
-        let channel_arc = self.create_channel(Arc::new(previous_config)).await?;
+        let channel_impl = self.create_channel(Arc::new(previous_config)).await?;
 
-        // Connect
-        let mut channel = channel_arc.write().await;
-        channel.connect().await?;
+        // Connect using ChannelImpl's unified interface
+        channel_impl.write().await.connect().await?;
 
         Ok("restored".to_string())
     }
