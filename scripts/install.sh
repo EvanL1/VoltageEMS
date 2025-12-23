@@ -723,9 +723,11 @@ if [[ -f "$DB_FILE" ]]; then
         echo -e "${BLUE}Existing database detected (${DB_SIZE_DISPLAY})${NC}"
         echo ""
         echo "Options:"
-        echo "  1. Keep existing data and add missing tables (safe upgrade)"
-        echo "  2. Reset database completely (WARNING: deletes all data)"
-        echo "  3. Skip database initialization"
+        echo "  1. Add missing tables only (safe upgrade, preserves data)"
+        echo "  2. Skip database initialization"
+        echo ""
+        echo -e "${YELLOW}Note: Database reset is disabled for safety. To reset manually:${NC}"
+        echo "      rm $DB_FILE && monarch init"
         echo ""
         read -p "Choose option [1]: " DB_OPTION
         DB_OPTION=${DB_OPTION:-1}
@@ -737,16 +739,6 @@ if [[ -f "$DB_FILE" ]]; then
                 echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
                 ;;
             2)
-                echo -e "${RED}⚠ WARNING: This will DELETE all existing configuration!${NC}"
-                read -p "Type 'DELETE' to confirm: " CONFIRM
-                if [[ "$CONFIRM" == "DELETE" ]]; then
-                    monarch init --force
-                    echo -e "${GREEN}✓ Database reset${NC}"
-                else
-                    echo -e "${YELLOW}Cancelled. Keeping existing database.${NC}"
-                fi
-                ;;
-            3)
                 echo -e "${BLUE}Skipped database initialization${NC}"
                 ;;
             *)

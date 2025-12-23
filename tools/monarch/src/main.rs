@@ -181,10 +181,10 @@ enum Commands {
         detailed: bool,
     },
 
-    /// Initialize database schema
+    /// Initialize database schema (migration-only, safe upgrade)
     Init {
-        /// Force reinitialize (delete existing database)
-        #[arg(short, long)]
+        /// DEPRECATED: This option is disabled for safety. Database can only be upgraded, not reset.
+        #[arg(short, long, hide = true)]
         force: bool,
     },
 
@@ -628,35 +628,32 @@ async fn init_command(db_path: &Path, force: bool) -> Result<()> {
 
     println!();
 
+    // --force is disabled for safety (migration-only policy)
+    if force {
+        eprintln!(
+            "{} --force is disabled for safety.",
+            "WARNING".bright_yellow()
+        );
+        eprintln!("   Database can only be upgraded, not reset.");
+        eprintln!(
+            "   If you really need to reset, manually delete: {}",
+            db_file.display()
+        );
+        return Ok(());
+    }
+
     // Check if database already exists
     if db_file.exists() {
-        if !force {
-            println!(
-                "{} Database already exists: {}",
-                "INFO".bright_cyan(),
-                db_file.display()
-            );
-            println!(
-                "{} Use {} to reinitialize",
-                "HINT".bright_blue(),
-                "--force".bright_yellow()
-            );
-            return Ok(());
-        }
-
-        // Force mode: clean up old files
-        println!("{} Removing existing database...", "-".bright_cyan());
-        std::fs::remove_file(&db_file)?;
-
-        // Remove WAL and SHM files if they exist
-        let wal_file = db_path.join("voltage.db-wal");
-        if wal_file.exists() {
-            let _ = std::fs::remove_file(&wal_file);
-        }
-        let shm_file = db_path.join("voltage.db-shm");
-        if shm_file.exists() {
-            let _ = std::fs::remove_file(&shm_file);
-        }
+        println!(
+            "{} Database already exists: {}",
+            "INFO".bright_cyan(),
+            db_file.display()
+        );
+        println!(
+            "{} Running safe schema upgrade (CREATE TABLE IF NOT EXISTS)...",
+            "INFO".bright_blue()
+        );
+        // Continue to run schema init - it uses IF NOT EXISTS so it's safe
     }
 
     // Initialize all tables
