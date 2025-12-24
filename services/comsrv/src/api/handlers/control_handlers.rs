@@ -16,6 +16,7 @@ use axum::{
 };
 use voltage_model::PointType;
 use voltage_rtdb::KeySpaceConfig;
+use voltage_rtdb::Rtdb;
 
 /// Control channel operation (start/stop/restart)
 ///
@@ -44,8 +45,8 @@ use voltage_rtdb::KeySpaceConfig;
     ),
     tag = "comsrv"
 )]
-pub async fn control_channel(
-    State(state): State<AppState>,
+pub async fn control_channel<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(id): Path<String>,
     Json(operation): Json<ChannelOperation>,
 ) -> Result<Json<SuccessResponse<String>>, AppError> {
@@ -181,8 +182,8 @@ pub async fn control_channel(
     ),
     tag = "comsrv"
 )]
-pub async fn write_channel_point(
-    State(state): State<AppState>,
+pub async fn write_channel_point<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(channel_id): Path<u32>,
     Json(request): Json<WritePointRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::WriteResponse>>, AppError> {

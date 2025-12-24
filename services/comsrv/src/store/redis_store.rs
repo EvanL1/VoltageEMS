@@ -46,9 +46,9 @@ use voltage_rtdb::{RoutingCache, Rtdb, WriteBuffer, WriteBufferConfig};
 /// It handles:
 /// - Redis Hash writes via WriteBuffer (high-performance buffered writes)
 /// - C2M routing to forward data to model instances
-pub struct RedisDataStore {
+pub struct RedisDataStore<R: Rtdb> {
     /// Redis connection
-    rtdb: Arc<dyn Rtdb>,
+    rtdb: Arc<R>,
     /// C2M/M2C routing cache
     routing_cache: Arc<RoutingCache>,
     /// Write buffer for aggregating Redis writes
@@ -61,14 +61,14 @@ pub struct RedisDataStore {
     key_config: KeySpaceConfig,
 }
 
-impl RedisDataStore {
+impl<R: Rtdb> RedisDataStore<R> {
     /// Create a new RedisDataStore.
     ///
     /// # Arguments
     ///
     /// * `rtdb` - Redis connection
     /// * `routing_cache` - C2M/M2C routing cache
-    pub fn new(rtdb: Arc<dyn Rtdb>, routing_cache: Arc<RoutingCache>) -> Self {
+    pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         Self {
             rtdb,
             routing_cache,
@@ -131,26 +131,38 @@ impl RedisDataStore {
     }
 
     /// Notify all subscribers of a data event.
+    ///
+    /// Optimized to move the event to the last subscriber, avoiding one clone.
     async fn notify_subscribers(&self, event: DataEvent) {
         let subscribers = self.subscribers.read().await;
-        for sender in subscribers.iter() {
+        let len = subscribers.len();
+        if len == 0 {
+            return;
+        }
+        // Clone for all but the last subscriber, move to the last one
+        for (i, sender) in subscribers.iter().enumerate() {
+            if i == len - 1 {
+                let _ = sender.try_send(event);
+                return;
+            }
             let _ = sender.try_send(event.clone());
         }
     }
 }
 
 // Data storage methods
-impl RedisDataStore {
+impl<R: Rtdb> RedisDataStore<R> {
     /// Write a batch of data points to Redis and route to model instances.
     ///
+    /// Takes ownership of `batch` to avoid cloning when notifying subscribers.
     /// Note: Data is already transformed by IGW in poll_once().
-    pub async fn write_batch(&self, channel_id: u32, batch: &DataBatch) -> IgwResult<()> {
+    pub async fn write_batch(&self, channel_id: u32, batch: DataBatch) -> IgwResult<()> {
         if batch.is_empty() {
             return Ok(());
         }
 
         // Convert to ChannelPointUpdates (values already transformed by IGW)
-        let updates = self.batch_to_updates(channel_id, batch);
+        let updates = self.batch_to_updates(channel_id, &batch);
 
         // Write via voltage-routing (handles Redis + C2M routing)
         let _stats = voltage_routing::write_channel_batch_buffered(
@@ -159,9 +171,8 @@ impl RedisDataStore {
             updates,
         );
 
-        // Notify subscribers
-        self.notify_subscribers(DataEvent::DataUpdate(batch.clone()))
-            .await;
+        // Notify subscribers - move batch into event, no clone needed
+        self.notify_subscribers(DataEvent::DataUpdate(batch)).await;
 
         Ok(())
     }
@@ -289,7 +300,7 @@ mod tests {
         batch.add(DataPoint::signal(2, true));
 
         // Write
-        store.write_batch(9901, &batch).await.unwrap();
+        store.write_batch(9901, batch).await.unwrap();
 
         // Note: In-memory test rtdb doesn't persist, so we can't verify reads
         // This test just ensures the code compiles and runs without panics

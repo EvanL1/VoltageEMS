@@ -9,6 +9,7 @@ use tracing::{error, info, warn};
 
 use crate::core::channels::channel_manager::ChannelManager;
 use crate::core::config::ChannelConfig;
+use voltage_rtdb::Rtdb;
 
 /// Channel change severity classification
 ///
@@ -73,7 +74,7 @@ impl ChannelChangeType {
     }
 }
 
-impl ReloadableService for ChannelManager {
+impl<R: Rtdb + 'static> ReloadableService for ChannelManager<R> {
     type ChangeType = ChannelChangeType;
     type Config = ChannelConfig;
     type ReloadResult = ChannelReloadResult;
@@ -284,7 +285,7 @@ impl ReloadableService for ChannelManager {
     }
 }
 
-impl ChannelManager {
+impl<R: Rtdb> ChannelManager<R> {
     /// Load channel configuration from SQLite database
     pub async fn load_channel_from_db(
         pool: &sqlx::SqlitePool,

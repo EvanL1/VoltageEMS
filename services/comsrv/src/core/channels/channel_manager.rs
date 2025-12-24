@@ -19,6 +19,7 @@ use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
 use crate::store::RedisDataStore;
+use voltage_rtdb::Rtdb;
 
 // ============================================================================
 // Channel Types (merged from channel.rs)
@@ -35,15 +36,15 @@ pub struct ChannelMetadata {
 
 /// Channel entry, combining channel and metadata
 #[derive(Clone)]
-pub struct ChannelEntry {
+pub struct ChannelEntry<R: Rtdb> {
     /// Dual-mode channel implementation (Legacy ComClient or IGW ProtocolClient)
-    pub channel: ChannelImpl,
+    pub channel: ChannelImpl<R>,
     pub metadata: ChannelMetadata,
-    pub command_trigger: Option<Arc<RwLock<CommandTrigger>>>,
+    pub command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
     pub channel_config: Arc<ChannelConfig>,
 }
 
-impl std::fmt::Debug for ChannelEntry {
+impl<R: Rtdb> std::fmt::Debug for ChannelEntry<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChannelEntry")
             .field("metadata", &self.metadata)
@@ -62,13 +63,13 @@ pub struct ChannelStats {
     pub last_accessed: Instant,
 }
 
-impl ChannelEntry {
+impl<R: Rtdb> ChannelEntry<R> {
     /// Create new channel entry
     pub fn new(
-        channel: ChannelImpl,
+        channel: ChannelImpl<R>,
         channel_config: Arc<ChannelConfig>,
         protocol_type: String,
-        command_trigger: Option<Arc<RwLock<CommandTrigger>>>,
+        command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
     ) -> Self {
         let metadata = ChannelMetadata {
             name: Arc::from(channel_config.name()),
@@ -111,18 +112,18 @@ impl ChannelEntry {
 // ============================================================================
 
 /// Channel manager - responsible for channel lifecycle management
-pub struct ChannelManager {
+pub struct ChannelManager<R: Rtdb> {
     /// Store created channels
-    channels: DashMap<u32, ChannelEntry, ahash::RandomState>,
+    channels: DashMap<u32, ChannelEntry<R>, ahash::RandomState>,
     /// Shared RTDB (Redis or Memory for testing)
-    rtdb: Arc<dyn voltage_rtdb::Rtdb>,
+    rtdb: Arc<R>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
     pub routing_cache: Arc<voltage_rtdb::RoutingCache>,
     /// SQLite connection pool for configuration loading
     sqlite_pool: Option<sqlx::SqlitePool>,
 }
 
-impl std::fmt::Debug for ChannelManager {
+impl<R: Rtdb> std::fmt::Debug for ChannelManager<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChannelManager")
             .field("channels", &self.channels.len())
@@ -130,12 +131,9 @@ impl std::fmt::Debug for ChannelManager {
     }
 }
 
-impl ChannelManager {
+impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Create new channel manager
-    pub fn new(
-        rtdb: Arc<dyn voltage_rtdb::Rtdb>,
-        routing_cache: Arc<voltage_rtdb::RoutingCache>,
-    ) -> Self {
+    pub fn new(rtdb: Arc<R>, routing_cache: Arc<voltage_rtdb::RoutingCache>) -> Self {
         Self {
             channels: DashMap::with_hasher(ahash::RandomState::default()),
             rtdb,
@@ -146,7 +144,7 @@ impl ChannelManager {
 
     /// Create channel manager with SQLite pool
     pub fn with_sqlite_pool(
-        rtdb: Arc<dyn voltage_rtdb::Rtdb>,
+        rtdb: Arc<R>,
         routing_cache: Arc<voltage_rtdb::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
     ) -> Self {
@@ -159,7 +157,10 @@ impl ChannelManager {
     }
 
     /// Create channel
-    pub async fn create_channel(&self, channel_config: Arc<ChannelConfig>) -> Result<ChannelImpl> {
+    pub async fn create_channel(
+        &self,
+        channel_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelImpl<R>> {
         let channel_id = channel_config.id();
 
         // Validate channel doesn't exist
@@ -168,7 +169,7 @@ impl ChannelManager {
         }
 
         // Convert to RuntimeChannelConfig and load configuration from SQLite
-        let mut runtime_config = RuntimeChannelConfig::from_base((*channel_config).clone());
+        let mut runtime_config = RuntimeChannelConfig::from_base_arc(Arc::clone(&channel_config));
         self.load_channel_configuration(&mut runtime_config).await?;
         let runtime_config = Arc::new(runtime_config);
 
@@ -237,7 +238,7 @@ impl ChannelManager {
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(ChannelImpl, Option<Arc<RwLock<CommandTrigger>>>)> {
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW path", channel_id);
 
         // 1. Create RedisDataStore for this channel
@@ -261,7 +262,7 @@ impl ChannelManager {
 
         // 6. Create IgwChannelWrapper with command processing and storage
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
-        let channel_impl: ChannelImpl = Arc::new(RwLock::new(wrapper));
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (virtual)", channel_id);
         Ok((channel_impl, command_trigger))
@@ -275,7 +276,7 @@ impl ChannelManager {
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(ChannelImpl, Option<Arc<RwLock<CommandTrigger>>>)> {
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW Modbus path", channel_id);
 
         // 1. Create RedisDataStore for this channel
@@ -311,7 +312,7 @@ impl ChannelManager {
 
         // 7. Create IgwChannelWrapper with command processing and storage
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
-        let channel_impl: ChannelImpl = Arc::new(RwLock::new(wrapper));
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (modbus_tcp)", channel_id);
         Ok((channel_impl, command_trigger))
@@ -325,7 +326,7 @@ impl ChannelManager {
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(ChannelImpl, Option<Arc<RwLock<CommandTrigger>>>)> {
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW Modbus RTU path", channel_id);
 
         // 1. Create RedisDataStore for this channel
@@ -361,7 +362,7 @@ impl ChannelManager {
 
         // 7. Create IgwChannelWrapper with command processing and storage
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
-        let channel_impl: ChannelImpl = Arc::new(RwLock::new(wrapper));
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (modbus_rtu)", channel_id);
         Ok((channel_impl, command_trigger))
@@ -412,7 +413,7 @@ impl ChannelManager {
     }
 
     /// Get channel implementation (dual-mode)
-    pub fn get_channel(&self, channel_id: u32) -> Option<ChannelImpl> {
+    pub fn get_channel(&self, channel_id: u32) -> Option<ChannelImpl<R>> {
         self.channels
             .get(&channel_id)
             .map(|entry| entry.channel.clone())
@@ -714,7 +715,7 @@ impl ChannelManager {
         &self,
         channel_id: u32,
     ) -> Result<(
-        Option<Arc<RwLock<crate::core::channels::trigger::CommandTrigger>>>,
+        Option<Arc<RwLock<crate::core::channels::trigger::CommandTrigger<R>>>>,
         tokio::sync::mpsc::Receiver<crate::core::channels::traits::ChannelCommand>,
     )> {
         use crate::core::channels::trigger::{CommandTrigger, CommandTriggerConfig};
@@ -754,7 +755,8 @@ mod tests {
     async fn test_channel_manager_creation() {
         let rtdb = create_test_rtdb();
         let routing_cache = create_test_routing_cache();
-        let manager = ChannelManager::new(rtdb, routing_cache);
+        let manager: ChannelManager<voltage_rtdb::MemoryRtdb> =
+            ChannelManager::new(rtdb, routing_cache);
 
         assert_eq!(manager.channel_count(), 0);
         assert_eq!(manager.get_channel_ids().len(), 0);
@@ -764,7 +766,8 @@ mod tests {
     async fn test_channel_manager_running_count() {
         let rtdb = create_test_rtdb();
         let routing_cache = create_test_routing_cache();
-        let manager = ChannelManager::new(rtdb, routing_cache);
+        let manager: ChannelManager<voltage_rtdb::MemoryRtdb> =
+            ChannelManager::new(rtdb, routing_cache);
 
         let count = manager.running_channel_count().await;
         assert_eq!(count, 0);

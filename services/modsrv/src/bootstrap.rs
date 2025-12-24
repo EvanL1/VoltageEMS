@@ -178,7 +178,7 @@ pub async fn load_products<R>(
     _rtdb: &Arc<R>,
 ) -> Result<Arc<ProductLoader>>
 where
-    R: voltage_rtdb::Rtdb + ?Sized,
+    R: voltage_rtdb::Rtdb,
 {
     // Products are now loaded from code definitions (no config directory needed)
     let product_loader = ProductLoader::new(sqlite_pool.clone());
@@ -424,7 +424,7 @@ pub async fn refresh_routing_cache(
 /// instead for better performance.
 pub async fn load_routing_cache<R>(rtdb: &Arc<R>) -> Result<Arc<voltage_rtdb::RoutingCache>>
 where
-    R: voltage_rtdb::Rtdb + ?Sized,
+    R: voltage_rtdb::Rtdb,
 {
     debug!("Loading routes from Redis");
 
@@ -565,9 +565,9 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
 /// @input pool: SQLite connection pool
 /// @input rtdb: Redis RTDB instance
 /// @output `Result<usize>` - Number of instances indexed
-async fn rebuild_instance_name_index(
+async fn rebuild_instance_name_index<R: voltage_rtdb::Rtdb>(
     pool: &SqlitePool,
-    rtdb: &dyn voltage_rtdb::Rtdb,
+    rtdb: &R,
 ) -> Result<usize> {
     use bytes::Bytes;
 

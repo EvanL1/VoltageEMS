@@ -49,7 +49,7 @@ pub use write_buffer::{
 
 /// Helper functions for common operations
 pub mod helpers {
-    use super::{KeySpaceConfig, MemoryRtdb, Rtdb};
+    use super::{KeySpaceConfig, MemoryRtdb, Rtdb, WriteBuffer};
     use anyhow::{Context, Result};
     use bytes::Bytes;
     use std::sync::Arc;
@@ -69,15 +69,7 @@ pub mod helpers {
     /// let rtdb = create_test_rtdb();
     /// // Use rtdb in tests...
     /// ```
-    pub fn create_test_rtdb() -> Arc<dyn Rtdb> {
-        Arc::new(MemoryRtdb::new())
-    }
-
-    /// Create a concrete MemoryRtdb for unit testing
-    ///
-    /// Use this when you need direct access to MemoryRtdb methods
-    /// (e.g., for inspecting internal state in tests).
-    pub fn create_test_memory_rtdb() -> Arc<MemoryRtdb> {
+    pub fn create_test_rtdb() -> Arc<MemoryRtdb> {
         Arc::new(MemoryRtdb::new())
     }
 
@@ -114,7 +106,7 @@ pub mod helpers {
         timestamp_ms: i64,
     ) -> Result<()>
     where
-        R: Rtdb + ?Sized,
+        R: Rtdb,
     {
         // Step 1: Write to comsrv:{channel_id}:{A|C} Hash (three fields: value/ts/raw)
         let channel_key = config.channel_key(channel_id, point_type);
@@ -190,7 +182,7 @@ pub mod helpers {
         timestamp_ms: i64,
     ) -> Result<usize>
     where
-        R: Rtdb + ?Sized,
+        R: Rtdb,
     {
         if points.is_empty() {
             return Ok(0);
@@ -239,6 +231,11 @@ pub mod helpers {
     /// This is a synchronous version that buffers writes instead of sending them
     /// directly to Redis. Used with WriteBuffer for high-frequency updates.
     ///
+    /// # Performance
+    /// Uses `Arc<str>` for field names to avoid String clones across 3 layers.
+    /// - Before: 3 String allocations per point (clone for each layer)
+    /// - After: 1 String allocation + 2 Arc::clone (O(1) atomic increment)
+    ///
     /// # Arguments
     /// * `write_buffer` - WriteBuffer for aggregating writes
     /// * `channel_key` - Base channel key (e.g. "comsrv:1001:T")
@@ -248,7 +245,7 @@ pub mod helpers {
     /// # Returns
     /// Number of points buffered
     pub fn buffer_channel_points_3layer(
-        write_buffer: &super::WriteBuffer,
+        write_buffer: &WriteBuffer,
         channel_key: &str,
         points: Vec<(u32, f64, f64)>, // (point_id, value, raw_value)
         timestamp_ms: i64,
@@ -262,17 +259,19 @@ pub mod helpers {
         // Pre-convert timestamp to Bytes once
         let timestamp_bytes = Bytes::from(timestamp_ms.to_string());
 
-        // Prepare 3-layer data
+        // Prepare 3-layer data with Arc<str> for O(1) field name sharing
         let mut values = Vec::with_capacity(count);
         let mut timestamps = Vec::with_capacity(count);
         let mut raw_values = Vec::with_capacity(count);
 
         for (point_id, value, raw_value) in points {
-            let point_id_str = point_id.to_string();
+            // Single String allocation, converted to Arc<str>
+            let field: Arc<str> = point_id.to_string().into();
 
-            values.push((point_id_str.clone(), Bytes::from(value.to_string())));
-            timestamps.push((point_id_str.clone(), timestamp_bytes.clone()));
-            raw_values.push((point_id_str, Bytes::from(raw_value.to_string())));
+            // Arc::clone is O(1) - just atomic counter increment
+            values.push((Arc::clone(&field), Bytes::from(value.to_string())));
+            timestamps.push((Arc::clone(&field), timestamp_bytes.clone()));
+            raw_values.push((field, Bytes::from(raw_value.to_string())));
         }
 
         // Buffer all 3 layers
@@ -315,7 +314,7 @@ pub mod helpers {
         value: f64,
     ) -> Result<i64>
     where
-        R: Rtdb + ?Sized,
+        R: Rtdb,
     {
         // Get current timestamp (milliseconds since epoch)
         let timestamp_ms = std::time::SystemTime::now()

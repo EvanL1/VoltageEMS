@@ -86,7 +86,7 @@ pub async fn set_action_point<R>(
     value: f64,
 ) -> Result<ActionRouteOutcome>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     let config = voltage_rtdb::KeySpaceConfig::production();
 
@@ -110,13 +110,9 @@ where
             .context("Failed to write instance action point")?;
 
         // Step 4: Write to channel Hash + auto-trigger TODO queue (Write-Triggers-Routing pattern)
-        // Get current timestamp (milliseconds)
-        let timestamp_ms = redis.time_millis().await.unwrap_or_else(|_| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64
-        });
+        // Get current timestamp (milliseconds) - use local system time for efficiency
+        use voltage_rtdb::{SystemTimeProvider, TimeProvider};
+        let timestamp_ms = SystemTimeProvider.now_millis();
 
         // Use unified helper: writes channel Hash (value/ts/raw) + triggers TODO queue
         voltage_rtdb::helpers::set_channel_point_with_trigger(

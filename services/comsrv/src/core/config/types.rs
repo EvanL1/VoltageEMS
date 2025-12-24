@@ -708,8 +708,13 @@ pub struct RuntimeChannelConfig {
 impl RuntimeChannelConfig {
     /// Create from base configuration (wraps in Arc for zero-copy sharing)
     pub fn from_base(base: ChannelConfig) -> Self {
+        Self::from_base_arc(Arc::new(base))
+    }
+
+    /// Create from Arc-wrapped base configuration (zero-copy)
+    pub fn from_base_arc(base: Arc<ChannelConfig>) -> Self {
         Self {
-            base: Arc::new(base),
+            base,
             telemetry_points: Vec::new(),
             signal_points: Vec::new(),
             control_points: Vec::new(),

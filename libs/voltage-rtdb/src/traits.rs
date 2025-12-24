@@ -1,10 +1,10 @@
 //! Trait definitions for RTDB abstraction
 
 use anyhow::Result;
-use async_trait::async_trait;
 use bytes::Bytes;
 use std::any::Any;
 use std::collections::HashMap;
+use std::future::Future;
 
 /// Unified RTDB Storage Trait
 ///
@@ -16,7 +16,9 @@ use std::collections::HashMap;
 /// Implementations:
 /// - `RedisRtdb`: Production Redis backend
 /// - `MemoryRtdb`: In-memory backend for testing
-#[async_trait]
+///
+/// Note: All async methods return `impl Future + Send` to ensure compatibility
+/// with `tokio::spawn` and other multi-threaded contexts.
 pub trait Rtdb: Send + Sync + 'static {
     // ========== Introspection ==========
 
@@ -29,44 +31,76 @@ pub trait Rtdb: Send + Sync + 'static {
     // ========== Basic Key-Value Operations ==========
 
     /// Get value by key
-    async fn get(&self, key: &str) -> Result<Option<Bytes>>;
+    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send;
 
     /// Set value for key
-    async fn set(&self, key: &str, value: Bytes) -> Result<()>;
+    fn set(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send;
 
     /// Delete key
-    async fn del(&self, key: &str) -> Result<bool>;
+    fn del(&self, key: &str) -> impl Future<Output = Result<bool>> + Send;
 
     /// Check if key exists
-    async fn exists(&self, key: &str) -> Result<bool>;
+    fn exists(&self, key: &str) -> impl Future<Output = Result<bool>> + Send;
 
     /// Increment key by float value (Redis INCRBYFLOAT)
     ///
     /// Returns the new value after incrementing.
-    async fn incrbyfloat(&self, key: &str, increment: f64) -> Result<f64>;
+    ///
+    /// # Behavior
+    ///
+    /// - If the key does not exist, it is initialized to 0.0 before incrementing.
+    /// - If the current value cannot be parsed as f64, it is treated as 0.0.
+    ///
+    /// # Implementation Notes
+    ///
+    /// - **RedisRtdb**: Delegates to Redis INCRBYFLOAT, which returns an error if the value is not a valid float.
+    /// - **MemoryRtdb**: Silently defaults to 0.0 on parse failure (logs at trace level).
+    ///
+    /// For test consistency, ensure stored values are always valid numeric strings.
+    fn incrbyfloat(&self, key: &str, increment: f64) -> impl Future<Output = Result<f64>> + Send;
 
     // ========== Hash Operations ==========
 
     /// Set hash field
-    async fn hash_set(&self, key: &str, field: &str, value: Bytes) -> Result<()>;
+    fn hash_set(
+        &self,
+        key: &str,
+        field: &str,
+        value: Bytes,
+    ) -> impl Future<Output = Result<()>> + Send;
 
     /// Get hash field
-    async fn hash_get(&self, key: &str, field: &str) -> Result<Option<Bytes>>;
+    fn hash_get(
+        &self,
+        key: &str,
+        field: &str,
+    ) -> impl Future<Output = Result<Option<Bytes>>> + Send;
 
     /// Get multiple hash fields (Redis HMGET)
     ///
     /// Returns a vector of values corresponding to the requested fields.
     /// Non-existent fields are returned as None.
-    async fn hash_mget(&self, key: &str, fields: &[&str]) -> Result<Vec<Option<Bytes>>>;
+    fn hash_mget(
+        &self,
+        key: &str,
+        fields: &[&str],
+    ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send;
 
     /// Set multiple hash fields
-    async fn hash_mset(&self, key: &str, fields: Vec<(String, Bytes)>) -> Result<()>;
+    fn hash_mset(
+        &self,
+        key: &str,
+        fields: Vec<(String, Bytes)>,
+    ) -> impl Future<Output = Result<()>> + Send;
 
     /// Get all hash fields
-    async fn hash_get_all(&self, key: &str) -> Result<HashMap<String, Bytes>>;
+    fn hash_get_all(
+        &self,
+        key: &str,
+    ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send;
 
     /// Delete hash field
-    async fn hash_del(&self, key: &str, field: &str) -> Result<bool>;
+    fn hash_del(&self, key: &str, field: &str) -> impl Future<Output = Result<bool>> + Send;
 
     /// Delete multiple hash fields at once (Redis HDEL with multiple fields)
     ///
@@ -74,28 +108,68 @@ pub trait Rtdb: Send + Sync + 'static {
     /// a single Redis command to delete all specified fields.
     ///
     /// Returns the number of fields that were removed.
-    async fn hash_del_many(&self, key: &str, fields: &[String]) -> Result<usize>;
+    fn hash_del_many(
+        &self,
+        key: &str,
+        fields: &[String],
+    ) -> impl Future<Output = Result<usize>> + Send;
+
+    /// Delete multiple hash fields using string slices (convenience wrapper)
+    ///
+    /// This is a convenience method that avoids the need to convert `&[&str]` to `Vec<String>`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// rtdb.hash_del_many_str("my_hash", &["field1", "field2", "field3"]).await?;
+    /// ```
+    fn hash_del_many_str(
+        &self,
+        key: &str,
+        fields: &[&str],
+    ) -> impl Future<Output = Result<usize>> + Send {
+        let key = key.to_string();
+        let fields: Vec<String> = fields.iter().map(|s| s.to_string()).collect();
+        async move { self.hash_del_many(&key, &fields).await }
+    }
 
     /// Increment hash field by value (Redis HINCRBY)
     ///
     /// Returns the new value after incrementing.
-    async fn hincrby(&self, key: &str, field: &str, increment: i64) -> Result<i64>;
+    ///
+    /// # Behavior
+    ///
+    /// - If the hash or field does not exist, it is initialized to 0 before incrementing.
+    /// - If the current value cannot be parsed as i64, it is treated as 0.
+    ///
+    /// # Implementation Notes
+    ///
+    /// - **RedisRtdb**: Delegates to Redis HINCRBY, which returns an error if the value is not a valid integer.
+    /// - **MemoryRtdb**: Silently defaults to 0 on parse failure (logs at trace level).
+    ///
+    /// For test consistency, ensure stored values are always valid numeric strings.
+    fn hincrby(
+        &self,
+        key: &str,
+        field: &str,
+        increment: i64,
+    ) -> impl Future<Output = Result<i64>> + Send;
 
     // ========== List Operations ==========
 
     /// Push value to left of list
-    async fn list_lpush(&self, key: &str, value: Bytes) -> Result<()>;
+    fn list_lpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send;
 
     /// Push value to right of list
-    async fn list_rpush(&self, key: &str, value: Bytes) -> Result<()>;
+    fn list_rpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send;
 
     /// Pop value from left of list
-    async fn list_lpop(&self, key: &str) -> Result<Option<Bytes>>;
+    fn list_lpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send;
 
     /// Pop value from right of list (Redis RPOP)
     ///
     /// Returns the popped value if the list is not empty, None otherwise.
-    async fn list_rpop(&self, key: &str) -> Result<Option<Bytes>>;
+    fn list_rpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send;
 
     /// Block and pop value from multiple lists (Redis BLPOP)
     ///
@@ -109,34 +183,44 @@ pub trait Rtdb: Send + Sync + 'static {
     /// # Returns
     /// * `Some((key, value))` - The key that had data and the popped value
     /// * `None` - Timeout expired without data
-    async fn list_blpop(
+    fn list_blpop(
         &self,
         keys: &[&str],
         timeout_seconds: u64,
-    ) -> Result<Option<(String, Bytes)>>;
+    ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send;
 
     /// Get list range
-    async fn list_range(&self, key: &str, start: isize, stop: isize) -> Result<Vec<Bytes>>;
+    fn list_range(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> impl Future<Output = Result<Vec<Bytes>>> + Send;
 
     /// Trim list to range
-    async fn list_trim(&self, key: &str, start: isize, stop: isize) -> Result<()>;
+    fn list_trim(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> impl Future<Output = Result<()>> + Send;
 
     // ========== Set Operations ==========
 
     /// Add member to set (Redis SADD)
     ///
     /// Returns true if the member was added, false if it already existed.
-    async fn sadd(&self, key: &str, member: &str) -> Result<bool>;
+    fn sadd(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send;
 
     /// Remove member from set (Redis SREM)
     ///
     /// Returns true if the member was removed, false if it didn't exist.
-    async fn srem(&self, key: &str, member: &str) -> Result<bool>;
+    fn srem(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send;
 
     /// Get all members of a set (Redis SMEMBERS)
     ///
     /// Returns a vector of all members in the set.
-    async fn smembers(&self, key: &str) -> Result<Vec<String>>;
+    fn smembers(&self, key: &str) -> impl Future<Output = Result<Vec<String>>> + Send;
 
     // ========== Key Scanning Operations ==========
 
@@ -144,7 +228,7 @@ pub trait Rtdb: Send + Sync + 'static {
     ///
     /// Returns a list of keys matching the glob pattern.
     /// In test implementations (MemoryRtdb), this searches in-memory keys.
-    async fn scan_match(&self, pattern: &str) -> Result<Vec<String>>;
+    fn scan_match(&self, pattern: &str) -> impl Future<Output = Result<Vec<String>>> + Send;
 
     // ========== Time Operations ==========
 
@@ -160,7 +244,7 @@ pub trait Rtdb: Send + Sync + 'static {
         since = "0.2.0",
         note = "Use voltage_rtdb::TimeProvider trait instead for better separation of concerns"
     )]
-    async fn time_millis(&self) -> Result<i64>;
+    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send;
 
     // ========== Pipeline Operations ==========
 
@@ -175,10 +259,10 @@ pub trait Rtdb: Send + Sync + 'static {
     /// # Returns
     /// * `Ok(())` on success
     /// * `Err` if any operation fails
-    async fn pipeline_hash_mset(
+    fn pipeline_hash_mset(
         &self,
         operations: Vec<(String, Vec<(String, Bytes)>)>,
-    ) -> Result<()>;
+    ) -> impl Future<Output = Result<()>> + Send;
 
     // ========== Convenience Operations (with default implementations) ==========
 
@@ -204,29 +288,46 @@ pub trait Rtdb: Send + Sync + 'static {
     /// // Initialize channel telemetry point
     /// rtdb.write_point_init("comsrv:1001:T", 5, 230.5).await?;
     /// ```
-    async fn write_point_init(&self, key: &str, point_id: u32, value: f64) -> Result<()> {
-        // Default implementation: write value + ts=0, no routing
-        let field = point_id.to_string();
-        let ts_field = format!("ts:{}", point_id);
-        let value_bytes = Bytes::from(value.to_string());
-        let ts_bytes = Bytes::from("0");
+    fn write_point_init(
+        &self,
+        key: &str,
+        point_id: u32,
+        value: f64,
+    ) -> impl Future<Output = Result<()>> + Send {
+        // Capture parameters for the async block
+        let key = key.to_string();
+        async move {
+            // Default implementation: write value + ts=0, no routing
+            let field = point_id.to_string();
+            let ts_field = format!("ts:{}", point_id);
+            let value_bytes = Bytes::from(value.to_string());
+            let ts_bytes = Bytes::from("0");
 
-        self.hash_set(key, &field, value_bytes).await?;
-        self.hash_set(key, &ts_field, ts_bytes).await?;
-        Ok(())
+            self.hash_set(&key, &field, value_bytes).await?;
+            self.hash_set(&key, &ts_field, ts_bytes).await?;
+            Ok(())
+        }
     }
 
     /// Enqueue control command to per-channel TODO queue: comsrv:{channel}:C:TODO
-    async fn enqueue_control(&self, channel_id: u32, payload_json: &str) -> Result<()> {
+    fn enqueue_control(
+        &self,
+        channel_id: u32,
+        payload_json: &str,
+    ) -> impl Future<Output = Result<()>> + Send {
         let key = format!("comsrv:{}:C:TODO", channel_id);
-        self.list_rpush(&key, Bytes::from(payload_json.to_string()))
-            .await
+        let payload = payload_json.to_string();
+        async move { self.list_rpush(&key, Bytes::from(payload)).await }
     }
 
     /// Enqueue adjustment command to per-channel TODO queue: comsrv:{channel}:A:TODO
-    async fn enqueue_adjustment(&self, channel_id: u32, payload_json: &str) -> Result<()> {
+    fn enqueue_adjustment(
+        &self,
+        channel_id: u32,
+        payload_json: &str,
+    ) -> impl Future<Output = Result<()>> + Send {
         let key = format!("comsrv:{}:A:TODO", channel_id);
-        self.list_rpush(&key, Bytes::from(payload_json.to_string()))
-            .await
+        let payload = payload_json.to_string();
+        async move { self.list_rpush(&key, Bytes::from(payload)).await }
     }
 }

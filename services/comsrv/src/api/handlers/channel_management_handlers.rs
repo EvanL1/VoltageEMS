@@ -17,6 +17,7 @@ use axum::{
     response::Json,
 };
 use std::sync::Arc;
+use voltage_rtdb::Rtdb;
 
 /// Parse channel config JSON into description, parameters, and logging
 fn parse_channel_config(
@@ -175,9 +176,9 @@ fn analyze_parameter_changes(
 /// Removes the old channel, creates a new one with updated config.
 /// Connection is attempted in background (non-blocking).
 /// Returns Ok("reloaded") immediately after channel creation.
-async fn perform_hot_reload(
+async fn perform_hot_reload<R: Rtdb + 'static>(
     id: u32,
-    state: &AppState,
+    state: &AppState<R>,
     new_config: crate::core::config::ChannelConfig,
 ) -> Result<String, String> {
     let manager = state.channel_manager.write().await;
@@ -309,8 +310,8 @@ async fn perform_hot_reload(
     ),
     tag = "comsrv"
 )]
-pub async fn create_channel_handler(
-    State(state): State<AppState>,
+pub async fn create_channel_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Json(req): Json<crate::dto::ChannelCreateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     use crate::core::config::ChannelConfig;
@@ -487,9 +488,9 @@ pub async fn create_channel_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn update_channel_handler(
+pub async fn update_channel_handler<R: Rtdb>(
     Path(id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Json(req): Json<crate::dto::ChannelConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     tracing::debug!("Ch{} updating", id);
@@ -746,9 +747,9 @@ pub async fn update_channel_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn set_channel_enabled_handler(
+pub async fn set_channel_enabled_handler<R: Rtdb>(
     Path(id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Json(req): Json<crate::dto::ChannelEnabledRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     use crate::core::config::ChannelConfig;
@@ -935,9 +936,9 @@ pub async fn set_channel_enabled_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn delete_channel_handler(
+pub async fn delete_channel_handler<R: Rtdb>(
     Path(id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<String>>, AppError> {
     tracing::debug!("Deleting Ch{}", id);
 
@@ -1003,8 +1004,8 @@ pub async fn delete_channel_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn reload_configuration_handler(
-    State(state): State<AppState>,
+pub async fn reload_configuration_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::ReloadConfigResult>>, AppError> {
     use crate::core::config::ChannelConfig;
 
@@ -1213,8 +1214,8 @@ pub async fn reload_configuration_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn reload_routing_handler(
-    State(state): State<AppState>,
+pub async fn reload_routing_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::RoutingReloadResult>>, AppError> {
     use crate::core::channels::ChannelManager;
 
@@ -1228,7 +1229,11 @@ pub async fn reload_routing_handler(
         let manager = state.channel_manager.read().await;
 
         // Call the public reload_routing_cache method
-        match ChannelManager::reload_routing_cache(&state.sqlite_pool, &manager.routing_cache).await
+        match ChannelManager::<voltage_rtdb::RedisRtdb>::reload_routing_cache(
+            &state.sqlite_pool,
+            &manager.routing_cache,
+        )
+        .await
         {
             Ok(counts) => counts,
             Err(e) => {

@@ -7,16 +7,19 @@
 //!
 //! Uses MemoryRtdb (no external dependencies) for fast, isolated testing.
 
+#![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_model::PointType;
 use voltage_routing::{write_channel_batch, ChannelPointUpdate};
+use voltage_rtdb::MemoryRtdb;
 use voltage_rtdb::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 /// Creates a memory RTDB for testing
-fn create_test_rtdb() -> Arc<dyn Rtdb> {
-    Arc::new(voltage_rtdb::MemoryRtdb::new())
+fn create_test_rtdb() -> Arc<MemoryRtdb> {
+    Arc::new(MemoryRtdb::new())
 }
 
 /// Creates a test environment with routing configuration
@@ -25,8 +28,8 @@ fn create_test_rtdb() -> Arc<dyn Rtdb> {
 /// * `c2m_routes` - C2M routing config, format: [("1001:T:1", "23:M:1"), ...]
 ///
 /// # Returns
-/// * `(Arc<dyn Rtdb>, Arc<RoutingCache>)` - RTDB and routing cache
-async fn setup_c2m_routing(c2m_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
+/// * `(Arc<MemoryRtdb>, Arc<RoutingCache>)` - RTDB and routing cache
+async fn setup_c2m_routing(c2m_routes: Vec<(&str, &str)>) -> (Arc<MemoryRtdb>, Arc<RoutingCache>) {
     let rtdb = create_test_rtdb();
     let mut c2m_map = HashMap::new();
     for (source, target) in c2m_routes {
@@ -41,8 +44,8 @@ async fn setup_c2m_routing(c2m_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc
 }
 
 /// Helper: Asserts channel data (engineering value layer)
-async fn assert_channel_value(
-    rtdb: &dyn Rtdb,
+async fn assert_channel_value<R: Rtdb>(
+    rtdb: &R,
     channel_id: u32,
     point_type: &str,
     point_id: u32,
@@ -65,8 +68,8 @@ async fn assert_channel_value(
 }
 
 /// Helper: Asserts channel timestamp exists
-async fn assert_channel_timestamp_exists(
-    rtdb: &dyn Rtdb,
+async fn assert_channel_timestamp_exists<R: Rtdb>(
+    rtdb: &R,
     channel_id: u32,
     point_type: &str,
     point_id: u32,
@@ -89,8 +92,8 @@ async fn assert_channel_timestamp_exists(
 }
 
 /// Helper: Asserts channel raw value
-async fn assert_channel_raw_value(
-    rtdb: &dyn Rtdb,
+async fn assert_channel_raw_value<R: Rtdb>(
+    rtdb: &R,
     channel_id: u32,
     point_type: &str,
     point_id: u32,
@@ -114,8 +117,8 @@ async fn assert_channel_raw_value(
 }
 
 /// Helper: Asserts instance measurement value
-async fn assert_instance_measurement(
-    rtdb: &dyn Rtdb,
+async fn assert_instance_measurement<R: Rtdb>(
+    rtdb: &R,
     instance_id: u16,
     point_id: u32,
     expected_value: f64,
@@ -135,7 +138,11 @@ async fn assert_instance_measurement(
 }
 
 /// Helper: Asserts instance measurement does not exist
-async fn assert_instance_measurement_not_exists(rtdb: &dyn Rtdb, instance_id: u16, point_id: u32) {
+async fn assert_instance_measurement_not_exists<R: Rtdb>(
+    rtdb: &R,
+    instance_id: u16,
+    point_id: u32,
+) {
     let config = KeySpaceConfig::production();
     let instance_key = config.instance_measurement_key(instance_id.into());
 

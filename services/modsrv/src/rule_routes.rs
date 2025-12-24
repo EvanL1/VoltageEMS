@@ -23,21 +23,21 @@ use voltage_rtdb::traits::Rtdb;
 use voltage_rules::{self as rule_repository, RuleNode, RuleScheduler, RuleVariable};
 
 /// Rule Engine state shared across handlers
-pub struct RuleEngineState<R: Rtdb + ?Sized> {
+pub struct RuleEngineState<R: Rtdb> {
     /// SQLite pool for rule persistence
     pub pool: SqlitePool,
     /// Rule scheduler (owns the executor)
     pub scheduler: Arc<RuleScheduler<R>>,
 }
 
-impl<R: Rtdb + ?Sized + 'static> RuleEngineState<R> {
+impl<R: Rtdb + 'static> RuleEngineState<R> {
     pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler<R>>) -> Self {
         Self { pool, scheduler }
     }
 }
 
 /// Create rule engine API routes
-pub fn create_rule_routes<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub fn create_rule_routes<R: Rtdb + Send + Sync + 'static>(
     state: Arc<RuleEngineState<R>>,
 ) -> Router {
     Router::new()
@@ -179,7 +179,7 @@ pub struct UpdateRuleRequest {
     ),
     tag = "rules"
 ))]
-pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn list_rules<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Query(query): Query<RuleListQuery>,
 ) -> Result<Json<SuccessResponse<PaginatedResponse<serde_json::Value>>>, ModSrvError> {
@@ -230,7 +230,7 @@ pub async fn list_rules<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn create_rule<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Json(req): Json<CreateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -282,7 +282,7 @@ pub async fn create_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn get_rule<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -313,7 +313,7 @@ pub async fn get_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn update_rule<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<i64>,
     Json(req): Json<UpdateRuleRequest>,
@@ -420,7 +420,7 @@ pub async fn update_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn delete_rule<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -452,7 +452,7 @@ pub async fn delete_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn enable_rule<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -484,7 +484,7 @@ pub async fn enable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn disable_rule<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -532,7 +532,7 @@ pub async fn disable_rule<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn execute_rule_now<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn execute_rule_now<R: Rtdb + Send + Sync + 'static>(
     Path(id): Path<i64>,
     State(state): State<Arc<RuleEngineState<R>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -592,7 +592,7 @@ pub async fn execute_rule_now<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn scheduler_status<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn scheduler_status<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     let status = state.scheduler.status().await;
@@ -614,7 +614,7 @@ pub async fn scheduler_status<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn scheduler_reload<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn scheduler_reload<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state.scheduler.reload_rules().await {
@@ -648,7 +648,7 @@ pub async fn scheduler_reload<R: Rtdb + ?Sized + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule_variables<R: Rtdb + ?Sized + Send + Sync + 'static>(
+pub async fn get_rule_variables<R: Rtdb + Send + Sync + 'static>(
     State(state): State<Arc<RuleEngineState<R>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {

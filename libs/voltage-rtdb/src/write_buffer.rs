@@ -109,9 +109,14 @@ pub struct WriteBufferStatsSnapshot {
 ///
 /// Buffers hash_set and hash_mset calls in memory, then flushes them
 /// to Redis periodically using pipeline_hash_mset for efficiency.
+///
+/// # Performance Optimization
+/// Field names use `Arc<str>` internally to avoid string clones in
+/// 3-layer writes (value/timestamp/raw). `Arc::clone()` is O(1).
 pub struct WriteBuffer {
     /// Pending data: key -> {field -> value}
-    pending: DashMap<String, DashMap<String, Bytes>>,
+    /// Field names use Arc<str> for O(1) cloning in multi-layer writes
+    pending: DashMap<String, DashMap<Arc<str>, Bytes>>,
     /// Notification for forced flush
     flush_notify: Arc<Notify>,
     /// Configuration
@@ -144,9 +149,14 @@ impl WriteBuffer {
     /// Buffer a single hash field write (returns immediately)
     ///
     /// The write will be flushed to Redis on the next flush cycle.
-    pub fn buffer_hash_set(&self, key: &str, field: &str, value: Bytes) {
+    ///
+    /// # Arguments
+    /// * `key` - Redis hash key
+    /// * `field` - Field name as `Arc<str>` for O(1) cloning in 3-layer writes
+    /// * `value` - Field value
+    pub fn buffer_hash_set(&self, key: &str, field: Arc<str>, value: Bytes) {
         let entry = self.pending.entry(key.to_string()).or_default();
-        entry.insert(field.to_string(), value);
+        entry.insert(field, value);
         self.stats.buffered_writes.fetch_add(1, Ordering::Relaxed);
 
         // Check if we need to force a flush
@@ -159,7 +169,11 @@ impl WriteBuffer {
     /// Buffer multiple hash field writes (returns immediately)
     ///
     /// More efficient than multiple buffer_hash_set calls.
-    pub fn buffer_hash_mset(&self, key: &str, fields: Vec<(String, Bytes)>) {
+    ///
+    /// # Arguments
+    /// * `key` - Redis hash key
+    /// * `fields` - Field-value pairs with `Arc<str>` field names for O(1) cloning
+    pub fn buffer_hash_mset(&self, key: &str, fields: Vec<(Arc<str>, Bytes)>) {
         if fields.is_empty() {
             return;
         }
@@ -183,13 +197,20 @@ impl WriteBuffer {
     }
 
     /// Collect and clear all pending data
+    ///
+    /// Converts `Arc<str>` field names to `String` for the Rtdb trait.
+    /// This conversion happens at flush time (batched), not per-write.
     fn drain_pending(&self) -> Vec<(String, Vec<(String, Bytes)>)> {
         let keys: Vec<_> = self.pending.iter().map(|e| e.key().clone()).collect();
         let mut operations = Vec::with_capacity(keys.len());
 
         for key in keys {
             if let Some((_, fields_map)) = self.pending.remove(&key) {
-                let fields: Vec<_> = fields_map.into_iter().collect();
+                // Convert Arc<str> to String at flush time
+                let fields: Vec<_> = fields_map
+                    .into_iter()
+                    .map(|(field, value)| (field.to_string(), value))
+                    .collect();
                 if !fields.is_empty() {
                     operations.push((key, fields));
                 }
@@ -223,7 +244,7 @@ impl WriteBuffer {
     /// ```
     pub async fn flush_loop<R>(&self, rtdb: &R)
     where
-        R: Rtdb + ?Sized,
+        R: Rtdb,
     {
         let interval = Duration::from_millis(self.config.flush_interval_ms);
 
@@ -245,7 +266,7 @@ impl WriteBuffer {
     /// Returns the number of fields flushed.
     pub async fn flush<R>(&self, rtdb: &R) -> anyhow::Result<usize>
     where
-        R: Rtdb + ?Sized,
+        R: Rtdb,
     {
         let operations = self.drain_pending();
 
@@ -272,7 +293,7 @@ impl WriteBuffer {
     /// Unlike flush_loop, this is a one-shot operation.
     pub async fn flush_now<R>(&self, rtdb: &R) -> anyhow::Result<usize>
     where
-        R: Rtdb + ?Sized,
+        R: Rtdb,
     {
         self.flush(rtdb).await
     }
@@ -304,9 +325,9 @@ mod tests {
     fn test_buffer_hash_set() {
         let buffer = WriteBuffer::new(WriteBufferConfig::default());
 
-        buffer.buffer_hash_set("key1", "field1", Bytes::from("value1"));
-        buffer.buffer_hash_set("key1", "field2", Bytes::from("value2"));
-        buffer.buffer_hash_set("key2", "field1", Bytes::from("value3"));
+        buffer.buffer_hash_set("key1", Arc::from("field1"), Bytes::from("value1"));
+        buffer.buffer_hash_set("key1", Arc::from("field2"), Bytes::from("value2"));
+        buffer.buffer_hash_set("key2", Arc::from("field1"), Bytes::from("value3"));
 
         assert_eq!(buffer.pending_keys(), 2);
         assert_eq!(buffer.pending_fields(), 3);
@@ -320,8 +341,8 @@ mod tests {
         buffer.buffer_hash_mset(
             "key1",
             vec![
-                ("field1".to_string(), Bytes::from("value1")),
-                ("field2".to_string(), Bytes::from("value2")),
+                (Arc::from("field1"), Bytes::from("value1")),
+                (Arc::from("field2"), Bytes::from("value2")),
             ],
         );
 
@@ -334,8 +355,8 @@ mod tests {
     fn test_buffer_overwrites_same_field() {
         let buffer = WriteBuffer::new(WriteBufferConfig::default());
 
-        buffer.buffer_hash_set("key1", "field1", Bytes::from("value1"));
-        buffer.buffer_hash_set("key1", "field1", Bytes::from("value2"));
+        buffer.buffer_hash_set("key1", Arc::from("field1"), Bytes::from("value1"));
+        buffer.buffer_hash_set("key1", Arc::from("field1"), Bytes::from("value2"));
 
         // Should only have 1 field (overwritten)
         assert_eq!(buffer.pending_fields(), 1);
@@ -347,8 +368,8 @@ mod tests {
     fn test_drain_pending() {
         let buffer = WriteBuffer::new(WriteBufferConfig::default());
 
-        buffer.buffer_hash_set("key1", "field1", Bytes::from("value1"));
-        buffer.buffer_hash_set("key2", "field1", Bytes::from("value2"));
+        buffer.buffer_hash_set("key1", Arc::from("field1"), Bytes::from("value1"));
+        buffer.buffer_hash_set("key2", Arc::from("field1"), Bytes::from("value2"));
 
         let operations = buffer.drain_pending();
 
@@ -362,8 +383,8 @@ mod tests {
         let buffer = WriteBuffer::new(WriteBufferConfig::default());
         let rtdb = MemoryRtdb::new();
 
-        buffer.buffer_hash_set("test:key", "field1", Bytes::from("100"));
-        buffer.buffer_hash_set("test:key", "field2", Bytes::from("200"));
+        buffer.buffer_hash_set("test:key", Arc::from("field1"), Bytes::from("100"));
+        buffer.buffer_hash_set("test:key", Arc::from("field2"), Bytes::from("200"));
 
         let flushed = buffer.flush(&rtdb).await.unwrap();
         assert_eq!(flushed, 2);
@@ -398,12 +419,12 @@ mod tests {
         };
         let buffer = WriteBuffer::new(config);
 
-        buffer.buffer_hash_set("key1", "field1", Bytes::from("v1"));
-        buffer.buffer_hash_set("key1", "field2", Bytes::from("v2"));
+        buffer.buffer_hash_set("key1", Arc::from("field1"), Bytes::from("v1"));
+        buffer.buffer_hash_set("key1", Arc::from("field2"), Bytes::from("v2"));
         assert_eq!(buffer.stats.forced_flushes.load(Ordering::Relaxed), 0);
 
         // Third write should trigger forced flush notification
-        buffer.buffer_hash_set("key1", "field3", Bytes::from("v3"));
+        buffer.buffer_hash_set("key1", Arc::from("field3"), Bytes::from("v3"));
         assert_eq!(buffer.stats.forced_flushes.load(Ordering::Relaxed), 1);
     }
 
@@ -413,12 +434,20 @@ mod tests {
         let rtdb = MemoryRtdb::new();
 
         // Buffer data for multiple keys (simulating T and S data)
-        buffer.buffer_hash_set("comsrv:1001:T", "1", Bytes::from("100.5"));
-        buffer.buffer_hash_set("comsrv:1001:T", "2", Bytes::from("200.3"));
-        buffer.buffer_hash_set("comsrv:1001:S", "1", Bytes::from("1"));
-        buffer.buffer_hash_set("comsrv:1001:S", "2", Bytes::from("0"));
-        buffer.buffer_hash_set("comsrv:1001:T:ts", "1", Bytes::from("1234567890"));
-        buffer.buffer_hash_set("comsrv:1001:T:ts", "2", Bytes::from("1234567890"));
+        buffer.buffer_hash_set("comsrv:1001:T", Arc::from("1"), Bytes::from("100.5"));
+        buffer.buffer_hash_set("comsrv:1001:T", Arc::from("2"), Bytes::from("200.3"));
+        buffer.buffer_hash_set("comsrv:1001:S", Arc::from("1"), Bytes::from("1"));
+        buffer.buffer_hash_set("comsrv:1001:S", Arc::from("2"), Bytes::from("0"));
+        buffer.buffer_hash_set(
+            "comsrv:1001:T:ts",
+            Arc::from("1"),
+            Bytes::from("1234567890"),
+        );
+        buffer.buffer_hash_set(
+            "comsrv:1001:T:ts",
+            Arc::from("2"),
+            Bytes::from("1234567890"),
+        );
 
         let flushed = buffer.flush(&rtdb).await.unwrap();
         assert_eq!(flushed, 6);
@@ -439,8 +468,8 @@ mod tests {
         let buffer = WriteBuffer::new(WriteBufferConfig::default());
         let rtdb = MemoryRtdb::new();
 
-        buffer.buffer_hash_set("key", "f1", Bytes::from("v1"));
-        buffer.buffer_hash_set("key", "f2", Bytes::from("v2"));
+        buffer.buffer_hash_set("key", Arc::from("f1"), Bytes::from("v1"));
+        buffer.buffer_hash_set("key", Arc::from("f2"), Bytes::from("v2"));
         buffer.flush(&rtdb).await.unwrap();
 
         let snapshot = buffer.stats.snapshot();

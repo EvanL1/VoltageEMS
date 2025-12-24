@@ -97,6 +97,7 @@ modbus = []
 swagger-ui = ["utoipa-swagger-ui"]   # Swagger UI documentation (enabled by default for development)
 openapi = []                         # OpenAPI schema generation for types
 integration = []                     # Integration tests requiring real Redis and voltage.db
+# AFIT migration complete - handlers are now generic over R: Rtdb
 
 [lints.clippy]
 cast-possible-truncation = "allow" # e.g., u64 as u32 when safe

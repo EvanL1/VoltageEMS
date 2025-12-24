@@ -85,8 +85,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 instance_name: instance.instance_name().to_string(),
                 product_name: instance.product_name().to_string(),
                 properties: instance.core.properties.clone(),
-                measurement_point_routings: measurement_point_routings.clone(),
-                action_point_routings: action_point_routings.clone(),
+                measurement_point_routings, // move, not clone
+                action_point_routings,      // move, not clone
                 measurement_points: product.measurements.clone(),
                 action_points: product.actions.clone(),
             });

@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use voltage_rtdb::Rtdb;
 
 // ============================================================================
 // Validator Structures - Strong typing for runtime validation
@@ -89,9 +90,9 @@ struct GpioMappingValidator {
     responses((status = 200, description = "Mappings retrieved", body = crate::dto::GroupedMappings)),
     tag = "comsrv"
 )]
-pub async fn get_channel_mappings_handler(
+pub async fn get_channel_mappings_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedMappings>>, AppError> {
     // 1. Verify channel exists
     let channel_exists: Option<(i64,)> =
@@ -487,9 +488,9 @@ pub async fn get_channel_mappings_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn update_channel_mappings_handler(
+pub async fn update_channel_mappings_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(mut req): Json<crate::dto::MappingBatchUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::MappingBatchUpdateResult>>, AppError> {

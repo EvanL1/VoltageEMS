@@ -34,6 +34,7 @@ use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::config::RuntimeChannelConfig;
 use crate::store::RedisDataStore;
+use voltage_rtdb::Rtdb;
 
 /// Wrapper for IGW protocol clients that integrates with comsrv's command system.
 ///
@@ -41,23 +42,23 @@ use crate::store::RedisDataStore;
 /// - Holds an IGW ProtocolClient implementation
 /// - Spawns a background task to process incoming commands
 /// - Provides access to the underlying protocol for status queries
-pub struct IgwChannelWrapper {
+pub struct IgwChannelWrapper<R: Rtdb> {
     /// The IGW protocol client
     protocol: Arc<RwLock<Box<dyn ProtocolClient>>>,
     /// Channel ID
     channel_id: u32,
     /// Data store for persisting polled data
-    store: Arc<RedisDataStore>,
+    store: Arc<RedisDataStore<R>>,
     /// Command executor task handle
     _executor_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-impl IgwChannelWrapper {
+impl<R: Rtdb> IgwChannelWrapper<R> {
     /// Create a new IGW channel wrapper with command processing and storage.
     pub fn new(
         protocol: Box<dyn ProtocolClient>,
         channel_id: u32,
-        store: Arc<RedisDataStore>,
+        store: Arc<RedisDataStore<R>>,
         command_rx: mpsc::Receiver<ChannelCommand>,
     ) -> Self {
         let protocol = Arc::new(RwLock::new(protocol));
@@ -91,7 +92,7 @@ impl IgwChannelWrapper {
         let count = batch.len();
         if count > 0 {
             self.store
-                .write_batch(self.channel_id, &batch)
+                .write_batch(self.channel_id, batch)
                 .await
                 .map_err(|e| crate::error::ComSrvError::RedisError(e.to_string()))?;
             debug!("Ch{} polled {} points", self.channel_id, count);
@@ -473,10 +474,10 @@ pub struct ChannelStatus {
 ///
 /// All protocols (Modbus TCP/RTU, Virtual) now use IGW implementations.
 /// The wrapper is held as Arc<RwLock<...>> for shared ownership and interior mutability.
-pub type ChannelImpl = Arc<RwLock<IgwChannelWrapper>>;
+pub type ChannelImpl<R> = Arc<RwLock<IgwChannelWrapper<R>>>;
 
 /// Extension methods for ChannelImpl.
-impl IgwChannelWrapper {
+impl<R: Rtdb> IgwChannelWrapper<R> {
     /// Get channel status.
     pub async fn get_status(&self) -> ChannelStatus {
         ChannelStatus {

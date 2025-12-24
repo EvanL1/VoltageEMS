@@ -15,6 +15,7 @@ use crate::dto::{
     AppError, ChannelConfig, ChannelDetail, ChannelListQuery, ChannelRuntimeStatus, ChannelStatus,
     ChannelStatusResponse, PaginatedResponse, PointCounts, SuccessResponse,
 };
+use voltage_rtdb::Rtdb;
 
 /// List all channels with pagination and filtering
 #[utoipa::path(
@@ -76,8 +77,8 @@ use crate::dto::{
     ),
     tag = "comsrv"
 )]
-pub async fn get_all_channels(
-    State(state): State<AppState>,
+pub async fn get_all_channels<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Query(query): Query<ChannelListQuery>,
 ) -> Result<Json<SuccessResponse<PaginatedResponse<ChannelStatusResponse>>>, AppError> {
     // Load all channels from database first
@@ -195,8 +196,8 @@ pub async fn get_all_channels(
     ),
     tag = "comsrv"
 )]
-pub async fn get_channel_status(
-    State(state): State<AppState>,
+pub async fn get_channel_status<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse<ChannelStatus>>, AppError> {
     let id_u16 = id
@@ -282,8 +283,8 @@ pub async fn get_channel_status(
     ),
     tag = "comsrv"
 )]
-pub async fn get_channel_detail_handler(
-    State(state): State<AppState>,
+pub async fn get_channel_detail_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse<ChannelDetail>>, AppError> {
     let id_u16 = id
@@ -446,8 +447,8 @@ pub async fn get_channel_detail_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn search_channels(
-    State(state): State<AppState>,
+pub async fn search_channels<R: Rtdb>(
+    State(state): State<AppState<R>>,
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     // raw_query is Option<String>:
@@ -636,8 +637,8 @@ pub async fn search_channels(
     ),
     tag = "comsrv"
 )]
-pub async fn list_channels(
-    State(state): State<AppState>,
+pub async fn list_channels<R: Rtdb>(
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     let channels: Vec<(i64, String)> =
         sqlx::query_as("SELECT channel_id, name FROM channels ORDER BY channel_id")
@@ -696,8 +697,8 @@ pub struct PointsQuery {
     ),
     tag = "comsrv"
 )]
-pub async fn list_all_points(
-    State(state): State<AppState>,
+pub async fn list_all_points<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Query(query): Query<PointsQuery>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     // Determine which tables to query based on type filter

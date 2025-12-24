@@ -25,7 +25,7 @@ use voltage_rtdb::{MemoryRtdb, Rtdb};
 async fn setup_m2c_routing(
     m2c_routes: Vec<(&str, &str)>,
     instance_mappings: Vec<(&str, u32)>,
-) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
+) -> (Arc<MemoryRtdb>, Arc<RoutingCache>) {
     let rtdb = Arc::new(MemoryRtdb::new());
 
     // Step 1: Set up instance name index (inst:name:index Hash)
@@ -55,7 +55,7 @@ async fn setup_m2c_routing(
 /// # Arguments
 /// * `rtdb` - RTDB instance
 /// * `queue_key` - TODO queue key (e.g. "comsrv:1001:A:TODO")
-async fn assert_todo_queue_triggered(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
+async fn assert_todo_queue_triggered<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
     let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
     assert!(
         !messages.is_empty(),
@@ -65,7 +65,7 @@ async fn assert_todo_queue_triggered(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
 }
 
 /// Asserts TODO queue is empty
-async fn assert_todo_queue_empty(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
+async fn assert_todo_queue_empty<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
     let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
     assert!(
         messages.is_empty(),
@@ -75,7 +75,7 @@ async fn assert_todo_queue_empty(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
 }
 
 /// Parses trigger message from TODO queue
-async fn parse_todo_message(rtdb: &Arc<dyn Rtdb>, queue_key: &str) -> serde_json::Value {
+async fn parse_todo_message<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) -> serde_json::Value {
     let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
     assert!(!messages.is_empty(), "TODO queue should have messages");
 

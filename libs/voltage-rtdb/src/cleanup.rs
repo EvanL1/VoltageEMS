@@ -5,9 +5,9 @@
 //! to define their specific cleanup logic.
 
 use std::collections::HashSet;
+use std::future::Future;
 
 use anyhow::Result;
-use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use crate::traits::Rtdb;
@@ -18,7 +18,6 @@ use crate::traits::Rtdb;
 /// - Get valid entity IDs from their database
 /// - Extract entity IDs from Redis keys
 /// - Identify system keys that should be preserved
-#[async_trait]
 pub trait CleanupProvider: Send + Sync {
     /// Get the set of valid entity IDs from the database
     ///
@@ -27,17 +26,19 @@ pub trait CleanupProvider: Send + Sync {
     ///
     /// # Example
     /// ```ignore
-    /// async fn get_valid_ids(&self) -> Result<HashSet<String>> {
-    ///     let ids = sqlx::query_as::<_, (u16,)>("SELECT id FROM channels")
-    ///         .fetch_all(&self.db)
-    ///         .await?
-    ///         .into_iter()
-    ///         .map(|(id,)| id.to_string())
-    ///         .collect();
-    ///     Ok(ids)
+    /// fn get_valid_ids(&self) -> impl Future<Output = Result<HashSet<String>>> + Send {
+    ///     async move {
+    ///         let ids = sqlx::query_as::<_, (u16,)>("SELECT id FROM channels")
+    ///             .fetch_all(&self.db)
+    ///             .await?
+    ///             .into_iter()
+    ///             .map(|(id,)| id.to_string())
+    ///             .collect();
+    ///         Ok(ids)
+    ///     }
     /// }
     /// ```
-    async fn get_valid_ids(&self) -> Result<HashSet<String>>;
+    fn get_valid_ids(&self) -> impl Future<Output = Result<HashSet<String>>> + Send;
 
     /// Get the Redis key pattern to scan
     ///
@@ -98,17 +99,26 @@ pub trait CleanupProvider: Send + Sync {
     ///
     /// # Example
     /// ```ignore
-    /// async fn get_valid_point_ids_for_entity(&self, entity_id: &str, key: &str) -> Result<Option<HashSet<String>>> {
-    ///     // For comsrv:1:T, query telemetry_points WHERE channel_id = 1
-    ///     // Return Some(set) with valid point_ids
+    /// fn get_valid_point_ids_for_entity(
+    ///     &self,
+    ///     entity_id: &str,
+    ///     key: &str,
+    /// ) -> impl Future<Output = Result<Option<HashSet<String>>>> + Send {
+    ///     let entity_id = entity_id.to_string();
+    ///     let key = key.to_string();
+    ///     async move {
+    ///         // For comsrv:1:T, query telemetry_points WHERE channel_id = 1
+    ///         // Return Some(set) with valid point_ids
+    ///         Ok(None)
+    ///     }
     /// }
     /// ```
-    async fn get_valid_point_ids_for_entity(
+    fn get_valid_point_ids_for_entity(
         &self,
         _entity_id: &str,
         _key: &str,
-    ) -> Result<Option<HashSet<String>>> {
-        Ok(None) // Default: no point-level cleanup
+    ) -> impl Future<Output = Result<Option<HashSet<String>>>> + Send {
+        async { Ok(None) } // Default: no point-level cleanup
     }
 }
 
@@ -272,10 +282,10 @@ mod tests {
         system_keys: Vec<String>,
     }
 
-    #[async_trait]
     impl CleanupProvider for MockProvider {
-        async fn get_valid_ids(&self) -> Result<HashSet<String>> {
-            Ok(self.valid_ids.clone())
+        fn get_valid_ids(&self) -> impl Future<Output = Result<HashSet<String>>> + Send {
+            let valid_ids = self.valid_ids.clone();
+            async move { Ok(valid_ids) }
         }
 
         fn key_pattern(&self) -> &str {

@@ -4,24 +4,26 @@
 //! And stateless functions: scale, clamp, abs, min, max
 
 use crate::error::{CalcError, Result};
-use crate::state::{
-    state_key, IntegrateState, MovingAvgState, RateOfChangeState, SharedStateStore,
-};
+use crate::state::{state_key, IntegrateState, MovingAvgState, RateOfChangeState, StateStore};
 use chrono::Utc;
+use std::sync::Arc;
 use tracing::debug;
 
 /// Built-in function executor
 ///
 /// Handles execution of stateful and stateless built-in functions.
-pub struct BuiltinFunctions {
+///
+/// # Type Parameters
+/// * `S` - State store implementation (defaults to MemoryStateStore)
+pub struct BuiltinFunctions<S: StateStore> {
     /// State store for stateful functions
-    state_store: SharedStateStore,
+    state_store: Arc<S>,
     /// Context identifier (e.g., rule_id, instance_id)
     context: String,
 }
 
-impl BuiltinFunctions {
-    pub fn new(state_store: SharedStateStore, context: impl Into<String>) -> Self {
+impl<S: StateStore> BuiltinFunctions<S> {
+    pub fn new(state_store: Arc<S>, context: impl Into<String>) -> Self {
         Self {
             state_store,
             context: context.into(),

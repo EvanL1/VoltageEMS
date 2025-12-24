@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_model::PointType;
 use voltage_routing::{write_channel_batch, ChannelPointUpdate};
+use voltage_rtdb::MemoryRtdb;
 use voltage_rtdb::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
@@ -21,8 +22,8 @@ use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 const MAX_C2C_DEPTH: u8 = 2;
 
 /// Creates a memory RTDB for testing (no external dependencies)
-fn create_test_rtdb() -> Arc<dyn Rtdb> {
-    Arc::new(voltage_rtdb::MemoryRtdb::new())
+fn create_test_rtdb() -> Arc<MemoryRtdb> {
+    Arc::new(MemoryRtdb::new())
 }
 
 /// Creates a test environment with C2C routing
@@ -33,7 +34,7 @@ fn create_test_rtdb() -> Arc<dyn Rtdb> {
 /// # Returns
 /// - RTDB instance (memory implementation)
 /// - RoutingCache instance (with C2C routing configuration)
-async fn setup_c2c_routing(c2c_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
+async fn setup_c2c_routing(c2c_routes: Vec<(&str, &str)>) -> (Arc<MemoryRtdb>, Arc<RoutingCache>) {
     let rtdb = create_test_rtdb();
 
     let mut c2c_map = HashMap::new();
@@ -58,8 +59,8 @@ async fn setup_c2c_routing(c2c_routes: Vec<(&str, &str)>) -> (Arc<dyn Rtdb>, Arc
 /// - `point_type`: Point type (T/S/C/A)
 /// - `point_id`: Point ID
 /// - `expected_value`: Expected value
-async fn assert_channel_value(
-    rtdb: &dyn Rtdb,
+async fn assert_channel_value<R: Rtdb>(
+    rtdb: &R,
     channel_id: u32,
     point_type: &str,
     point_id: u32,
@@ -91,8 +92,8 @@ async fn assert_channel_value(
 /// - `channel_id`: Channel ID
 /// - `point_type`: Point type (T/S/C/A)
 /// - `point_id`: Point ID
-async fn assert_channel_value_missing(
-    rtdb: &dyn Rtdb,
+async fn assert_channel_value_missing<R: Rtdb>(
+    rtdb: &R,
     channel_id: u32,
     point_type: &str,
     point_id: u32,
@@ -123,8 +124,8 @@ async fn assert_channel_value_missing(
 /// - `point_type`: Point type (T/S/C/A)
 /// - `point_id`: Point ID
 /// - `expected_raw_value`: Expected raw value
-async fn assert_raw_value(
-    rtdb: &dyn Rtdb,
+async fn assert_raw_value<R: Rtdb>(
+    rtdb: &R,
     channel_id: u32,
     point_type: &str,
     point_id: u32,

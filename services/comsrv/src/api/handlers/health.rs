@@ -8,6 +8,7 @@ use common::system_metrics::SystemMetrics;
 
 use crate::api::routes::{get_service_start_time, AppState};
 use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
+use voltage_rtdb::Rtdb;
 
 /// Get service status endpoint
 ///
@@ -24,8 +25,8 @@ use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
     ),
     tag = "comsrv"
 )]
-pub async fn get_service_status(
-    State(state): State<AppState>,
+pub async fn get_service_status<R: Rtdb>(
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<ServiceStatus>>, AppError> {
     let manager = state.channel_manager.read().await;
     let total_channels = manager.channel_count();

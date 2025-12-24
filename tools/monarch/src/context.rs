@@ -15,7 +15,7 @@ use {
     comsrv::core::channels::ChannelManager,
     modsrv::{InstanceManager, ProductLoader},
     sqlx::SqlitePool,
-    voltage_rtdb::{RedisRtdb, Rtdb},
+    voltage_rtdb::RedisRtdb,
 };
 
 /// Configuration for service initialization
@@ -127,9 +127,9 @@ impl ServiceContext {
 #[cfg(feature = "lib-mode")]
 /// Comsrv service context
 pub struct ComsrvContext {
-    pub channel_manager: Arc<RwLock<ChannelManager>>,
+    pub channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>,
     pub sqlite_pool: SqlitePool,
-    pub rtdb: Arc<dyn Rtdb>,
+    pub rtdb: Arc<RedisRtdb>,
 }
 
 #[cfg(feature = "lib-mode")]
@@ -149,8 +149,8 @@ impl ComsrvContext {
                 .with_context(|| format!("Failed to connect to Redis at {}", config.redis_url))?,
         );
 
-        // Create RedisRtdb from RedisClient and cast to trait object
-        let rtdb: Arc<dyn Rtdb> = Arc::new(RedisRtdb::from_client(redis_client.clone()));
+        // Create RedisRtdb from RedisClient (using concrete type for static dispatch)
+        let rtdb: Arc<RedisRtdb> = Arc::new(RedisRtdb::from_client(redis_client.clone()));
 
         // Create empty routing cache (Monarch doesn't use routing)
         let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());

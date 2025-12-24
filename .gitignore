@@ -27,6 +27,7 @@ AGENTS.md
 .*
 !.env
 !.gitignore
+!.gitmodules
 !.github/
 !.dockerignore
 !.prettierrc.json

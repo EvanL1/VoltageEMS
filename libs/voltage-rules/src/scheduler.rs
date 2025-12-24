@@ -60,11 +60,11 @@ struct ScheduledRule {
 }
 
 /// Rule Scheduler - manages periodic rule execution
-pub struct RuleScheduler<R: Rtdb + ?Sized> {
+pub struct RuleScheduler<R: Rtdb> {
     /// RTDB instance for reading/writing data
     rtdb: Arc<R>,
-    /// Rule executor instance
-    executor: Arc<RuleExecutor<R>>,
+    /// Rule executor instance (uses default MemoryStateStore)
+    executor: Arc<RuleExecutor<R, voltage_calc::MemoryStateStore>>,
     /// SQLite pool for rule persistence
     pool: SqlitePool,
     /// Cached rules with their trigger configs
@@ -79,7 +79,7 @@ pub struct RuleScheduler<R: Rtdb + ?Sized> {
     logger_manager: RuleLoggerManager,
 }
 
-impl<R: Rtdb + ?Sized + 'static> RuleScheduler<R> {
+impl<R: Rtdb + 'static> RuleScheduler<R> {
     /// Create a new rule scheduler with configurable tick interval
     ///
     /// # Arguments
