@@ -15,10 +15,13 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum", "openapi"] }
+
+# IGW - Industrial Gateway Protocol Library
+igw = { version = "0.2", default-features = false, features = ["virtual-channel", "modbus", "modbus-rtu"] }
 errors = { path = "../../libs/errors", features = ["axum-support"] }
-voltage-comlink = { path = "../../libs/voltage-comlink" }
+# voltage-comlink removed - types moved to core/channels/types.rs
 voltage-model = { path = "../../libs/voltage-model" }
-voltage-protocols = { path = "../../libs/voltage-protocols", features = ["modbus", "modbus-rtu", "dido"] }
+# voltage-protocols removed - all protocols now use igw
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
@@ -94,6 +97,7 @@ modbus = []
 swagger-ui = ["utoipa-swagger-ui"]   # Swagger UI documentation (enabled by default for development)
 openapi = []                         # OpenAPI schema generation for types
 integration = []                     # Integration tests requiring real Redis and voltage.db
+# AFIT migration complete - handlers are now generic over R: Rtdb
 
 [lints.clippy]
 cast-possible-truncation = "allow" # e.g., u64 as u32 when safe

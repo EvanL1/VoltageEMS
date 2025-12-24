@@ -5,6 +5,7 @@
 use crate::context::ComsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use serde::{Deserialize, Serialize};
+use voltage_rtdb::Rtdb; // Trait must be in scope for method calls
 
 // Use chrono from sqlx::types for timestamp generation
 use sqlx::types::chrono::Utc;

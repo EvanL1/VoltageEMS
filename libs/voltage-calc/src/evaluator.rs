@@ -8,9 +8,10 @@
 
 use crate::builtin_functions::{self, BuiltinFunctions};
 use crate::error::{CalcError, Result};
-use crate::state::SharedStateStore;
+use crate::state::StateStore;
 use evalexpr::{ContextWithMutableFunctions, ContextWithMutableVariables, Value};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// CalcEngine - Formula evaluation engine
 ///
@@ -31,18 +32,18 @@ use std::collections::HashMap;
 /// // With stateful functions (async)
 /// let energy = engine.evaluate("integrate(P)", &vars).await?;
 /// ```
-pub struct CalcEngine {
+pub struct CalcEngine<S: StateStore> {
     /// Built-in function executor
-    builtin: BuiltinFunctions,
+    builtin: BuiltinFunctions<S>,
 }
 
-impl CalcEngine {
+impl<S: StateStore> CalcEngine<S> {
     /// Create new CalcEngine
     ///
     /// # Arguments
     /// * `state_store` - State storage for stateful functions
     /// * `context` - Context identifier (e.g., rule_id, instance_id)
-    pub fn new(state_store: SharedStateStore, context: impl Into<String>) -> Self {
+    pub fn new(state_store: Arc<S>, context: impl Into<String>) -> Self {
         Self {
             builtin: BuiltinFunctions::new(state_store, context),
         }
@@ -353,7 +354,7 @@ mod tests {
     use crate::state::MemoryStateStore;
     use std::sync::Arc;
 
-    fn create_engine() -> CalcEngine {
+    fn create_engine() -> CalcEngine<MemoryStateStore> {
         let store = Arc::new(MemoryStateStore::new());
         CalcEngine::new(store, "test")
     }

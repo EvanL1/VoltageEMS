@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use voltage_rtdb::Rtdb;
 
 // ============================================================================
 // Validator Structures - Strong typing for runtime validation
@@ -89,9 +90,9 @@ struct GpioMappingValidator {
     responses((status = 200, description = "Mappings retrieved", body = crate::dto::GroupedMappings)),
     tag = "comsrv"
 )]
-pub async fn get_channel_mappings_handler(
+pub async fn get_channel_mappings_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedMappings>>, AppError> {
     // 1. Verify channel exists
     let channel_exists: Option<(i64,)> =
@@ -487,9 +488,9 @@ pub async fn get_channel_mappings_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn update_channel_mappings_handler(
+pub async fn update_channel_mappings_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(mut req): Json<crate::dto::MappingBatchUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::MappingBatchUpdateResult>>, AppError> {
@@ -728,14 +729,13 @@ pub async fn update_channel_mappings_handler(
             // Trigger channel reload by calling reload handler internally
             tracing::debug!("Ch{} auto-reload", channel_id);
 
-            // Simple reload: disconnect and reconnect
+            // Simple reload: disconnect and reconnect using ChannelImpl's unified interface
             let factory = state.factory.read().await;
-            if let Some(channel_arc) = factory.get_channel(channel_id) {
-                let mut channel = channel_arc.write().await;
-                if let Err(e) = channel.disconnect().await {
+            if let Some(channel_impl) = factory.get_channel(channel_id) {
+                if let Err(e) = channel_impl.disconnect().await {
                     tracing::warn!("Ch{} disconnect: {}", channel_id, e);
                 }
-                if let Err(e) = channel.connect().await {
+                if let Err(e) = channel_impl.connect().await {
                     tracing::error!("Ch{} reconnect: {}", channel_id, e);
                     return Err(AppError::internal_error(format!(
                         "Mappings updated but channel reload failed: {}",

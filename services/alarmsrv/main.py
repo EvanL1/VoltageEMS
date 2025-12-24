@@ -76,7 +76,7 @@ async def startup_event():
     
     # 记录服务启动信息
     logger.info(f"告警服务启动成功")
-    logger.info(f"数据库路径: {settings.DATABASE_PATH}")
+    logger.info(f"数据库路径: {settings.VOLTAGE_DB_PATH}")
     logger.info(f"Redis连接: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
     logger.info(f"数据监控间隔: {settings.DATA_FETCH_INTERVAL}秒")
 
@@ -103,7 +103,7 @@ async def root():
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "status": "running",
-        "database": settings.DATABASE_PATH,
+        "database": settings.VOLTAGE_DB_PATH,
     }
 
 

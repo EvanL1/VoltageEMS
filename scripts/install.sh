@@ -42,6 +42,198 @@ run_docker_compose() {
     fi
 }
 
+# =============================================================================
+# Smart Update Helper Functions
+# =============================================================================
+
+# Image to container mapping
+declare -A IMAGE_TO_CONTAINERS=(
+    ["redis:8-alpine"]="voltage-redis"
+    ["influxdb:2-alpine"]="voltage-influxdb"
+    ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv"
+    ["voltage-hissrv:latest"]="voltage-hissrv"
+    ["voltage-apigateway:latest"]="voltage-apigateway"
+    ["voltage-netsrv:latest"]="voltage-netsrv"
+    ["voltage-alarmsrv:latest"]="voltage-alarmsrv"
+    ["voltage-apps:latest"]="voltage-apps"
+)
+
+# Container to service name mapping (for docker-compose)
+declare -A CONTAINER_TO_SERVICE=(
+    ["voltage-redis"]="voltage-redis"
+    ["voltage-influxdb"]="voltage-influxdb"
+    ["voltageems-comsrv"]="comsrv"
+    ["voltageems-modsrv"]="modsrv"
+    ["voltage-hissrv"]="hissrv"
+    ["voltage-apigateway"]="apigateway"
+    ["voltage-netsrv"]="netsrv"
+    ["voltage-alarmsrv"]="alarmsrv"
+    ["voltage-apps"]="apps"
+)
+
+# Generate backup tag for an image
+# Example: redis:8-alpine -> redis:backup-8-alpine-1703260800
+generate_backup_tag() {
+    local image=$1
+    local timestamp=${BACKUP_TIMESTAMP:-$(date +%s)}
+    local name="${image%:*}"      # redis, voltageems
+    local tag="${image##*:}"      # 8-alpine, latest
+    echo "${name}:backup-${tag}-${timestamp}"
+}
+
+# Detect if an image has changed compared to running container
+# Returns: "changed", "unchanged", or "not_running"
+detect_image_change() {
+    local image=$1
+    local containers="${IMAGE_TO_CONTAINERS[$image]:-}"
+
+    [[ -z "$containers" ]] && echo "unknown" && return
+
+    # Get new loaded image ID
+    local new_id
+    new_id=$(docker images "$image" --format '{{.ID}}' 2>/dev/null)
+    [[ -z "$new_id" ]] && echo "not_loaded" && return
+
+    # Get running container's image ID (use first container)
+    local first_container
+    first_container=$(echo "$containers" | awk '{print $1}')
+    local running_id
+    running_id=$(docker inspect "$first_container" --format '{{.Image}}' 2>/dev/null | sed 's/sha256://; s/^\(.\{12\}\).*/\1/')
+
+    if [[ -z "$running_id" ]]; then
+        echo "not_running"
+    elif [[ "$new_id" == "$running_id" ]]; then
+        echo "unchanged"
+    else
+        echo "changed"
+    fi
+}
+
+# Check if all containers are running
+all_containers_running() {
+    local containers=$1
+    for container in $containers; do
+        if ! docker ps --filter "name=^${container}$" --filter "status=running" -q | grep -q .; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+# Update a single service with backup and rollback capability
+# Args: $1=image, $2=containers (space-separated)
+# Returns: 0 on success, 1 on failure
+update_service() {
+    local image=$1
+    local containers=$2
+    local backup_tag
+    backup_tag=$(generate_backup_tag "$image")
+
+    echo -e "  ${BLUE}Updating: $image${NC}"
+
+    # Step 1: Backup current image
+    echo "    Backing up → $backup_tag"
+    if ! docker tag "$image" "$backup_tag" 2>/dev/null; then
+        echo -e "    ${YELLOW}Warning: Could not backup (image may not exist locally)${NC}"
+    fi
+
+    # Step 2: Stop and remove old containers
+    for container in $containers; do
+        docker stop "$container" 2>/dev/null || true
+        docker rm "$container" 2>/dev/null || true
+    done
+
+    # Step 3: Start new containers
+    for container in $containers; do
+        local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
+        run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d "$service"
+    done
+
+    # Step 4: Health check (wait for containers to start)
+    sleep 3
+
+    if all_containers_running "$containers"; then
+        echo -e "    ${GREEN}✓ Update successful${NC}"
+        # Remove backup on success
+        docker rmi "$backup_tag" 2>/dev/null || true
+        return 0
+    else
+        echo -e "    ${RED}✗ Update failed, rolling back...${NC}"
+        # Rollback: restore backup image and restart
+        docker tag "$backup_tag" "$image" 2>/dev/null || true
+        for container in $containers; do
+            local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
+            run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d "$service"
+        done
+        echo -e "    ${YELLOW}Rollback completed${NC}"
+        return 1
+    fi
+}
+
+# Confirm infrastructure update (requires explicit 'y')
+confirm_infrastructure_update() {
+    local image=$1
+    local service_name="${image%:*}"
+
+    echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}⚠  Infrastructure Update: $service_name${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  Image: $image"
+    echo "  Impact: Brief service interruption"
+    echo "  Data: Preserved (persistent volumes)"
+    echo ""
+    read -p "Update now? (y/N): " confirm
+
+    [[ "$confirm" =~ ^[Yy]$ ]]
+}
+
+# Select Python services to update (batch selection)
+# Args: changed services as positional arguments
+# Output: selected services (space-separated)
+select_python_services() {
+    local -a changed_services=("$@")
+
+    [[ ${#changed_services[@]} -eq 0 ]] && return
+
+    echo ""
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}  Python Services Update${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  Changed services: ${changed_services[*]}"
+    echo ""
+    echo "  [A]ll    - Update all changed services (default)"
+    echo "  [S]elect - Choose individually"
+    echo "  [N]one   - Skip all"
+    echo ""
+    read -p "Choice [A]: " choice
+
+    case "${choice:-A}" in
+        [Aa]*)
+            echo "${changed_services[@]}"
+            ;;
+        [Ss]*)
+            local -a selected=()
+            for svc in "${changed_services[@]}"; do
+                read -p "  Update $svc? (Y/n): " confirm
+                if [[ -z "$confirm" || "$confirm" =~ ^[Yy]$ ]]; then
+                    selected+=("$svc")
+                fi
+            done
+            echo "${selected[*]}"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# =============================================================================
+# End of Smart Update Helper Functions
+# =============================================================================
+
 # Determine which host user should own installed files. This must be resolved
 # before we attempt any permission changes while running with `set -u`.
 determine_install_user() {
@@ -145,88 +337,6 @@ determine_install_user() {
     fi
 }
 
-# Check if a Docker image has changed by comparing image digests
-# Args: $1 = image name (e.g., "redis:8-alpine")
-# Returns: 0 if changed or not running, 1 if unchanged
-check_image_changed() {
-    local image_name=$1
-    local container_name=""
-
-    # Determine container name from image name
-    case "$image_name" in
-        voltage-redis:* | redis:*)
-            container_name="voltage-redis"
-            ;;
-        voltageems:*)
-            # voltageems image is used by multiple containers
-            # Check if any container is running
-            container_name=$(docker ps --filter "ancestor=$image_name" --format "{{.Names}}" | head -1)
-            ;;
-        voltage-hissrv:* | voltage-apigateway:* | voltage-netsrv:* | voltage-alarmsrv:* | voltage-apps:*)
-            # Python auxiliary services and frontend
-            # Extract container name from image name (e.g., voltage-hissrv:latest -> hissrv)
-            container_name=$(echo "$image_name" | sed 's/voltage-//' | cut -d: -f1)
-            ;;
-        influxdb:*)
-            container_name="influxdb"
-            ;;
-        *)
-            echo -e "${YELLOW}Unknown image: $image_name${NC}"
-            return 0  # Assume changed for unknown images
-            ;;
-    esac
-
-    # If container doesn't exist or isn't running, consider it as "needs update"
-    if [[ -z "$container_name" ]]; then
-        return 0
-    fi
-
-    # Get the image ID currently used by the running container (normalize to short ID format)
-    local running_image_id
-    running_image_id=$(docker inspect "$container_name" --format='{{.Image}}' 2>/dev/null | sed 's/sha256://; s/^\(.\{12\}\).*/\1/')
-
-    if [[ -z "$running_image_id" ]]; then
-        # Container not found or not running
-        return 0
-    fi
-
-    # Get the image ID of the local image with the same tag
-    local local_image_id
-    local_image_id=$(docker images "$image_name" --format='{{.ID}}' 2>/dev/null)
-
-    if [[ -z "$local_image_id" ]]; then
-        # Local image not found
-        return 0
-    fi
-
-    # Compare image IDs
-    if [[ "$running_image_id" == "$local_image_id" ]]; then
-        # Images are the same
-        return 1
-    else
-        # Images are different
-        return 0
-    fi
-}
-
-# Display image change status with colors
-# Args: $1 = image name, $2 = running digest, $3 = new digest
-display_image_status() {
-    local image_name=$1
-    local running_digest=$2
-    local new_digest=$3
-
-    if [[ -z "$running_digest" ]]; then
-        echo -e "  ${BLUE}$image_name${NC}: ${YELLOW}not running${NC}"
-    elif [[ "$running_digest" == "$new_digest" ]]; then
-        echo -e "  ${BLUE}$image_name${NC}: ${GREEN}✓ unchanged${NC}"
-    else
-        echo -e "  ${BLUE}$image_name${NC}: ${RED}⚠ changed${NC}"
-        echo -e "    Running: ${running_digest:0:12}"
-        echo -e "    New:     ${new_digest:0:12}"
-    fi
-}
-
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}  VoltageEMS ARM64 Installer   ${NC}"
 echo -e "${BLUE}================================${NC}"
@@ -310,277 +420,161 @@ if command -v docker &> /dev/null; then
         echo -e "${BLUE}Existing VoltageEMS images detected.${NC}"
         echo ""
         echo -e "${BLUE}Smart Update Mode:${NC}"
-        echo "  1. Load new images (no service interruption)"
-        echo "  2. Compare image changes"
-        echo "  3. Only update changed services"
-        echo "  4. Protect Redis from unnecessary restarts"
+        echo "  1. Load new images"
+        echo "  2. Detect changes"
+        echo "  3. Confirm and update (with auto-rollback)"
         echo ""
         read -p "Proceed with smart update? (Y/n): " -n 1 -r
         echo
 
-        # Default to Yes if user just hits Enter
         if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
-            # === PHASE 1: Load new images (without affecting running containers) ===
+            # Set global backup timestamp for consistent naming
+            BACKUP_TIMESTAMP=$(date +%s)
+
+            # === PHASE 1: DETECT ===
             echo ""
-            echo -e "${BLUE}Phase 1: Loading new images...${NC}"
+            echo -e "${BLUE}Phase 1: Loading and detecting changes...${NC}"
 
-            # Clean up old backup tags first (keep only last 2 for safety)
-            echo "Cleaning up old backup tags..."
-            BACKUP_COUNT=$(docker images | grep -c "backup-" || true)
-            if [[ $BACKUP_COUNT -gt 2 ]]; then
-                # Remove oldest backup tags, keep last 2
-                docker images | grep "backup-" | sort -k2 | head -n -2 | awk '{print $1":"$2}' | xargs -r docker rmi 2>/dev/null || true
-                echo "  Cleaned up $(($BACKUP_COUNT - 2)) old backup tags"
-            fi
-
-            # Backup existing images by tagging them
-            echo "Creating backup tags for current images..."
-            for image in voltageems:latest redis:8-alpine voltage-hissrv:latest voltage-apigateway:latest voltage-netsrv:latest voltage-alarmsrv:latest voltage-apps:latest influxdb:2-alpine; do
-                if docker image inspect "$image" >/dev/null 2>&1; then
-                    backup_tag="${image/:latest/:backup-$(date +%s)}"
-                    docker tag "$image" "$backup_tag" 2>/dev/null || true
-                    echo "  Backed up $image → $backup_tag"
-                fi
-            done
-
-            # Load new images
-            LOADED_IMAGES=""
-            for image in docker/*.tar.gz; do
-                if [[ -f "$image" ]]; then
-                    echo -n "  Loading $(basename "$image")... "
-                    if OUTPUT=$(docker load < "$image" 2>&1); then
-                        LOADED_NAME=$(echo "$OUTPUT" | grep "Loaded image:" | sed 's/Loaded image: //')
-                        if [ -n "$LOADED_NAME" ]; then
-                            LOADED_IMAGES="$LOADED_IMAGES $LOADED_NAME"
-                            echo -e "${GREEN}success${NC}"
-                        else
-                            echo -e "${GREEN}success${NC}"
-                        fi
+            # Load all new images
+            for tarball in docker/*.tar.gz; do
+                if [[ -f "$tarball" ]]; then
+                    echo -n "  Loading $(basename "$tarball")... "
+                    if docker load < "$tarball" >/dev/null 2>&1; then
+                        echo -e "${GREEN}done${NC}"
                     else
                         echo -e "${RED}failed${NC}"
-                        echo "    Error: $OUTPUT"
                         exit 1
                     fi
                 fi
             done
 
-            # === PHASE 2: Detect image changes ===
+            # Detect changes for all images
+            declare -A CHANGE_STATUS
+            INFRA_CHANGED=()
+            RUST_CHANGED=()
+            PYTHON_CHANGED=()
+
             echo ""
-            echo -e "${BLUE}Phase 2: Detecting image changes...${NC}"
+            echo "  Detecting image changes:"
+            for image in "${!IMAGE_TO_CONTAINERS[@]}"; do
+                status=$(detect_image_change "$image")
+                CHANGE_STATUS[$image]=$status
 
-            REDIS_CHANGED=false
-            VOLTAGEEMS_CHANGED=false
+                case "$status" in
+                    "changed")
+                        echo -e "    ${RED}⚠${NC} $image: ${RED}changed${NC}"
+                        case "$image" in
+                            redis:*|influxdb:*)
+                                INFRA_CHANGED+=("$image")
+                                ;;
+                            voltageems:*)
+                                RUST_CHANGED+=("$image")
+                                ;;
+                            voltage-*)
+                                PYTHON_CHANGED+=("$image")
+                                ;;
+                        esac
+                        ;;
+                    "unchanged")
+                        echo -e "    ${GREEN}✓${NC} $image: unchanged"
+                        ;;
+                    "not_running")
+                        echo -e "    ${YELLOW}○${NC} $image: not running"
+                        ;;
+                    *)
+                        echo -e "    ${YELLOW}?${NC} $image: $status"
+                        ;;
+                esac
+            done
 
-            # Check voltage-redis
-            if check_image_changed "redis:8-alpine"; then
-                REDIS_CHANGED=true
-                echo -e "  ${RED}⚠ voltage-redis has changed${NC}"
-            else
-                echo -e "  ${GREEN}✓ voltage-redis unchanged${NC}"
-            fi
+            # === PHASE 2: DECIDE ===
+            echo ""
+            echo -e "${BLUE}Phase 2: Confirming updates...${NC}"
 
-            # Check voltageems
-            if check_image_changed "voltageems:latest"; then
-                VOLTAGEEMS_CHANGED=true
-                echo -e "  ${RED}⚠ voltageems has changed${NC}"
-            else
-                echo -e "  ${GREEN}✓ voltageems unchanged${NC}"
-            fi
+            TO_UPDATE=()
+            UPDATE_SUCCESS=()
+            UPDATE_FAILED=()
 
-            # Check Python auxiliary services and frontend
-            PYTHON_SERVICES_CHANGED=()
-            PYTHON_SERVICES_UNCHANGED=()
-
-            for svc in hissrv apigateway netsrv alarmsrv apps; do
-                image_name="voltage-${svc}:latest"
-                if check_image_changed "$image_name"; then
-                    PYTHON_SERVICES_CHANGED+=("$svc")
-                    echo -e "  ${RED}⚠ $svc has changed${NC}"
+            # Infrastructure: explicit confirmation required
+            for image in "${INFRA_CHANGED[@]}"; do
+                if confirm_infrastructure_update "$image"; then
+                    TO_UPDATE+=("$image")
                 else
-                    PYTHON_SERVICES_UNCHANGED+=("$svc")
-                    echo -e "  ${GREEN}✓ $svc unchanged${NC}"
+                    echo -e "  ${BLUE}Skipped: $image${NC}"
                 fi
             done
 
-            # === PHASE 3: Selective update with Redis protection ===
-            echo ""
-            echo -e "${BLUE}Phase 3: Applying updates...${NC}"
+            # Rust core: auto-confirm
+            for image in "${RUST_CHANGED[@]}"; do
+                echo -e "  ${GREEN}Auto-confirmed: $image (Rust core)${NC}"
+                TO_UPDATE+=("$image")
+            done
 
-            # Handle VoltageRedis update (with explicit confirmation)
-            if [ "$REDIS_CHANGED" = true ]; then
-                echo ""
-                echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${YELLOW}⚠  Redis Image Update Detected${NC}"
-                echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo ""
-                echo "  Service: VoltageRedis"
-                echo "  Impact: Brief service interruption (2-5 seconds)"
-                echo "  Data: Preserved (AOF + RDB persistence)"
-                echo ""
-                read -p "Update Redis now? (y/N): " redis_confirm
-                echo ""
-
-                if [[ "$redis_confirm" =~ ^[Yy]([Ee][Ss])?$ ]]; then
-                    echo -e "${YELLOW}Updating VoltageRedis...${NC}"
-
-                    # Stop and remove old Redis container
-                    docker stop voltage-redis 2>/dev/null || true
-                    docker rm voltage-redis 2>/dev/null || true
-
-                    # Remove old Redis image
-                    OLD_REDIS_IMAGES=$(docker images | grep "redis" | grep -v "backup\|8-alpine" | awk '{print $1":"$2}')
-                    for img in $OLD_REDIS_IMAGES; do
-                        if [[ "$img" != "redis:8-alpine" ]]; then
-                            docker rmi "$img" 2>/dev/null || true
-                        fi
-                    done
-
-                    # Start new Redis container using docker-compose
-                    if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-                        run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d voltage-redis
-                        echo -e "${GREEN}✓ VoltageRedis updated successfully${NC}"
-                    else
-                        echo -e "${RED}CRITICAL ERROR: docker-compose.yml not found at expected location${NC}"
-                        echo -e "${RED}Expected: $INSTALL_DIR/docker-compose.yml${NC}"
-                        echo -e "${RED}This is a bug in the installer. Please report to developers.${NC}"
-                        echo -e "${YELLOW}Workaround: Run 'sudo cp docker-compose.yml $INSTALL_DIR/' manually${NC}"
-                        exit 1
-                    fi
-                else
-                    echo -e "${BLUE}Skipped Redis update (will use old image)${NC}"
-                    # Restore old image tag
-                    BACKUP_REDIS=$(docker images | grep "redis.*backup" | head -1 | awk '{print $1":"$2}' || true)
-                    if [[ -n "$BACKUP_REDIS" ]]; then
-                        docker tag "$BACKUP_REDIS" "redis:8-alpine"
-                        echo "  Restored previous redis:8-alpine"
-                    fi
-                fi
-            else
-                echo -e "${GREEN}✓ VoltageRedis: No update needed${NC}"
-            fi
-
-            # Handle VoltageEMS services update (automatic if changed)
-            if [ "$VOLTAGEEMS_CHANGED" = true ]; then
-                echo ""
-                echo -e "${YELLOW}Updating VoltageEMS services (comsrv, modsrv)...${NC}"
-
-                # Get list of running VoltageEMS containers
-                RUNNING_SERVICES=$(docker ps --filter "ancestor=voltageems:latest" --format "{{.Names}}" | grep -E "comsrv|modsrv" || true)
-
-                if [[ -n "$RUNNING_SERVICES" ]]; then
-                    echo "  Stopping old containers: $(echo "$RUNNING_SERVICES" | tr '\n' ' ')"
-                    echo "$RUNNING_SERVICES" | xargs -r docker stop 2>/dev/null || true
-                    echo "$RUNNING_SERVICES" | xargs -r docker rm 2>/dev/null || true
-                fi
-
-                # Remove old voltageems images (keep backup)
-                OLD_VOLTAGEEMS_IMAGES=$(docker images | grep "voltageems" | grep -v "backup" | awk '{print $1":"$2}')
-                for img in $OLD_VOLTAGEEMS_IMAGES; do
-                    if [[ "$img" != "voltageems:latest" ]]; then
-                        docker rmi "$img" 2>/dev/null || true
-                    fi
+            # Python services: batch selection
+            if [[ ${#PYTHON_CHANGED[@]} -gt 0 ]]; then
+                # Extract service names from image names (voltage-hissrv:latest -> hissrv)
+                PYTHON_SVCS=()
+                for img in "${PYTHON_CHANGED[@]}"; do
+                    svc=$(echo "$img" | sed 's/voltage-//' | cut -d: -f1)
+                    PYTHON_SVCS+=("$svc")
                 done
 
-                # Restart services using docker-compose (force recreate to use new image)
-                if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-                    run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --force-recreate comsrv modsrv
-                    echo -e "${GREEN}✓ VoltageEMS services updated successfully (containers recreated)${NC}"
-                else
-                    echo -e "${YELLOW}Note: docker-compose.yml not found, start manually after installation${NC}"
-                fi
-            else
-                echo -e "${GREEN}✓ VoltageEMS services: No update needed${NC}"
+                # shellcheck disable=SC2086
+                selected_svcs=$(select_python_services "${PYTHON_SVCS[@]}")
+                for svc in $selected_svcs; do
+                    TO_UPDATE+=("voltage-${svc}:latest")
+                done
             fi
 
-            # Handle Python auxiliary services update (interactive, one by one)
-            PYTHON_SERVICES_UPDATED=()
-            PYTHON_SERVICES_SKIPPED=()
-
-            if [ ${#PYTHON_SERVICES_CHANGED[@]} -gt 0 ]; then
+            # === PHASE 3: EXECUTE ===
+            if [[ ${#TO_UPDATE[@]} -eq 0 ]]; then
                 echo ""
-                echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${YELLOW}  Python Auxiliary Services Update${NC}"
-                echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${BLUE}No updates selected.${NC}"
+            else
                 echo ""
-                echo "  ${#PYTHON_SERVICES_CHANGED[@]} service(s) have changed: ${PYTHON_SERVICES_CHANGED[*]}"
+                echo -e "${BLUE}Phase 3: Executing updates...${NC}"
+                echo "  Services to update: ${#TO_UPDATE[@]}"
                 echo ""
 
-                for svc in "${PYTHON_SERVICES_CHANGED[@]}"; do
-                    read -p "  Update $svc? (Y/n): " svc_confirm
-
-                    if [[ -z "$svc_confirm" ]] || [[ "$svc_confirm" =~ ^[Yy]$ ]]; then
-                        echo -e "    ${YELLOW}Updating $svc...${NC}"
-                        docker stop "$svc" 2>/dev/null || true
-                        docker rm "$svc" 2>/dev/null || true
-
-                        if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-                            run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --force-recreate "$svc"
-                            echo -e "    ${GREEN}✓ $svc updated${NC}"
-                            PYTHON_SERVICES_UPDATED+=("$svc")
+                for image in "${TO_UPDATE[@]}"; do
+                    containers="${IMAGE_TO_CONTAINERS[$image]:-}"
+                    if [[ -n "$containers" ]]; then
+                        if update_service "$image" "$containers"; then
+                            UPDATE_SUCCESS+=("$image")
                         else
-                            echo -e "    ${YELLOW}Note: docker-compose.yml not found${NC}"
+                            UPDATE_FAILED+=("$image")
                         fi
-                    else
-                        echo -e "    ${BLUE}Skipped $svc${NC}"
-                        PYTHON_SERVICES_SKIPPED+=("$svc")
                     fi
                 done
-                echo ""
-            else
-                echo -e "${GREEN}✓ Python services: No update needed${NC}"
             fi
 
-            # === PHASE 4: Cleanup ===
+            # Cleanup
             echo ""
-            echo -e "${BLUE}Phase 4: Cleaning up...${NC}"
-
-            # Remove backup tags (only if update was successful)
-            BACKUP_IMAGES=$(docker images | grep "backup-" | awk '{print $1":"$2}')
-            if [[ -n "$BACKUP_IMAGES" ]]; then
-                FAILED_REMOVALS=""
-                for img in $BACKUP_IMAGES; do
-                    if ! docker rmi "$img" 2>/dev/null; then
-                        FAILED_REMOVALS="$FAILED_REMOVALS $img"
-                    fi
-                done
-
-                if [[ -z "$FAILED_REMOVALS" ]]; then
-                    echo "  Removed all backup images"
-                else
-                    echo -e "${YELLOW}  ⚠ Some backup tags remain (in use by containers):${NC}"
-                    echo "    $FAILED_REMOVALS"
-                    echo "    Tip: Stop containers first, or they will be cleaned on next update"
-                fi
-            fi
-
-            # Clean up dangling images
+            echo -e "${BLUE}Cleaning up...${NC}"
             docker image prune -f 2>/dev/null || true
-
-            echo ""
-            echo -e "${GREEN}[DONE] Smart update completed${NC}"
 
             # Summary
             echo ""
+            echo -e "${GREEN}[DONE] Smart update completed${NC}"
+            echo ""
             echo -e "${BLUE}Update Summary:${NC}"
-            if [ "$REDIS_CHANGED" = true ]; then
-                echo "  • VoltageRedis: Updated"
-            else
-                echo "  • VoltageRedis: Unchanged (no restart)"
+
+            if [[ ${#UPDATE_SUCCESS[@]} -gt 0 ]]; then
+                echo -e "  ${GREEN}✓ Updated:${NC} ${UPDATE_SUCCESS[*]}"
             fi
-            if [ "$VOLTAGEEMS_CHANGED" = true ]; then
-                echo "  • VoltageEMS services: Updated"
-            else
-                echo "  • VoltageEMS services: Unchanged"
+            if [[ ${#UPDATE_FAILED[@]} -gt 0 ]]; then
+                echo -e "  ${RED}✗ Failed:${NC} ${UPDATE_FAILED[*]}"
             fi
-            if [ ${#PYTHON_SERVICES_CHANGED[@]} -gt 0 ]; then
-                if [ ${#PYTHON_SERVICES_UPDATED[@]} -gt 0 ]; then
-                    echo "  • Python services updated: ${PYTHON_SERVICES_UPDATED[*]}"
+
+            # Count unchanged
+            UNCHANGED_COUNT=0
+            for image in "${!IMAGE_TO_CONTAINERS[@]}"; do
+                if [[ "${CHANGE_STATUS[$image]}" == "unchanged" ]]; then
+                    ((UNCHANGED_COUNT++))
                 fi
-                if [ ${#PYTHON_SERVICES_SKIPPED[@]} -gt 0 ]; then
-                    echo "  • Python services skipped: ${PYTHON_SERVICES_SKIPPED[*]}"
-                fi
-            else
-                echo "  • Python services: Unchanged"
+            done
+            if [[ $UNCHANGED_COUNT -gt 0 ]]; then
+                echo "  • $UNCHANGED_COUNT service(s) unchanged"
             fi
         else
             echo -e "${YELLOW}Skipping image update.${NC}"
@@ -729,9 +723,11 @@ if [[ -f "$DB_FILE" ]]; then
         echo -e "${BLUE}Existing database detected (${DB_SIZE_DISPLAY})${NC}"
         echo ""
         echo "Options:"
-        echo "  1. Keep existing data and add missing tables (safe upgrade)"
-        echo "  2. Reset database completely (WARNING: deletes all data)"
-        echo "  3. Skip database initialization"
+        echo "  1. Add missing tables only (safe upgrade, preserves data)"
+        echo "  2. Skip database initialization"
+        echo ""
+        echo -e "${YELLOW}Note: Database reset is disabled for safety. To reset manually:${NC}"
+        echo "      rm $DB_FILE && monarch init"
         echo ""
         read -p "Choose option [1]: " DB_OPTION
         DB_OPTION=${DB_OPTION:-1}
@@ -743,16 +739,6 @@ if [[ -f "$DB_FILE" ]]; then
                 echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
                 ;;
             2)
-                echo -e "${RED}⚠ WARNING: This will DELETE all existing configuration!${NC}"
-                read -p "Type 'DELETE' to confirm: " CONFIRM
-                if [[ "$CONFIRM" == "DELETE" ]]; then
-                    monarch init --force
-                    echo -e "${GREEN}✓ Database reset${NC}"
-                else
-                    echo -e "${YELLOW}Cancelled. Keeping existing database.${NC}"
-                fi
-                ;;
-            3)
                 echo -e "${BLUE}Skipped database initialization${NC}"
                 ;;
             *)

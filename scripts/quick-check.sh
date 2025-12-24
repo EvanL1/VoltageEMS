@@ -19,7 +19,7 @@ cargo check --workspace
 echo -e "${YELLOW}Checking code format...${NC}"
 cargo fmt --all -- --check
 
-# Clippy check
+# Clippy check (all features enabled)
 echo -e "${YELLOW}Running Clippy...${NC}"
 cargo clippy --all-targets --all-features -- -D warnings
 

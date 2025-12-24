@@ -3,7 +3,6 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use async_trait::async_trait;
 use sqlx::SqlitePool;
 use voltage_rtdb::cleanup::CleanupProvider;
 
@@ -22,7 +21,6 @@ impl ComsrvCleanupProvider {
     }
 }
 
-#[async_trait]
 impl CleanupProvider for ComsrvCleanupProvider {
     async fn get_valid_ids(&self) -> Result<HashSet<String>> {
         let channels =

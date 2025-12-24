@@ -15,7 +15,7 @@ use bytes::Bytes;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_calc::{CalcEngine, MemoryStateStore, SharedStateStore};
+use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
 use voltage_routing::set_action_point;
 use voltage_rtdb::traits::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
@@ -83,14 +83,15 @@ pub struct ConditionResult {
 }
 
 /// Rule executor
-pub struct RuleExecutor<R: Rtdb + ?Sized> {
+pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     rtdb: Arc<R>,
     routing_cache: Arc<RoutingCache>,
     /// State store for stateful calculation functions (integrate, moving_avg, etc.)
-    state_store: SharedStateStore,
+    state_store: Arc<S>,
 }
 
-impl<R: Rtdb + ?Sized> RuleExecutor<R> {
+impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
+    /// Create with default MemoryStateStore
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         Self {
             rtdb,
@@ -98,12 +99,14 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
             state_store: Arc::new(MemoryStateStore::new()),
         }
     }
+}
 
+impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     /// Create with custom state store
     pub fn with_state_store(
         rtdb: Arc<R>,
         routing_cache: Arc<RoutingCache>,
-        state_store: SharedStateStore,
+        state_store: Arc<S>,
     ) -> Self {
         Self {
             rtdb,
@@ -150,8 +153,8 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
 
             match node {
                 RuleNode::End => {
-                    // Save final variable values and mark success
-                    result.variable_values = values.clone();
+                    // Save final variable values and mark success (move, not clone)
+                    result.variable_values = std::mem::take(&mut values);
                     result.success = true;
                     break;
                 },
@@ -172,8 +175,8 @@ impl<R: Rtdb + ?Sized> RuleExecutor<R> {
                     // Read node-local variables
                     if let Err(e) = self.read_rule_variables(variables, &mut values).await {
                         result.error = Some(format!("Failed to read variables: {}", e));
-                        // Save variable values even on error for logging
-                        result.variable_values = values.clone();
+                        // Save variable values even on error (move, not clone - we're returning)
+                        result.variable_values = std::mem::take(&mut values);
                         return Ok(result);
                     }
 

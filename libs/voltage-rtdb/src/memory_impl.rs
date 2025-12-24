@@ -5,11 +5,11 @@
 
 use crate::traits::*;
 use anyhow::Result;
-use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -69,189 +69,248 @@ pub struct MemoryStats {
     pub set_count: usize,
 }
 
-#[async_trait]
 impl Rtdb for MemoryRtdb {
-    async fn get(&self, key: &str) -> Result<Option<Bytes>> {
-        Ok(self.kv_store.get(key).map(|v| v.clone()))
+    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+        let result = self.kv_store.get(key).map(|v| v.clone());
+        async move { Ok(result) }
     }
 
-    async fn set(&self, key: &str, value: Bytes) -> Result<()> {
+    fn set(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
         self.kv_store.insert(key.to_string(), value);
-        Ok(())
+        async move { Ok(()) }
     }
 
-    async fn del(&self, key: &str) -> Result<bool> {
-        Ok(self.kv_store.remove(key).is_some())
+    fn del(&self, key: &str) -> impl Future<Output = Result<bool>> + Send {
+        let result = self.kv_store.remove(key).is_some();
+        async move { Ok(result) }
     }
 
-    async fn exists(&self, key: &str) -> Result<bool> {
-        Ok(self.kv_store.contains_key(key))
+    fn exists(&self, key: &str) -> impl Future<Output = Result<bool>> + Send {
+        let result = self.kv_store.contains_key(key);
+        async move { Ok(result) }
     }
 
-    async fn incrbyfloat(&self, key: &str, increment: f64) -> Result<f64> {
-        // Get current value or default to 0.0
-        let current_value = if let Some(bytes) = self.kv_store.get(key) {
-            let s = String::from_utf8(bytes.to_vec())?;
-            s.parse::<f64>().unwrap_or(0.0)
-        } else {
-            0.0
+    fn incrbyfloat(&self, key: &str, increment: f64) -> impl Future<Output = Result<f64>> + Send {
+        // Use entry API for atomic read-modify-write
+        // The RefMut holds the shard lock, preventing concurrent access to this key
+        let key_owned = key.to_string();
+        let new_value = {
+            let mut entry = self
+                .kv_store
+                .entry(key_owned.clone())
+                .or_insert_with(|| Bytes::from("0"));
+
+            // Parse current value (default to 0.0 if invalid, matching Redis behavior)
+            let current: f64 = match String::from_utf8(entry.to_vec()) {
+                Ok(s) => s.parse().unwrap_or_else(|_| {
+                    tracing::trace!(
+                        key = %key_owned,
+                        value = %s,
+                        "incrbyfloat: failed to parse value as f64, defaulting to 0.0"
+                    );
+                    0.0
+                }),
+                Err(_) => {
+                    tracing::trace!(
+                        key = %key_owned,
+                        "incrbyfloat: value is not valid UTF-8, defaulting to 0.0"
+                    );
+                    0.0
+                },
+            };
+
+            // Calculate and store new value atomically
+            let new_val = current + increment;
+            *entry = Bytes::from(new_val.to_string());
+            new_val
         };
 
-        // Calculate new value
-        let new_value = current_value + increment;
-
-        // Store new value
-        self.kv_store
-            .insert(key.to_string(), Bytes::from(new_value.to_string()));
-
-        Ok(new_value)
+        async move { Ok(new_value) }
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
 
-    async fn hash_set(&self, key: &str, field: &str, value: Bytes) -> Result<()> {
+    fn hash_set(
+        &self,
+        key: &str,
+        field: &str,
+        value: Bytes,
+    ) -> impl Future<Output = Result<()>> + Send {
         self.hash_store
             .entry(key.to_string())
             .or_default()
             .insert(field.to_string(), value);
-        Ok(())
+        async move { Ok(()) }
     }
 
-    async fn hash_get(&self, key: &str, field: &str) -> Result<Option<Bytes>> {
-        Ok(self
+    fn hash_get(
+        &self,
+        key: &str,
+        field: &str,
+    ) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+        let result = self
             .hash_store
             .get(key)
-            .and_then(|hash| hash.get(field).map(|v| v.clone())))
+            .and_then(|hash| hash.get(field).map(|v| v.clone()));
+        async move { Ok(result) }
     }
 
-    async fn hash_mget(&self, key: &str, fields: &[&str]) -> Result<Vec<Option<Bytes>>> {
-        if let Some(hash) = self.hash_store.get(key) {
-            Ok(fields
+    fn hash_mget(
+        &self,
+        key: &str,
+        fields: &[&str],
+    ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send {
+        let result = if let Some(hash) = self.hash_store.get(key) {
+            fields
                 .iter()
                 .map(|field| hash.get(*field).map(|v| v.clone()))
-                .collect())
+                .collect()
         } else {
-            // Key doesn't exist, return None for all fields
-            Ok(vec![None; fields.len()])
-        }
+            vec![None; fields.len()]
+        };
+        async move { Ok(result) }
     }
 
-    async fn hash_mset(&self, key: &str, fields: Vec<(String, Bytes)>) -> Result<()> {
+    fn hash_mset(
+        &self,
+        key: &str,
+        fields: Vec<(String, Bytes)>,
+    ) -> impl Future<Output = Result<()>> + Send {
         let hash = self.hash_store.entry(key.to_string()).or_default();
-
         for (field, value) in fields {
             hash.insert(field, value);
         }
-        Ok(())
+        async move { Ok(()) }
     }
 
-    async fn hash_get_all(&self, key: &str) -> Result<HashMap<String, Bytes>> {
-        if let Some(hash) = self.hash_store.get(key) {
-            Ok(hash
-                .iter()
+    fn hash_get_all(
+        &self,
+        key: &str,
+    ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send {
+        let result = if let Some(hash) = self.hash_store.get(key) {
+            hash.iter()
                 .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect())
+                .collect()
         } else {
-            Ok(HashMap::new())
-        }
+            HashMap::new()
+        };
+        async move { Ok(result) }
     }
 
-    async fn hash_del(&self, key: &str, field: &str) -> Result<bool> {
-        if let Some(hash) = self.hash_store.get(key) {
-            Ok(hash.remove(field).is_some())
+    fn hash_del(&self, key: &str, field: &str) -> impl Future<Output = Result<bool>> + Send {
+        let result = if let Some(hash) = self.hash_store.get(key) {
+            hash.remove(field).is_some()
         } else {
-            Ok(false)
-        }
+            false
+        };
+        async move { Ok(result) }
     }
 
-    async fn hash_del_many(&self, key: &str, fields: &[String]) -> Result<usize> {
-        if let Some(hash) = self.hash_store.get(key) {
+    fn hash_del_many(
+        &self,
+        key: &str,
+        fields: &[String],
+    ) -> impl Future<Output = Result<usize>> + Send {
+        let result = if let Some(hash) = self.hash_store.get(key) {
             let mut removed = 0;
             for field in fields {
                 if hash.remove(field).is_some() {
                     removed += 1;
                 }
             }
-            Ok(removed)
+            removed
         } else {
-            Ok(0)
-        }
+            0
+        };
+        async move { Ok(result) }
     }
 
-    async fn list_lpush(&self, key: &str, value: Bytes) -> Result<()> {
+    fn list_lpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
         self.list_store
             .entry(key.to_string())
             .or_insert_with(|| RwLock::new(Vec::new()))
             .write()
             .insert(0, value);
-        Ok(())
+        async move { Ok(()) }
     }
 
-    async fn list_rpush(&self, key: &str, value: Bytes) -> Result<()> {
+    fn list_rpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
         self.list_store
             .entry(key.to_string())
             .or_insert_with(|| RwLock::new(Vec::new()))
             .write()
             .push(value);
-        Ok(())
+        async move { Ok(()) }
     }
 
-    async fn list_lpop(&self, key: &str) -> Result<Option<Bytes>> {
-        Ok(self.list_store.get(key).and_then(|list| {
+    fn list_lpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+        let result = self.list_store.get(key).and_then(|list| {
             let mut list = list.write();
             if list.is_empty() {
                 None
             } else {
                 Some(list.remove(0))
             }
-        }))
+        });
+        async move { Ok(result) }
     }
 
-    async fn list_rpop(&self, key: &str) -> Result<Option<Bytes>> {
-        Ok(self.list_store.get(key).and_then(|list| {
+    fn list_rpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+        let result = self.list_store.get(key).and_then(|list| {
             let mut list = list.write();
-            // list.pop() returns Option<Bytes>; returns Some when not empty
             list.pop()
-        }))
+        });
+        async move { Ok(result) }
     }
 
-    async fn list_blpop(
+    fn list_blpop(
         &self,
         keys: &[&str],
         timeout_seconds: u64,
-    ) -> Result<Option<(String, Bytes)>> {
-        use tokio::time::{sleep, Duration, Instant};
+    ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send {
+        // For blocking pop, we need to clone the list_store reference
+        let list_store = self.list_store.clone();
+        let keys: Vec<String> = keys.iter().map(|s| s.to_string()).collect();
 
-        let start = Instant::now();
-        let timeout = Duration::from_secs(timeout_seconds);
+        async move {
+            use tokio::time::{sleep, Duration, Instant};
 
-        // Poll keys until timeout or data found
-        loop {
-            // Try to pop from each key in order
-            for key in keys {
-                if let Some(list) = self.list_store.get(*key) {
-                    let mut list = list.write();
-                    if !list.is_empty() {
-                        let value = list.remove(0);
-                        return Ok(Some((key.to_string(), value)));
+            let start = Instant::now();
+            let timeout = Duration::from_secs(timeout_seconds);
+
+            // Poll keys until timeout or data found
+            loop {
+                // Try to pop from each key in order
+                for key in &keys {
+                    if let Some(list) = list_store.get(key) {
+                        let mut list = list.write();
+                        if !list.is_empty() {
+                            let value = list.remove(0);
+                            return Ok(Some((key.clone(), value)));
+                        }
                     }
                 }
-            }
 
-            // Check timeout
-            if start.elapsed() >= timeout {
-                return Ok(None);
-            }
+                // Check timeout
+                if start.elapsed() >= timeout {
+                    return Ok(None);
+                }
 
-            // Sleep briefly before next poll (10ms)
-            sleep(Duration::from_millis(10)).await;
+                // Sleep briefly before next poll (10ms)
+                sleep(Duration::from_millis(10)).await;
+            }
         }
     }
 
-    async fn list_range(&self, key: &str, start: isize, stop: isize) -> Result<Vec<Bytes>> {
-        if let Some(list) = self.list_store.get(key) {
+    fn list_range(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> impl Future<Output = Result<Vec<Bytes>>> + Send {
+        let result = if let Some(list) = self.list_store.get(key) {
             let list = list.read();
             let len = list.len() as isize;
 
@@ -269,16 +328,22 @@ impl Rtdb for MemoryRtdb {
             };
 
             if start_idx < stop_idx {
-                Ok(list[start_idx..stop_idx].to_vec())
+                list[start_idx..stop_idx].to_vec()
             } else {
-                Ok(Vec::new())
+                Vec::new()
             }
         } else {
-            Ok(Vec::new())
-        }
+            Vec::new()
+        };
+        async move { Ok(result) }
     }
 
-    async fn list_trim(&self, key: &str, start: isize, stop: isize) -> Result<()> {
+    fn list_trim(
+        &self,
+        key: &str,
+        start: isize,
+        stop: isize,
+    ) -> impl Future<Output = Result<()>> + Send {
         if let Some(list) = self.list_store.get(key) {
             let mut list = list.write();
             let len = list.len() as isize;
@@ -301,98 +366,136 @@ impl Rtdb for MemoryRtdb {
                 list.clear();
             }
         }
-        Ok(())
+        async move { Ok(()) }
     }
 
-    async fn scan_match(&self, pattern: &str) -> Result<Vec<String>> {
+    fn scan_match(&self, pattern: &str) -> impl Future<Output = Result<Vec<String>>> + Send {
         // Test stub: simple pattern matching on in-memory keys
         tracing::trace!("MemoryRtdb: SCAN MATCH pattern '{}'", pattern);
 
         // Convert glob pattern to regex (simple implementation for testing)
         let regex_pattern = pattern.replace("*", ".*").replace("?", ".");
-        let re = regex::Regex::new(&format!("^{}$", regex_pattern))?;
 
-        let mut matches = Vec::new();
+        let kv_store = self.kv_store.clone();
+        let hash_store = self.hash_store.clone();
+        let list_store = self.list_store.clone();
 
-        // Scan KV store
-        for entry in self.kv_store.iter() {
-            if re.is_match(entry.key()) {
-                matches.push(entry.key().clone());
+        async move {
+            let re = regex::Regex::new(&format!("^{}$", regex_pattern))?;
+
+            let mut matches = Vec::new();
+
+            // Scan KV store
+            for entry in kv_store.iter() {
+                if re.is_match(entry.key()) {
+                    matches.push(entry.key().clone());
+                }
             }
-        }
 
-        // Scan hash store
-        for entry in self.hash_store.iter() {
-            if re.is_match(entry.key()) {
-                matches.push(entry.key().clone());
+            // Scan hash store
+            for entry in hash_store.iter() {
+                if re.is_match(entry.key()) {
+                    matches.push(entry.key().clone());
+                }
             }
-        }
 
-        // Scan list store
-        for entry in self.list_store.iter() {
-            if re.is_match(entry.key()) {
-                matches.push(entry.key().clone());
+            // Scan list store
+            for entry in list_store.iter() {
+                if re.is_match(entry.key()) {
+                    matches.push(entry.key().clone());
+                }
             }
-        }
 
-        matches.sort();
-        matches.dedup();
-        Ok(matches)
+            matches.sort();
+            matches.dedup();
+            Ok(matches)
+        }
     }
 
-    async fn sadd(&self, key: &str, member: &str) -> Result<bool> {
+    fn sadd(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send {
         let set = self.set_store.entry(key.to_string()).or_default();
-        Ok(set.insert(member.to_string()))
+        let result = set.insert(member.to_string());
+        async move { Ok(result) }
     }
 
-    async fn srem(&self, key: &str, member: &str) -> Result<bool> {
-        if let Some(set) = self.set_store.get(key) {
-            Ok(set.remove(member).is_some())
+    fn srem(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send {
+        let result = if let Some(set) = self.set_store.get(key) {
+            set.remove(member).is_some()
         } else {
-            Ok(false)
-        }
+            false
+        };
+        async move { Ok(result) }
     }
 
-    async fn smembers(&self, key: &str) -> Result<Vec<String>> {
-        if let Some(set) = self.set_store.get(key) {
-            let members: Vec<String> = set.iter().map(|entry| entry.key().clone()).collect();
-            Ok(members)
+    fn smembers(&self, key: &str) -> impl Future<Output = Result<Vec<String>>> + Send {
+        let result = if let Some(set) = self.set_store.get(key) {
+            set.iter().map(|entry| entry.key().clone()).collect()
         } else {
-            Ok(Vec::new())
-        }
+            Vec::new()
+        };
+        async move { Ok(result) }
     }
 
-    async fn hincrby(&self, key: &str, field: &str, increment: i64) -> Result<i64> {
-        let hash = self.hash_store.entry(key.to_string()).or_default();
+    fn hincrby(
+        &self,
+        key: &str,
+        field: &str,
+        increment: i64,
+    ) -> impl Future<Output = Result<i64>> + Send {
+        // Use nested entry API for atomic read-modify-write
+        // Outer lock: ensures hash exists, inner lock: atomic field update
+        let key_owned = key.to_string();
+        let field_owned = field.to_string();
+        let new_value = {
+            let hash = self.hash_store.entry(key_owned.clone()).or_default();
 
-        // Get current value or default to 0
-        let current_value = if let Some(bytes) = hash.get(field) {
-            let s = String::from_utf8(bytes.to_vec())?;
-            s.parse::<i64>().unwrap_or(0)
-        } else {
-            0
+            // Get or create field with atomic update
+            let mut entry = hash
+                .entry(field_owned.clone())
+                .or_insert_with(|| Bytes::from("0"));
+
+            // Parse current value (default to 0 if invalid, matching Redis HINCRBY behavior)
+            let current: i64 = match String::from_utf8(entry.to_vec()) {
+                Ok(s) => s.parse().unwrap_or_else(|_| {
+                    tracing::trace!(
+                        key = %key_owned,
+                        field = %field_owned,
+                        value = %s,
+                        "hincrby: failed to parse value as i64, defaulting to 0"
+                    );
+                    0
+                }),
+                Err(_) => {
+                    tracing::trace!(
+                        key = %key_owned,
+                        field = %field_owned,
+                        "hincrby: value is not valid UTF-8, defaulting to 0"
+                    );
+                    0
+                },
+            };
+
+            // Calculate and store new value atomically
+            let new_val = current + increment;
+            *entry = Bytes::from(new_val.to_string());
+            new_val
         };
 
-        // Calculate new value
-        let new_value = current_value + increment;
-
-        // Store new value
-        hash.insert(field.to_string(), Bytes::from(new_value.to_string()));
-
-        Ok(new_value)
+        async move { Ok(new_value) }
     }
 
-    async fn time_millis(&self) -> Result<i64> {
-        let duration = SystemTime::now()
+    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send {
+        let result = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| anyhow::anyhow!("System time error: {}", e))?;
-        Ok(duration.as_millis() as i64)
+            .map(|d| d.as_millis() as i64)
+            .map_err(|e| anyhow::anyhow!("System time error: {}", e));
+        async move { result }
     }
 
-    async fn pipeline_hash_mset(
+    fn pipeline_hash_mset(
         &self,
         operations: Vec<(String, Vec<(String, Bytes)>)>,
-    ) -> Result<()> {
+    ) -> impl Future<Output = Result<()>> + Send {
         // For in-memory implementation, just execute each HSET sequentially
         // This is efficient since it's all in-memory with no network overhead
         for (key, fields) in operations {
@@ -403,7 +506,7 @@ impl Rtdb for MemoryRtdb {
                 }
             }
         }
-        Ok(())
+        async move { Ok(()) }
     }
 }
 
@@ -989,6 +1092,59 @@ mod tests {
         for i in 0..50 {
             assert!(!rtdb.exists(&format!("key{}", i)).await.unwrap());
         }
+    }
+
+    // ========== Multi-threaded Concurrency Tests ==========
+    // These tests use multi_thread runtime to actually test concurrent access
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_hincrby_multithread() {
+        use std::sync::Arc;
+        use tokio::task::JoinSet;
+
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let mut tasks = JoinSet::new();
+
+        // 4 threads × 250 increments = 1000 total
+        for _ in 0..1000 {
+            let rtdb_clone = rtdb.clone();
+            tasks.spawn(async move {
+                rtdb_clone.hincrby("test:hash", "counter", 1).await.unwrap();
+            });
+        }
+
+        while tasks.join_next().await.is_some() {}
+
+        // Final value must be exactly 1000 (no lost updates)
+        let result = rtdb.hincrby("test:hash", "counter", 0).await.unwrap();
+        assert_eq!(result, 1000, "Concurrent increments should sum correctly");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_incrbyfloat_multithread() {
+        use std::sync::Arc;
+        use tokio::task::JoinSet;
+
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let mut tasks = JoinSet::new();
+
+        // 4 threads × 250 increments = 1000 total
+        for _ in 0..1000 {
+            let rtdb_clone = rtdb.clone();
+            tasks.spawn(async move {
+                rtdb_clone.incrbyfloat("counter", 1.0).await.unwrap();
+            });
+        }
+
+        while tasks.join_next().await.is_some() {}
+
+        // Final value must be 1000.0 (allowing floating point tolerance)
+        let result = rtdb.incrbyfloat("counter", 0.0).await.unwrap();
+        assert!(
+            (result - 1000.0).abs() < 0.001,
+            "Expected 1000.0, got {}",
+            result
+        );
     }
 
     // ========== Dual-Mode Write Tests (Init vs Runtime) ==========

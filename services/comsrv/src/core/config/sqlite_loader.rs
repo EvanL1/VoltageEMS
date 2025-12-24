@@ -235,7 +235,7 @@ impl ComsrvSqliteLoader {
 
         // Load control points from control_points table (with embedded protocol mappings)
         let control_rows = sqlx::query(
-            "SELECT point_id, signal_name, unit, data_type, description, protocol_mappings
+            "SELECT point_id, signal_name, unit, reverse, data_type, description, protocol_mappings
              FROM control_points
              WHERE channel_id = ?
              ORDER BY point_id",

@@ -708,8 +708,13 @@ pub struct RuntimeChannelConfig {
 impl RuntimeChannelConfig {
     /// Create from base configuration (wraps in Arc for zero-copy sharing)
     pub fn from_base(base: ChannelConfig) -> Self {
+        Self::from_base_arc(Arc::new(base))
+    }
+
+    /// Create from Arc-wrapped base configuration (zero-copy)
+    pub fn from_base_arc(base: Arc<ChannelConfig>) -> Self {
         Self {
-            base: Arc::new(base),
+            base,
             telemetry_points: Vec::new(),
             signal_points: Vec::new(),
             control_points: Vec::new(),
@@ -739,21 +744,6 @@ impl RuntimeChannelConfig {
     /// Check if enabled
     pub fn is_enabled(&self) -> bool {
         self.base.core.enabled
-    }
-}
-
-// Implement RuntimeConfig trait from voltage-comlink
-impl voltage_comlink::RuntimeConfig for RuntimeChannelConfig {
-    fn id(&self) -> u32 {
-        self.base.core.id
-    }
-
-    fn name(&self) -> &str {
-        &self.base.core.name
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -1154,7 +1144,7 @@ impl SqlInsertablePoint for ControlPoint {
         .bind(1.0) // Scale default for control
         .bind(0.0) // Offset default for control
         .bind(&self.base.unit)
-        .bind(false) // Reverse default for control
+        .bind(self.reverse) // Use configured reverse value
         .bind("uint16") // Data type default for control
         .bind(&self.base.description)
         .execute(executor)

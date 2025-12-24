@@ -268,7 +268,7 @@ impl RoutingLoader {
     /// Sync all routing to Redis for fast runtime lookup
     pub async fn sync_routing_to_redis<R>(&self, redis: &R) -> Result<()>
     where
-        R: Rtdb + ?Sized,
+        R: Rtdb,
     {
         debug!("Syncing routing to Redis");
 

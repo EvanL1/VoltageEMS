@@ -159,17 +159,19 @@ fn parse_point_type(s: &str) -> Option<PointType> {
 /// Application-layer routing cache for C2M, C2C and M2C routing
 ///
 /// Stores structured route targets for zero-cost lookups (no runtime parsing).
+/// Uses `Arc<str>` for keys to enable O(1) clone during iteration (atomic counter
+/// increment vs heap allocation for String).
 #[derive(Debug, Clone)]
 pub struct RoutingCache {
     /// C2M routing: channel_key -> instance target
     /// Key: "channel_id:type:point_id" (e.g., "2:T:1")
-    c2m: Arc<DashMap<String, C2MTarget>>,
+    c2m: Arc<DashMap<Arc<str>, C2MTarget>>,
     /// C2C routing: channel_key -> channel target
     /// Key: "channel_id:type:point_id" (e.g., "2:T:1")
-    c2c: Arc<DashMap<String, C2CTarget>>,
+    c2c: Arc<DashMap<Arc<str>, C2CTarget>>,
     /// M2C routing: instance_key -> channel target
     /// Key: "instance_id:A:point_id" (e.g., "23:A:4")
-    m2c: Arc<DashMap<String, M2CTarget>>,
+    m2c: Arc<DashMap<Arc<str>, M2CTarget>>,
 }
 
 impl RoutingCache {
@@ -203,10 +205,11 @@ impl RoutingCache {
         c2c_data: HashMap<String, String>,
     ) -> Self {
         // Initialize C2M routing (parse to structured targets)
+        // Convert String keys to Arc<str> for O(1) clone during iteration
         let c2m = Arc::new(DashMap::new());
         for (k, v) in c2m_data {
             if let Some(target) = parse_c2m_target(&v) {
-                c2m.insert(k, target);
+                c2m.insert(Arc::from(k), target);
             }
         }
 
@@ -214,7 +217,7 @@ impl RoutingCache {
         let m2c = Arc::new(DashMap::new());
         for (k, v) in m2c_data {
             if let Some(target) = parse_m2c_target(&v) {
-                m2c.insert(k, target);
+                m2c.insert(Arc::from(k), target);
             }
         }
 
@@ -222,7 +225,7 @@ impl RoutingCache {
         let c2c = Arc::new(DashMap::new());
         for (k, v) in c2c_data {
             if let Some(target) = parse_c2c_target(&v) {
-                c2c.insert(k, target);
+                c2c.insert(Arc::from(k), target);
             }
         }
 
@@ -241,21 +244,21 @@ impl RoutingCache {
         self.c2m.clear();
         for (k, v) in c2m_data {
             if let Some(target) = parse_c2m_target(&v) {
-                self.c2m.insert(k, target);
+                self.c2m.insert(Arc::from(k), target);
             }
         }
 
         self.m2c.clear();
         for (k, v) in m2c_data {
             if let Some(target) = parse_m2c_target(&v) {
-                self.m2c.insert(k, target);
+                self.m2c.insert(Arc::from(k), target);
             }
         }
 
         self.c2c.clear();
         for (k, v) in c2c_data {
             if let Some(target) = parse_c2c_target(&v) {
-                self.c2c.insert(k, target);
+                self.c2c.insert(Arc::from(k), target);
             }
         }
     }
@@ -334,39 +337,45 @@ impl RoutingCache {
     /// Insert C2C routing entry from string target
     pub fn insert_c2c(&self, source_key: String, target_key: String) {
         if let Some(target) = parse_c2c_target(&target_key) {
-            self.c2c.insert(source_key, target);
+            self.c2c.insert(Arc::from(source_key), target);
         }
     }
 
     /// Remove C2C routing entry
-    pub fn remove_c2c(&self, source_key: &str) -> Option<(String, C2CTarget)> {
+    pub fn remove_c2c(&self, source_key: &str) -> Option<(Arc<str>, C2CTarget)> {
         self.c2c.remove(source_key)
     }
 
     /// Get all C2C routing entries matching a prefix
-    pub fn get_c2c_by_prefix(&self, prefix: &str) -> Vec<(String, C2CTarget)> {
+    ///
+    /// Returns `Arc<str>` keys for O(1) clone (atomic counter increment).
+    pub fn get_c2c_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, C2CTarget)> {
         self.c2c
             .iter()
             .filter(|entry| entry.key().starts_with(prefix))
-            .map(|entry| (entry.key().clone(), *entry.value()))
+            .map(|entry| (Arc::clone(entry.key()), *entry.value()))
             .collect()
     }
 
     /// Get all C2M routing entries matching a prefix
-    pub fn get_c2m_by_prefix(&self, prefix: &str) -> Vec<(String, C2MTarget)> {
+    ///
+    /// Returns `Arc<str>` keys for O(1) clone (atomic counter increment).
+    pub fn get_c2m_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, C2MTarget)> {
         self.c2m
             .iter()
             .filter(|entry| entry.key().starts_with(prefix))
-            .map(|entry| (entry.key().clone(), *entry.value()))
+            .map(|entry| (Arc::clone(entry.key()), *entry.value()))
             .collect()
     }
 
     /// Get all M2C routing entries matching a prefix
-    pub fn get_m2c_by_prefix(&self, prefix: &str) -> Vec<(String, M2CTarget)> {
+    ///
+    /// Returns `Arc<str>` keys for O(1) clone (atomic counter increment).
+    pub fn get_m2c_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, M2CTarget)> {
         self.m2c
             .iter()
             .filter(|entry| entry.key().starts_with(prefix))
-            .map(|entry| (entry.key().clone(), *entry.value()))
+            .map(|entry| (Arc::clone(entry.key()), *entry.value()))
             .collect()
     }
 
@@ -534,7 +543,7 @@ mod tests {
         let removed = cache.remove_c2c("1001:T:1");
         assert!(removed.is_some());
         let (key, target) = removed.unwrap();
-        assert_eq!(key, "1001:T:1");
+        assert_eq!(&*key, "1001:T:1"); // Arc<str> comparison
         assert_eq!(target.channel_id, 1002);
         assert_eq!(target.point_id, 5);
         assert!(cache.lookup_c2c("1001:T:1").is_none());

@@ -18,6 +18,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: true
 
     # Free disk space by removing unnecessary pre-installed software
     - name: Free Disk Space
@@ -78,6 +80,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: true
 
     # Free disk space by removing unnecessary pre-installed software
     - name: Free Disk Space
@@ -132,6 +136,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: true
 
     # Free disk space by removing unnecessary pre-installed software
     - name: Free Disk Space
@@ -257,6 +263,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: true
 
     # Free disk space by removing unnecessary pre-installed software
     - name: Free Disk Space

@@ -10,12 +10,16 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
-use crate::core::channels::point_config::RuntimeConfigProvider;
-use crate::core::channels::sync::TelemetrySync;
-use crate::core::channels::traits::{ComClient, TelemetryBatch};
+use crate::core::channels::igw_bridge::{
+    convert_to_igw_point_configs, convert_to_modbus_point_configs, create_modbus_channel,
+    create_modbus_rtu_channel, create_virtual_channel, ChannelImpl, IgwChannelWrapper,
+};
+
 use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
+use crate::store::RedisDataStore;
+use voltage_rtdb::Rtdb;
 
 // ============================================================================
 // Channel Types (merged from channel.rs)
@@ -32,14 +36,15 @@ pub struct ChannelMetadata {
 
 /// Channel entry, combining channel and metadata
 #[derive(Clone)]
-pub struct ChannelEntry {
-    pub channel: Arc<RwLock<Box<dyn ComClient>>>,
+pub struct ChannelEntry<R: Rtdb> {
+    /// Dual-mode channel implementation (Legacy ComClient or IGW ProtocolClient)
+    pub channel: ChannelImpl<R>,
     pub metadata: ChannelMetadata,
-    pub command_trigger: Option<Arc<RwLock<CommandTrigger>>>,
+    pub command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
     pub channel_config: Arc<ChannelConfig>,
 }
 
-impl std::fmt::Debug for ChannelEntry {
+impl<R: Rtdb> std::fmt::Debug for ChannelEntry<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChannelEntry")
             .field("metadata", &self.metadata)
@@ -58,13 +63,13 @@ pub struct ChannelStats {
     pub last_accessed: Instant,
 }
 
-impl ChannelEntry {
+impl<R: Rtdb> ChannelEntry<R> {
     /// Create new channel entry
     pub fn new(
-        channel: Arc<RwLock<Box<dyn ComClient>>>,
+        channel: ChannelImpl<R>,
         channel_config: Arc<ChannelConfig>,
         protocol_type: String,
-        command_trigger: Option<Arc<RwLock<CommandTrigger>>>,
+        command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
     ) -> Self {
         let metadata = ChannelMetadata {
             name: Arc::from(channel_config.name()),
@@ -83,14 +88,13 @@ impl ChannelEntry {
 
     /// Get channel statistics
     pub async fn get_stats(&self, channel_id: u32) -> ChannelStats {
-        let channel = self.channel.read().await;
         let last_accessed = *self.metadata.last_accessed.read().await;
 
         ChannelStats {
             channel_id,
             name: self.metadata.name.to_string(),
             protocol_type: self.metadata.protocol_type.clone(),
-            is_connected: channel.is_connected(),
+            is_connected: self.channel.read().await.is_connected().await,
             created_at: self.metadata.created_at,
             last_accessed,
         }
@@ -104,55 +108,22 @@ impl ChannelEntry {
 }
 
 // ============================================================================
-// Protocol Client Factory
+// Channel Manager
 // ============================================================================
 
-/// Create protocol client based on protocol name
-async fn create_protocol_client(
-    protocol_name: &str,
-    runtime_config: &RuntimeChannelConfig,
-) -> Result<Box<dyn ComClient>> {
-    match protocol_name {
-        #[cfg(feature = "modbus")]
-        "modbus_tcp" | "modbus_rtu" => {
-            use crate::protocols::modbus::ModbusProtocol;
-            Ok(Box::new(ModbusProtocol::from_runtime_config(
-                runtime_config,
-            )?))
-        },
-        "virtual" => {
-            use crate::protocols::virt::VirtualProtocol;
-            Ok(Box::new(VirtualProtocol::from_runtime_config(
-                runtime_config,
-            )?))
-        },
-        _ => Err(ComSrvError::ProtocolError(format!(
-            "Unknown protocol: {}",
-            protocol_name
-        ))),
-    }
-}
-
-/// Dynamic communication client type
-pub type DynComClient = Arc<RwLock<Box<dyn ComClient>>>;
-
 /// Channel manager - responsible for channel lifecycle management
-pub struct ChannelManager {
+pub struct ChannelManager<R: Rtdb> {
     /// Store created channels
-    channels: DashMap<u32, ChannelEntry, ahash::RandomState>,
+    channels: DashMap<u32, ChannelEntry<R>, ahash::RandomState>,
     /// Shared RTDB (Redis or Memory for testing)
-    rtdb: Arc<dyn voltage_rtdb::Rtdb>,
+    rtdb: Arc<R>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
     pub routing_cache: Arc<voltage_rtdb::RoutingCache>,
-    /// Telemetry sync manager
-    telemetry_sync: TelemetrySync,
     /// SQLite connection pool for configuration loading
     sqlite_pool: Option<sqlx::SqlitePool>,
-    /// Point configuration provider for data transformation
-    config_provider: Arc<RuntimeConfigProvider>,
 }
 
-impl std::fmt::Debug for ChannelManager {
+impl<R: Rtdb> std::fmt::Debug for ChannelManager<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChannelManager")
             .field("channels", &self.channels.len())
@@ -160,47 +131,28 @@ impl std::fmt::Debug for ChannelManager {
     }
 }
 
-impl ChannelManager {
+impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Create new channel manager
-    pub fn new(
-        rtdb: Arc<dyn voltage_rtdb::Rtdb>,
-        routing_cache: Arc<voltage_rtdb::RoutingCache>,
-    ) -> Self {
-        // Create point configuration provider for data transformation
-        let config_provider = Arc::new(RuntimeConfigProvider::new());
-
-        let telemetry_sync =
-            TelemetrySync::new(rtdb.clone(), routing_cache.clone(), config_provider.clone());
-
+    pub fn new(rtdb: Arc<R>, routing_cache: Arc<voltage_rtdb::RoutingCache>) -> Self {
         Self {
             channels: DashMap::with_hasher(ahash::RandomState::default()),
             rtdb,
             routing_cache,
-            telemetry_sync,
             sqlite_pool: None,
-            config_provider,
         }
     }
 
     /// Create channel manager with SQLite pool
     pub fn with_sqlite_pool(
-        rtdb: Arc<dyn voltage_rtdb::Rtdb>,
+        rtdb: Arc<R>,
         routing_cache: Arc<voltage_rtdb::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
     ) -> Self {
-        // Create point configuration provider for data transformation
-        let config_provider = Arc::new(RuntimeConfigProvider::new());
-
-        let telemetry_sync =
-            TelemetrySync::new(rtdb.clone(), routing_cache.clone(), config_provider.clone());
-
         Self {
             channels: DashMap::with_hasher(ahash::RandomState::default()),
             rtdb,
             routing_cache,
-            telemetry_sync,
             sqlite_pool: Some(sqlite_pool),
-            config_provider,
         }
     }
 
@@ -208,7 +160,7 @@ impl ChannelManager {
     pub async fn create_channel(
         &self,
         channel_config: Arc<ChannelConfig>,
-    ) -> Result<Arc<RwLock<Box<dyn ComClient>>>> {
+    ) -> Result<ChannelImpl<R>> {
         let channel_id = channel_config.id();
 
         // Validate channel doesn't exist
@@ -217,7 +169,7 @@ impl ChannelManager {
         }
 
         // Convert to RuntimeChannelConfig and load configuration from SQLite
-        let mut runtime_config = RuntimeChannelConfig::from_base((*channel_config).clone());
+        let mut runtime_config = RuntimeChannelConfig::from_base_arc(Arc::clone(&channel_config));
         self.load_channel_configuration(&mut runtime_config).await?;
         let runtime_config = Arc::new(runtime_config);
 
@@ -230,44 +182,44 @@ impl ChannelManager {
             runtime_config.adjustment_points.len()
         );
 
-        // Load point transformers into config provider for data transformation
-        self.config_provider
-            .load_channel_config(&runtime_config)
-            .await;
-        debug!("Ch{} transformers loaded", channel_id);
-
         // Get protocol using normalized name
         let protocol_name = crate::utils::normalize_protocol_name(runtime_config.protocol());
-
-        // Create client based on protocol name
-        let mut client = create_protocol_client(&protocol_name, &runtime_config).await?;
         let base_config = Arc::clone(&runtime_config.base);
 
         // Setup Redis storage with runtime config containing actual point IDs
         self.initialize_channel_redis_storage(&runtime_config)
             .await?;
 
-        // Initialize protocol with runtime config containing point data
-        client.initialize(runtime_config.clone()).await?;
+        // Branch based on protocol type: IGW path for virtual/modbus, Legacy for others
+        let (channel_impl, command_trigger) = match protocol_name.as_str() {
+            "virtual" => {
+                // IGW path: Use igw::VirtualChannel with RedisDataStore
+                self.create_igw_virtual_channel(channel_id, &runtime_config)
+                    .await?
+            },
+            "modbus_tcp" => {
+                // IGW path: Use igw::ModbusChannel (TCP) with RedisDataStore
+                self.create_igw_modbus_channel(channel_id, &runtime_config)
+                    .await?
+            },
+            "modbus_rtu" => {
+                // IGW path: Use igw::ModbusChannel (RTU/serial) with RedisDataStore
+                self.create_igw_modbus_rtu_channel(channel_id, &runtime_config)
+                    .await?
+            },
+            _ => {
+                // All protocols now use IGW - unsupported protocols should error
+                return Err(anyhow::anyhow!(
+                    "Unsupported protocol '{}' for channel {}. Supported: virtual, modbus_tcp, modbus_rtu",
+                    protocol_name,
+                    channel_id
+                )
+                .into());
+            },
+        };
 
-        // Setup telemetry data channel for protocol to send data
-        let telemetry_sender = self.get_telemetry_sender();
-        client.set_data_channel(telemetry_sender);
-
-        // Start telemetry sync task (only once - protected by internal guard)
-        if self.telemetry_sync.get_handle().read().await.is_none() {
-            self.start_telemetry_sync_task().await?;
-            info!("Telemetry sync started");
-        }
-
-        // Setup command trigger
-        let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
-        client.set_command_receiver(rx);
-
-        // Create channel entry
-        let channel_arc = Arc::new(RwLock::new(client));
         let entry = ChannelEntry::new(
-            channel_arc.clone(),
+            channel_impl.clone(),
             base_config,
             protocol_name.clone(),
             command_trigger,
@@ -276,7 +228,144 @@ impl ChannelManager {
         self.channels.insert(channel_id, entry);
 
         info!("Ch{} created ({})", channel_id, protocol_name);
-        Ok(channel_arc)
+        Ok(channel_impl)
+    }
+
+    /// Create IGW-based virtual channel.
+    ///
+    /// Uses igw::VirtualChannel with RedisDataStore for data persistence.
+    async fn create_igw_virtual_channel(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
+        debug!("Ch{} creating via IGW path", channel_id);
+
+        // 1. Create RedisDataStore for this channel
+        let store = Arc::new(RedisDataStore::new(
+            Arc::clone(&self.rtdb),
+            Arc::clone(&self.routing_cache),
+        ));
+
+        // 2. Convert point configs to IGW format and register with store
+        let point_configs = convert_to_igw_point_configs(runtime_config);
+        store.set_point_configs(channel_id, point_configs.clone());
+
+        // 3. Start background flush task for write buffer
+        store.start_flush_task();
+
+        // 4. Create VirtualChannel (no store - storage handled by IgwChannelWrapper)
+        let protocol = create_virtual_channel(channel_id, runtime_config.name(), point_configs);
+
+        // 5. Setup command trigger for M2C control
+        let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
+
+        // 6. Create IgwChannelWrapper with command processing and storage
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+
+        info!("Ch{} created via IGW (virtual)", channel_id);
+        Ok((channel_impl, command_trigger))
+    }
+
+    /// Create IGW-based Modbus TCP channel.
+    ///
+    /// Uses igw::ModbusChannel with RedisDataStore for data persistence.
+    /// Includes batch read optimization, auto-reconnect, and zero-data detection.
+    async fn create_igw_modbus_channel(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
+        debug!("Ch{} creating via IGW Modbus path", channel_id);
+
+        // 1. Create RedisDataStore for this channel
+        let store = Arc::new(RedisDataStore::new(
+            Arc::clone(&self.rtdb),
+            Arc::clone(&self.routing_cache),
+        ));
+
+        // 2. Convert Modbus point configs to IGW format
+        let point_configs = convert_to_modbus_point_configs(runtime_config);
+        store.set_point_configs(channel_id, point_configs.clone());
+
+        // 3. Start background flush task for write buffer
+        store.start_flush_task();
+
+        // 4. Extract host/port from runtime config parameters
+        let params = &runtime_config.base.parameters;
+        let host = params
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or("127.0.0.1");
+        let port = params
+            .get("port")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u16)
+            .unwrap_or(502);
+
+        // 5. Create ModbusChannel via igw_bridge (no store - storage handled by IgwChannelWrapper)
+        let protocol = create_modbus_channel(channel_id, host, port, point_configs);
+
+        // 6. Setup command trigger for M2C control
+        let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
+
+        // 7. Create IgwChannelWrapper with command processing and storage
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+
+        info!("Ch{} created via IGW (modbus_tcp)", channel_id);
+        Ok((channel_impl, command_trigger))
+    }
+
+    /// Create IGW-based Modbus RTU (serial) channel.
+    ///
+    /// Uses igw::ModbusChannel in RTU mode with RedisDataStore for data persistence.
+    /// Includes batch read optimization, auto-reconnect, and zero-data detection.
+    async fn create_igw_modbus_rtu_channel(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
+        debug!("Ch{} creating via IGW Modbus RTU path", channel_id);
+
+        // 1. Create RedisDataStore for this channel
+        let store = Arc::new(RedisDataStore::new(
+            Arc::clone(&self.rtdb),
+            Arc::clone(&self.routing_cache),
+        ));
+
+        // 2. Convert Modbus point configs to IGW format
+        let point_configs = convert_to_modbus_point_configs(runtime_config);
+        store.set_point_configs(channel_id, point_configs.clone());
+
+        // 3. Start background flush task for write buffer
+        store.start_flush_task();
+
+        // 4. Extract device/baud_rate from runtime config parameters
+        let params = &runtime_config.base.parameters;
+        let device = params
+            .get("device")
+            .and_then(|v| v.as_str())
+            .unwrap_or("/dev/ttyUSB0");
+        let baud_rate = params
+            .get("baud_rate")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(9600);
+
+        // 5. Create ModbusChannel (RTU) via igw_bridge
+        let protocol = create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs);
+
+        // 6. Setup command trigger for M2C control
+        let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
+
+        // 7. Create IgwChannelWrapper with command processing and storage
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+
+        info!("Ch{} created via IGW (modbus_rtu)", channel_id);
+        Ok((channel_impl, command_trigger))
     }
 
     /// Load channel configuration from SQLite
@@ -304,11 +393,8 @@ impl ChannelManager {
     /// Remove channel
     pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
         if let Some((_, entry)) = self.channels.remove(&channel_id) {
-            // Disconnect channel
-            {
-                let mut channel = entry.channel.write().await;
-                let _ = channel.disconnect().await;
-            }
+            // Disconnect channel using ChannelImpl's unified interface
+            let _ = entry.channel.write().await.disconnect().await;
 
             // Stop command trigger if exists
             if let Some(trigger_arc) = entry.command_trigger {
@@ -326,8 +412,8 @@ impl ChannelManager {
         }
     }
 
-    /// Get channel
-    pub fn get_channel(&self, channel_id: u32) -> Option<Arc<RwLock<Box<dyn ComClient>>>> {
+    /// Get channel implementation (dual-mode)
+    pub fn get_channel(&self, channel_id: u32) -> Option<ChannelImpl<R>> {
         self.channels
             .get(&channel_id)
             .map(|entry| entry.channel.clone())
@@ -347,8 +433,7 @@ impl ChannelManager {
     pub async fn running_channel_count(&self) -> usize {
         let mut count = 0;
         for entry in self.channels.iter() {
-            let channel = entry.channel.read().await;
-            if channel.is_connected() {
+            if entry.channel.read().await.is_connected().await {
                 count += 1;
             }
         }
@@ -390,11 +475,10 @@ impl ChannelManager {
 
         for entry in self.channels.iter() {
             let channel_id = *entry.key();
-            let channel_arc = entry.channel.clone();
+            let channel_impl = entry.channel.clone();
 
             let task = tokio::spawn(async move {
-                let mut channel = channel_arc.write().await;
-                match channel.connect().await {
+                match channel_impl.write().await.connect().await {
                     Ok(_) => {
                         info!("Ch{} connected", channel_id);
                         Ok(())
@@ -427,27 +511,9 @@ impl ChannelManager {
         }
     }
 
-    /// Start telemetry sync task
-    pub async fn start_telemetry_sync_task(&self) -> Result<()> {
-        self.telemetry_sync.start_telemetry_sync_task().await
-    }
-
-    /// Stop telemetry sync task
-    pub async fn stop_telemetry_sync_task(&self) -> Result<()> {
-        self.telemetry_sync.stop_telemetry_sync_task().await
-    }
-
-    /// Get telemetry data sender
-    pub fn get_telemetry_sender(&self) -> tokio::sync::mpsc::Sender<TelemetryBatch> {
-        self.telemetry_sync.get_sender()
-    }
-
     /// Cleanup all resources
     pub async fn cleanup(&self) -> Result<()> {
         info!("Cleanup started");
-
-        // Stop telemetry sync task
-        let _ = self.stop_telemetry_sync_task().await;
 
         // Remove all channels
         let channel_ids: Vec<u32> = self.get_channel_ids();
@@ -649,7 +715,7 @@ impl ChannelManager {
         &self,
         channel_id: u32,
     ) -> Result<(
-        Option<Arc<RwLock<crate::core::channels::trigger::CommandTrigger>>>,
+        Option<Arc<RwLock<crate::core::channels::trigger::CommandTrigger<R>>>>,
         tokio::sync::mpsc::Receiver<crate::core::channels::traits::ChannelCommand>,
     )> {
         use crate::core::channels::trigger::{CommandTrigger, CommandTriggerConfig};
@@ -689,7 +755,8 @@ mod tests {
     async fn test_channel_manager_creation() {
         let rtdb = create_test_rtdb();
         let routing_cache = create_test_routing_cache();
-        let manager = ChannelManager::new(rtdb, routing_cache);
+        let manager: ChannelManager<voltage_rtdb::MemoryRtdb> =
+            ChannelManager::new(rtdb, routing_cache);
 
         assert_eq!(manager.channel_count(), 0);
         assert_eq!(manager.get_channel_ids().len(), 0);
@@ -699,7 +766,8 @@ mod tests {
     async fn test_channel_manager_running_count() {
         let rtdb = create_test_rtdb();
         let routing_cache = create_test_routing_cache();
-        let manager = ChannelManager::new(rtdb, routing_cache);
+        let manager: ChannelManager<voltage_rtdb::MemoryRtdb> =
+            ChannelManager::new(rtdb, routing_cache);
 
         let count = manager.running_channel_count().await;
         assert_eq!(count, 0);

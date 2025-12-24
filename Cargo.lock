@@ -481,11 +481,12 @@ dependencies = [
  "clap",
  "common",
  "csv",
- "dashmap",
+ "dashmap 5.5.3",
  "errors",
  "figment",
  "futures",
  "http-body-util",
+ "igw",
  "modsrv",
  "rand 0.8.5",
  "redis",
@@ -507,9 +508,7 @@ dependencies = [
  "tracing-test",
  "utoipa",
  "utoipa-swagger-ui",
- "voltage-comlink",
  "voltage-model",
- "voltage-protocols",
  "voltage-routing",
  "voltage-rtdb",
  "voltage-schema-macro",
@@ -701,6 +700,20 @@ dependencies = [
  "once_cell",
  "parking_lot_core",
  "serde",
+]
+
+[[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -1380,6 +1393,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "igw"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06b8d3b6e5bdc00229ce8cdd54eff2f3fbdcfbe7045abca688fee91e33f40624"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "dashmap 6.1.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "voltage_modbus",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1633,7 +1664,7 @@ dependencies = [
  "clap",
  "common",
  "csv",
- "dashmap",
+ "dashmap 5.5.3",
  "errors",
  "evalexpr",
  "futures",
@@ -1683,7 +1714,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "voltage-comlink",
  "voltage-routing",
  "voltage-rtdb",
  "voltage-rules",
@@ -3553,28 +3583,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "voltage-comlink"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "dashmap",
- "futures",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-serial",
- "tokio-util",
- "tracing",
- "voltage-model",
- "voltage-rtdb",
- "voltage_modbus",
-]
-
-[[package]]
 name = "voltage-infra"
 version = "0.1.0"
 dependencies = [
@@ -3606,23 +3614,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "voltage-protocols"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "chrono",
- "serde",
- "serde_json",
- "tokio",
- "tokio-serial",
- "tokio-util",
- "tracing",
- "voltage-comlink",
- "voltage_modbus",
-]
-
-[[package]]
 name = "voltage-routing"
 version = "0.1.0"
 dependencies = [
@@ -3645,7 +3636,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
- "dashmap",
+ "dashmap 5.5.3",
  "parking_lot",
  "redis",
  "regex",
@@ -3667,7 +3658,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
- "dashmap",
+ "dashmap 5.5.3",
  "serde",
  "serde_json",
  "sqlx",
@@ -3704,6 +3695,7 @@ dependencies = [
  "crc",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-serial",
  "tracing",
 ]
 

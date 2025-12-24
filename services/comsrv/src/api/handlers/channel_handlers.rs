@@ -15,6 +15,7 @@ use crate::dto::{
     AppError, ChannelConfig, ChannelDetail, ChannelListQuery, ChannelRuntimeStatus, ChannelStatus,
     ChannelStatusResponse, PaginatedResponse, PointCounts, SuccessResponse,
 };
+use voltage_rtdb::Rtdb;
 
 /// List all channels with pagination and filtering
 #[utoipa::path(
@@ -76,8 +77,8 @@ use crate::dto::{
     ),
     tag = "comsrv"
 )]
-pub async fn get_all_channels(
-    State(state): State<AppState>,
+pub async fn get_all_channels<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Query(query): Query<ChannelListQuery>,
 ) -> Result<Json<SuccessResponse<PaginatedResponse<ChannelStatusResponse>>>, AppError> {
     // Load all channels from database first
@@ -106,9 +107,9 @@ pub async fn get_all_channels(
             });
 
         // Get runtime status if channel is running
-        let (connected, last_update) = if let Some(channel) = manager.get_channel(channel_id) {
-            let channel_guard = channel.read().await;
-            let status = channel_guard.get_status().await;
+        let (connected, last_update) = if let Some(channel_impl) = manager.get_channel(channel_id) {
+            let wrapper = channel_impl.read().await;
+            let status = wrapper.get_status().await;
             (
                 status.is_connected,
                 DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
@@ -195,8 +196,8 @@ pub async fn get_all_channels(
     ),
     tag = "comsrv"
 )]
-pub async fn get_channel_status(
-    State(state): State<AppState>,
+pub async fn get_channel_status<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse<ChannelStatus>>, AppError> {
     let id_u16 = id
@@ -204,15 +205,15 @@ pub async fn get_channel_status(
         .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
     let manager = state.channel_manager.read().await;
 
-    if let Some(channel) = manager.get_channel(id_u16) {
+    if let Some(channel_impl) = manager.get_channel(id_u16) {
         let (name, protocol) = manager
             .get_channel_metadata(id_u16)
             .unwrap_or_else(|| (format!("Channel {id_u16}"), "Unknown".to_string()));
 
-        let channel_guard = channel.read().await;
-        let channel_status = channel_guard.get_status().await;
-        let is_running = channel_guard.is_connected();
-        let diagnostics = channel_guard
+        let wrapper = channel_impl.read().await;
+        let channel_status = wrapper.get_status().await;
+        let is_running = wrapper.is_connected().await;
+        let diagnostics = wrapper
             .get_diagnostics()
             .await
             .unwrap_or_else(|_| serde_json::json!({}));
@@ -282,8 +283,8 @@ pub async fn get_channel_status(
     ),
     tag = "comsrv"
 )]
-pub async fn get_channel_detail_handler(
-    State(state): State<AppState>,
+pub async fn get_channel_detail_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(id): Path<String>,
 ) -> Result<Json<SuccessResponse<ChannelDetail>>, AppError> {
     let id_u16 = id
@@ -332,23 +333,24 @@ pub async fn get_channel_detail_handler(
     };
 
     let manager = state.channel_manager.read().await;
-    let (connected, last_update, statistics) = if let Some(ch) = manager.get_channel(id_u16) {
-        let guard = ch.read().await;
-        let status = guard.get_status().await;
-        let diag = guard
-            .get_diagnostics()
-            .await
-            .unwrap_or_else(|_| serde_json::json!({}));
-        (
-            status.is_connected,
-            DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
-            diag.as_object()
-                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                .unwrap_or_default(),
-        )
-    } else {
-        (false, Utc::now(), std::collections::HashMap::new())
-    };
+    let (connected, last_update, statistics) =
+        if let Some(channel_impl) = manager.get_channel(id_u16) {
+            let wrapper = channel_impl.read().await;
+            let status = wrapper.get_status().await;
+            let diag = wrapper
+                .get_diagnostics()
+                .await
+                .unwrap_or_else(|_| serde_json::json!({}));
+            (
+                status.is_connected,
+                DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
+                diag.as_object()
+                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default(),
+            )
+        } else {
+            (false, Utc::now(), std::collections::HashMap::new())
+        };
 
     let config = ChannelConfig {
         core: crate::core::config::ChannelCore {
@@ -445,8 +447,8 @@ pub async fn get_channel_detail_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn search_channels(
-    State(state): State<AppState>,
+pub async fn search_channels<R: Rtdb>(
+    State(state): State<AppState<R>>,
     RawQuery(raw_query): RawQuery,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     // raw_query is Option<String>:
@@ -635,8 +637,8 @@ pub async fn search_channels(
     ),
     tag = "comsrv"
 )]
-pub async fn list_channels(
-    State(state): State<AppState>,
+pub async fn list_channels<R: Rtdb>(
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     let channels: Vec<(i64, String)> =
         sqlx::query_as("SELECT channel_id, name FROM channels ORDER BY channel_id")
@@ -695,8 +697,8 @@ pub struct PointsQuery {
     ),
     tag = "comsrv"
 )]
-pub async fn list_all_points(
-    State(state): State<AppState>,
+pub async fn list_all_points<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Query(query): Query<PointsQuery>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     // Determine which tables to query based on type filter

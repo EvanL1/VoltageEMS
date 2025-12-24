@@ -102,23 +102,23 @@ fn default_timeout() -> u64 {
 }
 
 /// Command trigger - listen to RTDB commands and trigger protocol execution
-pub struct CommandTrigger {
+pub struct CommandTrigger<R: Rtdb> {
     config: CommandTriggerConfig,
     command_tx: mpsc::Sender<ChannelCommand>,
     shutdown_tx: tokio::sync::watch::Sender<bool>, // false = running, true = shutdown
     _shutdown_rx_keepalive: tokio::sync::watch::Receiver<bool>, // Keep receiver alive.
     task_handle: Option<JoinHandle<()>>,
-    rtdb: Arc<dyn Rtdb>,
+    rtdb: Arc<R>,
     /// Timestamp deduplication: tracks last executed timestamp for each point
     last_ts_map: Arc<DashMap<u32, i64>>,
 }
 
-impl CommandTrigger {
+impl<R: Rtdb + 'static> CommandTrigger<R> {
     /// Create new command trigger
     pub async fn new(
         config: CommandTriggerConfig,
         command_tx: mpsc::Sender<ChannelCommand>,
-        rtdb: Arc<dyn Rtdb>,
+        rtdb: Arc<R>,
     ) -> Result<Self> {
         // Create watch channel; the initial value false means not stopped.
         let (tx, rx) = tokio::sync::watch::channel(false);
@@ -188,7 +188,7 @@ impl CommandTrigger {
 
     /// List queue loop using a BLPOP blocking wait with reconnection logic.
     async fn list_queue_loop(
-        rtdb: Arc<dyn Rtdb>,
+        rtdb: Arc<R>,
         command_tx: mpsc::Sender<ChannelCommand>,
         mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
         config: CommandTriggerConfig,
@@ -527,7 +527,7 @@ fn classify_redis_error(error: &dyn std::fmt::Display) -> &'static str {
     }
 }
 
-impl Drop for CommandTrigger {
+impl<R: Rtdb> Drop for CommandTrigger<R> {
     fn drop(&mut self) {
         // Send stop signal.
         let _ = self.shutdown_tx.send(true);
@@ -549,6 +549,7 @@ impl Drop for CommandTrigger {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
+    use voltage_rtdb::MemoryRtdb;
 
     #[tokio::test]
     async fn test_command_parsing() {
@@ -786,7 +787,7 @@ mod tests {
     #[test]
     fn test_parse_command_data_valid_json() {
         let data = r#"{"command_type":"control","point_id":1,"value":10.5}"#;
-        let result = CommandTrigger::parse_command_data(data, Some(1001), None);
+        let result = CommandTrigger::<MemoryRtdb>::parse_command_data(data, Some(1001), None);
 
         assert!(result.is_ok());
         let command = result.unwrap();
@@ -798,7 +799,7 @@ mod tests {
     #[test]
     fn test_parse_command_data_invalid_json() {
         let data = "invalid json {";
-        let result = CommandTrigger::parse_command_data(data, Some(1001), None);
+        let result = CommandTrigger::<MemoryRtdb>::parse_command_data(data, Some(1001), None);
 
         assert!(result.is_err());
     }
@@ -806,7 +807,7 @@ mod tests {
     #[test]
     fn test_parse_command_data_channel_id_inference() {
         let data = r#"{"command_type":"adjustment","point_id":2,"value":20.0}"#;
-        let result = CommandTrigger::parse_command_data(data, Some(2001), None);
+        let result = CommandTrigger::<MemoryRtdb>::parse_command_data(data, Some(2001), None);
 
         assert!(result.is_ok());
         let command = result.unwrap();
@@ -826,7 +827,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
 
-        let channel_cmd = CommandTrigger::to_channel_command(ctrl_cmd.clone());
+        let channel_cmd = CommandTrigger::<MemoryRtdb>::to_channel_command(ctrl_cmd.clone());
 
         // ChannelCommand is an enum, use pattern matching
         match channel_cmd {
@@ -852,7 +853,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
 
-        let channel_cmd = CommandTrigger::to_channel_command(adj_cmd.clone());
+        let channel_cmd = CommandTrigger::<MemoryRtdb>::to_channel_command(adj_cmd.clone());
 
         // ChannelCommand is an enum, use pattern matching
         match channel_cmd {

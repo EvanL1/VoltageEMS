@@ -544,23 +544,45 @@ pub async fn handle_command(
             match route_type_lower.as_str() {
                 "c2m" => {
                     let routes = routing_cache.get_c2m_by_prefix(filter_prefix);
-                    all_routes.extend(routes.into_iter().map(|(k, v)| (k, v.to_string(), "C2M")));
+                    // Arc<str> → String for CLI display (not a hot path)
+                    all_routes.extend(
+                        routes
+                            .into_iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2M")),
+                    );
                 },
                 "m2c" => {
                     let routes = routing_cache.get_m2c_by_prefix(filter_prefix);
-                    all_routes.extend(routes.into_iter().map(|(k, v)| (k, v.to_string(), "M2C")));
+                    all_routes.extend(
+                        routes
+                            .into_iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string(), "M2C")),
+                    );
                 },
                 "c2c" => {
                     let routes = routing_cache.get_c2c_by_prefix(filter_prefix);
-                    all_routes.extend(routes.into_iter().map(|(k, v)| (k, v.to_string(), "C2C")));
+                    all_routes.extend(
+                        routes
+                            .into_iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2C")),
+                    );
                 },
                 "all" => {
                     let c2m = routing_cache.get_c2m_by_prefix(filter_prefix);
                     let m2c = routing_cache.get_m2c_by_prefix(filter_prefix);
                     let c2c = routing_cache.get_c2c_by_prefix(filter_prefix);
-                    all_routes.extend(c2m.into_iter().map(|(k, v)| (k, v.to_string(), "C2M")));
-                    all_routes.extend(m2c.into_iter().map(|(k, v)| (k, v.to_string(), "M2C")));
-                    all_routes.extend(c2c.into_iter().map(|(k, v)| (k, v.to_string(), "C2C")));
+                    all_routes.extend(
+                        c2m.into_iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2M")),
+                    );
+                    all_routes.extend(
+                        m2c.into_iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string(), "M2C")),
+                    );
+                    all_routes.extend(
+                        c2c.into_iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2C")),
+                    );
                 },
                 _ => {
                     return Err(anyhow::anyhow!(

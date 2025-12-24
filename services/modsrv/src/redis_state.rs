@@ -11,7 +11,7 @@ use common::RedisRoutingKeys;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{Rtdb, SystemTimeProvider, TimeProvider};
 
 use crate::product_loader::{ActionPoint, MeasurementPoint, Product};
 
@@ -61,7 +61,7 @@ fn value_to_string(value: &Value) -> String {
 /// Store routing entries into Redis hashes.
 pub async fn store_routing<R>(redis: &R, entries: &[RoutingEntry]) -> Result<usize>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     if entries.is_empty() {
         return Ok(0);
@@ -103,7 +103,7 @@ where
 /// Clear all routing tables.
 pub async fn clear_routing<R>(redis: &R) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     redis.del(RedisRoutingKeys::CHANNEL_TO_MODEL).await?;
     redis.del(RedisRoutingKeys::MODEL_TO_CHANNEL).await?;
@@ -115,7 +115,7 @@ where
 /// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
 pub async fn clear_routing_for_instance<R>(redis: &R, instance_name: &str) -> Result<usize>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     // 1. Query instance_id by name using O(1) reverse index (inst:name:index Hash)
     let instance_id = match redis.hash_get("inst:name:index", instance_name).await? {
@@ -187,7 +187,7 @@ where
 /// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
 pub async fn clear_routing_for_channel<R>(redis: &R, channel_id: &str) -> Result<usize>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     // New format: route keys start with channel_id directly (no "comsrv:" prefix)
     let prefix = format!("{}:", channel_id);
@@ -232,7 +232,7 @@ pub async fn get_routing<R>(
     pattern: Option<&str>,
 ) -> Result<HashMap<String, String>>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     let table = direction.table();
     let mappings_bytes = redis.hash_get_all(table).await?;
@@ -253,10 +253,10 @@ where
 #[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn upsert_product<R>(redis: &R, product: &Product) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     let product_key = InstanceRedisKeys::product(&product.product_name);
-    let now_ms = redis.time_millis().await?;
+    let now_ms = SystemTimeProvider.now_millis();
     let product_json = serde_json::to_string(product)?;
 
     let fields: Vec<(String, Bytes)> = vec![
@@ -300,7 +300,7 @@ where
 
 async fn write_point_definitions<R>(redis: &R, key: &str, points: &[MeasurementPoint]) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     if points.is_empty() {
         redis.del(key).await?;
@@ -325,7 +325,7 @@ where
 
 async fn write_action_definitions<R>(redis: &R, key: &str, actions: &[ActionPoint]) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     if actions.is_empty() {
         redis.del(key).await?;
@@ -351,7 +351,7 @@ async fn write_property_definitions<R>(
     properties: &[crate::product_loader::PropertyTemplate],
 ) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     if properties.is_empty() {
         redis.del(key).await?;
@@ -386,7 +386,7 @@ pub async fn register_instance<R>(
     _parameters: Option<&HashMap<String, Value>>,
 ) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     // ========================================================================
     // Redis = Real-time data only (SQLite = Single source of truth for config)
@@ -429,7 +429,7 @@ where
 /// EN: Remove Redis data related to an instance and clean up routing mappings.
 pub async fn unregister_instance<R>(redis: &R, instance_id: u32, instance_name: &str) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     // Delete real-time data keys (Redis = real-time data only)
     let keys_to_delete = vec![
@@ -475,7 +475,7 @@ pub async fn rename_instance_in_redis<R>(
     new_name: &str,
 ) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     // 1. Remove old name from reverse index
     redis.hash_del("inst:name:index", old_name).await?;
@@ -511,7 +511,7 @@ where
 /// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
 async fn cleanup_routing<R>(redis: &R, instance_id: u32, _instance_name: &str) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     // New format: route keys start with instance_id directly (no "inst:" prefix)
     let prefix = format!("{}:", instance_id);
@@ -558,10 +558,10 @@ pub async fn sync_measurement<R>(
     measurement: &HashMap<String, Value>,
 ) -> Result<()>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     let key = InstanceRedisKeys::measurement_hash(instance_id);
-    let now_ms = redis.time_millis().await?;
+    let now_ms = SystemTimeProvider.now_millis();
     let mut fields: Vec<(String, Bytes)> = measurement
         .iter()
         .map(|(k, v)| (k.clone(), Bytes::from(value_to_string(v))))
@@ -579,7 +579,7 @@ pub async fn get_instance_data<R>(
     data_type: Option<&str>,
 ) -> Result<Value>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     match data_type {
         Some("measurement") => {

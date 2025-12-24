@@ -137,8 +137,8 @@ async fn main() -> VoltageResult<()> {
     // Initialize services
     let shutdown_token = CancellationToken::new();
 
-    // Wrap RedisRtdb as trait object for ChannelManager
-    let rtdb: Arc<dyn voltage_rtdb::Rtdb> = Arc::new(redis_rtdb);
+    // Use concrete type (native AFIT requires static dispatch)
+    let rtdb: Arc<voltage_rtdb::RedisRtdb> = Arc::new(redis_rtdb);
 
     // Create channel manager (mutable state, needs lock)
     let channel_manager = Arc::new(RwLock::new(ChannelManager::with_sqlite_pool(

@@ -67,9 +67,9 @@ pub async fn get_all_routing_handler(
     let measurement_routing = sqlx::query_as::<_, (i64, u32, String, u32, String, u32, u32, bool)>(
         r#"
         SELECT routing_id, instance_id, instance_name, channel_id, channel_type,
-               channel_point_id, measurement_point_id, enabled
+               channel_point_id, measurement_id AS measurement_point_id, enabled
         FROM measurement_routing
-        ORDER BY instance_id, measurement_point_id
+        ORDER BY instance_id, measurement_id
         "#,
     )
     .fetch_all(&state.instance_manager.pool)
@@ -81,10 +81,10 @@ pub async fn get_all_routing_handler(
     // Query action routing
     let action_routing = sqlx::query_as::<_, (i64, u32, String, u32, u32, String, u32, bool)>(
         r#"
-        SELECT routing_id, instance_id, instance_name, action_point_id, channel_id, channel_type,
+        SELECT routing_id, instance_id, instance_name, action_id AS action_point_id, channel_id, channel_type,
                channel_point_id, enabled
         FROM action_routing
-        ORDER BY instance_id, action_point_id
+        ORDER BY instance_id, action_id
         "#,
     )
     .fetch_all(&state.instance_manager.pool)
@@ -272,10 +272,10 @@ pub async fn get_routing_by_channel_handler(
     let uplink = sqlx::query_as::<_, (i64, u16, String, String, u32, u32, bool)>(
         r#"
         SELECT routing_id, instance_id, instance_name, channel_type,
-               channel_point_id, measurement_point_id, enabled
+               channel_point_id, measurement_id AS measurement_point_id, enabled
         FROM measurement_routing
         WHERE channel_id = ?
-        ORDER BY instance_id, measurement_point_id
+        ORDER BY instance_id, measurement_id
         "#,
     )
     .bind(channel_id)
@@ -286,11 +286,11 @@ pub async fn get_routing_by_channel_handler(
     // Query downlink routing (M2C)
     let downlink = sqlx::query_as::<_, (i64, u16, String, u32, String, u32, bool)>(
         r#"
-        SELECT routing_id, instance_id, instance_name, action_point_id, channel_type,
+        SELECT routing_id, instance_id, instance_name, action_id AS action_point_id, channel_type,
                channel_point_id, enabled
         FROM action_routing
         WHERE channel_id = ?
-        ORDER BY instance_id, action_point_id
+        ORDER BY instance_id, action_id
         "#,
     )
     .bind(channel_id)

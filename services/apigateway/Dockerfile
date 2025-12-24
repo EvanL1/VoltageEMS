@@ -25,8 +25,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # 复制应用代码
 COPY . .
 
-# 创建必要目录
-RUN mkdir -p logs config
+# 创建必要目录并设置权限（允许任意用户写入）
+RUN mkdir -p logs config && chmod 777 logs
 
 # 暴露端口
 EXPOSE 6005

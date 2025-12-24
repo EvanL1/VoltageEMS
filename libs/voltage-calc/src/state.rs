@@ -3,10 +3,9 @@
 //! Functions like `integrate()` and `moving_avg()` need to persist state
 //! between evaluations (last timestamp, window values, etc.).
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::future::Future;
 use tokio::sync::RwLock;
 
 use crate::error::Result;
@@ -14,16 +13,15 @@ use crate::error::Result;
 /// State storage trait for stateful functions
 ///
 /// Implementations can use Redis, in-memory storage, or other backends.
-#[async_trait]
 pub trait StateStore: Send + Sync {
     /// Get state for a key
-    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>>;
+    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send;
 
     /// Set state for a key
-    async fn set(&self, key: &str, value: &[u8]) -> Result<()>;
+    fn set(&self, key: &str, value: &[u8]) -> impl Future<Output = Result<()>> + Send;
 
     /// Delete state for a key
-    async fn delete(&self, key: &str) -> Result<()>;
+    fn delete(&self, key: &str) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// In-memory state store for testing and simple use cases
@@ -38,30 +36,38 @@ impl MemoryStateStore {
     }
 }
 
-#[async_trait]
 impl StateStore for MemoryStateStore {
-    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        let data = self.data.read().await;
-        Ok(data.get(key).cloned())
+    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send {
+        let key = key.to_string();
+        async move {
+            let data = self.data.read().await;
+            Ok(data.get(&key).cloned())
+        }
     }
 
-    async fn set(&self, key: &str, value: &[u8]) -> Result<()> {
-        let mut data = self.data.write().await;
-        data.insert(key.to_string(), value.to_vec());
-        Ok(())
+    fn set(&self, key: &str, value: &[u8]) -> impl Future<Output = Result<()>> + Send {
+        let key = key.to_string();
+        let value = value.to_vec();
+        async move {
+            let mut data = self.data.write().await;
+            data.insert(key, value);
+            Ok(())
+        }
     }
 
-    async fn delete(&self, key: &str) -> Result<()> {
-        let mut data = self.data.write().await;
-        data.remove(key);
-        Ok(())
+    fn delete(&self, key: &str) -> impl Future<Output = Result<()>> + Send {
+        let key = key.to_string();
+        async move {
+            let mut data = self.data.write().await;
+            data.remove(&key);
+            Ok(())
+        }
     }
 }
 
 /// Null state store - no persistence (stateful functions will fail)
 pub struct NullStateStore;
 
-#[async_trait]
 impl StateStore for NullStateStore {
     async fn get(&self, _key: &str) -> Result<Option<Vec<u8>>> {
         Ok(None)
@@ -143,5 +149,5 @@ pub fn state_key(context: &str, func: &str, var: &str) -> String {
     format!("calc:state:{}:{}:{}", context, func, var)
 }
 
-/// Shared state store reference
-pub type SharedStateStore = Arc<dyn StateStore>;
+// Note: SharedStateStore type alias removed for native AFIT compatibility.
+// Use Arc<S> where S: StateStore instead.

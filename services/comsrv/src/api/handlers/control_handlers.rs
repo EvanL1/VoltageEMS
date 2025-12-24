@@ -16,6 +16,7 @@ use axum::{
 };
 use voltage_model::PointType;
 use voltage_rtdb::KeySpaceConfig;
+use voltage_rtdb::Rtdb;
 
 /// Control channel operation (start/stop/restart)
 ///
@@ -44,8 +45,8 @@ use voltage_rtdb::KeySpaceConfig;
     ),
     tag = "comsrv"
 )]
-pub async fn control_channel(
-    State(state): State<AppState>,
+pub async fn control_channel<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(id): Path<String>,
     Json(operation): Json<ChannelOperation>,
 ) -> Result<Json<SuccessResponse<String>>, AppError> {
@@ -55,18 +56,17 @@ pub async fn control_channel(
     let manager = state.channel_manager.read().await;
 
     // Check if channel exists and get the channel
-    let Some(channel) = manager.get_channel(channel_id) else {
+    let Some(channel_impl) = manager.get_channel(channel_id) else {
         return Err(AppError::not_found(format!(
             "Channel {} not found",
             channel_id
         )));
     };
 
-    // Execute operation based on type
+    // Execute operation based on type using ChannelImpl's unified interface
     match operation.operation.as_str() {
         "start" => {
-            let mut channel_guard = channel.write().await;
-            if let Err(e) = channel_guard.connect().await {
+            if let Err(e) = channel_impl.write().await.connect().await {
                 tracing::error!("Ch{} connect: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
@@ -78,11 +78,10 @@ pub async fn control_channel(
             ))))
         },
         "stop" => {
-            let mut channel_guard = channel.write().await;
-            if let Err(e) = channel_guard.disconnect().await {
+            if let Err(e) = channel_impl.write().await.disconnect().await {
                 tracing::error!("Ch{} disconnect: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
-                    "Failed to connect channel {}: {}",
+                    "Failed to disconnect channel {}: {}",
                     channel_id, e
                 )));
             }
@@ -91,12 +90,11 @@ pub async fn control_channel(
             ))))
         },
         "restart" => {
-            let mut channel_guard = channel.write().await;
             // First stop the channel
-            if let Err(e) = channel_guard.disconnect().await {
+            if let Err(e) = channel_impl.write().await.disconnect().await {
                 tracing::error!("Ch{} stop: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
-                    "Failed to connect channel {}: {}",
+                    "Failed to stop channel {}: {}",
                     channel_id, e
                 )));
             }
@@ -105,10 +103,10 @@ pub async fn control_channel(
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
             // Then start it again
-            if let Err(e) = channel_guard.connect().await {
+            if let Err(e) = channel_impl.write().await.connect().await {
                 tracing::error!("Ch{} restart: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
-                    "Failed to connect channel {}: {}",
+                    "Failed to restart channel {}: {}",
                     channel_id, e
                 )));
             }
@@ -184,8 +182,8 @@ pub async fn control_channel(
     ),
     tag = "comsrv"
 )]
-pub async fn write_channel_point(
-    State(state): State<AppState>,
+pub async fn write_channel_point<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path(channel_id): Path<u32>,
     Json(request): Json<WritePointRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::WriteResponse>>, AppError> {

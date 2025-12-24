@@ -4,13 +4,14 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::MemoryRtdb;
+use voltage_rtdb::Rtdb; // Trait must be in scope for generic bounds
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 // ==================== Basic Test Infrastructure ====================
 
 // Re-exported from voltage_rtdb::helpers for backward compatibility
-pub use voltage_rtdb::helpers::{create_test_memory_rtdb, create_test_rtdb};
+pub use voltage_rtdb::helpers::create_test_rtdb;
 
 /// Create a test routing cache for unit testing
 ///
@@ -32,7 +33,7 @@ pub fn create_test_routing_cache() -> Arc<RoutingCache> {
 /// * `c2m_routes` - C2M routing mappings: [("1001:T:1", "23:M:1"), ...]
 ///
 /// # Returns
-/// * `(Arc<dyn Rtdb>, Arc<RoutingCache>)` - RTDB and routing cache instances
+/// * `(Arc<MemoryRtdb>, Arc<RoutingCache>)` - RTDB and routing cache instances
 ///
 /// # Example
 /// ```no_run
@@ -49,7 +50,7 @@ pub fn create_test_routing_cache() -> Arc<RoutingCache> {
 /// ```
 pub async fn setup_c2m_routing(
     c2m_routes: Vec<(&str, &str)>,
-) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
+) -> (Arc<MemoryRtdb>, Arc<RoutingCache>) {
     let rtdb = create_test_rtdb();
     let mut c2m_map = HashMap::new();
     for (source, target) in c2m_routes {
@@ -86,8 +87,8 @@ pub async fn setup_c2m_routing(
 /// }
 /// ```
 #[allow(clippy::disallowed_methods)] // Test utility - unwrap is acceptable for test data conversion
-pub async fn assert_channel_value(
-    rtdb: &dyn Rtdb,
+pub async fn assert_channel_value<R: Rtdb>(
+    rtdb: &R,
     channel_id: u32,
     point_type: &str,
     point_id: u32,
@@ -134,8 +135,8 @@ pub async fn assert_channel_value(
 /// }
 /// ```
 #[allow(clippy::disallowed_methods)] // Test utility - unwrap is acceptable for test data conversion
-pub async fn assert_instance_measurement(
-    rtdb: &dyn Rtdb,
+pub async fn assert_instance_measurement<R: Rtdb>(
+    rtdb: &R,
     instance_id: u32,
     point_id: u32,
     expected_value: f64,

@@ -17,6 +17,7 @@ use axum::{
     response::Json,
 };
 use std::sync::Arc;
+use voltage_rtdb::Rtdb;
 
 /// Parse channel config JSON into description, parameters, and logging
 fn parse_channel_config(
@@ -175,9 +176,9 @@ fn analyze_parameter_changes(
 /// Removes the old channel, creates a new one with updated config.
 /// Connection is attempted in background (non-blocking).
 /// Returns Ok("reloaded") immediately after channel creation.
-async fn perform_hot_reload(
+async fn perform_hot_reload<R: Rtdb + 'static>(
     id: u32,
-    state: &AppState,
+    state: &AppState<R>,
     new_config: crate::core::config::ChannelConfig,
 ) -> Result<String, String> {
     let manager = state.channel_manager.write().await;
@@ -188,17 +189,16 @@ async fn perform_hot_reload(
     }
 
     // 2. Create new channel
-    let channel_arc = manager
+    let channel_impl = manager
         .create_channel(Arc::new(new_config))
         .await
         .map_err(|e| format!("Failed to create channel: {}", e))?;
 
     drop(manager);
 
-    // 3. Async connection (don't wait)
+    // 3. Async connection (don't wait) using ChannelImpl's unified interface
     tokio::spawn(async move {
-        let mut channel = channel_arc.write().await;
-        match channel.connect().await {
+        match channel_impl.write().await.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", id),
             Err(e) => tracing::warn!("Ch{} connect: {}", id, e),
         }
@@ -310,8 +310,8 @@ async fn perform_hot_reload(
     ),
     tag = "comsrv"
 )]
-pub async fn create_channel_handler(
-    State(state): State<AppState>,
+pub async fn create_channel_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Json(req): Json<crate::dto::ChannelCreateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     use crate::core::config::ChannelConfig;
@@ -394,12 +394,11 @@ pub async fn create_channel_handler(
         // enabled = true: Create runtime channel and connect in background (non-blocking)
         let manager = state.channel_manager.write().await;
         match manager.create_channel(Arc::new(channel_config)).await {
-            Ok(channel_arc) => {
+            Ok(channel_impl) => {
                 // Spawn background connection to avoid failing API on initial connect error
                 let channel_id_for_log = channel_id;
                 tokio::spawn(async move {
-                    let mut channel = channel_arc.write().await;
-                    if let Err(e) = channel.connect().await {
+                    if let Err(e) = channel_impl.write().await.connect().await {
                         tracing::warn!("Ch{} connect: {}", channel_id_for_log, e);
                     } else {
                         tracing::debug!("Ch{} connected", channel_id_for_log);
@@ -489,9 +488,9 @@ pub async fn create_channel_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn update_channel_handler(
+pub async fn update_channel_handler<R: Rtdb>(
     Path(id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Json(req): Json<crate::dto::ChannelConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     tracing::debug!("Ch{} updating", id);
@@ -748,9 +747,9 @@ pub async fn update_channel_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn set_channel_enabled_handler(
+pub async fn set_channel_enabled_handler<R: Rtdb>(
     Path(id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Json(req): Json<crate::dto::ChannelEnabledRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     use crate::core::config::ChannelConfig;
@@ -818,14 +817,12 @@ pub async fn set_channel_enabled_handler(
 
         let manager = state.channel_manager.write().await;
         match manager.create_channel(Arc::new(config)).await {
-            Ok(channel_arc) => {
+            Ok(channel_impl) => {
                 // Trigger asynchronous connection in background
                 // Don't wait for connection result - let reconnection mechanism handle failures
-                let channel_clone = channel_arc.clone();
                 let channel_id_for_log = id;
                 tokio::spawn(async move {
-                    let mut channel = channel_clone.write().await;
-                    match channel.connect().await {
+                    match channel_impl.write().await.connect().await {
                         Ok(_) => tracing::debug!("Ch{} connected", channel_id_for_log),
                         Err(e) => tracing::warn!("Ch{} connect: {}", channel_id_for_log, e),
                     }
@@ -939,9 +936,9 @@ pub async fn set_channel_enabled_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn delete_channel_handler(
+pub async fn delete_channel_handler<R: Rtdb>(
     Path(id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<String>>, AppError> {
     tracing::debug!("Deleting Ch{}", id);
 
@@ -1007,8 +1004,8 @@ pub async fn delete_channel_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn reload_configuration_handler(
-    State(state): State<AppState>,
+pub async fn reload_configuration_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::ReloadConfigResult>>, AppError> {
     use crate::core::config::ChannelConfig;
 
@@ -1097,10 +1094,9 @@ pub async fn reload_configuration_handler(
             if *enabled {
                 let manager = state.channel_manager.write().await;
                 match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(channel_arc) => {
-                        // Try to connect
-                        let mut channel = channel_arc.write().await;
-                        if let Err(e) = channel.connect().await {
+                    Ok(channel_impl) => {
+                        // Try to connect using ChannelImpl's unified interface
+                        if let Err(e) = channel_impl.write().await.connect().await {
                             tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_added.push(*id);
@@ -1162,9 +1158,9 @@ pub async fn reload_configuration_handler(
                 };
 
                 match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(channel_arc) => {
-                        let mut channel = channel_arc.write().await;
-                        if let Err(e) = channel.connect().await {
+                    Ok(channel_impl) => {
+                        // Connect using ChannelImpl's unified interface
+                        if let Err(e) = channel_impl.write().await.connect().await {
                             tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_updated.push(*id);
@@ -1218,8 +1214,8 @@ pub async fn reload_configuration_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn reload_routing_handler(
-    State(state): State<AppState>,
+pub async fn reload_routing_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::RoutingReloadResult>>, AppError> {
     use crate::core::channels::ChannelManager;
 
@@ -1233,7 +1229,11 @@ pub async fn reload_routing_handler(
         let manager = state.channel_manager.read().await;
 
         // Call the public reload_routing_cache method
-        match ChannelManager::reload_routing_cache(&state.sqlite_pool, &manager.routing_cache).await
+        match ChannelManager::<voltage_rtdb::RedisRtdb>::reload_routing_cache(
+            &state.sqlite_pool,
+            &manager.routing_cache,
+        )
+        .await
         {
             Ok(counts) => counts,
             Err(e) => {

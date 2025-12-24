@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use voltage_rtdb::{RedisRtdb, Rtdb};
 
 /// Start the communication service with optimized performance and monitoring
 ///
@@ -89,7 +90,16 @@ use tracing::{debug, error, info, warn};
 /// This function provides a convenient public interface for starting the communication service.
 pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
-    channel_manager: Arc<RwLock<ChannelManager>>,
+    channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>,
+) -> Result<usize> {
+    start_communication_service_generic(config_manager, channel_manager).await
+}
+
+/// Generic version of start_communication_service that accepts any Rtdb implementation.
+/// Used by tests with MemoryRtdb.
+pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
+    config_manager: Arc<ConfigManager>,
+    channel_manager: Arc<RwLock<ChannelManager<R>>>,
 ) -> Result<usize> {
     debug!("start_communication_service called");
 
@@ -287,7 +297,15 @@ pub async fn start_communication_service(
 /// ```
 ///
 /// This function provides a convenient public interface for graceful service shutdown.
-pub async fn shutdown_handler(channel_manager: Arc<RwLock<ChannelManager>>) {
+pub async fn shutdown_handler(channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>) {
+    shutdown_handler_generic(channel_manager).await
+}
+
+/// Generic version of shutdown_handler that accepts any Rtdb implementation.
+/// Used by tests with MemoryRtdb.
+pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
+    channel_manager: Arc<RwLock<ChannelManager<R>>>,
+) {
     info!("Starting graceful shutdown...");
 
     // Get all channel IDs
@@ -437,7 +455,16 @@ pub async fn shutdown_handler(channel_manager: Arc<RwLock<ChannelManager>>) {
 ///
 /// This function provides a convenient public interface for resource cleanup management.
 pub fn start_cleanup_task(
-    channel_manager: Arc<RwLock<ChannelManager>>,
+    channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>,
+    configured_count: usize,
+) -> (tokio::task::JoinHandle<()>, CancellationToken) {
+    start_cleanup_task_generic(channel_manager, configured_count)
+}
+
+/// Generic version of start_cleanup_task that accepts any Rtdb implementation.
+/// Used by tests with MemoryRtdb.
+pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
+    channel_manager: Arc<RwLock<ChannelManager<R>>>,
     configured_count: usize,
 ) -> (tokio::task::JoinHandle<()>, CancellationToken) {
     let token = CancellationToken::new();
@@ -501,7 +528,28 @@ pub async fn wait_for_shutdown() {
 
 /// Perform graceful shutdown of all services
 pub async fn shutdown_services(
-    channel_manager: Arc<RwLock<ChannelManager>>,
+    channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>,
+    shutdown_token: CancellationToken,
+    cleanup_token: CancellationToken,
+    cleanup_handle: tokio::task::JoinHandle<()>,
+    server_handle: tokio::task::JoinHandle<()>,
+    warning_handle: tokio::task::JoinHandle<()>,
+) {
+    shutdown_services_generic(
+        channel_manager,
+        shutdown_token,
+        cleanup_token,
+        cleanup_handle,
+        server_handle,
+        warning_handle,
+    )
+    .await
+}
+
+/// Generic version of shutdown_services that accepts any Rtdb implementation.
+/// Used by tests with MemoryRtdb.
+pub(crate) async fn shutdown_services_generic<R: Rtdb + 'static>(
+    channel_manager: Arc<RwLock<ChannelManager<R>>>,
     shutdown_token: CancellationToken,
     cleanup_token: CancellationToken,
     cleanup_handle: tokio::task::JoinHandle<()>,
@@ -511,7 +559,7 @@ pub async fn shutdown_services(
     info!("Received shutdown signal, starting graceful shutdown...");
 
     // First shutdown the communication channels
-    shutdown_handler(channel_manager).await;
+    shutdown_handler_generic(channel_manager).await;
 
     // Signal all tasks to shutdown
     shutdown_token.cancel();
@@ -537,6 +585,12 @@ pub async fn shutdown_services(
     info!("Service shutdown complete");
 }
 
+// NOTE: These tests are temporarily disabled during AFIT migration.
+// The production functions (start_communication_service, start_cleanup_task) are hardcoded to RedisRtdb,
+// but tests create ChannelManager<MemoryRtdb>. This type mismatch cannot be resolved without either:
+// 1. Genericizing the production functions (significant refactor)
+// 2. Converting to integration tests with real Redis
+// TODO: Genericize lifecycle functions to accept any Rtdb implementation.
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
@@ -656,7 +710,7 @@ mod tests {
             crate::test_utils::create_test_routing_cache(),
         )));
 
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service_generic(config_manager, channel_manager).await;
 
         assert!(result.is_ok(), "Service startup should succeed");
         let configured_count = result.unwrap();
@@ -677,7 +731,7 @@ mod tests {
             crate::test_utils::create_test_routing_cache(),
         )));
 
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service_generic(config_manager, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -698,7 +752,7 @@ mod tests {
             crate::test_utils::create_test_routing_cache(),
         )));
 
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service_generic(config_manager, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -727,10 +781,10 @@ mod tests {
         )));
 
         // Start service first
-        let _ = start_communication_service(config_manager, channel_manager.clone()).await;
+        let _ = start_communication_service_generic(config_manager, channel_manager.clone()).await;
 
         // Now shutdown
-        shutdown_handler(channel_manager.clone()).await;
+        shutdown_handler_generic(channel_manager.clone()).await;
 
         // Verify all channels are stopped
         let manager_guard = channel_manager.read().await;
@@ -749,7 +803,7 @@ mod tests {
         )));
 
         // Shutdown without starting any channels
-        shutdown_handler(channel_manager).await;
+        shutdown_handler_generic(channel_manager).await;
 
         // Test passes if no panic occurs
     }
@@ -766,11 +820,11 @@ mod tests {
         )));
 
         // Start service
-        let _ = start_communication_service(config_manager, channel_manager.clone()).await;
+        let _ = start_communication_service_generic(config_manager, channel_manager.clone()).await;
 
         // Shutdown twice
-        shutdown_handler(channel_manager.clone()).await;
-        shutdown_handler(channel_manager).await;
+        shutdown_handler_generic(channel_manager.clone()).await;
+        shutdown_handler_generic(channel_manager).await;
 
         // Test passes if no panic occurs on second shutdown
     }
@@ -786,7 +840,7 @@ mod tests {
             crate::test_utils::create_test_routing_cache(),
         )));
 
-        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0);
+        let (handle, cancel_token) = start_cleanup_task_generic(channel_manager, 0);
 
         // Verify handle is valid
         assert!(!handle.is_finished(), "Cleanup task should be running");
@@ -803,7 +857,7 @@ mod tests {
             crate::test_utils::create_test_routing_cache(),
         )));
 
-        let (handle, cancel_token) = start_cleanup_task(channel_manager, 0);
+        let (handle, cancel_token) = start_cleanup_task_generic(channel_manager, 0);
 
         // Cancel immediately
         cancel_token.cancel();
@@ -825,12 +879,14 @@ mod tests {
         )));
 
         // Start service
-        let configured_count = start_communication_service(config_manager, channel_manager.clone())
-            .await
-            .unwrap();
+        let configured_count =
+            start_communication_service_generic(config_manager, channel_manager.clone())
+                .await
+                .unwrap();
 
         // Start cleanup task
-        let (handle, cancel_token) = start_cleanup_task(channel_manager.clone(), configured_count);
+        let (handle, cancel_token) =
+            start_cleanup_task_generic(channel_manager.clone(), configured_count);
 
         // Let it run briefly
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -856,7 +912,7 @@ mod tests {
         )));
 
         // Start service includes connection phase
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service_generic(config_manager, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -876,7 +932,7 @@ mod tests {
         )));
 
         // Even if connections fail, startup should succeed
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service_generic(config_manager, channel_manager).await;
 
         assert!(
             result.is_ok(),
@@ -909,7 +965,7 @@ mod tests {
         )));
 
         let start_time = std::time::Instant::now();
-        let result = start_communication_service(config_manager, channel_manager).await;
+        let result = start_communication_service_generic(config_manager, channel_manager).await;
         let elapsed = start_time.elapsed();
 
         assert!(result.is_ok(), "Parallel channel creation should succeed");

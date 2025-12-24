@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::debug;
 use voltage_model::PointType;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, WriteBuffer};
@@ -91,7 +92,7 @@ pub async fn write_channel_batch<R>(
     updates: Vec<ChannelPointUpdate>,
 ) -> Result<BatchRoutingResult>
 where
-    R: Rtdb + ?Sized,
+    R: Rtdb,
 {
     if updates.is_empty() {
         return Ok(BatchRoutingResult::default());
@@ -237,7 +238,8 @@ pub fn write_channel_batch_buffered(
 
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
-        let mut instance_writes: HashMap<u32, Vec<(String, bytes::Bytes)>> = HashMap::new();
+        // Use Arc<str> for field names to match WriteBuffer signature
+        let mut instance_writes: HashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = HashMap::new();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
         for update in &updates {
@@ -251,7 +253,7 @@ pub fn write_channel_batch_buffered(
                     .entry(target.instance_id)
                     .or_default()
                     .push((
-                        target.point_id.to_string(),
+                        Arc::from(target.point_id.to_string()),
                         bytes::Bytes::from(update.value.to_string()),
                     ));
             }

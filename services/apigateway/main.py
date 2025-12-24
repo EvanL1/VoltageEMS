@@ -29,14 +29,28 @@ from app.routers.broadcast import router as broadcast_router, set_websocket_mana
 load_dotenv()
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/apigateway.log'),
-        logging.StreamHandler()
-    ]
-)
+def setup_logging():
+    """Setup logging with fallback to stdout-only if file logging fails."""
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    handlers = [logging.StreamHandler()]
+
+    # Try to setup file logging
+    log_dir = os.environ.get('LOG_DIR', 'logs')
+    log_file = os.path.join(log_dir, 'apigateway.log')
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file))
+    except (OSError, PermissionError):
+        # File logging not available, use stdout only
+        pass
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        handlers=handlers
+    )
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # 创建FastAPI应用

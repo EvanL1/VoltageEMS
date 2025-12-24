@@ -14,6 +14,7 @@ use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
+use voltage_rtdb::Rtdb;
 
 /// Get point information including value, timestamp and raw value
 ///
@@ -49,8 +50,8 @@ use axum::{
     ),
     tag = "comsrv"
 )]
-pub async fn get_point_info_handler(
-    State(state): State<AppState>,
+pub async fn get_point_info_handler<R: Rtdb>(
+    State(state): State<AppState<R>>,
     Path((channel_id, telemetry_type, point_id)): Path<(u32, String, u32)>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
     let telemetry_type_upper = telemetry_type.to_ascii_uppercase();
@@ -160,10 +161,10 @@ pub async fn get_point_info_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn get_channel_points_handler(
+pub async fn get_channel_points_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
     // 1. Verify channel exists
     let channel_exists: Option<(i64,)> =
@@ -426,9 +427,9 @@ pub async fn get_channel_points_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn get_point_mapping_with_type_handler(
+pub async fn get_point_mapping_with_type_handler<R: Rtdb>(
     Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointMappingDetail>>, AppError> {
     // 1. Validate and map four-remote type to table name
     let table = match point_type.to_uppercase().as_str() {
@@ -704,9 +705,9 @@ pub struct PointBatchError {
     ),
     tag = "comsrv"
 )]
-pub async fn create_telemetry_point_handler(
+pub async fn create_telemetry_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -782,9 +783,9 @@ pub async fn create_telemetry_point_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn create_signal_point_handler(
+pub async fn create_signal_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -894,9 +895,9 @@ pub async fn create_signal_point_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn create_control_point_handler(
+pub async fn create_control_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1001,9 +1002,9 @@ pub async fn create_control_point_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn create_adjustment_point_handler(
+pub async fn create_adjustment_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1303,9 +1304,9 @@ pub struct PointUpdateRequest {
     ),
     tag = "comsrv"
 )]
-pub async fn update_point_handler(
+pub async fn update_point_handler<R: Rtdb>(
     Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1467,9 +1468,9 @@ pub async fn update_point_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn get_point_config_handler(
+pub async fn get_point_config_handler<R: Rtdb>(
     Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
 
@@ -1593,33 +1594,33 @@ pub async fn get_point_config_handler(
 // ----------------------------------------------------------------------------
 
 /// Get telemetry point configuration (wrapper for literal /T/ route)
-pub async fn get_telemetry_point_config_handler(
+pub async fn get_telemetry_point_config_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "T".to_string(), point_id)), State(state)).await
 }
 
 /// Get signal point configuration (wrapper for literal /S/ route)
-pub async fn get_signal_point_config_handler(
+pub async fn get_signal_point_config_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "S".to_string(), point_id)), State(state)).await
 }
 
 /// Get control point configuration (wrapper for literal /C/ route)
-pub async fn get_control_point_config_handler(
+pub async fn get_control_point_config_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "C".to_string(), point_id)), State(state)).await
 }
 
 /// Get adjustment point configuration (wrapper for literal /A/ route)
-pub async fn get_adjustment_point_config_handler(
+pub async fn get_adjustment_point_config_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::PointDefinition>>, AppError> {
     get_point_config_handler(Path((channel_id, "A".to_string(), point_id)), State(state)).await
 }
@@ -1652,9 +1653,9 @@ pub async fn get_adjustment_point_config_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn delete_point_handler(
+pub async fn delete_point_handler<R: Rtdb>(
     Path((channel_id, point_type, point_id)): Path<(u32, String, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
@@ -1771,9 +1772,9 @@ pub async fn delete_point_handler(
 // ----------------------------------------------------------------------------
 
 /// Update telemetry point (wrapper for literal /T/ route)
-pub async fn update_telemetry_point_handler(
+pub async fn update_telemetry_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1787,9 +1788,9 @@ pub async fn update_telemetry_point_handler(
 }
 
 /// Update signal point (wrapper for literal /S/ route)
-pub async fn update_signal_point_handler(
+pub async fn update_signal_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1803,9 +1804,9 @@ pub async fn update_signal_point_handler(
 }
 
 /// Update control point (wrapper for literal /C/ route)
-pub async fn update_control_point_handler(
+pub async fn update_control_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1819,9 +1820,9 @@ pub async fn update_control_point_handler(
 }
 
 /// Update adjustment point (wrapper for literal /A/ route)
-pub async fn update_adjustment_point_handler(
+pub async fn update_adjustment_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(update): Json<PointUpdateRequest>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
@@ -1839,9 +1840,9 @@ pub async fn update_adjustment_point_handler(
 // ----------------------------------------------------------------------------
 
 /// Delete telemetry point (wrapper for literal /T/ route)
-pub async fn delete_telemetry_point_handler(
+pub async fn delete_telemetry_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     delete_point_handler(
@@ -1853,9 +1854,9 @@ pub async fn delete_telemetry_point_handler(
 }
 
 /// Delete signal point (wrapper for literal /S/ route)
-pub async fn delete_signal_point_handler(
+pub async fn delete_signal_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     delete_point_handler(
@@ -1867,9 +1868,9 @@ pub async fn delete_signal_point_handler(
 }
 
 /// Delete control point (wrapper for literal /C/ route)
-pub async fn delete_control_point_handler(
+pub async fn delete_control_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     delete_point_handler(
@@ -1881,9 +1882,9 @@ pub async fn delete_control_point_handler(
 }
 
 /// Delete adjustment point (wrapper for literal /A/ route)
-pub async fn delete_adjustment_point_handler(
+pub async fn delete_adjustment_point_handler<R: Rtdb>(
     Path((channel_id, point_id)): Path<(u32, u32)>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     delete_point_handler(
@@ -1946,10 +1947,10 @@ pub async fn delete_adjustment_point_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn get_unmapped_points_handler(
+pub async fn get_unmapped_points_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
     Query(params): Query<std::collections::HashMap<String, String>>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedPoints>>, AppError> {
     // 1. Verify channel exists
     validate_channel_exists(&state.sqlite_pool, channel_id).await?;
@@ -2413,9 +2414,9 @@ pub async fn get_unmapped_points_handler(
     ),
     tag = "comsrv"
 )]
-pub async fn batch_point_operations_handler(
+pub async fn batch_point_operations_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
-    State(state): State<AppState>,
+    State(state): State<AppState<R>>,
     Query(reload_query): Query<crate::dto::AutoReloadQuery>,
     Json(request): Json<PointBatchRequest>,
 ) -> Result<Json<SuccessResponse<PointBatchResult>>, AppError> {
@@ -2528,10 +2529,10 @@ pub async fn batch_point_operations_handler(
 // ----------------------------------------------------------------------------
 
 /// Process single create operation
-async fn process_create_operation(
+async fn process_create_operation<R: Rtdb>(
     channel_id: u32,
     item: &PointBatchCreateItem,
-    state: &AppState,
+    state: &AppState<R>,
 ) -> Result<(), String> {
     use crate::core::config::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
 
@@ -2693,10 +2694,10 @@ async fn process_create_operation(
 }
 
 /// Process single update operation (reuse existing handler logic)
-async fn process_update_operation(
+async fn process_update_operation<R: Rtdb>(
     channel_id: u32,
     item: &PointBatchUpdateItem,
-    state: &AppState,
+    state: &AppState<R>,
 ) -> Result<(), String> {
     // Reuse the existing update_point_handler logic
     // Note: Batch operations always trigger auto-reload at the end
@@ -2713,10 +2714,10 @@ async fn process_update_operation(
 }
 
 /// Process single delete operation (reuse existing handler logic)
-async fn process_delete_operation(
+async fn process_delete_operation<R: Rtdb>(
     channel_id: u32,
     item: &PointBatchDeleteItem,
-    state: &AppState,
+    state: &AppState<R>,
 ) -> Result<(), String> {
     // Reuse the existing delete_point_handler logic
     // Note: Batch operations always trigger auto-reload at the end
@@ -2751,9 +2752,9 @@ async fn process_delete_operation(
 ///
 /// ## Implementation
 /// Uses `tokio::spawn` for async execution to avoid blocking the API response.
-pub(crate) async fn trigger_channel_reload_if_needed(
+pub(crate) async fn trigger_channel_reload_if_needed<R: Rtdb + 'static>(
     channel_id: u32,
-    state: &AppState,
+    state: &AppState<R>,
     auto_reload: bool,
 ) {
     if !auto_reload {
@@ -2779,13 +2780,19 @@ pub(crate) async fn trigger_channel_reload_if_needed(
 /// Perform channel reload (load config from SQLite and hot-reload)
 ///
 /// This is an internal helper function that performs the actual reload logic.
-async fn perform_channel_reload(channel_id: u32, state: &AppState) -> anyhow::Result<()> {
+async fn perform_channel_reload<R: Rtdb>(
+    channel_id: u32,
+    state: &AppState<R>,
+) -> anyhow::Result<()> {
     use crate::core::channels::channel_manager::ChannelManager;
 
     // 1. Load channel configuration from SQLite
-    let config = ChannelManager::load_channel_from_db(&state.sqlite_pool, channel_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to load channel config: {}", e))?;
+    let config = ChannelManager::<voltage_rtdb::RedisRtdb>::load_channel_from_db(
+        &state.sqlite_pool,
+        channel_id,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to load channel config: {}", e))?;
 
     // 2. Remove old channel
     let manager = state.channel_manager.write().await;
@@ -2796,7 +2803,7 @@ async fn perform_channel_reload(channel_id: u32, state: &AppState) -> anyhow::Re
 
     // 3. Create new channel with updated config
     let manager = state.channel_manager.write().await;
-    let channel_arc = manager
+    let channel_impl = manager
         .create_channel(std::sync::Arc::new(config))
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create channel: {}", e))?;
@@ -2804,8 +2811,8 @@ async fn perform_channel_reload(channel_id: u32, state: &AppState) -> anyhow::Re
 
     // 4. Connect in background (non-blocking)
     tokio::spawn(async move {
-        let mut channel = channel_arc.write().await;
-        match channel.connect().await {
+        // Use ChannelImpl's unified connect interface
+        match channel_impl.write().await.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", channel_id),
             Err(e) => tracing::warn!("Ch{} connect: {}", channel_id, e),
         }

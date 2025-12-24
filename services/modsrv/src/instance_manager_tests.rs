@@ -67,7 +67,7 @@ fn create_test_product_loader(pool: SqlitePool) -> Arc<ProductLoader> {
     Arc::new(crate::product_loader::ProductLoader::new(pool))
 }
 
-use voltage_rtdb::helpers::create_test_memory_rtdb as create_test_rtdb;
+use voltage_rtdb::helpers::create_test_rtdb;
 
 // ==================== Phase 1: CRUD Core Tests ====================
 

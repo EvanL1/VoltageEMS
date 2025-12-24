@@ -86,8 +86,18 @@ async fn load_c2m_routes(
     .await?;
 
     for (instance_id, _, channel_id, channel_type, channel_point_id, measurement_id) in rows {
-        let point_type = voltage_model::PointType::from_str(&channel_type)
-            .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
+        let point_type = match voltage_model::PointType::from_str(&channel_type) {
+            Some(pt) => pt,
+            None => {
+                tracing::warn!(
+                    "Skipping C2M route: invalid channel_type='{}' for channel={} point={}",
+                    channel_type,
+                    channel_id,
+                    channel_point_id
+                );
+                continue;
+            },
+        };
 
         // From: channel_id:type:point_id -> To: instance_id:M:point_id
         let from_key =
@@ -118,8 +128,18 @@ async fn load_m2c_routes(
     .await?;
 
     for (instance_id, _, action_id, channel_id, channel_type, channel_point_id) in rows {
-        let point_type = voltage_model::PointType::from_str(&channel_type)
-            .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
+        let point_type = match voltage_model::PointType::from_str(&channel_type) {
+            Some(pt) => pt,
+            None => {
+                tracing::warn!(
+                    "Skipping M2C route: invalid channel_type='{}' for channel={} point={}",
+                    channel_type,
+                    channel_id,
+                    channel_point_id
+                );
+                continue;
+            },
+        };
 
         // From: instance_id:A:point_id -> To: channel_id:type:point_id
         let from_key = format!("{}:A:{}", instance_id, action_id);

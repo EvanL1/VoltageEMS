@@ -1,3 +1,6 @@
+// NOTE: This test module uses generic handlers with MemoryRtdb for unit testing.
+// The handlers are generic over R: Rtdb, allowing tests to use MemoryRtdb
+// while production code uses RedisRtdb.
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 use super::*;
@@ -47,134 +50,29 @@ async fn create_test_sqlite_pool_with_points() -> sqlx::SqlitePool {
 }
 
 /// Helper: Create API routes with MemoryRtdb for testing
-async fn create_test_api_routes(channel_manager: Arc<RwLock<ChannelManager>>) -> Router {
-    let rtdb: Arc<dyn voltage_rtdb::Rtdb> = Arc::new(voltage_rtdb::MemoryRtdb::new());
+async fn create_test_api_routes(
+    channel_manager: Arc<RwLock<ChannelManager<MemoryRtdb>>>,
+) -> Router {
+    let rtdb = Arc::new(MemoryRtdb::new());
     let sqlite_pool = create_test_sqlite_pool().await;
-    let state = AppState::new(channel_manager, rtdb, sqlite_pool);
-
-    Router::new()
-        .route("/health", get(health_check))
-        .route("/api/status", get(get_service_status))
-        .route(
-            "/api/channels",
-            get(get_all_channels).post(create_channel_handler),
-        )
-        .route(
-            "/api/channels/{id}",
-            get(get_channel_detail_handler)
-                .put(update_channel_handler)
-                .delete(delete_channel_handler),
-        )
-        .route("/api/channels/{id}/status", get(get_channel_status))
-        .route("/api/channels/{id}/control", post(control_channel))
-        .route(
-            "/api/channels/{id}/enabled",
-            axum::routing::put(set_channel_enabled_handler),
-        )
-        .route("/api/channels/{id}/points", get(get_channel_points_handler))
-        .route(
-            "/api/channels/{id}/unmapped-points",
-            get(get_unmapped_points_handler),
-        )
-        .route(
-            "/api/channels/{id}/mappings",
-            get(get_channel_mappings_handler).put(update_channel_mappings_handler),
-        )
-        .route(
-            "/api/channels/{channel_id}/{type}/points/{point_id}/mapping",
-            get(get_point_mapping_with_type_handler),
-        )
-        .route("/api/channels/reload", post(reload_configuration_handler))
-        .route(
-            "/api/channels/{channel_id}/write",
-            post(write_channel_point),
-        )
-        .route(
-            "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
-            get(get_point_info_handler),
-        )
-        .with_state(state)
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool)
 }
 
 /// Helper: Build a Router using a provided in-memory SQLite pool
 async fn create_test_api_with_pool(
-    channel_manager: Arc<RwLock<ChannelManager>>,
+    channel_manager: Arc<RwLock<ChannelManager<MemoryRtdb>>>,
     sqlite_pool: SqlitePool,
 ) -> Router {
-    let rtdb: Arc<dyn voltage_rtdb::Rtdb> = Arc::new(voltage_rtdb::MemoryRtdb::new());
-    let state = AppState::new(channel_manager, rtdb, sqlite_pool);
-
-    Router::new()
-        .route(
-            "/api/channels",
-            get(get_all_channels).post(create_channel_handler),
-        )
-        .route(
-            "/api/channels/{id}",
-            get(get_channel_detail_handler)
-                .put(update_channel_handler)
-                .delete(delete_channel_handler),
-        )
-        .route("/api/channels/{id}/status", get(get_channel_status))
-        .route("/api/channels/{id}/control", post(control_channel))
-        .route(
-            "/api/channels/{id}/enabled",
-            axum::routing::put(set_channel_enabled_handler),
-        )
-        .route("/api/channels/{id}/points", get(get_channel_points_handler))
-        .route(
-            "/api/channels/{id}/unmapped-points",
-            get(get_unmapped_points_handler),
-        )
-        .route(
-            "/api/channels/{id}/mappings",
-            get(get_channel_mappings_handler).put(update_channel_mappings_handler),
-        )
-        .route(
-            "/api/channels/{channel_id}/{type}/points/{point_id}/mapping",
-            get(get_point_mapping_with_type_handler),
-        )
-        .route("/api/channels/reload", post(reload_configuration_handler))
-        .with_state(state)
+    let rtdb = Arc::new(MemoryRtdb::new());
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool)
 }
 
 async fn create_test_api_with_pool_rtdb_and_instance(
-    channel_manager: Arc<RwLock<ChannelManager>>,
+    channel_manager: Arc<RwLock<ChannelManager<MemoryRtdb>>>,
     sqlite_pool: SqlitePool,
-    rtdb: Arc<voltage_rtdb::MemoryRtdb>,
-) -> (Router, Arc<voltage_rtdb::MemoryRtdb>) {
-    let state = AppState::new(channel_manager, rtdb.clone(), sqlite_pool);
-    let router = Router::new()
-        .route(
-            "/api/channels",
-            get(get_all_channels).post(create_channel_handler),
-        )
-        .route(
-            "/api/channels/{id}",
-            get(get_channel_detail_handler)
-                .put(update_channel_handler)
-                .delete(delete_channel_handler),
-        )
-        .route("/api/channels/{id}/status", get(get_channel_status))
-        .route("/api/channels/{id}/control", post(control_channel))
-        .route(
-            "/api/channels/{id}/enabled",
-            axum::routing::put(set_channel_enabled_handler),
-        )
-        .route("/api/channels/{id}/points", get(get_channel_points_handler))
-        .route(
-            "/api/channels/{id}/unmapped-points",
-            get(get_unmapped_points_handler),
-        )
-        .route(
-            "/api/channels/{id}/mappings",
-            get(get_channel_mappings_handler).put(update_channel_mappings_handler),
-        )
-        .route(
-            "/api/channels/{channel_id}/write",
-            post(write_channel_point),
-        )
-        .with_state(state);
+    rtdb: Arc<MemoryRtdb>,
+) -> (Router, Arc<MemoryRtdb>) {
+    let router = create_api_routes_generic(channel_manager, rtdb.clone(), sqlite_pool);
     (router, rtdb)
 }
 
@@ -1276,9 +1174,10 @@ fn test_api_routes_compile() {
     // This unit test ensures the API structure is valid
     // by verifying the create_api_routes function exists and has the correct type signature
     use super::*;
+    use voltage_rtdb::RedisRtdb;
     let _ = create_api_routes
         as fn(
-            Arc<RwLock<ChannelManager>>,
+            Arc<RwLock<ChannelManager<RedisRtdb>>>,
             Arc<common::redis::RedisClient>,
             sqlx::SqlitePool,
         ) -> Router;

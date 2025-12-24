@@ -1,0 +1,289 @@
+name: Release ARM64 Installer
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  TARGET: aarch64-unknown-linux-musl
+
+jobs:
+  # ============================================================================
+  # Job 1: Pre-Release Quality Check
+  # ============================================================================
+  pre-check:
+    name: Pre-Release Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Quick Quality Check
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace -- -D warnings
+
+  # ============================================================================
+  # Job 2: Build ARM64 Installer
+  # ============================================================================
+  build:
+    name: Build ARM64 Installer
+    runs-on: ubuntu-latest
+    needs: pre-check
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact_name: ${{ steps.version.outputs.artifact_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      # Free disk space (GitHub runner has limited space)
+      - name: Free Disk Space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo apt-get clean
+          docker system prune -af --volumes || true
+          echo "=== After cleanup ==="
+          df -h /
+
+      # Extract version from git tag
+      - name: Extract Version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "artifact_name=MonarchEdge-arm64-${VERSION}.run" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-arm64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-arm64-
+            ${{ runner.os }}-cargo-
+
+      # Install Zig and cargo-zigbuild for cross-compilation
+      - name: Install Cross-Compilation Tools
+        run: |
+          # Install Zig
+          ZIG_VERSION="0.13.0"
+          echo "Installing Zig ${ZIG_VERSION}..."
+          wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+          tar -xf "zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+          sudo mv "zig-linux-x86_64-${ZIG_VERSION}" /opt/zig
+          echo "/opt/zig" >> $GITHUB_PATH
+
+          # Install cargo-zigbuild
+          echo "Installing cargo-zigbuild..."
+          cargo install cargo-zigbuild --locked || true
+
+          # Verify installation
+          echo "Zig version: $(/opt/zig/zig version)"
+          echo "cargo-zigbuild version: $(cargo zigbuild --version)"
+
+      - name: Install Packaging Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y makeself
+
+      # Setup QEMU for ARM64 Docker image building
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/arm64
+
+      # Build the ARM64 installer package
+      - name: Build ARM64 Installer
+        run: |
+          chmod +x scripts/build-arm64-installer.sh
+          chmod +x scripts/offline/build-monarch-arm64.sh || true
+          ./scripts/build-arm64-installer.sh "${{ steps.version.outputs.version }}"
+        env:
+          ENABLE_SWAGGER_UI: "0"
+
+      # Verify build artifacts exist
+      - name: Verify Build Artifacts
+        run: |
+          ARTIFACT="release/${{ steps.version.outputs.artifact_name }}"
+
+          if [[ ! -f "$ARTIFACT" ]]; then
+            echo "ERROR: Build artifact not found: $ARTIFACT"
+            ls -la release/ || echo "release directory not found"
+            exit 1
+          fi
+
+          echo "Build artifact:"
+          ls -lh "$ARTIFACT"
+
+          # Calculate SHA256 checksum
+          sha256sum "$ARTIFACT" > "release/${{ steps.version.outputs.artifact_name }}.sha256"
+          echo "SHA256 checksum:"
+          cat "release/${{ steps.version.outputs.artifact_name }}.sha256"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-installer
+          path: |
+            release/${{ steps.version.outputs.artifact_name }}
+            release/${{ steps.version.outputs.artifact_name }}.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+  # ============================================================================
+  # Job 3: Create GitHub Release
+  # ============================================================================
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: arm64-installer
+          path: release/
+
+      - name: List Downloaded Artifacts
+        run: ls -la release/
+
+      # Generate release notes from tag annotation and commit history
+      - name: Generate Release Notes
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          TAG_NAME="${GITHUB_REF_NAME}"
+
+          cat > release_notes.md << 'EOF'
+          ## MonarchEdge ${{ needs.build.outputs.version }}
+
+          ### Installation
+
+          1. Copy the installer to your ARM64 device:
+             ```bash
+             scp MonarchEdge-arm64-${{ needs.build.outputs.version }}.run user@device:/tmp/
+             ```
+
+          2. Run the installer:
+             ```bash
+             chmod +x /tmp/MonarchEdge-arm64-${{ needs.build.outputs.version }}.run
+             sudo /tmp/MonarchEdge-arm64-${{ needs.build.outputs.version }}.run
+             ```
+
+          3. Start services:
+             ```bash
+             cd /opt/MonarchEdge
+             docker-compose up -d
+             monarch sync all
+             ```
+
+          ### Package Contents
+
+          - **Rust Services**: comsrv (6001), modsrv (6002)
+          - **Python Services**: hissrv (6004), apigateway (6005), netsrv (6006), alarmsrv (6007)
+          - **Infrastructure**: Redis 8, InfluxDB 2
+          - **CLI Tool**: monarch
+
+          ### Verify Download
+
+          ```bash
+          sha256sum -c MonarchEdge-arm64-${{ needs.build.outputs.version }}.run.sha256
+          ```
+
+          EOF
+
+          # Try to get tag annotation for release notes
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME" 2>/dev/null || echo "")
+          if [[ -n "$TAG_MESSAGE" && "$TAG_MESSAGE" != "" ]]; then
+            echo "" >> release_notes.md
+            echo "### Release Notes" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "$TAG_MESSAGE" >> release_notes.md
+          fi
+
+          # Get commits since previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [[ -n "$PREV_TAG" ]]; then
+            echo "" >> release_notes.md
+            echo "### Changes since $PREV_TAG" >> release_notes.md
+            echo "" >> release_notes.md
+            git log --pretty=format:"- %s" "$PREV_TAG".."$TAG_NAME" >> release_notes.md || true
+          fi
+
+          echo "Generated release notes:"
+          cat release_notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MonarchEdge ${{ needs.build.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release/${{ needs.build.outputs.artifact_name }}
+            release/${{ needs.build.outputs.artifact_name }}.sha256
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

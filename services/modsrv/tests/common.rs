@@ -365,6 +365,7 @@ pub mod helpers {
 pub mod routing {
     use super::*;
     use bytes::Bytes;
+    use voltage_rtdb::MemoryRtdb;
     use voltage_rtdb::RoutingCache;
     use voltage_rtdb::Rtdb;
 
@@ -375,7 +376,7 @@ pub mod routing {
     /// * `instance_mappings` - Instance name to ID mappings: [("inverter_01", 23), ...]
     ///
     /// # Returns
-    /// * `(Arc<dyn Rtdb>, Arc<RoutingCache>)` - RTDB and routing cache instances
+    /// * `(Arc<MemoryRtdb>, Arc<RoutingCache>)` - RTDB and routing cache instances
     ///
     /// # Example
     /// ```no_run
@@ -394,10 +395,10 @@ pub mod routing {
     pub async fn setup_m2c_routing(
         m2c_routes: Vec<(&str, &str)>,
         instance_mappings: Vec<(&str, u32)>,
-    ) -> (Arc<dyn Rtdb>, Arc<RoutingCache>) {
+    ) -> (Arc<MemoryRtdb>, Arc<RoutingCache>) {
         use voltage_rtdb::MemoryRtdb;
 
-        let rtdb = Arc::new(MemoryRtdb::new()) as Arc<dyn Rtdb>;
+        let rtdb = Arc::new(MemoryRtdb::new());
 
         // Step 1: Setup instance name index (inst:name:index Hash)
         for (name, id) in instance_mappings {
@@ -441,8 +442,8 @@ pub mod routing {
     /// }
     /// ```
     #[allow(dead_code)]
-    pub async fn assert_instance_action(
-        rtdb: &Arc<dyn Rtdb>,
+    pub async fn assert_instance_action<R: Rtdb>(
+        rtdb: &Arc<R>,
         instance_id: u32,
         point_id: u32,
         expected_value: f64,
@@ -488,7 +489,7 @@ pub mod routing {
     /// }
     /// ```
     #[allow(dead_code)]
-    pub async fn assert_todo_queue_triggered(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
+    pub async fn assert_todo_queue_triggered<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
         let messages = rtdb
             .list_range(queue_key, 0, -1)
             .await
@@ -519,7 +520,7 @@ pub mod routing {
     /// }
     /// ```
     #[allow(dead_code)]
-    pub async fn assert_todo_queue_empty(rtdb: &Arc<dyn Rtdb>, queue_key: &str) {
+    pub async fn assert_todo_queue_empty<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
         let messages = rtdb
             .list_range(queue_key, 0, -1)
             .await
@@ -556,7 +557,7 @@ pub mod routing {
     /// }
     /// ```
     #[allow(dead_code)]
-    pub async fn parse_todo_message(rtdb: &Arc<dyn Rtdb>, queue_key: &str) -> serde_json::Value {
+    pub async fn parse_todo_message<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) -> serde_json::Value {
         let messages = rtdb
             .list_range(queue_key, 0, -1)
             .await

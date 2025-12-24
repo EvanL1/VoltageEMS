@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     DATA_BATCH_SIZE: int = 100
     
     # 数据库设置
-    DATABASE_PATH: str = Field("/app/config/voltageems-alarm.db", description="数据库文件路径")
+    VOLTAGE_DB_PATH: str = Field("/app/data/voltage.db", description="数据库文件路径")
     DATABASE_TIMEOUT: int = Field(30, description="数据库连接超时时间（秒）")
     
     # 日志设置
