@@ -58,7 +58,6 @@ services:
     container_name: voltageems-modsrv
     command: ["modsrv"]
     network_mode: host
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Run as host user
     environment:
       - SERVICE_NAME=modsrv
       - SERVICE_PORT=6002

@@ -1,11 +1,12 @@
 //! Error handling for Communication Service
 //!
 //! This module provides error type definitions and conversions for the Communication Service.
+//! Error types have been consolidated from 27 variants to 15 for maintainability.
 
 use errors::VoltageError;
 use thiserror::Error;
 
-/// Communication Service Error Type
+/// Communication Service Error Type (Simplified: 15 variants)
 #[derive(Error, Debug, Clone)]
 pub enum ComSrvError {
     /// Configuration-related errors
@@ -16,159 +17,99 @@ pub enum ComSrvError {
     #[error("IO error: {0}")]
     IoError(String),
 
-    /// General protocol communication errors
+    /// Protocol communication errors (includes Modbus)
     #[error("Protocol error: {0}")]
     ProtocolError(String),
 
-    /// Connection establishment and maintenance errors
+    /// Connection establishment and maintenance errors (includes NotConnected)
     #[error("Connection error: {0}")]
     ConnectionError(String),
 
-    /// Not connected error
-    #[error("Not connected")]
-    NotConnected,
-
-    /// Not supported error
-    #[error("Not supported: {0}")]
-    NotSupported(String),
-
-    /// Data serialization and deserialization errors
-    #[error("Serialization error: {0}")]
-    SerializationError(String),
-
-    /// Data conversion and transformation errors
-    #[error("Data conversion error: {0}")]
-    DataConversionError(String),
-
-    /// Invalid data format or content errors
-    #[error("Invalid data: {0}")]
-    InvalidData(String),
+    /// Data handling errors (serialization, parsing, conversion, validation)
+    #[error("Data error: {0}")]
+    DataError(String),
 
     /// Operation timeout errors
     #[error("Timeout error: {0}")]
     TimeoutError(String),
 
-    /// Modbus protocol specific errors
-    #[error("Modbus error: {0}")]
-    ModbusError(String),
+    /// Storage errors (Redis, database)
+    #[error("Storage error: {0}")]
+    StorageError(String),
 
-    /// Redis data access errors
-    #[error("Redis error: {0}")]
-    RedisError(String),
-
-    /// Resource access and permission errors
+    /// Resource errors (exhaustion, busy)
     #[error("Resource error: {0}")]
     ResourceError(String),
 
-    /// General internal errors
-    #[error("Internal error: {0}")]
-    InternalError(String),
-
-    /// Invalid parameter errors
-    #[error("Invalid parameter: {0}")]
-    InvalidParameter(String),
-
-    /// Channel not found errors
-    #[error("Channel not found: {0}")]
-    ChannelNotFound(String),
-
-    /// Channel operation errors
+    /// Channel errors (not found, exists, operation failed)
     #[error("Channel error: {0}")]
     ChannelError(String),
 
-    /// Point not found errors
-    #[error("Point not found: {0}")]
-    PointNotFound(String),
+    /// Point errors (not found, table error)
+    #[error("Point error: {0}")]
+    PointError(String),
 
-    /// Point table errors
-    #[error("Point table error: {0}")]
-    PointTableError(String),
+    /// Validation errors (invalid parameter, operation, not supported)
+    #[error("Validation error: {0}")]
+    ValidationError(String),
 
-    /// Invalid operation errors
-    #[error("Invalid operation: {0}")]
-    InvalidOperation(String),
+    /// Permission errors
+    #[error("Permission error: {0}")]
+    PermissionError(String),
 
-    /// Channel already exists
-    #[error("Channel already exists: {0}")]
-    ChannelExists(u32),
-
-    /// Batch operation failed
-    #[error("Batch operation failed: {0}")]
-    BatchOperationFailed(String),
-
-    /// Synchronization error
-    #[error("Sync error: {0}")]
-    SyncError(String),
-
-    /// Parsing errors
-    #[error("Parsing error: {0}")]
-    ParsingError(String),
-
-    /// Permission denied
-    #[error("Permission denied: {0}")]
-    PermissionDenied(String),
-
-    /// State errors
+    /// State and synchronization errors (lock, sync)
     #[error("State error: {0}")]
     StateError(String),
 
-    /// Lock errors
-    #[error("Lock error: {0}")]
-    LockError(String),
+    /// Batch operation errors
+    #[error("Batch error: {0}")]
+    BatchError(String),
 
-    /// Resource exhausted
-    #[error("Resource exhausted: {0}")]
-    ResourceExhausted(String),
-
-    /// Unknown errors
-    #[error("Unknown error: {0}")]
-    UnknownError(String),
-
-    /// API errors
-    #[error("API error: {0}")]
-    ApiError(String),
+    /// Internal errors (unknown, API, general)
+    #[error("Internal error: {0}")]
+    InternalError(String),
 }
 
 /// Result type alias for Communication Service
 pub type Result<T> = std::result::Result<T, ComSrvError>;
 
-// Conversion from std::io::Error
-impl From<std::io::Error> for ComSrvError {
-    fn from(err: std::io::Error) -> Self {
-        ComSrvError::IoError(err.to_string())
-    }
-}
+// ============================================================================
+// Backward Compatibility Aliases (deprecated, will be removed)
+// ============================================================================
 
-// Conversion from serde_json::Error
-impl From<serde_json::Error> for ComSrvError {
-    fn from(err: serde_json::Error) -> Self {
-        ComSrvError::SerializationError(format!("JSON error: {err}"))
-    }
-}
-
-// Conversion from serde_yaml::Error
-impl From<serde_yaml::Error> for ComSrvError {
-    fn from(err: serde_yaml::Error) -> Self {
-        ComSrvError::SerializationError(format!("YAML error: {err}"))
-    }
-}
-
-// Conversion from anyhow::Error
-impl From<anyhow::Error> for ComSrvError {
-    fn from(err: anyhow::Error) -> Self {
-        ComSrvError::ConfigError(format!("Validation error: {err}"))
-    }
-}
-
-// Conversion from voltage_modbus::ModbusError
-impl From<voltage_modbus::ModbusError> for ComSrvError {
-    fn from(err: voltage_modbus::ModbusError) -> Self {
-        ComSrvError::ModbusError(err.to_string())
-    }
-}
-
-// Helper methods for creating errors
 impl ComSrvError {
+    // Legacy constructors for backward compatibility
+    #[deprecated(note = "Use DataError instead")]
+    pub fn serialization(msg: impl Into<String>) -> Self {
+        ComSrvError::DataError(format!("Serialization: {}", msg.into()))
+    }
+
+    #[deprecated(note = "Use DataError instead")]
+    pub fn data_conversion(msg: impl Into<String>) -> Self {
+        ComSrvError::DataError(format!("Conversion: {}", msg.into()))
+    }
+
+    #[deprecated(note = "Use DataError instead")]
+    pub fn invalid_data(msg: impl Into<String>) -> Self {
+        ComSrvError::DataError(format!("Invalid: {}", msg.into()))
+    }
+
+    #[deprecated(note = "Use DataError instead")]
+    pub fn parsing(msg: impl Into<String>) -> Self {
+        ComSrvError::DataError(format!("Parsing: {}", msg.into()))
+    }
+
+    #[deprecated(note = "Use ProtocolError instead")]
+    pub fn modbus(msg: impl Into<String>) -> Self {
+        ComSrvError::ProtocolError(format!("Modbus: {}", msg.into()))
+    }
+
+    #[deprecated(note = "Use StorageError instead")]
+    pub fn redis(msg: impl Into<String>) -> Self {
+        ComSrvError::StorageError(format!("Redis: {}", msg.into()))
+    }
+
+    // Current constructors
     pub fn config(msg: impl Into<String>) -> Self {
         ComSrvError::ConfigError(msg.into())
     }
@@ -185,38 +126,105 @@ impl ComSrvError {
         ComSrvError::ConnectionError(msg.into())
     }
 
-    pub fn serialization(msg: impl Into<String>) -> Self {
-        ComSrvError::SerializationError(msg.into())
-    }
-
-    pub fn data_conversion(msg: impl Into<String>) -> Self {
-        ComSrvError::DataConversionError(msg.into())
-    }
-
-    pub fn invalid_data(msg: impl Into<String>) -> Self {
-        ComSrvError::InvalidData(msg.into())
+    pub fn data(msg: impl Into<String>) -> Self {
+        ComSrvError::DataError(msg.into())
     }
 
     pub fn timeout(msg: impl Into<String>) -> Self {
         ComSrvError::TimeoutError(msg.into())
     }
 
-    pub fn modbus(msg: impl Into<String>) -> Self {
-        ComSrvError::ModbusError(msg.into())
-    }
-
-    pub fn redis(msg: impl Into<String>) -> Self {
-        ComSrvError::RedisError(msg.into())
+    pub fn storage(msg: impl Into<String>) -> Self {
+        ComSrvError::StorageError(msg.into())
     }
 
     pub fn resource(msg: impl Into<String>) -> Self {
         ComSrvError::ResourceError(msg.into())
     }
 
+    pub fn channel(msg: impl Into<String>) -> Self {
+        ComSrvError::ChannelError(msg.into())
+    }
+
+    pub fn point(msg: impl Into<String>) -> Self {
+        ComSrvError::PointError(msg.into())
+    }
+
+    pub fn validation(msg: impl Into<String>) -> Self {
+        ComSrvError::ValidationError(msg.into())
+    }
+
+    pub fn permission(msg: impl Into<String>) -> Self {
+        ComSrvError::PermissionError(msg.into())
+    }
+
+    pub fn state(msg: impl Into<String>) -> Self {
+        ComSrvError::StateError(msg.into())
+    }
+
+    pub fn batch(msg: impl Into<String>) -> Self {
+        ComSrvError::BatchError(msg.into())
+    }
+
     pub fn internal(msg: impl Into<String>) -> Self {
         ComSrvError::InternalError(msg.into())
     }
+
+    // Convenience constructors for specific cases
+    pub fn channel_not_found(id: impl std::fmt::Display) -> Self {
+        ComSrvError::ChannelError(format!("Channel not found: {}", id))
+    }
+
+    pub fn channel_exists(id: u32) -> Self {
+        ComSrvError::ChannelError(format!("Channel already exists: {}", id))
+    }
+
+    pub fn point_not_found(id: impl std::fmt::Display) -> Self {
+        ComSrvError::PointError(format!("Point not found: {}", id))
+    }
+
+    pub fn not_connected() -> Self {
+        ComSrvError::ConnectionError("Not connected".to_string())
+    }
 }
+
+// ============================================================================
+// From implementations for external error types
+// ============================================================================
+
+impl From<std::io::Error> for ComSrvError {
+    fn from(err: std::io::Error) -> Self {
+        ComSrvError::IoError(err.to_string())
+    }
+}
+
+impl From<serde_json::Error> for ComSrvError {
+    fn from(err: serde_json::Error) -> Self {
+        ComSrvError::DataError(format!("JSON: {err}"))
+    }
+}
+
+impl From<serde_yaml::Error> for ComSrvError {
+    fn from(err: serde_yaml::Error) -> Self {
+        ComSrvError::DataError(format!("YAML: {err}"))
+    }
+}
+
+impl From<anyhow::Error> for ComSrvError {
+    fn from(err: anyhow::Error) -> Self {
+        ComSrvError::ConfigError(format!("Validation: {err}"))
+    }
+}
+
+impl From<voltage_modbus::ModbusError> for ComSrvError {
+    fn from(err: voltage_modbus::ModbusError) -> Self {
+        ComSrvError::ProtocolError(format!("Modbus: {}", err))
+    }
+}
+
+// ============================================================================
+// Extension trait for adding context to errors
+// ============================================================================
 
 /// Extension trait for adding context to errors
 pub trait ErrorExt<T> {
@@ -224,6 +232,7 @@ pub trait ErrorExt<T> {
     fn io_error(self, msg: &str) -> Result<T>;
     fn protocol_error(self, msg: &str) -> Result<T>;
     fn connection_error(self, msg: &str) -> Result<T>;
+    fn data_error(self, msg: &str) -> Result<T>;
     fn context(self, msg: &str) -> Result<T>;
 }
 
@@ -247,85 +256,50 @@ where
         self.map_err(|e| ComSrvError::ConnectionError(format!("{msg}: {e}")))
     }
 
+    fn data_error(self, msg: &str) -> Result<T> {
+        self.map_err(|e| ComSrvError::DataError(format!("{msg}: {e}")))
+    }
+
     fn context(self, msg: &str) -> Result<T> {
         self.map_err(|e| ComSrvError::InternalError(format!("{msg}: {e}")))
     }
 }
 
+// ============================================================================
 // Conversion from ComSrvError to VoltageError for API boundaries
+// ============================================================================
+
 impl From<ComSrvError> for VoltageError {
     fn from(err: ComSrvError) -> Self {
         match err {
-            // Configuration errors
             ComSrvError::ConfigError(msg) => VoltageError::Configuration(msg),
-
-            // I/O errors
             ComSrvError::IoError(msg) => VoltageError::Io(std::io::Error::other(msg)),
-
-            // Protocol and communication errors
-            ComSrvError::ProtocolError(msg) | ComSrvError::ModbusError(msg) => {
-                VoltageError::Protocol {
-                    protocol: "comsrv".to_string(),
-                    message: msg,
+            ComSrvError::ProtocolError(msg) => VoltageError::Protocol {
+                protocol: "comsrv".to_string(),
+                message: msg,
+            },
+            ComSrvError::ConnectionError(msg) => VoltageError::Communication(msg),
+            ComSrvError::DataError(msg) => VoltageError::Validation(msg),
+            ComSrvError::TimeoutError(msg) => VoltageError::Timeout(msg),
+            ComSrvError::StorageError(msg) => VoltageError::Database(msg),
+            ComSrvError::ResourceError(msg) => VoltageError::ResourceBusy(msg),
+            ComSrvError::ChannelError(msg) => {
+                if msg.contains("not found") {
+                    VoltageError::ChannelNotFound(msg)
+                } else if msg.contains("exists") {
+                    VoltageError::AlreadyExists(msg)
+                } else {
+                    VoltageError::Processing(msg)
                 }
             },
-
-            ComSrvError::ConnectionError(msg) => VoltageError::Communication(msg),
-
-            ComSrvError::NotConnected => VoltageError::Communication("Not connected".to_string()),
-
-            // Timeout errors
-            ComSrvError::TimeoutError(msg) => VoltageError::Timeout(msg),
-
-            // Redis errors
-            ComSrvError::RedisError(msg) => VoltageError::Database(format!("Redis: {}", msg)),
-
-            // Data errors
-            ComSrvError::SerializationError(msg) => VoltageError::Serialization(msg),
-            ComSrvError::DataConversionError(msg)
-            | ComSrvError::InvalidData(msg)
-            | ComSrvError::ParsingError(msg) => VoltageError::Validation(msg),
-
-            // Resource errors
-            ComSrvError::ChannelNotFound(id) => VoltageError::ChannelNotFound(id),
-            ComSrvError::PointNotFound(msg) => VoltageError::NotFound {
+            ComSrvError::PointError(msg) => VoltageError::NotFound {
                 resource: format!("Point: {}", msg),
             },
-            ComSrvError::ChannelExists(id) => {
-                VoltageError::AlreadyExists(format!("Channel {}", id))
-            },
-
-            // Invalid operations
-            ComSrvError::InvalidParameter(msg) => VoltageError::InvalidParameter {
-                param: "unknown".to_string(),
-                reason: msg,
-            },
-            ComSrvError::InvalidOperation(msg) | ComSrvError::NotSupported(msg) => {
-                VoltageError::Validation(msg)
-            },
-
-            // Permission and state errors
-            ComSrvError::PermissionDenied(msg) => VoltageError::Forbidden(msg),
-            ComSrvError::StateError(msg) | ComSrvError::LockError(msg) => {
-                VoltageError::Internal(msg)
-            },
-
-            // Resource exhaustion
-            ComSrvError::ResourceExhausted(msg) => VoltageError::ResourceBusy(msg),
-
-            // General errors
-            ComSrvError::InternalError(msg)
-            | ComSrvError::UnknownError(msg)
-            | ComSrvError::SyncError(msg)
-            | ComSrvError::BatchOperationFailed(msg) => VoltageError::Internal(msg),
-
-            // API errors
-            ComSrvError::ApiError(msg) => VoltageError::Api(msg),
-
-            // Point table and channel errors
-            ComSrvError::PointTableError(msg)
-            | ComSrvError::ChannelError(msg)
-            | ComSrvError::ResourceError(msg) => VoltageError::Processing(msg),
+            ComSrvError::ValidationError(msg) => VoltageError::Validation(msg),
+            ComSrvError::PermissionError(msg) => VoltageError::Forbidden(msg),
+            ComSrvError::StateError(msg) => VoltageError::Internal(msg),
+            ComSrvError::BatchError(msg) => VoltageError::Internal(msg),
+            ComSrvError::InternalError(msg) => VoltageError::Internal(msg),
         }
     }
 }
@@ -339,120 +313,41 @@ use errors::{ErrorCategory, VoltageErrorTrait};
 impl VoltageErrorTrait for ComSrvError {
     fn error_code(&self) -> &'static str {
         match self {
-            // Configuration
             Self::ConfigError(_) => "COMSRV_CONFIG_ERROR",
-
-            // IO
             Self::IoError(_) => "COMSRV_IO_ERROR",
-
-            // Protocol
             Self::ProtocolError(_) => "COMSRV_PROTOCOL_ERROR",
-            Self::ModbusError(_) => "COMSRV_MODBUS_ERROR",
-
-            // Connection
             Self::ConnectionError(_) => "COMSRV_CONNECTION_ERROR",
-            Self::NotConnected => "COMSRV_NOT_CONNECTED",
-
-            // Timeout
+            Self::DataError(_) => "COMSRV_DATA_ERROR",
             Self::TimeoutError(_) => "COMSRV_TIMEOUT",
-
-            // Data Handling
-            Self::SerializationError(_) => "COMSRV_SERIALIZATION_ERROR",
-            Self::DataConversionError(_) => "COMSRV_DATA_CONVERSION_ERROR",
-            Self::InvalidData(_) => "COMSRV_INVALID_DATA",
-            Self::ParsingError(_) => "COMSRV_PARSING_ERROR",
-
-            // Resources
-            Self::ChannelNotFound(_) => "COMSRV_CHANNEL_NOT_FOUND",
-            Self::ChannelExists(_) => "COMSRV_CHANNEL_EXISTS",
-            Self::ChannelError(_) => "COMSRV_CHANNEL_ERROR",
-            Self::PointNotFound(_) => "COMSRV_POINT_NOT_FOUND",
-            Self::PointTableError(_) => "COMSRV_POINT_TABLE_ERROR",
+            Self::StorageError(_) => "COMSRV_STORAGE_ERROR",
             Self::ResourceError(_) => "COMSRV_RESOURCE_ERROR",
-            Self::ResourceExhausted(_) => "COMSRV_RESOURCE_EXHAUSTED",
-
-            // Validation
-            Self::InvalidParameter(_) => "COMSRV_INVALID_PARAMETER",
-            Self::InvalidOperation(_) => "COMSRV_INVALID_OPERATION",
-            Self::NotSupported(_) => "COMSRV_NOT_SUPPORTED",
-
-            // Redis
-            Self::RedisError(_) => "COMSRV_REDIS_ERROR",
-
-            // Sync and Batch Operations
-            Self::SyncError(_) => "COMSRV_SYNC_ERROR",
-            Self::BatchOperationFailed(_) => "COMSRV_BATCH_OPERATION_FAILED",
-
-            // State and Locking
+            Self::ChannelError(_) => "COMSRV_CHANNEL_ERROR",
+            Self::PointError(_) => "COMSRV_POINT_ERROR",
+            Self::ValidationError(_) => "COMSRV_VALIDATION_ERROR",
+            Self::PermissionError(_) => "COMSRV_PERMISSION_ERROR",
             Self::StateError(_) => "COMSRV_STATE_ERROR",
-            Self::LockError(_) => "COMSRV_LOCK_ERROR",
-
-            // Permission
-            Self::PermissionDenied(_) => "COMSRV_PERMISSION_DENIED",
-
-            // API
-            Self::ApiError(_) => "COMSRV_API_ERROR",
-
-            // General
+            Self::BatchError(_) => "COMSRV_BATCH_ERROR",
             Self::InternalError(_) => "COMSRV_INTERNAL_ERROR",
-            Self::UnknownError(_) => "COMSRV_UNKNOWN_ERROR",
         }
     }
 
     fn category(&self) -> ErrorCategory {
         match self {
-            // Configuration → Configuration
             Self::ConfigError(_) => ErrorCategory::Configuration,
-
-            // Protocol → Protocol
-            Self::ProtocolError(_) | Self::ModbusError(_) => ErrorCategory::Protocol,
-
-            // Connection → Connection
-            Self::ConnectionError(_) | Self::NotConnected => ErrorCategory::Connection,
-
-            // Timeout → Timeout
+            Self::IoError(_) => ErrorCategory::Internal,
+            Self::ProtocolError(_) => ErrorCategory::Protocol,
+            Self::ConnectionError(_) => ErrorCategory::Connection,
+            Self::DataError(_) => ErrorCategory::Validation,
             Self::TimeoutError(_) => ErrorCategory::Timeout,
-
-            // Database → Database
-            Self::RedisError(_) => ErrorCategory::Database,
-
-            // Validation → Validation
-            Self::InvalidParameter(_)
-            | Self::InvalidOperation(_)
-            | Self::InvalidData(_)
-            | Self::NotSupported(_) => ErrorCategory::Validation,
-
-            // NotFound → NotFound
-            Self::ChannelNotFound(_) | Self::PointNotFound(_) => ErrorCategory::NotFound,
-
-            // Conflict → Conflict
-            Self::ChannelExists(_) => ErrorCategory::Conflict,
-
-            // Permission → Permission
-            Self::PermissionDenied(_) => ErrorCategory::Permission,
-
-            // ResourceBusy → ResourceBusy (sync errors as busy)
-            Self::SyncError(_) => ErrorCategory::ResourceBusy,
-
-            // ResourceExhausted → ResourceExhausted
-            Self::ResourceExhausted(_) => ErrorCategory::ResourceExhausted,
-
-            // Internal → Internal
-            Self::InternalError(_)
-            | Self::IoError(_)
-            | Self::SerializationError(_)
-            | Self::DataConversionError(_)
-            | Self::ParsingError(_)
-            | Self::ChannelError(_)
-            | Self::PointTableError(_)
-            | Self::ResourceError(_)
-            | Self::BatchOperationFailed(_)
-            | Self::StateError(_)
-            | Self::LockError(_)
-            | Self::ApiError(_) => ErrorCategory::Internal,
-
-            // Unknown → Unknown
-            Self::UnknownError(_) => ErrorCategory::Unknown,
+            Self::StorageError(_) => ErrorCategory::Database,
+            Self::ResourceError(_) => ErrorCategory::ResourceExhausted,
+            Self::ChannelError(_) => ErrorCategory::NotFound,
+            Self::PointError(_) => ErrorCategory::NotFound,
+            Self::ValidationError(_) => ErrorCategory::Validation,
+            Self::PermissionError(_) => ErrorCategory::Permission,
+            Self::StateError(_) => ErrorCategory::ResourceBusy,
+            Self::BatchError(_) => ErrorCategory::Internal,
+            Self::InternalError(_) => ErrorCategory::Internal,
         }
     }
 }
@@ -461,7 +356,6 @@ impl VoltageErrorTrait for ComSrvError {
 // API Adaptation: ComSrvError → AppError conversion
 // ============================================================================
 
-/// Automatically convert ComSrvError to AppError using VoltageErrorTrait for HTTP status mapping
 impl From<ComSrvError> for common::AppError {
     fn from(err: ComSrvError) -> Self {
         use common::{AppError, ErrorInfo};

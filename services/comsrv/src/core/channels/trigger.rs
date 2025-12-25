@@ -232,7 +232,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                             match result {
                                 Ok(Some((queue, data_bytes))) => {
                                     let data = String::from_utf8(data_bytes.to_vec()).map_err(|e| {
-                                        crate::error::ComSrvError::ParsingError(
+                                        crate::error::ComSrvError::data(
                                             format!("Failed to parse UTF-8: {}", e)
                                         )
                                     })?;
@@ -276,7 +276,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                             let current_ts: i64 = match rtdb.hash_get(&channel_key, &ts_field).await {
                                                 Ok(Some(ts_bytes)) => {
                                                     let ts_str = String::from_utf8(ts_bytes.to_vec()).map_err(|e| {
-                                                        crate::error::ComSrvError::ParsingError(
+                                                        crate::error::ComSrvError::data(
                                                             format!("Failed to parse UTF-8 timestamp: {}", e)
                                                         )
                                                     })?;
@@ -301,7 +301,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                             let value: f64 = match rtdb.hash_get(&channel_key, &point_id.to_string()).await {
                                                 Ok(Some(value_bytes)) => {
                                                     let value_str = String::from_utf8(value_bytes.to_vec()).map_err(|e| {
-                                                        crate::error::ComSrvError::ParsingError(
+                                                        crate::error::ComSrvError::data(
                                                             format!("Failed to parse UTF-8 value: {}", e)
                                                         )
                                                     })?;
@@ -444,7 +444,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
 
         // Fallback: attempt to augment JSON with missing fields
         let mut value: serde_json::Value = serde_json::from_str(data).map_err(|e| {
-            crate::error::ComSrvError::ParsingError(format!("Failed to parse command JSON: {e}"))
+            crate::error::ComSrvError::data(format!("Failed to parse command JSON: {e}"))
         })?;
 
         if let serde_json::Value::Object(ref mut map) = value {
@@ -471,7 +471,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
 
             // Try final deserialization
             let mut command: ControlCommand = serde_json::from_value(value).map_err(|e| {
-                crate::error::ComSrvError::ParsingError(format!(
+                crate::error::ComSrvError::data(format!(
                     "Failed to parse command after fallback: {e}"
                 ))
             })?;
@@ -482,7 +482,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
             return Ok(command);
         }
 
-        Err(crate::error::ComSrvError::ParsingError(
+        Err(crate::error::ComSrvError::data(
             "Command JSON is not an object".to_string(),
         ))
     }

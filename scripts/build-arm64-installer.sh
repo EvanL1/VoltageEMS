@@ -22,8 +22,32 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/build/arm64-installer"
 OUTPUT_DIR="$ROOT_DIR/release"
 
-# Version - support both date and semantic versioning
-VERSION="${1:-$(date +%Y%m%d)}"
+# Parse command line arguments
+VERSION=""
+ENABLE_SWAGGER=0
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --with-swagger|-s)
+            ENABLE_SWAGGER=1
+            shift
+            ;;
+        -*)
+            echo -e "${RED}Unknown option: $1${NC}"
+            echo "Usage: $0 [VERSION] [--with-swagger|-s]"
+            echo "  VERSION        Version string (default: YYYYMMDD)"
+            echo "  --with-swagger Include Swagger UI in the build"
+            exit 1
+            ;;
+        *)
+            VERSION="$1"
+            shift
+            ;;
+    esac
+done
+
+# Default version if not specified
+VERSION="${VERSION:-$(date +%Y%m%d)}"
 FOLDER_NAME="MonarchEdge"
 PACKAGE_NAME="MonarchEdge-arm64-${VERSION}"
 
@@ -213,19 +237,16 @@ if ! rustup target list --installed | grep -q "$TARGET"; then
     rustup target add $TARGET
 fi
 
-# Check if Swagger UI should be enabled (default: disabled for production builds)
-ENABLE_SWAGGER_UI="${ENABLE_SWAGGER_UI:-0}"
-
-# Determine build features based on environment variable
+# Determine build features based on command line arguments
 # Note: Features are combined for all services (comsrv, modsrv)
 # - comsrv needs: modbus, [swagger-ui]
 # - modsrv needs: redis, sqlite, [swagger-ui]
-if [[ "$ENABLE_SWAGGER_UI" == "1" ]]; then
+if [[ "$ENABLE_SWAGGER" == "1" ]]; then
     CARGO_FEATURES="modbus,redis,sqlite,swagger-ui"
-    echo -e "${GREEN}Building with Swagger UI ENABLED (set ENABLE_SWAGGER_UI=0 to disable)${NC}"
+    echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
 else
     CARGO_FEATURES="modbus,redis,sqlite"
-    echo -e "${YELLOW}Building without Swagger UI (default for production)${NC}"
+    echo -e "${YELLOW}Building without Swagger UI (use --with-swagger to enable)${NC}"
 fi
 
 # Build services using zigbuild
@@ -250,7 +271,7 @@ done
 echo -e "${BLUE}Creating Docker image with $CPU_CORES parallel jobs...${NC}"
 docker build \
     --build-arg BUILD_JOBS=$CPU_CORES \
-    --build-arg ENABLE_SWAGGER_UI="$ENABLE_SWAGGER_UI" \
+    --build-arg ENABLE_SWAGGER_UI="$ENABLE_SWAGGER" \
     -t voltageems:latest .
 
 if [ $? -eq 0 ]; then

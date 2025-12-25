@@ -15,6 +15,9 @@ use crate::core::channels::igw_bridge::{
     create_modbus_rtu_channel, create_virtual_channel, ChannelImpl, IgwChannelWrapper,
 };
 
+#[cfg(all(target_os = "linux", feature = "gpio"))]
+use crate::core::channels::igw_bridge::create_gpio_channel;
+
 use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
@@ -165,7 +168,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
         // Validate channel doesn't exist
         if self.channels.contains_key(&channel_id) {
-            return Err(ComSrvError::ChannelExists(channel_id));
+            return Err(ComSrvError::channel_exists(channel_id));
         }
 
         // Convert to RuntimeChannelConfig and load configuration from SQLite
@@ -207,12 +210,24 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 self.create_igw_modbus_rtu_channel(channel_id, &runtime_config)
                     .await?
             },
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            "gpio" | "di_do" | "dido" => {
+                // IGW path: Use igw::GpioChannel for DI/DO
+                self.create_igw_gpio_channel(channel_id, &runtime_config)
+                    .await?
+            },
             _ => {
                 // All protocols now use IGW - unsupported protocols should error
+                #[cfg(all(target_os = "linux", feature = "gpio"))]
+                let supported = "virtual, modbus_tcp, modbus_rtu, gpio";
+                #[cfg(not(all(target_os = "linux", feature = "gpio")))]
+                let supported = "virtual, modbus_tcp, modbus_rtu";
+
                 return Err(anyhow::anyhow!(
-                    "Unsupported protocol '{}' for channel {}. Supported: virtual, modbus_tcp, modbus_rtu",
+                    "Unsupported protocol '{}' for channel {}. Supported: {}",
                     protocol_name,
-                    channel_id
+                    channel_id,
+                    supported
                 )
                 .into());
             },
@@ -368,6 +383,46 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         Ok((channel_impl, command_trigger))
     }
 
+    /// Create IGW-based GPIO channel for DI/DO.
+    ///
+    /// GPIO channels support:
+    /// - Signal points (DI): Digital input reading
+    /// - Control points (DO): Digital output control
+    #[cfg(all(target_os = "linux", feature = "gpio"))]
+    async fn create_igw_gpio_channel(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
+        debug!("Ch{} creating via IGW GPIO path", channel_id);
+
+        // 1. Create RedisDataStore for this channel
+        let store = Arc::new(RedisDataStore::new(
+            Arc::clone(&self.rtdb),
+            Arc::clone(&self.routing_cache),
+        ));
+
+        // 2. Convert point configs to IGW format (for signal/control points)
+        let point_configs = convert_to_igw_point_configs(runtime_config);
+        store.set_point_configs(channel_id, point_configs);
+
+        // 3. Start background flush task for write buffer
+        store.start_flush_task();
+
+        // 4. Create GpioChannel via igw_bridge
+        let protocol = create_gpio_channel(channel_id, runtime_config);
+
+        // 5. Setup command trigger for M2C control (DO commands)
+        let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
+
+        // 6. Create IgwChannelWrapper with command processing and storage
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+
+        info!("Ch{} created via IGW (gpio)", channel_id);
+        Ok((channel_impl, command_trigger))
+    }
+
     /// Load channel configuration from SQLite
     async fn load_channel_configuration(
         &self,
@@ -405,10 +460,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             info!("Ch{} removed", channel_id);
             Ok(())
         } else {
-            Err(ComSrvError::ChannelNotFound(format!(
-                "Channel {}",
-                channel_id
-            )))
+            Err(ComSrvError::channel_not_found(channel_id))
         }
     }
 
@@ -504,7 +556,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         if failed_channels.is_empty() {
             Ok(())
         } else {
-            Err(ComSrvError::BatchOperationFailed(format!(
+            Err(ComSrvError::batch(format!(
                 "Failed to connect {} channels",
                 failed_channels.len()
             )))
@@ -693,7 +745,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             voltage_routing::write_channel_batch(rtdb.as_ref(), &self.routing_cache, updates)
                 .await
                 .map_err(|e| {
-                    ComSrvError::RedisError(format!(
+                    ComSrvError::storage(format!(
                         "Failed to initialize {} points via application layer: {}",
                         telemetry_name, e
                     ))

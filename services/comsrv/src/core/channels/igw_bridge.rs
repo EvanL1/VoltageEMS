@@ -36,7 +36,11 @@ use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig
 use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 use igw::{ConnectionState, Protocol, ProtocolClient};
 
+#[cfg(all(target_os = "linux", feature = "gpio"))]
+use igw::protocols::gpio::{GpioChannel, GpioChannelConfig, GpioDirection, GpioPinConfig};
+
 use crate::core::channels::traits::ChannelCommand;
+use crate::core::channels::types::ChannelStatus;
 use crate::core::config::RuntimeChannelConfig;
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
@@ -59,6 +63,9 @@ pub enum ProtocolClientImpl {
     Virtual(VirtualChannel),
     /// Modbus TCP or RTU channel
     Modbus(ModbusChannel),
+    /// GPIO channel for digital I/O (Linux only)
+    #[cfg(all(target_os = "linux", feature = "gpio"))]
+    Gpio(GpioChannel),
 }
 
 impl ProtocolClientImpl {
@@ -67,6 +74,8 @@ impl ProtocolClientImpl {
         match self {
             Self::Virtual(c) => c.poll_once().await,
             Self::Modbus(c) => c.poll_once().await,
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(c) => c.poll_once().await,
         }
     }
 
@@ -75,6 +84,8 @@ impl ProtocolClientImpl {
         match self {
             Self::Virtual(c) => c.connect().await,
             Self::Modbus(c) => c.connect().await,
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(c) => c.connect().await,
         }
     }
 
@@ -83,6 +94,8 @@ impl ProtocolClientImpl {
         match self {
             Self::Virtual(c) => c.disconnect().await,
             Self::Modbus(c) => c.disconnect().await,
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(c) => c.disconnect().await,
         }
     }
 
@@ -91,6 +104,8 @@ impl ProtocolClientImpl {
         match self {
             Self::Virtual(c) => c.connection_state(),
             Self::Modbus(c) => c.connection_state(),
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(c) => c.connection_state(),
         }
     }
 
@@ -102,6 +117,8 @@ impl ProtocolClientImpl {
         match self {
             Self::Virtual(c) => c.write_control(commands).await,
             Self::Modbus(c) => c.write_control(commands).await,
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(c) => c.write_control(commands).await,
         }
     }
 
@@ -113,26 +130,32 @@ impl ProtocolClientImpl {
         match self {
             Self::Virtual(c) => c.write_adjustment(commands).await,
             Self::Modbus(c) => c.write_adjustment(commands).await,
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(c) => c.write_adjustment(commands).await,
         }
     }
 
     /// Set the log handler for protocol-level logging.
     ///
-    /// Only ModbusChannel supports logging; VirtualChannel is a no-op.
+    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel are no-ops.
     pub fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
         match self {
             Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
             Self::Modbus(c) => c.set_log_handler(handler),
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
         }
     }
 
     /// Set the log configuration.
     ///
-    /// Only ModbusChannel supports logging; VirtualChannel is a no-op.
+    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel are no-ops.
     pub fn set_log_config(&mut self, config: ChannelLogConfig) {
         match self {
             Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
             Self::Modbus(c) => c.set_log_config(config),
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
         }
     }
 
@@ -208,7 +231,7 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
             self.store
                 .write_batch(self.channel_id, batch)
                 .await
-                .map_err(|e| crate::error::ComSrvError::RedisError(e.to_string()))?;
+                .map_err(|e| crate::error::ComSrvError::storage(e.to_string()))?;
             // Note: igw already logs poll results at debug level
         }
 
@@ -585,16 +608,70 @@ pub fn create_modbus_rtu_channel(
     client
 }
 
+/// Create an IGW GpioChannel for digital I/O.
+///
+/// Note: Only available on Linux with `gpio` feature enabled.
+/// Storage is handled by the service layer (ChannelManager) after polling.
+///
+/// # Arguments
+///
+/// * `_channel_id` - Unique channel identifier
+/// * `runtime_config` - Channel configuration containing GPIO pin mappings
+#[cfg(all(target_os = "linux", feature = "gpio"))]
+pub fn create_gpio_channel(
+    _channel_id: u32,
+    runtime_config: &RuntimeChannelConfig,
+) -> ProtocolClientImpl {
+    use std::time::Duration;
+
+    let mut gpio_config = GpioChannelConfig::new();
+
+    // Get default chip from channel parameters or use "gpiochip0"
+    let default_chip = runtime_config
+        .base
+        .parameters
+        .get("gpio_chip")
+        .and_then(|v| v.as_str())
+        .unwrap_or("gpiochip0");
+
+    // Get poll interval from parameters
+    if let Some(interval_ms) = runtime_config
+        .base
+        .parameters
+        .get("poll_interval_ms")
+        .and_then(|v| v.as_u64())
+    {
+        gpio_config = gpio_config.with_poll_interval(Duration::from_millis(interval_ms));
+    }
+
+    // Configure DI pins from signal points (遥信)
+    for pt in &runtime_config.signal_points {
+        if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
+            let pin_config =
+                GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id.to_string())
+                    .with_active_low(pt.reverse);
+
+            gpio_config = gpio_config.add_pin(pin_config);
+        }
+    }
+
+    // Configure DO pins from control points (遥控)
+    for pt in &runtime_config.control_points {
+        if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
+            let pin_config =
+                GpioPinConfig::digital_output(default_chip, gpio_num, pt.base.point_id.to_string())
+                    .with_active_low(pt.reverse);
+
+            gpio_config = gpio_config.add_pin(pin_config);
+        }
+    }
+
+    ProtocolClientImpl::Gpio(GpioChannel::new(gpio_config))
+}
+
 // ============================================================================
 // ChannelImpl - Unified IGW-based channel implementation
 // ============================================================================
-
-/// Channel status for external queries.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ChannelStatus {
-    pub is_connected: bool,
-    pub last_update: i64,
-}
 
 /// Channel implementation wrapping IGW ProtocolClient.
 ///

@@ -739,6 +739,14 @@ impl RuntimeChannelConfig {
     pub fn is_enabled(&self) -> bool {
         self.base.core.enabled
     }
+
+    /// Get GPIO number for a point ID (if mapped)
+    pub fn get_gpio_mapping(&self, point_id: u32) -> Option<u32> {
+        self.gpio_mappings
+            .iter()
+            .find(|m| m.point_id == point_id)
+            .map(|m| m.gpio_number)
+    }
 }
 
 // Default value functions
