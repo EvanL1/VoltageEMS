@@ -12,7 +12,7 @@
 //! ChannelManager
 //!         ↓ create_*_channel() + IgwChannelWrapper::new()
 //! IgwChannelWrapper
-//!         ├─ protocol: igw::ProtocolClient (ModbusChannel, VirtualChannel)
+//!         ├─ protocol: ProtocolClientImpl (enum-based, replaces dyn ProtocolClient)
 //!         ├─ store: RedisDataStore (service layer storage)
 //!         └─ poll_once() → protocol.poll_once() → store.write_batch()
 //! ```
@@ -22,29 +22,143 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, warn};
 
-use igw::core::data::DataType;
+use igw::core::data::{DataBatch, DataType};
+use igw::core::error::GatewayError;
+use igw::core::logging::{
+    ChannelLogConfig, ChannelLogHandler, LoggableProtocol, TracingLogHandler,
+};
 use igw::core::point::{
     ByteOrder, DataFormat, ModbusAddress, PointConfig, ProtocolAddress, TransformConfig,
     VirtualAddress,
 };
-use igw::core::traits::{AdjustmentCommand, ControlCommand, ProtocolClient};
+use igw::core::traits::{AdjustmentCommand, ControlCommand, WriteResult};
 use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
 use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
+use igw::{ConnectionState, Protocol, ProtocolClient};
 
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::config::RuntimeChannelConfig;
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
+// ============================================================================
+// ProtocolClientImpl - Enum-based protocol dispatch (replaces Box<dyn ProtocolClient>)
+// ============================================================================
+
+/// Enum-based protocol client implementation.
+///
+/// This replaces `Box<dyn ProtocolClient>` to work with igw 0.2.2's AFIT
+/// (Async Functions In Traits) which makes `ProtocolClient` not dyn-compatible.
+///
+/// Benefits:
+/// - Compile-time type safety
+/// - No vtable overhead
+/// - Exhaustive match ensures all protocols are handled
+pub enum ProtocolClientImpl {
+    /// Virtual channel for testing and simulation
+    Virtual(VirtualChannel),
+    /// Modbus TCP or RTU channel
+    Modbus(ModbusChannel),
+}
+
+impl ProtocolClientImpl {
+    /// Poll once to get data from the device.
+    pub async fn poll_once(&mut self) -> Result<DataBatch, GatewayError> {
+        match self {
+            Self::Virtual(c) => c.poll_once().await,
+            Self::Modbus(c) => c.poll_once().await,
+        }
+    }
+
+    /// Connect to the device.
+    pub async fn connect(&mut self) -> Result<(), GatewayError> {
+        match self {
+            Self::Virtual(c) => c.connect().await,
+            Self::Modbus(c) => c.connect().await,
+        }
+    }
+
+    /// Disconnect from the device.
+    pub async fn disconnect(&mut self) -> Result<(), GatewayError> {
+        match self {
+            Self::Virtual(c) => c.disconnect().await,
+            Self::Modbus(c) => c.disconnect().await,
+        }
+    }
+
+    /// Get the current connection state.
+    pub fn connection_state(&self) -> ConnectionState {
+        match self {
+            Self::Virtual(c) => c.connection_state(),
+            Self::Modbus(c) => c.connection_state(),
+        }
+    }
+
+    /// Write control commands to the device.
+    pub async fn write_control(
+        &mut self,
+        commands: &[ControlCommand],
+    ) -> Result<WriteResult, GatewayError> {
+        match self {
+            Self::Virtual(c) => c.write_control(commands).await,
+            Self::Modbus(c) => c.write_control(commands).await,
+        }
+    }
+
+    /// Write adjustment commands to the device.
+    pub async fn write_adjustment(
+        &mut self,
+        commands: &[AdjustmentCommand],
+    ) -> Result<WriteResult, GatewayError> {
+        match self {
+            Self::Virtual(c) => c.write_adjustment(commands).await,
+            Self::Modbus(c) => c.write_adjustment(commands).await,
+        }
+    }
+
+    /// Set the log handler for protocol-level logging.
+    ///
+    /// Only ModbusChannel supports logging; VirtualChannel is a no-op.
+    pub fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
+        match self {
+            Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
+            Self::Modbus(c) => c.set_log_handler(handler),
+        }
+    }
+
+    /// Set the log configuration.
+    ///
+    /// Only ModbusChannel supports logging; VirtualChannel is a no-op.
+    pub fn set_log_config(&mut self, config: ChannelLogConfig) {
+        match self {
+            Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
+            Self::Modbus(c) => c.set_log_config(config),
+        }
+    }
+
+    /// Configure logging with TracingLogHandler (default config).
+    ///
+    /// This is a convenience method that sets up tracing integration
+    /// for ModbusChannel. VirtualChannel is a no-op.
+    pub fn enable_tracing_logs(&mut self) {
+        self.set_log_handler(Arc::new(TracingLogHandler));
+        self.set_log_config(ChannelLogConfig::default());
+    }
+}
+
+// ============================================================================
+// IgwChannelWrapper - Protocol wrapper with storage integration
+// ============================================================================
+
 /// Wrapper for IGW protocol clients that integrates with comsrv's command system.
 ///
 /// This wrapper:
-/// - Holds an IGW ProtocolClient implementation
+/// - Holds an IGW ProtocolClient implementation (enum-based)
 /// - Spawns a background task to process incoming commands
 /// - Provides access to the underlying protocol for status queries
 pub struct IgwChannelWrapper<R: Rtdb> {
-    /// The IGW protocol client
-    protocol: Arc<RwLock<Box<dyn ProtocolClient>>>,
+    /// The IGW protocol client (enum-based for AFIT compatibility)
+    protocol: Arc<RwLock<ProtocolClientImpl>>,
     /// Channel ID
     channel_id: u32,
     /// Data store for persisting polled data
@@ -56,7 +170,7 @@ pub struct IgwChannelWrapper<R: Rtdb> {
 impl<R: Rtdb> IgwChannelWrapper<R> {
     /// Create a new IGW channel wrapper with command processing and storage.
     pub fn new(
-        protocol: Box<dyn ProtocolClient>,
+        protocol: ProtocolClientImpl,
         channel_id: u32,
         store: Arc<RedisDataStore<R>>,
         command_rx: mpsc::Receiver<ChannelCommand>,
@@ -95,14 +209,14 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
                 .write_batch(self.channel_id, batch)
                 .await
                 .map_err(|e| crate::error::ComSrvError::RedisError(e.to_string()))?;
-            debug!("Ch{} polled {} points", self.channel_id, count);
+            // Note: igw already logs poll results at debug level
         }
 
         Ok(count)
     }
 
     /// Get the protocol client for status queries.
-    pub fn protocol(&self) -> &Arc<RwLock<Box<dyn ProtocolClient>>> {
+    pub fn protocol(&self) -> &Arc<RwLock<ProtocolClientImpl>> {
         &self.protocol
     }
 
@@ -137,7 +251,7 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
 
     /// Run the command executor loop.
     async fn run_command_executor(
-        protocol: Arc<RwLock<Box<dyn ProtocolClient>>>,
+        protocol: Arc<RwLock<ProtocolClientImpl>>,
         mut command_rx: mpsc::Receiver<ChannelCommand>,
         channel_id: u32,
     ) {
@@ -193,6 +307,10 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
         debug!("Ch{} igw command executor stopped", channel_id);
     }
 }
+
+// ============================================================================
+// Point Configuration Conversion
+// ============================================================================
 
 /// Convert RuntimeChannelConfig to IGW PointConfig list.
 ///
@@ -272,20 +390,6 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
     }
 
     configs
-}
-
-/// Create an IGW VirtualChannel.
-///
-/// Note: The channel no longer holds a store reference. Storage is handled
-/// by the service layer (ChannelManager) after polling.
-pub fn create_virtual_channel(
-    _channel_id: u32,
-    channel_name: &str,
-    point_configs: Vec<PointConfig>,
-) -> Box<dyn ProtocolClient> {
-    let config = VirtualChannelConfig::new(channel_name).with_points(point_configs);
-
-    Box::new(VirtualChannel::new(config))
 }
 
 /// Convert RuntimeChannelConfig to IGW PointConfig list for Modbus.
@@ -409,6 +513,24 @@ fn parse_byte_order(s: &str) -> ByteOrder {
     }
 }
 
+// ============================================================================
+// Channel Factory Functions
+// ============================================================================
+
+/// Create an IGW VirtualChannel.
+///
+/// Note: The channel no longer holds a store reference. Storage is handled
+/// by the service layer (ChannelManager) after polling.
+pub fn create_virtual_channel(
+    _channel_id: u32,
+    channel_name: &str,
+    point_configs: Vec<PointConfig>,
+) -> ProtocolClientImpl {
+    let config = VirtualChannelConfig::new(channel_name).with_points(point_configs);
+
+    ProtocolClientImpl::Virtual(VirtualChannel::new(config))
+}
+
 /// Create an IGW ModbusChannel for TCP mode.
 ///
 /// Note: The channel no longer holds a store reference. Storage is handled
@@ -416,23 +538,25 @@ fn parse_byte_order(s: &str) -> ByteOrder {
 ///
 /// # Arguments
 ///
-/// * `_channel_id` - Unique channel identifier (for logging, not used by channel)
+/// * `channel_id` - Unique channel identifier (used for logging in igw 0.2.2+)
 /// * `host` - Modbus TCP server host address
 /// * `port` - Modbus TCP server port
 /// * `point_configs` - Point configurations with Modbus addresses
 pub fn create_modbus_channel(
-    _channel_id: u32,
+    channel_id: u32,
     host: &str,
     port: u16,
     point_configs: Vec<PointConfig>,
-) -> Box<dyn ProtocolClient> {
+) -> ProtocolClientImpl {
     let address = format!("{}:{}", host, port);
 
     let config = ModbusChannelConfig::tcp(&address)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
 
-    Box::new(ModbusChannel::new(config))
+    let mut client = ProtocolClientImpl::Modbus(ModbusChannel::new(config, channel_id));
+    client.enable_tracing_logs();
+    client
 }
 
 /// Create an IGW ModbusChannel for RTU (serial) mode.
@@ -442,21 +566,23 @@ pub fn create_modbus_channel(
 ///
 /// # Arguments
 ///
-/// * `_channel_id` - Unique channel identifier (for logging, not used by channel)
+/// * `channel_id` - Unique channel identifier (used for logging in igw 0.2.2+)
 /// * `device` - Serial device path (e.g., "/dev/ttyUSB0" on Linux)
 /// * `baud_rate` - Serial baud rate (e.g., 9600, 19200, 115200)
 /// * `point_configs` - Point configurations with Modbus addresses
 pub fn create_modbus_rtu_channel(
-    _channel_id: u32,
+    channel_id: u32,
     device: &str,
     baud_rate: u32,
     point_configs: Vec<PointConfig>,
-) -> Box<dyn ProtocolClient> {
+) -> ProtocolClientImpl {
     let config = ModbusChannelConfig::rtu(device, baud_rate)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
 
-    Box::new(ModbusChannel::new(config))
+    let mut client = ProtocolClientImpl::Modbus(ModbusChannel::new(config, channel_id));
+    client.enable_tracing_logs();
+    client
 }
 
 // ============================================================================

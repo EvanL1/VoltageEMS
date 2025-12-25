@@ -11,6 +11,16 @@ NC='\033[0m'
 
 echo -e "${GREEN}=== VoltageEMS Quick Check ===${NC}"
 
+# Check for forbidden mod.rs files (project convention)
+echo -e "${YELLOW}Checking for mod.rs files...${NC}"
+MOD_RS_FILES=$(find . -name "mod.rs" -not -path "./target/*" 2>/dev/null || true)
+if [ -n "$MOD_RS_FILES" ]; then
+    echo -e "${RED}ERROR: mod.rs files are forbidden (project convention)${NC}"
+    echo "$MOD_RS_FILES"
+    exit 1
+fi
+echo -e "${GREEN}No mod.rs files found${NC}"
+
 # Check compilation
 echo -e "${YELLOW}Checking compilation...${NC}"
 cargo check --workspace

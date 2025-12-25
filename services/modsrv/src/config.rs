@@ -23,9 +23,7 @@ fn default_modsrv_api() -> ApiConfig {
     }
 }
 
-fn bool_true() -> bool {
-    true
-}
+use common::serde_helpers::bool_true;
 
 // ============================================================================
 // Core Configuration

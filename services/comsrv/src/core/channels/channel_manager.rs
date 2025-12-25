@@ -114,7 +114,7 @@ impl<R: Rtdb> ChannelEntry<R> {
 /// Channel manager - responsible for channel lifecycle management
 pub struct ChannelManager<R: Rtdb> {
     /// Store created channels
-    channels: DashMap<u32, ChannelEntry<R>, ahash::RandomState>,
+    channels: DashMap<u32, ChannelEntry<R>>,
     /// Shared RTDB (Redis or Memory for testing)
     rtdb: Arc<R>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
@@ -135,7 +135,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Create new channel manager
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<voltage_rtdb::RoutingCache>) -> Self {
         Self {
-            channels: DashMap::with_hasher(ahash::RandomState::default()),
+            channels: DashMap::new(),
             rtdb,
             routing_cache,
             sqlite_pool: None,
@@ -149,7 +149,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         sqlite_pool: sqlx::SqlitePool,
     ) -> Self {
         Self {
-            channels: DashMap::with_hasher(ahash::RandomState::default()),
+            channels: DashMap::new(),
             rtdb,
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
@@ -480,7 +480,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             let task = tokio::spawn(async move {
                 match channel_impl.write().await.connect().await {
                     Ok(_) => {
-                        info!("Ch{} connected", channel_id);
+                        // Note: igw TracingLogHandler outputs "Channel connected" at info level
                         Ok(())
                     },
                     Err(e) => {

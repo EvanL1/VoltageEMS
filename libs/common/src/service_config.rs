@@ -193,7 +193,7 @@ pub struct RedisConfig {
     pub url: String,
 
     /// Whether Redis is enabled
-    #[serde(default = "bool_true")]
+    #[serde(default = "crate::serde_helpers::bool_true")]
     pub enabled: bool,
 }
 
@@ -274,10 +274,7 @@ fn default_max_files() -> u32 {
     7
 }
 
-/// Serde default for boolean true
-pub fn bool_true() -> bool {
-    true
-}
+// Note: bool_true() is defined in serde_helpers module
 
 // ============================================================================
 // Default implementations

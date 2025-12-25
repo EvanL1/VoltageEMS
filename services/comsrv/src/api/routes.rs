@@ -116,15 +116,14 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
         crate::api::handlers::point_handlers::get_unmapped_points_handler,
         crate::api::handlers::point_handlers::get_point_mapping_with_type_handler,
 
-        // Point CRUD operations
+        // Point CRUD operations (using parameterized inner handlers for OpenAPI docs)
         crate::api::handlers::point_handlers::create_telemetry_point_handler,
         crate::api::handlers::point_handlers::create_signal_point_handler,
         crate::api::handlers::point_handlers::create_control_point_handler,
         crate::api::handlers::point_handlers::create_adjustment_point_handler,
-        crate::api::handlers::point_handlers::update_point_handler,
-        crate::api::handlers::point_handlers::delete_point_handler,
-        crate::api::handlers::point_handlers::get_point_config_handler,
         crate::api::handlers::point_handlers::batch_point_operations_handler,
+        // Note: GET/PUT/DELETE use type-specific wrappers at runtime, but OpenAPI
+        // documents the parameterized inner handlers for simplicity
 
         // Channel management (CRUD)
         crate::api::handlers::channel_management_handlers::create_channel_handler,

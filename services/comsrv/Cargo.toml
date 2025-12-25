@@ -17,7 +17,7 @@ path = "src/main.rs"
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum", "openapi"] }
 
 # IGW - Industrial Gateway Protocol Library
-igw = { version = "0.2", default-features = false, features = ["virtual-channel", "modbus", "modbus-rtu"] }
+igw = { version = "=0.2.2", default-features = false, features = ["virtual-channel", "modbus", "modbus-rtu", "tracing-support"] }
 errors = { path = "../../libs/errors", features = ["axum-support"] }
 # voltage-comlink removed - types moved to core/channels/types.rs
 voltage-model = { path = "../../libs/voltage-model" }
@@ -50,9 +50,6 @@ csv = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
-# Industrial communication
-tokio-serial = { workspace = true }
-
 # Web framework
 axum = { workspace = true }
 utoipa = { workspace = true }
@@ -62,16 +59,12 @@ tower-http = { workspace = true }
 
 # Data structures
 dashmap = { workspace = true }
-ahash = { workspace = true }
 bytes = { workspace = true }
 
 # Utils
 chrono = { workspace = true }
 clap = { workspace = true }
 rand = { workspace = true }
-
-# Configuration (will migrate to voltage-common)
-figment = { workspace = true }
 
 # SQLite for configuration
 sqlx = { workspace = true }

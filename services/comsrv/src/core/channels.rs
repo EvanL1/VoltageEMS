@@ -13,7 +13,7 @@ pub mod types; // Channel communication types (owned by comsrv)
 pub mod igw_bridge; // Bridge for IGW protocol clients
 
 // Re-export data types from local types module
-pub use types::{ChannelCommand, ChannelLogger, ChannelStatus, ConnectionState, ProtocolValue};
+pub use types::{ChannelCommand, ChannelStatus, ConnectionState, ProtocolValue};
 
 // Re-export other types from local modules
 pub use crate::core::config::FourRemote;
@@ -23,6 +23,7 @@ pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCo
 // IGW bridge types
 pub use igw_bridge::{
     convert_to_igw_point_configs, create_virtual_channel, ChannelImpl, IgwChannelWrapper,
+    ProtocolClientImpl,
 };
 
 /// Initialize channels module

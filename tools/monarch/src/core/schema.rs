@@ -4,9 +4,9 @@
 //! All tables are created in a single `voltage.db` file.
 
 use anyhow::{Context, Result};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use std::path::Path;
-use tracing::info;
+use tracing::{info, warn};
 
 // Import DDL constants from services (lib mode)
 use comsrv::core::config as comsrv_schema;
@@ -47,6 +47,36 @@ const RULE_HISTORY_TABLE: &str = r#"
     )
 "#;
 
+/// Migrate legacy rules table if needed
+///
+/// Checks if the rules table uses the old schema (id TEXT) and rebuilds it
+/// with the correct schema (id INTEGER). This handles upgrades from older versions.
+async fn migrate_rules_table_if_needed(pool: &SqlitePool) -> Result<()> {
+    // Check if rules table exists and get id column type
+    let row = sqlx::query("SELECT type FROM pragma_table_info('rules') WHERE name = 'id'")
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(row) = row {
+        let col_type: String = row.try_get("type")?;
+        if col_type.to_uppercase() == "TEXT" {
+            warn!("Detected legacy rules table (id TEXT), rebuilding with INTEGER schema...");
+
+            // Drop old tables (will be recreated with correct schema)
+            sqlx::query("DROP TABLE IF EXISTS rule_history")
+                .execute(pool)
+                .await?;
+            sqlx::query("DROP TABLE IF EXISTS rules")
+                .execute(pool)
+                .await?;
+
+            info!("Legacy rules table dropped, will be recreated with correct schema");
+        }
+    }
+
+    Ok(())
+}
+
 /// Initialize all database tables in voltage.db
 ///
 /// Creates all tables, indexes, and triggers needed by VoltageEMS services.
@@ -71,6 +101,9 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
 
     // Set file permissions for Docker compatibility
     file_utils::set_database_permissions(db_path)?;
+
+    // Run schema migrations before creating tables
+    migrate_rules_table_if_needed(&pool).await?;
 
     // === Shared tables ===
     sqlx::query(comsrv_schema::SERVICE_CONFIG_TABLE)

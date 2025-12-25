@@ -182,10 +182,8 @@ pub struct Point {
     pub unit: Option<String>,
 }
 
-// Serde default functions
-fn scale_one() -> f64 {
-    1.0
-}
+// Serde default/deserialize functions - delegate to common::serde_helpers
+use common::serde_helpers::{scale_one, step_one};
 
 fn deserialize_scale<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
@@ -199,10 +197,6 @@ where
     D: serde::Deserializer<'de>,
 {
     common::serde_helpers::deserialize_offset(deserializer)
-}
-
-fn step_one() -> f64 {
-    1.0
 }
 
 /// Telemetry point (T)

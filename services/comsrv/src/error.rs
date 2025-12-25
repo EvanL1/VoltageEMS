@@ -153,13 +153,6 @@ impl From<serde_yaml::Error> for ComSrvError {
     }
 }
 
-// Conversion from figment::Error
-impl From<figment::Error> for ComSrvError {
-    fn from(err: figment::Error) -> Self {
-        ComSrvError::ConfigError(format!("Configuration error: {err}"))
-    }
-}
-
 // Conversion from anyhow::Error
 impl From<anyhow::Error> for ComSrvError {
     fn from(err: anyhow::Error) -> Self {

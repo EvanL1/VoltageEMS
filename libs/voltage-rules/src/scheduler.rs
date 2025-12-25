@@ -2,7 +2,6 @@
 //!
 //! Manages rule execution based on trigger configurations:
 //! - Interval: Execute rules at fixed intervals
-//! - OnChange: Execute rules when watched instance values change (TODO: future)
 //!
 //! Current implementation uses a simple tick-based approach with 100ms granularity.
 
@@ -32,14 +31,6 @@ pub enum TriggerConfig {
     Interval {
         /// Interval in milliseconds
         interval_ms: u64,
-    },
-    /// Execute rule when watched instance values change (future implementation)
-    #[allow(dead_code)]
-    OnChange {
-        /// List of instance IDs to watch
-        watch_instances: Vec<u16>,
-        /// Debounce time in milliseconds
-        debounce_ms: u64,
     },
 }
 
@@ -207,10 +198,6 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
                             elapsed >= *interval_ms
                         },
                     }
-                },
-                TriggerConfig::OnChange { .. } => {
-                    // TODO: Implement change detection
-                    false
                 },
             };
 
@@ -386,11 +373,7 @@ mod tests {
     #[test]
     fn test_trigger_config_default() {
         let config = TriggerConfig::default();
-        match config {
-            TriggerConfig::Interval { interval_ms } => {
-                assert_eq!(interval_ms, 1000);
-            },
-            _ => panic!("Expected Interval trigger"),
-        }
+        let TriggerConfig::Interval { interval_ms } = config;
+        assert_eq!(interval_ms, 1000);
     }
 }
