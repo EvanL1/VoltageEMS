@@ -1356,9 +1356,9 @@ dependencies = [
 
 [[package]]
 name = "igw"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd7a5670952916e26279a18f53b0d3ce96c0e92783b727d8fe49a2d9bf52bf77"
+checksum = "0d3a349eec15d1d05baaddf376ec2948e8a31c109849aa00e08c58ce9f9db483"
 dependencies = [
  "async-trait",
  "bytes",
