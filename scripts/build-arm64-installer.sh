@@ -238,24 +238,29 @@ if ! rustup target list --installed | grep -q "$TARGET"; then
 fi
 
 # Determine build features based on command line arguments
-# Note: Features are combined for all services (comsrv, modsrv)
-# - comsrv needs: modbus, [swagger-ui]
-# - modsrv needs: redis, sqlite, [swagger-ui]
+# Default features (always enabled):
+# - comsrv: modbus, gpio, openapi
+# - modsrv: redis, sqlite
+# Optional: swagger-ui (for development/debugging)
 if [[ "$ENABLE_SWAGGER" == "1" ]]; then
-    CARGO_FEATURES="modbus,redis,sqlite,swagger-ui"
+    CARGO_FEATURES="swagger-ui"
     echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
 else
-    CARGO_FEATURES="modbus,redis,sqlite"
-    echo -e "${YELLOW}Building without Swagger UI (use --with-swagger to enable)${NC}"
+    CARGO_FEATURES=""
+    echo -e "${YELLOW}Building with default features (use --with-swagger to enable Swagger UI)${NC}"
 fi
 
 # Build services using zigbuild
 echo -e "${BLUE}Building services for ARM64 with $CPU_CORES parallel jobs...${NC}"
 cd "$ROOT_DIR"
-CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
-    --no-default-features \
-    --features "$CARGO_FEATURES" \
-    -p comsrv -p modsrv
+if [[ -n "$CARGO_FEATURES" ]]; then
+    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
+        --features "$CARGO_FEATURES" \
+        -p comsrv -p modsrv
+else
+    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
+        -p comsrv -p modsrv
+fi
 
 # Check if binaries were built
 SERVICES="comsrv modsrv"

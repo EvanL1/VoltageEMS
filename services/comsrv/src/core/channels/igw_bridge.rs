@@ -37,7 +37,9 @@ use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 use igw::{ConnectionState, Protocol, ProtocolClient};
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
-use igw::protocols::gpio::{GpioChannel, GpioChannelConfig, GpioDirection, GpioPinConfig};
+use igw::protocols::gpio::{
+    GpioChannel, GpioChannelConfig, GpioDirection, GpioDriverType, GpioPinConfig,
+};
 
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ChannelStatus;
@@ -143,19 +145,19 @@ impl ProtocolClientImpl {
             Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
             Self::Modbus(c) => c.set_log_handler(handler),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
+            Self::Gpio(c) => c.set_log_handler(handler),
         }
     }
 
     /// Set the log configuration.
     ///
-    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel are no-ops.
+    /// ModbusChannel and GpioChannel support logging; VirtualChannel is no-op.
     pub fn set_log_config(&mut self, config: ChannelLogConfig) {
         match self {
             Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
             Self::Modbus(c) => c.set_log_config(config),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
+            Self::Gpio(c) => c.set_log_config(config),
         }
     }
 
@@ -610,23 +612,54 @@ pub fn create_modbus_rtu_channel(
 
 /// Create an IGW GpioChannel for digital I/O.
 ///
-/// Note: Only available on Linux with `gpio` feature enabled.
-/// Storage is handled by the service layer (ChannelManager) after polling.
+/// Supports two driver modes:
+/// - `gpiod` (default): Modern chardev interface using `/dev/gpiochipN`
+/// - `sysfs`: Legacy interface using `/sys/class/gpio/`
+///
+/// # Configuration Parameters
+///
+/// | Parameter | Description | Default |
+/// |-----------|-------------|---------|
+/// | `driver` | Driver type: "gpiod" or "sysfs" | "gpiod" |
+/// | `gpio_chip` | GPIO chip name (gpiod only) | "gpiochip0" |
+/// | `gpio_base_path` | Sysfs base path (sysfs only) | "/sys/class/gpio" |
+/// | `poll_interval_ms` | Polling interval in ms | 100 |
 ///
 /// # Arguments
 ///
-/// * `_channel_id` - Unique channel identifier
+/// * `channel_id` - Unique channel identifier (for logging)
 /// * `runtime_config` - Channel configuration containing GPIO pin mappings
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 pub fn create_gpio_channel(
-    _channel_id: u32,
+    channel_id: u32,
     runtime_config: &RuntimeChannelConfig,
 ) -> ProtocolClientImpl {
     use std::time::Duration;
 
-    let mut gpio_config = GpioChannelConfig::new();
+    // Determine driver type from configuration
+    let driver_str = runtime_config
+        .base
+        .parameters
+        .get("driver")
+        .and_then(|v| v.as_str())
+        .unwrap_or("gpiod");
 
-    // Get default chip from channel parameters or use "gpiochip0"
+    let use_sysfs = driver_str == "sysfs" || driver_str == "sysfs_gpio";
+
+    // Create config with appropriate driver
+    let mut gpio_config = if use_sysfs {
+        let base_path = runtime_config
+            .base
+            .parameters
+            .get("gpio_base_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("/sys/class/gpio");
+        GpioChannelConfig::new_sysfs(base_path)
+    } else {
+        GpioChannelConfig::new() // gpiod (default)
+    };
+
+    // Get default chip from channel parameters (for gpiod mode)
     let default_chip = runtime_config
         .base
         .parameters
@@ -639,6 +672,7 @@ pub fn create_gpio_channel(
         .base
         .parameters
         .get("poll_interval_ms")
+        .or_else(|| runtime_config.base.parameters.get("di_poll_interval_ms"))
         .and_then(|v| v.as_u64())
     {
         gpio_config = gpio_config.with_poll_interval(Duration::from_millis(interval_ms));
@@ -647,10 +681,15 @@ pub fn create_gpio_channel(
     // Configure DI pins from signal points (遥信)
     for pt in &runtime_config.signal_points {
         if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
-            let pin_config =
-                GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id.to_string())
-                    .with_active_low(pt.reverse);
-
+            let pin_config = if use_sysfs {
+                // Sysfs: use global GPIO number
+                GpioPinConfig::digital_input_sysfs(gpio_num, pt.base.point_id)
+                    .with_active_low(pt.reverse)
+            } else {
+                // Gpiod: use chip + offset
+                GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id)
+                    .with_active_low(pt.reverse)
+            };
             gpio_config = gpio_config.add_pin(pin_config);
         }
     }
@@ -658,15 +697,26 @@ pub fn create_gpio_channel(
     // Configure DO pins from control points (遥控)
     for pt in &runtime_config.control_points {
         if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
-            let pin_config =
-                GpioPinConfig::digital_output(default_chip, gpio_num, pt.base.point_id.to_string())
-                    .with_active_low(pt.reverse);
-
+            let pin_config = if use_sysfs {
+                // Sysfs: use global GPIO number
+                GpioPinConfig::digital_output_sysfs(gpio_num, pt.base.point_id)
+                    .with_active_low(pt.reverse)
+            } else {
+                // Gpiod: use chip + offset
+                GpioPinConfig::digital_output(default_chip, gpio_num, pt.base.point_id)
+                    .with_active_low(pt.reverse)
+            };
             gpio_config = gpio_config.add_pin(pin_config);
         }
     }
 
-    ProtocolClientImpl::Gpio(GpioChannel::new(gpio_config))
+    // Create channel and setup logging
+    let mut channel = GpioChannel::new(gpio_config);
+    channel.set_channel_id(channel_id);
+
+    let mut client = ProtocolClientImpl::Gpio(channel);
+    client.enable_tracing_logs();
+    client
 }
 
 // ============================================================================

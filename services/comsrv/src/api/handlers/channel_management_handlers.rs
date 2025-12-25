@@ -273,9 +273,9 @@ async fn perform_hot_reload<R: Rtdb + 'static>(
                     }
                 })
             )),
-            ("DI/DO GPIO" = (
-                summary = "DI/DO GPIO channel for digital I/O",
-                description = "Digital input/output channel using Linux sysfs GPIO interface (e.g., ECU-1170)",
+            ("DI/DO GPIO (sysfs)" = (
+                summary = "DI/DO GPIO - sysfs driver (legacy)",
+                description = "Digital I/O using legacy sysfs interface (/sys/class/gpio). Use global GPIO numbers.",
                 value = json!({
                     "name": "ECU1170 GPIO",
                     "description": "Digital I/O for industrial controller",
@@ -285,6 +285,21 @@ async fn perform_hot_reload<R: Rtdb + 'static>(
                         "driver": "sysfs",
                         "gpio_base_path": "/sys/class/gpio",
                         "di_poll_interval_ms": 200
+                    }
+                })
+            )),
+            ("DI/DO GPIO (gpiod)" = (
+                summary = "DI/DO GPIO - gpiod driver (recommended)",
+                description = "Digital I/O using modern chardev interface (/dev/gpiochipN). Use chip name + pin offset.",
+                value = json!({
+                    "name": "ECU1170 GPIO",
+                    "description": "Digital I/O for industrial controller",
+                    "protocol": "di_do",
+                    "enabled": true,
+                    "parameters": {
+                        "driver": "gpiod",
+                        "gpio_chip": "gpiochip6",
+                        "poll_interval_ms": 200
                     }
                 })
             )),
