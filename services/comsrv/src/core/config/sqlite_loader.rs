@@ -262,7 +262,10 @@ impl ComsrvSqliteLoader {
         // Helper function to parse protocol mappings from JSON field
         let mut parse_mappings = |protocol_mappings_json: Option<String>,
                                   point_id: u32,
-                                  telemetry_type: &str|
+                                  telemetry_type: &str,
+                                  data_type: &str,
+                                  scale: f64,
+                                  offset: f64|
          -> Result<()> {
             if let Some(json_str) = protocol_mappings_json {
                 if json_str.trim().is_empty() || json_str == "null" || json_str == "{}" {
@@ -354,6 +357,72 @@ impl ComsrvSqliteLoader {
                             runtime_config.gpio_mappings.push(mapping);
                         }
                     },
+                    "can" => {
+                        use crate::core::config::CanMapping;
+                        if let Ok(mapping_data) =
+                            serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            // Extract byte_offset and bit_position from JSON
+                            let byte_offset = mapping_data
+                                .get("byte_offset")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as u32;
+                            let bit_position = mapping_data
+                                .get("bit_position")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as u32;
+                            
+                            // Calculate start_bit = byte_offset * 8 + bit_position
+                            let start_bit = byte_offset * 8 + bit_position;
+                            
+                            let mapping = CanMapping {
+                                channel_id,
+                                point_id,
+                                telemetry_type: telemetry_type.to_string(),
+                                can_id: mapping_data
+                                    .get("can_id")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as u32,
+                                msg_name: mapping_data
+                                    .get("msg_name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                signal_name: mapping_data
+                                    .get("signal_name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                start_bit,
+                                bit_length: mapping_data
+                                    .get("bit_length")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as u32,
+                                byte_order: mapping_data
+                                    .get("byte_order")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("ABCD")
+                                    .to_string(),
+                                data_type: data_type.to_string(),
+                                signed: mapping_data
+                                    .get("signed")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false),
+                                // Use scale/offset from telemetry_points table, not from JSON
+                                scale,
+                                offset,
+                                min_value: mapping_data
+                                    .get("min_value")
+                                    .and_then(|v| v.as_f64()),
+                                max_value: mapping_data
+                                    .get("max_value")
+                                    .and_then(|v| v.as_f64()),
+                                unit: mapping_data
+                                    .get("unit")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                            };
+                            runtime_config.can_mappings.push(mapping);
+                        }
+                    },
                     _ => {
                         // Other protocols don't have mappings yet
                     },
@@ -381,7 +450,7 @@ impl ComsrvSqliteLoader {
 
             // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
-            parse_mappings(protocol_mappings, point_id as u32, "T")?;
+            parse_mappings(protocol_mappings, point_id as u32, "T", &data_type, scale, offset)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
@@ -410,14 +479,14 @@ impl ComsrvSqliteLoader {
             })?;
             let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
             let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            let _data_type: String = row
+            let data_type: String = row
                 .try_get("data_type")
                 .unwrap_or_else(|_| "uint16".to_string());
             let description: Option<String> = row.try_get("description").ok();
 
             // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
-            parse_mappings(protocol_mappings, point_id as u32, "S")?;
+            parse_mappings(protocol_mappings, point_id as u32, "S", &data_type, 1.0, 0.0)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
@@ -443,14 +512,14 @@ impl ComsrvSqliteLoader {
             })?;
             let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
             let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            let _data_type: String = row
+            let data_type: String = row
                 .try_get("data_type")
                 .unwrap_or_else(|_| "bool".to_string());
             let description: Option<String> = row.try_get("description").ok();
 
             // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
-            parse_mappings(protocol_mappings, point_id as u32, "C")?;
+            parse_mappings(protocol_mappings, point_id as u32, "C", &data_type, 1.0, 0.0)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
@@ -489,7 +558,7 @@ impl ComsrvSqliteLoader {
 
             // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
-            parse_mappings(protocol_mappings, point_id as u32, "A")?;
+            parse_mappings(protocol_mappings, point_id as u32, "A", &data_type, scale, offset)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
