@@ -14,7 +14,6 @@ use flate2::Compression;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
-    filter::FilterExt,
     fmt::{
         self,
         format::{FmtSpan, Writer},
@@ -615,27 +614,13 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
 
     let registry = tracing_subscriber::registry().with(reload_filter);
 
-    // Console layer - simplified for INFO and above, detailed for DEBUG and below
+    // Console layer - format only, level filtering handled by reload_filter
+    // NOTE: Removed per-layer LevelFilter to allow dynamic log level changes via API
     // Custom format: 2025-12-02T00:50:44.809Z [INFO] message
-    let console_layer = if config.console_level >= Level::INFO {
-        // Production mode: clean output with bracketed level
-        fmt::layer()
-            .with_ansi(true)
-            .event_format(BracketedLevelFormat)
-            .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-                config.console_level,
-            ))
-            .boxed()
-    } else {
-        // Debug mode: full details for developers (still use bracketed format)
-        fmt::layer()
-            .with_ansi(true)
-            .event_format(BracketedLevelFormat) // Use [INFO] format
-            .with_filter(tracing_subscriber::filter::LevelFilter::from_level(
-                config.console_level,
-            ))
-            .boxed()
-    };
+    let console_layer = fmt::layer()
+        .with_ansi(true)
+        .event_format(BracketedLevelFormat)
+        .boxed();
 
     // Create reloadable writer
     let reloadable_writer = ReloadableWriter::new(non_blocking);
@@ -650,6 +635,9 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     // Business file layer (exclude api_access target)
     use tracing_subscriber::filter;
 
+    // Business file layer - excludes api_access target only
+    // NOTE: Removed LevelFilter to allow dynamic log level changes via API
+    // Level filtering is now handled by the top-level reload_filter
     let business_file_layer = if config.enable_json {
         fmt::layer()
             .json()
@@ -658,11 +646,9 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             .with_target(true)
             .with_thread_ids(true)
             .with_span_events(FmtSpan::FULL)
-            .with_filter(
-                filter::filter_fn(|metadata| metadata.target() != "api_access").and(
-                    tracing_subscriber::filter::LevelFilter::from_level(config.file_level),
-                ),
-            )
+            .with_filter(filter::filter_fn(|metadata| {
+                metadata.target() != "api_access"
+            }))
             .boxed()
     } else {
         // Simplified format: no module paths, no thread IDs (saves ~40 chars/line)
@@ -670,11 +656,9 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
             .with_writer(writer_handle)
             .with_ansi(false)
             .event_format(BracketedLevelFormat) // Use [INFO] format like console
-            .with_filter(
-                filter::filter_fn(|metadata| metadata.target() != "api_access").and(
-                    tracing_subscriber::filter::LevelFilter::from_level(config.file_level),
-                ),
-            )
+            .with_filter(filter::filter_fn(|metadata| {
+                metadata.target() != "api_access"
+            }))
             .boxed()
     };
 

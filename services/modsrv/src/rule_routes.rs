@@ -238,7 +238,7 @@ pub async fn create_rule<R: Rtdb + Send + Sync + 'static>(
     let next_id: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) + 1 FROM rules")
         .fetch_one(&state.pool)
         .await
-        .unwrap_or(1);
+        .map_err(|e| ModSrvError::DatabaseError(format!("Failed to get next rule ID: {}", e)))?;
 
     // Insert empty rule record (metadata only, no flow)
     if let Err(e) = sqlx::query(
@@ -318,12 +318,14 @@ pub async fn update_rule<R: Rtdb + Send + Sync + 'static>(
     Path(id): Path<i64>,
     Json(req): Json<UpdateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    // Check rule exists
+    // Check rule exists (properly propagate database errors)
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM rules WHERE id = ?)")
         .bind(id)
         .fetch_one(&state.pool)
         .await
-        .unwrap_or(false);
+        .map_err(|e| {
+            ModSrvError::DatabaseError(format!("Failed to check rule existence: {}", e))
+        })?;
 
     if !exists {
         return Err(ModSrvError::RuleNotFound(id.to_string()));

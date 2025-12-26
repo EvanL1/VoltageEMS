@@ -18,6 +18,49 @@ LOG_DIR="${LOG_DIR:-/extp/logs}"
 # Save the directory where installation was launched (for cleanup later)
 LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
 
+# =============================================================================
+# Command Line Arguments
+# =============================================================================
+AUTO_MODE=false
+SHOW_HELP=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --auto|-y|--yes)
+            AUTO_MODE=true
+            shift
+            ;;
+        --help|-h)
+            SHOW_HELP=true
+            shift
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            echo "Usage: $0 [--auto|-y] [--help|-h]"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$SHOW_HELP" == true ]]; then
+    echo "VoltageEMS ARM64 Installation Script"
+    echo ""
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --auto, -y, --yes   Auto mode: skip all confirmations, update all changed images"
+    echo "  --help, -h          Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                  Interactive installation"
+    echo "  $0 --auto           Automatic update (no prompts)"
+    exit 0
+fi
+
+if [[ "$AUTO_MODE" == true ]]; then
+    echo -e "${BLUE}Running in AUTO mode - all confirmations will be skipped${NC}"
+fi
+
 # Docker Compose V1/V2 compatibility functions
 detect_docker_compose_cmd() {
     if docker compose version &>/dev/null 2>&1; then
@@ -45,6 +88,18 @@ run_docker_compose() {
 # =============================================================================
 # Smart Update Helper Functions
 # =============================================================================
+
+# Tarball filename to image name mapping
+declare -A TARBALL_TO_IMAGE=(
+    ["voltageems.tar.gz"]="voltageems:latest"
+    ["voltage-redis.tar.gz"]="redis:8-alpine"
+    ["voltage-influxdb.tar.gz"]="influxdb:2-alpine"
+    ["hissrv.tar.gz"]="voltage-hissrv:latest"
+    ["apigateway.tar.gz"]="voltage-apigateway:latest"
+    ["netsrv.tar.gz"]="voltage-netsrv:latest"
+    ["alarmsrv.tar.gz"]="voltage-alarmsrv:latest"
+    ["apps.tar.gz"]="voltage-apps:latest"
+)
 
 # Image to container mapping
 declare -A IMAGE_TO_CONTAINERS=(
@@ -120,6 +175,97 @@ all_containers_running() {
     return 0
 }
 
+# =============================================================================
+# Smart Image Loading - Skip unchanged images
+# =============================================================================
+
+# Extract image ID from tar.gz without loading
+# Docker save format: manifest.json contains Config field with image sha256
+get_tarball_image_id() {
+    local tarball=$1
+
+    # Extract manifest.json and get the Config (image ID)
+    # Format: [{"Config":"sha256:abc123...","RepoTags":["image:tag"],"Layers":[...]}]
+    local config_hash
+    config_hash=$(zcat "$tarball" 2>/dev/null | tar -xOf - manifest.json 2>/dev/null | \
+        sed -n 's/.*"Config":"\([^"]*\)".*/\1/p' | sed 's/\.json$//' | head -1)
+
+    # Return first 12 chars of hash (same format as docker images output)
+    if [[ -n "$config_hash" ]]; then
+        echo "${config_hash:0:12}"
+    else
+        echo ""
+    fi
+}
+
+# Get local image ID by image name
+get_local_image_id() {
+    local image=$1
+    docker images "$image" --format '{{.ID}}' 2>/dev/null | head -1
+}
+
+# Smart load: only load if image has changed
+# Returns: 0 if loaded, 1 if skipped (unchanged), 2 if error
+smart_load_image() {
+    local tarball=$1
+    local basename
+    basename=$(basename "$tarball")
+    local image="${TARBALL_TO_IMAGE[$basename]:-}"
+
+    # If no mapping found, load anyway
+    if [[ -z "$image" ]]; then
+        echo -n "  Loading $basename (unknown mapping)... "
+        if docker load < "$tarball" >/dev/null 2>&1; then
+            echo -e "${GREEN}done${NC}"
+            return 0
+        else
+            echo -e "${RED}failed${NC}"
+            return 2
+        fi
+    fi
+
+    # Get tarball image ID
+    local tarball_id
+    tarball_id=$(get_tarball_image_id "$tarball")
+
+    if [[ -z "$tarball_id" ]]; then
+        # Cannot extract ID, load anyway
+        echo -n "  Loading $basename (cannot extract ID)... "
+        if docker load < "$tarball" >/dev/null 2>&1; then
+            echo -e "${GREEN}done${NC}"
+            return 0
+        else
+            echo -e "${RED}failed${NC}"
+            return 2
+        fi
+    fi
+
+    # Get local image ID
+    local local_id
+    local_id=$(get_local_image_id "$image")
+
+    # Compare IDs
+    if [[ -n "$local_id" && "$tarball_id" == "$local_id" ]]; then
+        echo -e "  ${GREEN}✓${NC} $basename: ${GREEN}unchanged${NC} (skipped)"
+        return 1
+    fi
+
+    # IDs differ or local not found - load the image
+    if [[ -z "$local_id" ]]; then
+        echo -n "  Loading $basename (new)... "
+    else
+        echo -n "  Loading $basename (${local_id} → ${tarball_id})... "
+    fi
+
+    if docker load < "$tarball" >/dev/null 2>&1; then
+        echo -e "${GREEN}done${NC}"
+        return 0
+    else
+        echo -e "${RED}failed${NC}"
+        return 2
+    fi
+}
+
 # Update a single service with backup and rollback capability
 # Args: $1=image, $2=containers (space-separated)
 # Returns: 0 on success, 1 on failure
@@ -184,8 +330,13 @@ confirm_infrastructure_update() {
     echo "  Impact: Brief service interruption"
     echo "  Data: Preserved (persistent volumes)"
     echo ""
-    read -p "Update now? (y/N): " confirm
 
+    if [[ "$AUTO_MODE" == true ]]; then
+        echo -e "  ${GREEN}Auto mode: confirmed${NC}"
+        return 0
+    fi
+
+    read -p "Update now? (y/N): " confirm
     [[ "$confirm" =~ ^[Yy]$ ]]
 }
 
@@ -203,6 +354,14 @@ select_python_services() {
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo "  Changed services: ${changed_services[*]}"
+
+    # Auto mode: update all changed services
+    if [[ "$AUTO_MODE" == true ]]; then
+        echo -e "  ${GREEN}Auto mode: updating all${NC}"
+        echo "${changed_services[@]}"
+        return
+    fi
+
     echo ""
     echo "  [A]ll    - Update all changed services (default)"
     echo "  [S]elect - Choose individually"
@@ -234,107 +393,12 @@ select_python_services() {
 # End of Smart Update Helper Functions
 # =============================================================================
 
-# Determine which host user should own installed files. This must be resolved
-# before we attempt any permission changes while running with `set -u`.
+# Determine which host user should own installed files.
+# Simplified: just use current user, no complex detection.
 determine_install_user() {
-    local resolved=""
-
-    if [[ -n "${INSTALL_USER:-}" ]]; then
-        if id "${INSTALL_USER}" &>/dev/null; then
-            resolved="${INSTALL_USER}"
-            echo "Using specified user: $resolved"
-        else
-            echo -e "${YELLOW}Warning: INSTALL_USER=${INSTALL_USER} not found on system${NC}"
-        fi
-    fi
-
-    if [[ -z "$resolved" && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-        resolved="$SUDO_USER"
-        echo "Detected installation user: $resolved (via sudo)"
-    fi
-
-    if [[ -z "$resolved" ]] && command -v logname &>/dev/null; then
-        local login_user
-        login_user=$(logname 2>/dev/null || true)
-        if [[ -n "$login_user" && "$login_user" != "root" && $(id -u "$login_user" 2>/dev/null || echo -1) -ge 0 ]]; then
-            resolved="$login_user"
-            echo "Detected installation user: $resolved (via logname)"
-        fi
-    fi
-
-    if [[ -z "$resolved" ]] && command -v who &>/dev/null; then
-        local logged_user
-        logged_user=$(who | grep -E "pts/|tty" | head -1 | awk '{print $1}' || true)
-        if [[ -n "$logged_user" && "$logged_user" != "root" && $(id -u "$logged_user" 2>/dev/null || echo -1) -ge 0 ]]; then
-            resolved="$logged_user"
-            echo "Detected installation user: $resolved (via who)"
-        fi
-    fi
-
-    if [[ -z "$resolved" ]]; then
-        local current_dir
-        current_dir=$(pwd)
-        if [[ "$current_dir" =~ ^/home/([^/]+) ]]; then
-            local potential_user="${BASH_REMATCH[1]}"
-            if id "$potential_user" &>/dev/null; then
-                resolved="$potential_user"
-                echo "Detected installation user: $resolved (from current directory)"
-            fi
-        fi
-    fi
-
-    if [[ -z "$resolved" || "$resolved" == "root" ]]; then
-        if [[ -r /etc/passwd ]]; then
-            while IFS=: read -r name _ user_uid _; do
-                case "$user_uid" in
-                    ''|*[!0-9]*) continue ;;
-                esac
-                if (( user_uid >= 1000 && user_uid < 65534 )) && [[ "$name" != "root" ]]; then
-                    if id "$name" &>/dev/null; then
-                        resolved="$name"
-                        echo -e "${YELLOW}Warning: Using first available user: $resolved${NC}"
-                        echo -e "${YELLOW}To specify a different user, run: INSTALL_USER=<username> $0${NC}"
-                    fi
-                    break
-                fi
-            done < /etc/passwd
-        fi
-    fi
-
-    if [[ -z "$resolved" ]]; then
-        resolved=${USER:-$(whoami)}
-        echo "Using current user: $resolved"
-    fi
-
-    ACTUAL_USER="$resolved"
-
-    # Smart UID/GID detection (supports macOS and Linux)
-    ACTUAL_UID=$(id -u "$ACTUAL_USER")
-
-    # Detect OS for GID strategy
-    OS=$(uname -s)
-
-    if [[ "$OS" == "Darwin" ]]; then
-        # macOS: Use user's primary group GID (typically 20=staff)
-        ACTUAL_GID=$(id -g "$ACTUAL_USER")
-        echo "Detected macOS environment - UID=$ACTUAL_UID, Primary GID=$ACTUAL_GID"
-    else
-        # Linux: Prefer docker group GID, fallback to user's primary group
-        if getent group docker &>/dev/null; then
-            DOCKER_GID=$(getent group docker | cut -d: -f3)
-            ACTUAL_GID=$DOCKER_GID
-            echo "Detected Linux environment - UID=$ACTUAL_UID, Docker GID=$ACTUAL_GID"
-        else
-            ACTUAL_GID=$(id -g "$ACTUAL_USER")
-            echo "Detected Linux environment (no docker group) - UID=$ACTUAL_UID, Primary GID=$ACTUAL_GID"
-        fi
-    fi
-
-    echo "Using installation user: $ACTUAL_USER (UID=$ACTUAL_UID, GID=$ACTUAL_GID)"
-
-    if [[ "$ACTUAL_USER" == "root" ]]; then
-        echo -e "${YELLOW}Warning: Directories will be owned by root. Set INSTALL_USER=<username> to override.${NC}"
-    fi
+    ACTUAL_USER=$(whoami)
+    ACTUAL_UID=$(id -u)
+    ACTUAL_GID=$(id -g)
 }
 
 echo -e "${BLUE}================================${NC}"
@@ -346,9 +410,13 @@ echo ""
 ARCH=$(uname -m)
 if [[ "$ARCH" != "aarch64" && "$ARCH" != "arm64" ]]; then
     echo -e "${YELLOW}Warning: This installer is for ARM64. Current arch: $ARCH${NC}"
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
-    [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    if [[ "$AUTO_MODE" == true ]]; then
+        echo -e "${YELLOW}Auto mode: continuing despite architecture mismatch${NC}"
+    else
+        read -p "Continue anyway? (y/N): " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
 fi
 
 # Resolve installation user details once up front so later steps can safely
@@ -420,72 +488,119 @@ if command -v docker &> /dev/null; then
         echo -e "${BLUE}Existing VoltageEMS images detected.${NC}"
         echo ""
         echo -e "${BLUE}Smart Update Mode:${NC}"
-        echo "  1. Load new images"
-        echo "  2. Detect changes"
-        echo "  3. Confirm and update (with auto-rollback)"
+        echo "  1. Smart load (skip unchanged images)"
+        echo "  2. Detect changes vs running containers"
+        echo "  3. Update changed services (with auto-rollback)"
         echo ""
-        read -p "Proceed with smart update? (Y/n): " -n 1 -r
-        echo
 
-        if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
+        PROCEED_UPDATE=false
+        if [[ "$AUTO_MODE" == true ]]; then
+            echo -e "${GREEN}Auto mode: proceeding with smart update${NC}"
+            PROCEED_UPDATE=true
+        else
+            read -p "Proceed with smart update? (Y/n): " -n 1 -r
+            echo
+            if [[ -z "$REPLY" ]] || [[ $REPLY =~ ^[Yy]$ ]]; then
+                PROCEED_UPDATE=true
+            fi
+        fi
+
+        if [[ "$PROCEED_UPDATE" == true ]]; then
             # Set global backup timestamp for consistent naming
             BACKUP_TIMESTAMP=$(date +%s)
 
-            # === PHASE 1: DETECT ===
+            # === PHASE 1: SMART LOADING ===
             echo ""
-            echo -e "${BLUE}Phase 1: Loading and detecting changes...${NC}"
+            echo -e "${BLUE}Phase 1: Smart loading images (skip unchanged)...${NC}"
 
-            # Load all new images
+            # Track loaded/skipped images
+            LOADED_IMAGES=()
+            SKIPPED_IMAGES=()
+
+            # Smart load: only load images that have changed
             for tarball in docker/*.tar.gz; do
                 if [[ -f "$tarball" ]]; then
-                    echo -n "  Loading $(basename "$tarball")... "
-                    if docker load < "$tarball" >/dev/null 2>&1; then
-                        echo -e "${GREEN}done${NC}"
-                    else
-                        echo -e "${RED}failed${NC}"
-                        exit 1
-                    fi
+                    _basename=$(basename "$tarball")
+                    _image="${TARBALL_TO_IMAGE[$_basename]:-}"
+
+                    smart_load_image "$tarball"
+                    _result=$?
+
+                    case $_result in
+                        0)  # Loaded
+                            [[ -n "$_image" ]] && LOADED_IMAGES+=("$_image")
+                            ;;
+                        1)  # Skipped (unchanged)
+                            [[ -n "$_image" ]] && SKIPPED_IMAGES+=("$_image")
+                            ;;
+                        2)  # Error
+                            echo -e "${RED}Failed to load $_basename${NC}"
+                            exit 1
+                            ;;
+                    esac
                 fi
             done
 
-            # Detect changes for all images
+            # Summary
+            echo ""
+            echo -e "  ${GREEN}Loaded: ${#LOADED_IMAGES[@]}${NC} | ${BLUE}Skipped: ${#SKIPPED_IMAGES[@]}${NC}"
+
+            # Detect changes vs running containers (for loaded images only)
+            # Skipped images (unchanged tarball vs local) won't have changed containers
             declare -A CHANGE_STATUS
             INFRA_CHANGED=()
             RUST_CHANGED=()
             PYTHON_CHANGED=()
 
-            echo ""
-            echo "  Detecting image changes:"
-            for image in "${!IMAGE_TO_CONTAINERS[@]}"; do
-                status=$(detect_image_change "$image")
-                CHANGE_STATUS[$image]=$status
+            # If nothing was loaded, skip detection
+            if [[ ${#LOADED_IMAGES[@]} -eq 0 ]]; then
+                echo ""
+                echo -e "  ${GREEN}All images unchanged - nothing to update${NC}"
+            else
+                echo ""
+                echo "  Detecting changes vs running containers:"
 
-                case "$status" in
-                    "changed")
-                        echo -e "    ${RED}⚠${NC} $image: ${RED}changed${NC}"
-                        case "$image" in
-                            redis:*|influxdb:*)
-                                INFRA_CHANGED+=("$image")
-                                ;;
-                            voltageems:*)
-                                RUST_CHANGED+=("$image")
-                                ;;
-                            voltage-*)
-                                PYTHON_CHANGED+=("$image")
-                                ;;
-                        esac
-                        ;;
-                    "unchanged")
-                        echo -e "    ${GREEN}✓${NC} $image: unchanged"
-                        ;;
-                    "not_running")
-                        echo -e "    ${YELLOW}○${NC} $image: not running"
-                        ;;
-                    *)
-                        echo -e "    ${YELLOW}?${NC} $image: $status"
-                        ;;
-                esac
-            done
+                # Check loaded images against running containers
+                for image in "${LOADED_IMAGES[@]}"; do
+                    status=$(detect_image_change "$image")
+                    CHANGE_STATUS[$image]=$status
+
+                    case "$status" in
+                        "changed")
+                            echo -e "    ${RED}⚠${NC} $image: ${RED}needs restart${NC}"
+                            case "$image" in
+                                redis:*|influxdb:*)
+                                    INFRA_CHANGED+=("$image")
+                                    ;;
+                                voltageems:*)
+                                    RUST_CHANGED+=("$image")
+                                    ;;
+                                voltage-*)
+                                    PYTHON_CHANGED+=("$image")
+                                    ;;
+                            esac
+                            ;;
+                        "not_running")
+                            echo -e "    ${YELLOW}○${NC} $image: not running (will start)"
+                            # Treat not-running as needing update
+                            case "$image" in
+                                redis:*|influxdb:*)
+                                    INFRA_CHANGED+=("$image")
+                                    ;;
+                                voltageems:*)
+                                    RUST_CHANGED+=("$image")
+                                    ;;
+                                voltage-*)
+                                    PYTHON_CHANGED+=("$image")
+                                    ;;
+                            esac
+                            ;;
+                        *)
+                            echo -e "    ${GREEN}✓${NC} $image: already running latest"
+                            ;;
+                    esac
+                done
+            fi
 
             # === PHASE 2: DECIDE ===
             echo ""
@@ -566,15 +681,9 @@ if command -v docker &> /dev/null; then
                 echo -e "  ${RED}✗ Failed:${NC} ${UPDATE_FAILED[*]}"
             fi
 
-            # Count unchanged
-            UNCHANGED_COUNT=0
-            for image in "${!IMAGE_TO_CONTAINERS[@]}"; do
-                if [[ "${CHANGE_STATUS[$image]}" == "unchanged" ]]; then
-                    ((UNCHANGED_COUNT++))
-                fi
-            done
-            if [[ $UNCHANGED_COUNT -gt 0 ]]; then
-                echo "  • $UNCHANGED_COUNT service(s) unchanged"
+            # Show skipped (unchanged) images
+            if [[ ${#SKIPPED_IMAGES[@]} -gt 0 ]]; then
+                echo "  • ${#SKIPPED_IMAGES[@]} image(s) skipped (unchanged)"
             fi
         else
             echo -e "${YELLOW}Skipping image update.${NC}"
@@ -583,14 +692,14 @@ if command -v docker &> /dev/null; then
     else
         # No existing images - first installation
         echo "Loading Docker images (first installation)..."
-        LOADED_IMAGES=""
-        for image in docker/*.tar.gz; do
-            if [[ -f "$image" ]]; then
-                echo -n "  Loading $(basename "$image")... "
-                if OUTPUT=$(docker load < "$image" 2>&1); then
+        FRESH_LOADED_IMAGES=""
+        for tarball in docker/*.tar.gz; do
+            if [[ -f "$tarball" ]]; then
+                echo -n "  Loading $(basename "$tarball")... "
+                if OUTPUT=$(docker load < "$tarball" 2>&1); then
                     LOADED_NAME=$(echo "$OUTPUT" | grep "Loaded image:" | sed 's/Loaded image: //')
                     if [ -n "$LOADED_NAME" ]; then
-                        LOADED_IMAGES="$LOADED_IMAGES $LOADED_NAME"
+                        FRESH_LOADED_IMAGES="$FRESH_LOADED_IMAGES $LOADED_NAME"
                         echo -e "${GREEN}success${NC}"
                     else
                         echo -e "${GREEN}success${NC}"
@@ -729,8 +838,14 @@ if [[ -f "$DB_FILE" ]]; then
         echo -e "${YELLOW}Note: Database reset is disabled for safety. To reset manually:${NC}"
         echo "      rm $DB_FILE && monarch init"
         echo ""
-        read -p "Choose option [1]: " DB_OPTION
-        DB_OPTION=${DB_OPTION:-1}
+
+        if [[ "$AUTO_MODE" == true ]]; then
+            echo -e "${GREEN}Auto mode: using safe upgrade (option 1)${NC}"
+            DB_OPTION=1
+        else
+            read -p "Choose option [1]: " DB_OPTION
+            DB_OPTION=${DB_OPTION:-1}
+        fi
 
         case $DB_OPTION in
             1)
@@ -1115,39 +1230,46 @@ if [[ -n "$INSTALLER_NAME" ]]; then
     echo "  Location: $INSTALLER_NAME"
     echo "  Size: $(du -h "$INSTALLER_NAME" 2>/dev/null | cut -f1)"
     echo ""
-    read -p "Do you want to delete the installer package? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        if rm -f "$INSTALLER_NAME" 2>/dev/null; then
-            echo -e "${GREEN}✓ Installer package deleted${NC}"
-        else
-            echo -e "${YELLOW}Warning: Failed to delete installer (may need sudo)${NC}"
-            echo "  You can manually delete it with:"
-            echo "  $SUDO rm -f '$INSTALLER_NAME'"
-        fi
+
+    if [[ "$AUTO_MODE" == true ]]; then
+        echo -e "${BLUE}Auto mode: keeping installer package${NC}"
     else
-        echo -e "${BLUE}Installer package kept at: $INSTALLER_NAME${NC}"
-    fi
-else
-    echo -e "${BLUE}No installer package found in common locations.${NC}"
-    echo ""
-    read -p "Do you want to specify the installer location for cleanup? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "Enter full path to installer: " INSTALLER_PATH
-        if [[ -f "$INSTALLER_PATH" ]]; then
-            read -p "Delete $INSTALLER_PATH? (y/N): " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                if rm -f "$INSTALLER_PATH" 2>/dev/null; then
-                    echo -e "${GREEN}✓ Installer deleted${NC}"
-                else
-                    echo -e "${YELLOW}Failed to delete (may need sudo)${NC}"
-                    echo "  Try: $SUDO rm -f '$INSTALLER_PATH'"
-                fi
+        read -p "Do you want to delete the installer package? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            if rm -f "$INSTALLER_NAME" 2>/dev/null; then
+                echo -e "${GREEN}✓ Installer package deleted${NC}"
+            else
+                echo -e "${YELLOW}Warning: Failed to delete installer (may need sudo)${NC}"
+                echo "  You can manually delete it with:"
+                echo "  $SUDO rm -f '$INSTALLER_NAME'"
             fi
         else
-            echo -e "${YELLOW}File not found: $INSTALLER_PATH${NC}"
+            echo -e "${BLUE}Installer package kept at: $INSTALLER_NAME${NC}"
+        fi
+    fi
+else
+    if [[ "$AUTO_MODE" != true ]]; then
+        echo -e "${BLUE}No installer package found in common locations.${NC}"
+        echo ""
+        read -p "Do you want to specify the installer location for cleanup? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            read -p "Enter full path to installer: " INSTALLER_PATH
+            if [[ -f "$INSTALLER_PATH" ]]; then
+                read -p "Delete $INSTALLER_PATH? (y/N): " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    if rm -f "$INSTALLER_PATH" 2>/dev/null; then
+                        echo -e "${GREEN}✓ Installer deleted${NC}"
+                    else
+                        echo -e "${YELLOW}Failed to delete (may need sudo)${NC}"
+                        echo "  Try: $SUDO rm -f '$INSTALLER_PATH'"
+                    fi
+                fi
+            else
+                echo -e "${YELLOW}File not found: $INSTALLER_PATH${NC}"
+            fi
         fi
     fi
 fi

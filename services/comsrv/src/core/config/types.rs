@@ -10,6 +10,7 @@ use common::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_model::PointType;
 use voltage_schema_macro::Schema;
 
 #[cfg(feature = "openapi")]
@@ -180,6 +181,11 @@ pub struct Point {
 
     /// Unit of measurement
     pub unit: Option<String>,
+
+    /// Protocol-specific mapping data as JSON string
+    /// Contains protocol-dependent fields like slave_id, register_address for Modbus
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_mappings: Option<String>,
 }
 
 // Serde default/deserialize functions - delegate to common::serde_helpers
@@ -668,35 +674,24 @@ pub trait SqlInsertablePoint {
 // ============================================================================
 
 /// Complete runtime channel configuration
-/// Contains base configuration, points, and protocol mappings
+/// Contains base configuration and points with embedded protocol mappings
 #[derive(Debug, Clone)]
 pub struct RuntimeChannelConfig {
     /// Base channel configuration (Arc-wrapped for zero-copy sharing)
     pub base: Arc<ChannelConfig>,
 
-    /// Telemetry points
+    /// Telemetry points (with embedded protocol_mappings JSON)
     pub telemetry_points: Vec<TelemetryPoint>,
 
-    /// Signal points
+    /// Signal points (with embedded protocol_mappings JSON)
     pub signal_points: Vec<SignalPoint>,
 
-    /// Control points
+    /// Control points (with embedded protocol_mappings JSON)
     pub control_points: Vec<ControlPoint>,
 
-    /// Adjustment points
+    /// Adjustment points (with embedded protocol_mappings JSON)
     pub adjustment_points: Vec<AdjustmentPoint>,
-
-    /// Modbus protocol mappings (if Modbus protocol)
-    pub modbus_mappings: Vec<ModbusMapping>,
-
-    /// Virtual protocol mappings (if Virtual protocol)
-    pub virtual_mappings: Vec<VirtualMapping>,
-
-    /// CAN protocol mappings (if CAN protocol)
-    pub can_mappings: Vec<CanMapping>,
-
-    /// GPIO protocol mappings (if DI/DO protocol)
-    pub gpio_mappings: Vec<GpioMapping>,
+    // Protocol mappings are now embedded in each point's protocol_mappings field
 }
 
 impl RuntimeChannelConfig {
@@ -713,10 +708,6 @@ impl RuntimeChannelConfig {
             signal_points: Vec::new(),
             control_points: Vec::new(),
             adjustment_points: Vec::new(),
-            modbus_mappings: Vec::new(),
-            virtual_mappings: Vec::new(),
-            can_mappings: Vec::new(),
-            gpio_mappings: Vec::new(),
         }
     }
 
@@ -740,12 +731,61 @@ impl RuntimeChannelConfig {
         self.base.core.enabled
     }
 
-    /// Get GPIO number for a point ID (if mapped)
-    pub fn get_gpio_mapping(&self, point_id: u32) -> Option<u32> {
-        self.gpio_mappings
+    // ========================================================================
+    // Point Query Methods (Type-Safe)
+    // ========================================================================
+    //
+    // DESIGN PRINCIPLE: point_id is only unique within a point type.
+    // The composite key is (channel_id, point_type, point_id).
+    //
+    // When querying points, you MUST either:
+    // 1. Iterate over a specific type collection (e.g., `for pt in &signal_points`)
+    // 2. Use typed query methods (e.g., `get_control_point(id)`)
+    //
+    // NEVER search across all point types with just a point_id - this was the
+    // root cause of the GPIO mapping bug where signal and control had the same
+    // point_id but different GPIO numbers.
+    // ========================================================================
+
+    /// Get a telemetry point by ID
+    pub fn get_telemetry_point(&self, point_id: u32) -> Option<&TelemetryPoint> {
+        self.telemetry_points
             .iter()
-            .find(|m| m.point_id == point_id)
-            .map(|m| m.gpio_number)
+            .find(|p| p.base.point_id == point_id)
+    }
+
+    /// Get a signal point by ID
+    pub fn get_signal_point(&self, point_id: u32) -> Option<&SignalPoint> {
+        self.signal_points
+            .iter()
+            .find(|p| p.base.point_id == point_id)
+    }
+
+    /// Get a control point by ID
+    pub fn get_control_point(&self, point_id: u32) -> Option<&ControlPoint> {
+        self.control_points
+            .iter()
+            .find(|p| p.base.point_id == point_id)
+    }
+
+    /// Get an adjustment point by ID
+    pub fn get_adjustment_point(&self, point_id: u32) -> Option<&AdjustmentPoint> {
+        self.adjustment_points
+            .iter()
+            .find(|p| p.base.point_id == point_id)
+    }
+
+    /// Get a point's base info by type and ID
+    ///
+    /// This is the type-safe way to query a point when you have the type information.
+    /// The caller must provide the point_type to avoid cross-type search bugs.
+    pub fn get_point_by_type(&self, point_type: PointType, point_id: u32) -> Option<&Point> {
+        match point_type {
+            PointType::Telemetry => self.get_telemetry_point(point_id).map(|p| &p.base),
+            PointType::Signal => self.get_signal_point(point_id).map(|p| &p.base),
+            PointType::Control => self.get_control_point(point_id).map(|p| &p.base),
+            PointType::Adjustment => self.get_adjustment_point(point_id).map(|p| &p.base),
+        }
     }
 }
 

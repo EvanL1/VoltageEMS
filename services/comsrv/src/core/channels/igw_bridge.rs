@@ -20,6 +20,8 @@
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, RwLock};
+#[cfg(all(target_os = "linux", feature = "gpio"))]
+use tracing::info;
 use tracing::{debug, error, warn};
 
 use igw::core::data::{DataBatch, DataType};
@@ -28,8 +30,7 @@ use igw::core::logging::{
     ChannelLogConfig, ChannelLogHandler, LoggableProtocol, TracingLogHandler,
 };
 use igw::core::point::{
-    ByteOrder, DataFormat, ModbusAddress, PointConfig, ProtocolAddress, TransformConfig,
-    VirtualAddress,
+    ByteOrder, DataFormat, PointConfig, ProtocolAddress, TransformConfig, VirtualAddress,
 };
 use igw::core::traits::{AdjustmentCommand, ControlCommand, WriteResult};
 use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
@@ -37,9 +38,7 @@ use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 use igw::{ConnectionState, Protocol, ProtocolClient};
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
-use igw::protocols::gpio::{
-    GpioChannel, GpioChannelConfig, GpioDirection, GpioDriverType, GpioPinConfig,
-};
+use igw::protocols::gpio::{GpioChannel, GpioChannelConfig, GpioPinConfig};
 
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ChannelStatus;
@@ -275,6 +274,9 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     }
 
     /// Run the command executor loop.
+    ///
+    /// This loop waits for connection before processing commands to avoid race conditions
+    /// where commands arrive before connect() is called.
     async fn run_command_executor(
         protocol: Arc<RwLock<ProtocolClientImpl>>,
         mut command_rx: mpsc::Receiver<ChannelCommand>,
@@ -282,7 +284,40 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     ) {
         debug!("Ch{} igw command executor started", channel_id);
 
+        // Wait for connection before processing commands (max 30 retries * 100ms = 3s)
+        const MAX_CONNECT_WAIT_RETRIES: u32 = 30;
+        const CONNECT_WAIT_INTERVAL_MS: u64 = 100;
+
         while let Some(cmd) = command_rx.recv().await {
+            // Wait for connection if not connected
+            let mut connected = false;
+            for attempt in 0..MAX_CONNECT_WAIT_RETRIES {
+                {
+                    let protocol_guard = protocol.read().await;
+                    if protocol_guard.connection_state().is_connected() {
+                        connected = true;
+                        break;
+                    }
+                }
+                if attempt == 0 {
+                    debug!(
+                        "Ch{} waiting for connection before executing command...",
+                        channel_id
+                    );
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(CONNECT_WAIT_INTERVAL_MS))
+                    .await;
+            }
+
+            if !connected {
+                error!(
+                    "Ch{} command dropped: connection timeout after {}ms",
+                    channel_id,
+                    MAX_CONNECT_WAIT_RETRIES as u64 * CONNECT_WAIT_INTERVAL_MS
+                );
+                continue;
+            }
+
             let mut protocol_guard = protocol.write().await;
 
             match cmd {
@@ -417,101 +452,11 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
     configs
 }
 
-/// Convert RuntimeChannelConfig to IGW PointConfig list for Modbus.
-///
-/// Unlike the virtual channel conversion which uses point IDs as addresses,
-/// this function uses the actual Modbus mappings (slave_id, function_code, register_address).
-/// It also looks up the corresponding point to get scale/offset/reverse for TransformConfig.
-pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    let mut configs = Vec::with_capacity(runtime_config.modbus_mappings.len());
-
-    for mapping in &runtime_config.modbus_mappings {
-        // Determine data type from telemetry_type
-        let data_type = match mapping.telemetry_type.as_str() {
-            "T" | "telemetry" => DataType::Telemetry,
-            "S" | "signal" => DataType::Signal,
-            "C" | "control" => DataType::Control,
-            "A" | "adjustment" => DataType::Adjustment,
-            _ => DataType::Telemetry, // Default to telemetry
-        };
-
-        // Parse data format from string
-        let format = parse_data_format(&mapping.data_type);
-
-        // Parse byte order from string
-        let byte_order = parse_byte_order(&mapping.byte_order);
-
-        // Build ModbusAddress
-        let modbus_addr = ModbusAddress {
-            slave_id: mapping.slave_id,
-            function_code: mapping.function_code,
-            register: mapping.register_address,
-            format,
-            byte_order,
-            bit_position: if mapping.bit_position > 0 {
-                Some(mapping.bit_position)
-            } else {
-                None
-            },
-        };
-
-        // Look up the corresponding point to get transform parameters
-        let transform = match data_type {
-            DataType::Telemetry => runtime_config
-                .telemetry_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    scale: p.scale,
-                    offset: p.offset,
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Signal => runtime_config
-                .signal_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Control => runtime_config
-                .control_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Adjustment => runtime_config
-                .adjustment_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    scale: p.scale,
-                    offset: p.offset,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-        };
-
-        let point_config = PointConfig::new(
-            mapping.point_id,
-            data_type,
-            ProtocolAddress::Modbus(modbus_addr),
-        )
-        .with_transform(transform);
-
-        configs.push(point_config);
-    }
-
-    configs
-}
+// Note: convert_to_modbus_point_configs was removed - modbus mappings are now
+// embedded in each point's protocol_mappings JSON field
 
 /// Parse data format string to DataFormat enum.
+#[allow(dead_code)] // Used in tests, may be needed for future Modbus support
 fn parse_data_format(s: &str) -> DataFormat {
     match s.to_lowercase().as_str() {
         "bool" | "boolean" => DataFormat::Bool,
@@ -528,6 +473,7 @@ fn parse_data_format(s: &str) -> DataFormat {
 }
 
 /// Parse byte order string to ByteOrder enum.
+#[allow(dead_code)] // Used in tests, may be needed for future Modbus support
 fn parse_byte_order(s: &str) -> ByteOrder {
     match s.to_uppercase().as_str() {
         "ABCD" | "BIG_ENDIAN" | "BE" => ByteOrder::Abcd,
@@ -678,9 +624,21 @@ pub fn create_gpio_channel(
         gpio_config = gpio_config.with_poll_interval(Duration::from_millis(interval_ms));
     }
 
-    // Configure DI pins from signal points (遥信)
+    // Helper to extract gpio_number directly from a point's protocol_mappings JSON.
+    // This is the correct pattern: extract from the current point being iterated,
+    // not via cross-type search. point_id is only unique within a point type.
+    fn extract_gpio_from_mappings(protocol_mappings: &Option<String>) -> Option<u32> {
+        protocol_mappings.as_ref().and_then(|json_str| {
+            serde_json::from_str::<serde_json::Value>(json_str)
+                .ok()
+                .and_then(|v| v.get("gpio_number").and_then(|n| n.as_u64()))
+                .map(|n| n as u32)
+        })
+    }
+
+    // Configure DI pins from signal points (digital inputs)
     for pt in &runtime_config.signal_points {
-        if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
+        if let Some(gpio_num) = extract_gpio_from_mappings(&pt.base.protocol_mappings) {
             let pin_config = if use_sysfs {
                 // Sysfs: use global GPIO number
                 GpioPinConfig::digital_input_sysfs(gpio_num, pt.base.point_id)
@@ -694,9 +652,21 @@ pub fn create_gpio_channel(
         }
     }
 
-    // Configure DO pins from control points (遥控)
+    // Configure DO pins from control points (digital outputs)
+    info!(
+        "Ch{} gpio: {} control_points",
+        channel_id,
+        runtime_config.control_points.len()
+    );
+    let mut pin_count = 0;
     for pt in &runtime_config.control_points {
-        if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
+        let gpio_num = extract_gpio_from_mappings(&pt.base.protocol_mappings);
+        info!(
+            "Ch{} gpio DO: pt{} -> gpio={:?} (mappings={:?})",
+            channel_id, pt.base.point_id, gpio_num, pt.base.protocol_mappings
+        );
+        if let Some(gpio_num) = gpio_num {
+            pin_count += 1;
             let pin_config = if use_sysfs {
                 // Sysfs: use global GPIO number
                 GpioPinConfig::digital_output_sysfs(gpio_num, pt.base.point_id)
@@ -709,6 +679,7 @@ pub fn create_gpio_channel(
             gpio_config = gpio_config.add_pin(pin_config);
         }
     }
+    info!("Ch{} gpio: added {} output pins", channel_id, pin_count);
 
     // Create channel and setup logging
     let mut channel = GpioChannel::new(gpio_config);
@@ -781,6 +752,7 @@ mod tests {
                 signal_name: "temperature".to_string(),
                 description: None,
                 unit: Some("C".to_string()),
+                protocol_mappings: None,
             },
             scale: 1.0,
             offset: 0.0,
@@ -794,6 +766,7 @@ mod tests {
                 signal_name: "status".to_string(),
                 description: None,
                 unit: None,
+                protocol_mappings: None,
             },
             reverse: false,
         });
@@ -804,6 +777,7 @@ mod tests {
                 signal_name: "switch".to_string(),
                 description: None,
                 unit: None,
+                protocol_mappings: None,
             },
             reverse: false,
             control_type: "latching".to_string(),
@@ -818,6 +792,7 @@ mod tests {
                 signal_name: "setpoint".to_string(),
                 description: None,
                 unit: Some("C".to_string()),
+                protocol_mappings: None,
             },
             min_value: None,
             max_value: None,
@@ -855,68 +830,8 @@ mod tests {
         assert_eq!(adjustment.data_type, DataType::Adjustment);
     }
 
-    #[test]
-    fn test_convert_to_modbus_point_configs() {
-        use crate::core::config::ModbusMapping;
-
-        let mut runtime_config = create_test_runtime_config();
-
-        // Add Modbus mappings
-        runtime_config.modbus_mappings = vec![
-            ModbusMapping {
-                channel_id: 1,
-                point_id: 100,
-                telemetry_type: "T".to_string(),
-                slave_id: 1,
-                function_code: 3,
-                register_address: 0,
-                data_type: "float32".to_string(),
-                byte_order: "ABCD".to_string(),
-                bit_position: 0,
-            },
-            ModbusMapping {
-                channel_id: 1,
-                point_id: 101,
-                telemetry_type: "S".to_string(),
-                slave_id: 1,
-                function_code: 1,
-                register_address: 10,
-                data_type: "bool".to_string(),
-                byte_order: "ABCD".to_string(),
-                bit_position: 5,
-            },
-        ];
-
-        let configs = convert_to_modbus_point_configs(&runtime_config);
-
-        assert_eq!(configs.len(), 2);
-
-        // Check first point (telemetry, float32)
-        let pt1 = configs.iter().find(|c| c.id == 100).unwrap();
-        assert_eq!(pt1.data_type, DataType::Telemetry);
-        if let ProtocolAddress::Modbus(addr) = &pt1.address {
-            assert_eq!(addr.slave_id, 1);
-            assert_eq!(addr.function_code, 3);
-            assert_eq!(addr.register, 0);
-            assert_eq!(addr.format, DataFormat::Float32);
-            assert_eq!(addr.byte_order, ByteOrder::Abcd);
-        } else {
-            panic!("Expected ModbusAddress");
-        }
-
-        // Check second point (signal, bool with bit_position)
-        let pt2 = configs.iter().find(|c| c.id == 101).unwrap();
-        assert_eq!(pt2.data_type, DataType::Signal);
-        if let ProtocolAddress::Modbus(addr) = &pt2.address {
-            assert_eq!(addr.slave_id, 1);
-            assert_eq!(addr.function_code, 1);
-            assert_eq!(addr.register, 10);
-            assert_eq!(addr.format, DataFormat::Bool);
-            assert_eq!(addr.bit_position, Some(5));
-        } else {
-            panic!("Expected ModbusAddress");
-        }
-    }
+    // test_convert_to_modbus_point_configs removed - function was deleted
+    // Modbus mappings are now embedded in each point's protocol_mappings JSON field
 
     #[test]
     fn test_parse_data_format() {

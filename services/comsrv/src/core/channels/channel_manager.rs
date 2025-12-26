@@ -11,8 +11,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
 use crate::core::channels::igw_bridge::{
-    convert_to_igw_point_configs, convert_to_modbus_point_configs, create_modbus_channel,
-    create_modbus_rtu_channel, create_virtual_channel, ChannelImpl, IgwChannelWrapper,
+    convert_to_igw_point_configs, create_modbus_channel, create_modbus_rtu_channel,
+    create_virtual_channel, ChannelImpl, IgwChannelWrapper,
 };
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
@@ -301,7 +301,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         ));
 
         // 2. Convert Modbus point configs to IGW format
-        let point_configs = convert_to_modbus_point_configs(runtime_config);
+        let point_configs = convert_to_igw_point_configs(runtime_config);
         store.set_point_configs(channel_id, point_configs.clone());
 
         // 3. Start background flush task for write buffer
@@ -351,7 +351,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         ));
 
         // 2. Convert Modbus point configs to IGW format
-        let point_configs = convert_to_modbus_point_configs(runtime_config);
+        let point_configs = convert_to_igw_point_configs(runtime_config);
         store.set_point_configs(channel_id, point_configs.clone());
 
         // 3. Start background flush task for write buffer

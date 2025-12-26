@@ -20,7 +20,7 @@ use crate::api::{
     handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
-        mapping_handlers::*, point_handlers::*,
+        mapping_handlers::*, point_handlers::*, protocol_handlers::*,
     },
 };
 use common::admin_api::{get_log_level, set_log_level};
@@ -222,6 +222,8 @@ pub fn create_api_routes_generic<R: Rtdb>(
         .route("/health", get(health_check))
         // Service management
         .route("/api/status", get(get_service_status))
+        // Protocol discovery
+        .route("/api/protocols", get(list_protocols))
         // Channel management (CRUD)
         .route("/api/channels", get(get_all_channels).post(create_channel_handler))
         .route("/api/channels/list", get(list_channels))

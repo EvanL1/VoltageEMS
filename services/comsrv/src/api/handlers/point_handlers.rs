@@ -1305,6 +1305,9 @@ pub struct PointUpdateRequest {
     tag = "comsrv"
 )]
 /// Internal implementation for update_point_handler
+///
+/// Uses parameterized queries to prevent SQL injection.
+/// Each point type has its own UPDATE statement due to different table schemas.
 async fn update_point_handler_inner<R: Rtdb>(
     channel_id: u32,
     point_type: &str,
@@ -1315,12 +1318,182 @@ async fn update_point_handler_inner<R: Rtdb>(
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     let point_type_upper = point_type.to_ascii_uppercase();
 
-    // Validate point type and get table name
-    let table = match point_type_upper.as_str() {
-        "T" => "telemetry_points",
-        "S" => "signal_points",
-        "C" => "control_points",
-        "A" => "adjustment_points",
+    // Validate channel exists
+    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
+
+    // Check if any field is provided for update
+    let has_update = update.signal_name.is_some()
+        || update.description.is_some()
+        || update.unit.is_some()
+        || update.scale.is_some()
+        || update.offset.is_some()
+        || update.data_type.is_some()
+        || update.reverse.is_some()
+        || update.control_type.is_some()
+        || update.on_value.is_some()
+        || update.off_value.is_some()
+        || update.pulse_duration_ms.is_some()
+        || update.min_value.is_some()
+        || update.max_value.is_some()
+        || update.step.is_some();
+
+    if !has_update {
+        return Err(AppError::bad_request("No fields provided for update"));
+    }
+
+    // Execute type-specific parameterized UPDATE query
+    // Using COALESCE(?, column) pattern: NULL parameter keeps original value
+    let signal_name: String = match point_type_upper.as_str() {
+        "T" => {
+            // Telemetry points: signal_name, description, unit, scale, offset, data_type, reverse
+            let result = sqlx::query_scalar::<_, String>(
+                "UPDATE telemetry_points SET
+                    signal_name = COALESCE(?, signal_name),
+                    description = COALESCE(?, description),
+                    unit = COALESCE(?, unit),
+                    scale = COALESCE(?, scale),
+                    offset = COALESCE(?, offset),
+                    data_type = COALESCE(?, data_type),
+                    reverse = COALESCE(?, reverse)
+                WHERE channel_id = ? AND point_id = ?
+                RETURNING signal_name",
+            )
+            .bind(update.signal_name.as_deref())
+            .bind(update.description.as_deref())
+            .bind(update.unit.as_deref())
+            .bind(update.scale)
+            .bind(update.offset)
+            .bind(update.data_type.as_deref())
+            .bind(update.reverse)
+            .bind(channel_id as i64)
+            .bind(point_id as i64)
+            .fetch_optional(&state.sqlite_pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Update telemetry point: {}", e);
+                AppError::internal_error("Failed to update point")
+            })?;
+
+            result.ok_or_else(|| {
+                AppError::not_found(format!(
+                    "Point {} (type T) not found in channel {}",
+                    point_id, channel_id
+                ))
+            })?
+        },
+        "S" => {
+            // Signal points: signal_name, description, unit, scale, offset, data_type, reverse, normal_state
+            let result = sqlx::query_scalar::<_, String>(
+                "UPDATE signal_points SET
+                    signal_name = COALESCE(?, signal_name),
+                    description = COALESCE(?, description),
+                    unit = COALESCE(?, unit),
+                    scale = COALESCE(?, scale),
+                    offset = COALESCE(?, offset),
+                    data_type = COALESCE(?, data_type),
+                    reverse = COALESCE(?, reverse)
+                WHERE channel_id = ? AND point_id = ?
+                RETURNING signal_name",
+            )
+            .bind(update.signal_name.as_deref())
+            .bind(update.description.as_deref())
+            .bind(update.unit.as_deref())
+            .bind(update.scale)
+            .bind(update.offset)
+            .bind(update.data_type.as_deref())
+            .bind(update.reverse)
+            .bind(channel_id as i64)
+            .bind(point_id as i64)
+            .fetch_optional(&state.sqlite_pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Update signal point: {}", e);
+                AppError::internal_error("Failed to update point")
+            })?;
+
+            result.ok_or_else(|| {
+                AppError::not_found(format!(
+                    "Point {} (type S) not found in channel {}",
+                    point_id, channel_id
+                ))
+            })?
+        },
+        "C" => {
+            // Control points: signal_name, description, unit, scale, offset, data_type, reverse
+            // Note: control_type, on_value, off_value, pulse_duration_ms are not in current schema
+            let result = sqlx::query_scalar::<_, String>(
+                "UPDATE control_points SET
+                    signal_name = COALESCE(?, signal_name),
+                    description = COALESCE(?, description),
+                    unit = COALESCE(?, unit),
+                    scale = COALESCE(?, scale),
+                    offset = COALESCE(?, offset),
+                    data_type = COALESCE(?, data_type),
+                    reverse = COALESCE(?, reverse)
+                WHERE channel_id = ? AND point_id = ?
+                RETURNING signal_name",
+            )
+            .bind(update.signal_name.as_deref())
+            .bind(update.description.as_deref())
+            .bind(update.unit.as_deref())
+            .bind(update.scale)
+            .bind(update.offset)
+            .bind(update.data_type.as_deref())
+            .bind(update.reverse)
+            .bind(channel_id as i64)
+            .bind(point_id as i64)
+            .fetch_optional(&state.sqlite_pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Update control point: {}", e);
+                AppError::internal_error("Failed to update point")
+            })?;
+
+            result.ok_or_else(|| {
+                AppError::not_found(format!(
+                    "Point {} (type C) not found in channel {}",
+                    point_id, channel_id
+                ))
+            })?
+        },
+        "A" => {
+            // Adjustment points: signal_name, description, unit, scale, offset, data_type, reverse
+            // Note: min_value, max_value, step are not in current schema
+            let result = sqlx::query_scalar::<_, String>(
+                "UPDATE adjustment_points SET
+                    signal_name = COALESCE(?, signal_name),
+                    description = COALESCE(?, description),
+                    unit = COALESCE(?, unit),
+                    scale = COALESCE(?, scale),
+                    offset = COALESCE(?, offset),
+                    data_type = COALESCE(?, data_type),
+                    reverse = COALESCE(?, reverse)
+                WHERE channel_id = ? AND point_id = ?
+                RETURNING signal_name",
+            )
+            .bind(update.signal_name.as_deref())
+            .bind(update.description.as_deref())
+            .bind(update.unit.as_deref())
+            .bind(update.scale)
+            .bind(update.offset)
+            .bind(update.data_type.as_deref())
+            .bind(update.reverse)
+            .bind(channel_id as i64)
+            .bind(point_id as i64)
+            .fetch_optional(&state.sqlite_pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("Update adjustment point: {}", e);
+                AppError::internal_error("Failed to update point")
+            })?;
+
+            result.ok_or_else(|| {
+                AppError::not_found(format!(
+                    "Point {} (type A) not found in channel {}",
+                    point_id, channel_id
+                ))
+            })?
+        },
         _ => {
             return Err(AppError::bad_request(format!(
                 "Invalid point type '{}'. Must be T, S, C, or A",
@@ -1328,107 +1501,6 @@ async fn update_point_handler_inner<R: Rtdb>(
             )));
         },
     };
-
-    // Validate channel exists
-    validate_channel_exists(&state.sqlite_pool, channel_id).await?;
-
-    // Verify point exists
-    let query = format!(
-        "SELECT signal_name FROM {} WHERE channel_id = ? AND point_id = ?",
-        table
-    );
-    let existing: Option<(String,)> = sqlx::query_as(&query)
-        .bind(channel_id as i64)
-        .bind(point_id as i64)
-        .fetch_optional(&state.sqlite_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Point check: {}", e);
-            AppError::internal_error("Database operation failed")
-        })?;
-
-    if existing.is_none() {
-        return Err(AppError::not_found(format!(
-            "Point {} (type {}) not found in channel {}",
-            point_id, point_type_upper, channel_id
-        )));
-    }
-
-    // Build dynamic UPDATE query with all non-null fields
-    let mut updates = Vec::new();
-
-    if update.signal_name.is_some() {
-        updates.push(format!(
-            "signal_name = '{}'",
-            update.signal_name.as_ref().unwrap().replace("'", "''")
-        ));
-    }
-    if let Some(ref desc) = update.description {
-        updates.push(format!("description = '{}'", desc.replace("'", "''")));
-    }
-    if let Some(ref u) = update.unit {
-        updates.push(format!("unit = '{}'", u.replace("'", "''")));
-    }
-    if let Some(scale) = update.scale {
-        updates.push(format!("scale = {}", scale));
-    }
-    if let Some(offset) = update.offset {
-        updates.push(format!("offset = {}", offset));
-    }
-    if let Some(ref dt) = update.data_type {
-        updates.push(format!("data_type = '{}'", dt.replace("'", "''")));
-    }
-    if let Some(reverse) = update.reverse {
-        updates.push(format!("reverse = {}", if reverse { 1 } else { 0 }));
-    }
-    // Control-specific fields
-    if let Some(ref ct) = update.control_type {
-        updates.push(format!("control_type = '{}'", ct.replace("'", "''")));
-    }
-    if let Some(on_value) = update.on_value {
-        updates.push(format!("on_value = {}", on_value));
-    }
-    if let Some(off_value) = update.off_value {
-        updates.push(format!("off_value = {}", off_value));
-    }
-    if let Some(pulse) = update.pulse_duration_ms {
-        updates.push(format!("pulse_duration_ms = {}", pulse));
-    }
-    // Adjustment-specific fields
-    if let Some(min_value) = update.min_value {
-        updates.push(format!("min_value = {}", min_value));
-    }
-    if let Some(max_value) = update.max_value {
-        updates.push(format!("max_value = {}", max_value));
-    }
-    if let Some(step) = update.step {
-        updates.push(format!("step = {}", step));
-    }
-
-    if updates.is_empty() {
-        return Err(AppError::bad_request("No fields provided for update"));
-    }
-
-    let update_sql = format!(
-        "UPDATE {} SET {} WHERE channel_id = {} AND point_id = {}",
-        table,
-        updates.join(", "),
-        channel_id,
-        point_id
-    );
-
-    tracing::debug!("UPDATE SQL: {}", update_sql);
-
-    sqlx::query(&update_sql)
-        .execute(&state.sqlite_pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Update point: {}", e);
-            AppError::internal_error("Failed to update point")
-        })?;
-
-    // Get updated signal_name for response
-    let signal_name = update.signal_name.unwrap_or(existing.unwrap().0);
 
     tracing::debug!("Ch{}:{}:{} updated", channel_id, point_type_upper, point_id);
 

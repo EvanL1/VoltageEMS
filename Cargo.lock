@@ -1356,14 +1356,15 @@ dependencies = [
 
 [[package]]
 name = "igw"
-version = "0.2.6"
+version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dee83bbbea827a8e9564c2e6e6febde3dcaa96a7b9519aa635cd2ca216ae92a4"
+checksum = "0b8e4e90109ecc113d849f58952b33b038840b1db9bc4dc2dc7d957cf9dd9579"
 dependencies = [
  "async-trait",
  "bytes",
  "chrono",
  "dashmap 6.1.0",
+ "once_cell",
  "serde",
  "serde_json",
  "thiserror 2.0.17",

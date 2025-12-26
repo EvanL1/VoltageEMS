@@ -22,8 +22,8 @@ pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCo
 
 // IGW bridge types
 pub use igw_bridge::{
-    convert_to_igw_point_configs, create_virtual_channel, ChannelImpl, IgwChannelWrapper,
-    ProtocolClientImpl,
+    convert_to_igw_point_configs as convert_to_point_configs, create_virtual_channel, ChannelImpl,
+    IgwChannelWrapper, ProtocolClientImpl,
 };
 
 /// Initialize channels module

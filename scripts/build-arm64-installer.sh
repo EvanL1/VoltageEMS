@@ -146,22 +146,27 @@ build_python_service() {
 }
 
 # Pull and save official Docker image for ARM64
+# Skips pull if image already exists locally
 pull_and_save_image() {
     local image=$1
     local output_name=$2
 
-    echo -e "${BLUE}Pulling $image for ARM64...${NC}"
-    docker pull --platform linux/arm64 "$image"
-
-    if [ $? -eq 0 ]; then
-        echo "Saving $image..."
-        docker save "$image" | gzip > "$BUILD_DIR/docker/$output_name"
-        local size=$(ls -lh "$BUILD_DIR/docker/$output_name" | awk '{print $5}')
-        echo -e "${GREEN}✓ Saved $output_name ($size)${NC}"
+    # Check if image already exists locally
+    if docker image inspect "$image" &>/dev/null; then
+        echo -e "${GREEN}Using existing local image: $image${NC}"
     else
-        echo -e "${RED}Error: Failed to pull $image${NC}"
-        return 1
+        echo -e "${BLUE}Pulling $image for ARM64...${NC}"
+        docker pull --platform linux/arm64 "$image"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Error: Failed to pull $image${NC}"
+            return 1
+        fi
     fi
+
+    echo "Saving $image..."
+    docker save "$image" | gzip > "$BUILD_DIR/docker/$output_name"
+    local size=$(ls -lh "$BUILD_DIR/docker/$output_name" | awk '{print $5}')
+    echo -e "${GREEN}✓ Saved $output_name ($size)${NC}"
 }
 
 # Clean and create build directory
