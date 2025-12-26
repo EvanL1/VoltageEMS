@@ -827,9 +827,17 @@ pub fn create_gpio_channel(
         gpio_config = gpio_config.with_poll_interval(Duration::from_millis(interval_ms));
     }
 
+    // Helper to parse gpio_number from protocol_mappings JSON
+    // Expected format: {"gpio_number": 496, ...}
+    let parse_gpio_number = |protocol_mappings: &Option<String>| -> Option<u32> {
+        let json_str = protocol_mappings.as_ref()?;
+        let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
+        json.get("gpio_number")?.as_u64().map(|n| n as u32)
+    };
+
     // Configure DI pins from signal points (遥信)
     for pt in &runtime_config.signal_points {
-        if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
+        if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
             let pin_config =
                 GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id.to_string())
                     .with_active_low(pt.reverse);
@@ -840,7 +848,7 @@ pub fn create_gpio_channel(
 
     // Configure DO pins from control points (遥控)
     for pt in &runtime_config.control_points {
-        if let Some(gpio_num) = runtime_config.get_gpio_mapping(pt.base.point_id) {
+        if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
             let pin_config =
                 GpioPinConfig::digital_output(default_chip, gpio_num, pt.base.point_id.to_string())
                     .with_active_low(pt.reverse);
