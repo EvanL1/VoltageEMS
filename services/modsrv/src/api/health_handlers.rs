@@ -9,52 +9,138 @@ use common::system_metrics::SystemMetrics;
 use common::{AppError, SuccessResponse};
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::app_state::AppState;
 
 /// Health check endpoint
 ///
-/// Returns service health status including database connectivity,
-/// loaded products, and active instances.
+/// Performs actual connectivity checks on dependencies.
+/// Returns 503 if any critical dependency is unhealthy.
 ///
 /// @route GET /health
 /// @output Json<SuccessResponse<serde_json::Value>> - Service health metrics
-/// @side-effects None (read-only operation)
+/// @status 200 - Service is healthy (all dependencies reachable)
+/// @status 503 - Service is unhealthy (one or more dependencies failed)
 pub async fn health_check(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
-    let sqlite_status = if state.sqlite_client.is_some() {
-        "connected"
+    let mut checks = serde_json::Map::new();
+    let mut overall_healthy = true;
+    let mut errors = Vec::new();
+
+    // Check SQLite connectivity using SqliteClient::ping()
+    let sqlite_start = Instant::now();
+    let sqlite_status = if let Some(client) = &state.sqlite_client {
+        match client.ping().await {
+            Ok(_) => {
+                checks.insert(
+                    "sqlite".to_string(),
+                    json!({
+                        "status": "healthy",
+                        "message": "Connected",
+                        "duration_ms": sqlite_start.elapsed().as_millis()
+                    }),
+                );
+                "connected"
+            },
+            Err(e) => {
+                overall_healthy = false;
+                let err_msg = format!("Ping failed: {}", e);
+                errors.push(format!("sqlite: {}", err_msg));
+                checks.insert(
+                    "sqlite".to_string(),
+                    json!({
+                        "status": "unhealthy",
+                        "message": err_msg,
+                        "duration_ms": sqlite_start.elapsed().as_millis()
+                    }),
+                );
+                "error"
+            },
+        }
     } else {
+        checks.insert(
+            "sqlite".to_string(),
+            json!({
+                "status": "not_configured",
+                "message": "SQLite client not initialized"
+            }),
+        );
         "not configured"
     };
 
-    // Get instance count from instance manager
-    let instances = state
-        .instance_manager
-        .list_instances(None)
-        .await
-        .unwrap_or_default();
-    let instance_count = instances.len();
+    // Check instance manager
+    let instance_start = Instant::now();
+    match state.instance_manager.list_instances(None).await {
+        Ok(instances) => {
+            checks.insert(
+                "instances".to_string(),
+                json!({
+                    "status": "healthy",
+                    "count": instances.len(),
+                    "duration_ms": instance_start.elapsed().as_millis()
+                }),
+            );
+        },
+        Err(e) => {
+            overall_healthy = false;
+            let err_msg = format!("Failed to list instances: {}", e);
+            errors.push(format!("instances: {}", err_msg));
+            checks.insert(
+                "instances".to_string(),
+                json!({
+                    "status": "unhealthy",
+                    "message": err_msg,
+                    "duration_ms": instance_start.elapsed().as_millis()
+                }),
+            );
+        },
+    }
 
-    // Get product count
-    let products = state
-        .product_loader
-        .get_all_products()
-        .await
-        .unwrap_or_default();
-    let product_count = products.len();
+    // Check product loader
+    let product_start = Instant::now();
+    match state.product_loader.get_all_products().await {
+        Ok(products) => {
+            checks.insert(
+                "products".to_string(),
+                json!({
+                    "status": "healthy",
+                    "count": products.len(),
+                    "duration_ms": product_start.elapsed().as_millis()
+                }),
+            );
+        },
+        Err(e) => {
+            overall_healthy = false;
+            let err_msg = format!("Failed to load products: {}", e);
+            errors.push(format!("products: {}", err_msg));
+            checks.insert(
+                "products".to_string(),
+                json!({
+                    "status": "unhealthy",
+                    "message": err_msg,
+                    "duration_ms": product_start.elapsed().as_millis()
+                }),
+            );
+        },
+    }
 
     // Collect system metrics (CPU, memory)
     let metrics = SystemMetrics::collect();
 
-    Ok(Json(SuccessResponse::new(json!({
-        "status": "healthy",
+    let status = if overall_healthy {
+        "healthy"
+    } else {
+        "unhealthy"
+    };
+
+    let response = json!({
+        "status": status,
         "service": "modsrv",
         "architecture": "product-instance",
         "sqlite": sqlite_status,
-        "products_loaded": product_count,
-        "instances_active": instance_count,
+        "checks": checks,
         "system": {
             "cpu_count": metrics.cpu_count,
             "process_cpu_percent": metrics.process_cpu_percent,
@@ -62,5 +148,15 @@ pub async fn health_check(
             "memory_total_mb": metrics.memory_total_mb
         },
         "timestamp": chrono::Utc::now().to_rfc3339()
-    }))))
+    });
+
+    // Return 503 if unhealthy
+    if !overall_healthy {
+        return Err(AppError::service_unavailable(format!(
+            "Service dependencies are unhealthy: {}",
+            errors.join(", ")
+        )));
+    }
+
+    Ok(Json(SuccessResponse::new(response)))
 }

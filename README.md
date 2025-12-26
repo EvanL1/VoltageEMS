@@ -11,7 +11,7 @@ VoltageEMS is a high-performance industrial IoT energy management system built w
 ## 🚀 Features
 
 - **High Performance**: Built with Rust for optimal performance and memory safety
-- **Centralized Configuration**: All configuration constants and queries managed in `voltage-config` library
+- **Centralized Configuration**: All configuration constants and queries managed in `voltage-model` library
 - **Web Dashboard**: Vue.js frontend with real-time data visualization
 - **Microservices Architecture**: Rust services with Redis for real-time data
 - **Real-time Data Flow**: Automatic data routing from devices to models via Redis mappings
@@ -293,7 +293,7 @@ Note:
 ```
 VoltageEMS/
 ├── libs/
-│   ├── voltage-config/      # Data structures (authoritative source)
+│   ├── voltage-model/       # Data structures (authoritative source)
 │   ├── voltage-routing/     # M2C routing shared library
 │   ├── voltage-rtdb/        # Redis abstraction layer
 │   ├── voltage-rules/       # Rule engine library

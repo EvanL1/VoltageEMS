@@ -17,9 +17,9 @@ use crate::core::channels::igw_bridge::{
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 use crate::core::channels::igw_bridge::create_gpio_channel;
-#[cfg(feature = "can")]
+#[cfg(all(feature = "can", target_os = "linux"))]
 use crate::core::channels::igw_bridge::{
-    convert_to_can_point_configs, convert_can_to_igw_point_configs, create_can_channel,
+    convert_can_to_igw_point_configs, convert_to_can_point_configs, create_can_channel,
 };
 use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
@@ -219,7 +219,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 self.create_igw_gpio_channel(channel_id, &runtime_config)
                     .await?
             },
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             "can" => {
                 // IGW path: Use igw::CanClient with RedisDataStore
                 self.create_igw_can_channel(channel_id, &runtime_config)
@@ -227,15 +227,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             },
             _ => {
                 // All protocols now use IGW - unsupported protocols should error
-                let mut supported_protocols = vec!["virtual", "modbus_tcp", "modbus_rtu"];
-                
+                // Base protocols available on all platforms
+                #[allow(unused_mut)] // mut needed for cfg-conditional push_str on Linux
+                let mut supported = String::from("virtual, modbus_tcp, modbus_rtu");
+
                 #[cfg(all(target_os = "linux", feature = "gpio"))]
-                supported_protocols.push("gpio");
-                
-                #[cfg(feature = "can")]
-                supported_protocols.push("can");
-                
-                let supported = supported_protocols.join(", ");
+                supported.push_str(", gpio");
+
+                #[cfg(all(feature = "can", target_os = "linux"))]
+                supported.push_str(", can");
 
                 return Err(anyhow::anyhow!(
                     "Unsupported protocol '{}' for channel {}. Supported: {}",
@@ -441,7 +441,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ///
     /// Uses igw::CanClient with RedisDataStore for data persistence.
     /// CAN protocol is event-driven and read-only (no M2C control).
-    #[cfg(feature = "can")]
+    #[cfg(all(feature = "can", target_os = "linux"))]
     async fn create_igw_can_channel(
         &self,
         channel_id: u32,
@@ -458,11 +458,11 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         // 2. Convert CAN mappings to IGW formats
         let can_point_configs = convert_to_can_point_configs(runtime_config);
         let igw_point_configs = convert_can_to_igw_point_configs(runtime_config);
-        
+
         if can_point_configs.is_empty() {
             warn!("Ch{} has no CAN point mappings configured", channel_id);
         }
-        
+
         store.set_point_configs(channel_id, igw_point_configs);
 
         // 3. Start background flush task for write buffer
@@ -488,7 +488,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         info!("Ch{} created via IGW (can)", channel_id);
         Ok((channel_impl, command_trigger))
     }
-
 
     /// Load channel configuration from SQLite
     async fn load_channel_configuration(

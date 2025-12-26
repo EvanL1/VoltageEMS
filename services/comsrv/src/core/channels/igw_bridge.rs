@@ -35,7 +35,7 @@ use igw::core::traits::{AdjustmentCommand, ControlCommand, WriteResult};
 use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
 use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 
-#[cfg(feature = "can")]
+#[cfg(all(feature = "can", target_os = "linux"))]
 use igw::protocols::can::{CanClient, CanConfig, CanPoint};
 
 use igw::{ConnectionState, Protocol, ProtocolClient};
@@ -68,7 +68,7 @@ pub enum ProtocolClientImpl {
     /// Modbus TCP or RTU channel
     Modbus(ModbusChannel),
     /// CAN channel (LYNK protocol)
-    #[cfg(feature = "can")]
+    #[cfg(all(feature = "can", target_os = "linux"))]
     Can(CanClient),
 }
 
@@ -80,7 +80,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.poll_once().await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.poll_once().await,
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(c) => c.poll_once().await,
         }
     }
@@ -92,7 +92,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.connect().await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.connect().await,
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(c) => c.connect().await,
         }
     }
@@ -104,7 +104,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.disconnect().await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.disconnect().await,
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(c) => c.disconnect().await,
         }
     }
@@ -116,7 +116,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.connection_state(),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.connection_state(),
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(c) => c.connection_state(),
         }
     }
@@ -131,7 +131,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.write_control(commands).await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.write_control(commands).await,
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(c) => c.write_control(commands).await,
         }
     }
@@ -146,7 +146,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.write_adjustment(commands).await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.write_adjustment(commands).await,
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(c) => c.write_adjustment(commands).await,
         }
     }
@@ -160,7 +160,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.set_log_handler(handler),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(_) => {}, // CanClient doesn't implement LoggableProtocol yet
         }
     }
@@ -174,7 +174,7 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.set_log_config(config),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
-            #[cfg(feature = "can")]
+            #[cfg(all(feature = "can", target_os = "linux"))]
             Self::Can(_) => {}, // CanClient doesn't implement LoggableProtocol yet
         }
     }
@@ -193,12 +193,6 @@ impl ProtocolClientImpl {
 // IgwChannelWrapper - Protocol wrapper with storage integration
 // ============================================================================
 
-/// Wrapper for IGW protocol clients that integrates with comsrv's command system.
-///
-/// This wrapper:
-/// - Holds an IGW ProtocolClient implementation (enum-based)
-/// - Spawns a background task to process incoming commands
-/// - Provides access to the underlying protocol for status queries
 /// Wrapper for IGW protocol clients that integrates with comsrv's command system.
 ///
 /// This wrapper:
@@ -250,9 +244,9 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
         let polling_handle = if enable_polling {
             let protocol_clone = Arc::clone(&protocol);
             let store_clone = Arc::clone(&store);
-            
+
             info!("Ch{} 启动轮询任务 (enable_polling=true)", channel_id);
-            
+
             Some(tokio::spawn(async move {
                 run_polling_task(protocol_clone, store_clone, channel_id).await;
             }))
@@ -396,27 +390,27 @@ async fn run_polling_task<R: Rtdb>(
     channel_id: u32,
 ) {
     info!("Ch{} polling task started", channel_id);
-    
+
     // Wait a bit for the connection to be established
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-    
+
     // Poll every 1 second
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(1000));
-    
+
     loop {
         interval.tick().await;
-        
+
         // Check if still connected
         let is_connected = {
             let guard = protocol.read().await;
             guard.connection_state().is_connected()
         };
-        
+
         if !is_connected {
             info!("Ch{} polling task停止: 连接已断开", channel_id);
             break;
         }
-        
+
         // Poll data
         let mut protocol_guard = protocol.write().await;
         match protocol_guard.poll_once().await {
@@ -436,7 +430,7 @@ async fn run_polling_task<R: Rtdb>(
             },
         }
     }
-    
+
     info!("Ch{} polling task terminated", channel_id);
 }
 
@@ -526,93 +520,173 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 
 /// Convert RuntimeChannelConfig to IGW PointConfig list for Modbus.
 ///
-/// Unlike the virtual channel conversion which uses point IDs as addresses,
-/// this function uses the actual Modbus mappings (slave_id, function_code, register_address).
-/// It also looks up the corresponding point to get scale/offset/reverse for TransformConfig.
+/// Extracts Modbus mapping information from each point's embedded protocol_mappings JSON field.
+/// This replaces the old approach of using separate modbus_mappings collection.
 pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    let mut configs = Vec::with_capacity(runtime_config.modbus_mappings.len());
+    let mut configs = Vec::new();
 
-    for mapping in &runtime_config.modbus_mappings {
-        // Determine data type from telemetry_type
-        let data_type = match mapping.telemetry_type.as_str() {
-            "T" | "telemetry" => DataType::Telemetry,
-            "S" | "signal" => DataType::Signal,
-            "C" | "control" => DataType::Control,
-            "A" | "adjustment" => DataType::Adjustment,
-            _ => DataType::Telemetry, // Default to telemetry
-        };
+    // Helper to parse modbus config from protocol_mappings JSON
+    fn parse_modbus_mapping(json_str: &str) -> Option<(u8, u8, u16, String, String, u8)> {
+        let v: serde_json::Value = serde_json::from_str(json_str).ok()?;
+        Some((
+            v.get("slave_id").and_then(|x| x.as_u64()).unwrap_or(1) as u8,
+            v.get("function_code").and_then(|x| x.as_u64()).unwrap_or(3) as u8,
+            v.get("register_address")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0) as u16,
+            v.get("data_type")
+                .and_then(|x| x.as_str())
+                .unwrap_or("uint16")
+                .to_string(),
+            v.get("byte_order")
+                .and_then(|x| x.as_str())
+                .unwrap_or("ABCD")
+                .to_string(),
+            v.get("bit_position").and_then(|x| x.as_u64()).unwrap_or(0) as u8,
+        ))
+    }
 
-        // Parse data format from string
-        let format = parse_data_format(&mapping.data_type);
-
-        // Parse byte order from string
-        let byte_order = parse_byte_order(&mapping.byte_order);
-
-        // Build ModbusAddress
-        let modbus_addr = ModbusAddress {
-            slave_id: mapping.slave_id,
-            function_code: mapping.function_code,
-            register: mapping.register_address,
-            format,
-            byte_order,
-            bit_position: if mapping.bit_position > 0 {
-                Some(mapping.bit_position)
-            } else {
-                None
-            },
-        };
-
-        // Look up the corresponding point to get transform parameters
-        let transform = match data_type {
-            DataType::Telemetry => runtime_config
-                .telemetry_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    scale: p.scale,
-                    offset: p.offset,
-                    reverse: p.reverse,
+    // Process telemetry points
+    for point in &runtime_config.telemetry_points {
+        if let Some(ref mappings_json) = point.base.protocol_mappings {
+            if let Some((
+                slave_id,
+                function_code,
+                register,
+                data_type_str,
+                byte_order_str,
+                bit_pos,
+            )) = parse_modbus_mapping(mappings_json)
+            {
+                let modbus_addr = ModbusAddress {
+                    slave_id,
+                    function_code,
+                    register,
+                    format: parse_data_format(&data_type_str),
+                    byte_order: parse_byte_order(&byte_order_str),
+                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                };
+                let transform = TransformConfig {
+                    scale: point.scale,
+                    offset: point.offset,
+                    reverse: point.reverse,
                     ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Signal => runtime_config
-                .signal_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Control => runtime_config
-                .control_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Adjustment => runtime_config
-                .adjustment_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    scale: p.scale,
-                    offset: p.offset,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-        };
+                };
+                let config = PointConfig::new(
+                    point.base.point_id,
+                    DataType::Telemetry,
+                    ProtocolAddress::Modbus(modbus_addr),
+                )
+                .with_transform(transform);
+                configs.push(config);
+            }
+        }
+    }
 
-        let point_config = PointConfig::new(
-            mapping.point_id,
-            data_type,
-            ProtocolAddress::Modbus(modbus_addr),
-        )
-        .with_transform(transform);
+    // Process signal points
+    for point in &runtime_config.signal_points {
+        if let Some(ref mappings_json) = point.base.protocol_mappings {
+            if let Some((
+                slave_id,
+                function_code,
+                register,
+                data_type_str,
+                byte_order_str,
+                bit_pos,
+            )) = parse_modbus_mapping(mappings_json)
+            {
+                let modbus_addr = ModbusAddress {
+                    slave_id,
+                    function_code,
+                    register,
+                    format: parse_data_format(&data_type_str),
+                    byte_order: parse_byte_order(&byte_order_str),
+                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                };
+                let transform = TransformConfig {
+                    reverse: point.reverse,
+                    ..Default::default()
+                };
+                let config = PointConfig::new(
+                    point.base.point_id,
+                    DataType::Signal,
+                    ProtocolAddress::Modbus(modbus_addr),
+                )
+                .with_transform(transform);
+                configs.push(config);
+            }
+        }
+    }
 
-        configs.push(point_config);
+    // Process control points
+    for point in &runtime_config.control_points {
+        if let Some(ref mappings_json) = point.base.protocol_mappings {
+            if let Some((
+                slave_id,
+                function_code,
+                register,
+                data_type_str,
+                byte_order_str,
+                bit_pos,
+            )) = parse_modbus_mapping(mappings_json)
+            {
+                let modbus_addr = ModbusAddress {
+                    slave_id,
+                    function_code,
+                    register,
+                    format: parse_data_format(&data_type_str),
+                    byte_order: parse_byte_order(&byte_order_str),
+                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                };
+                let transform = TransformConfig {
+                    reverse: point.reverse,
+                    ..Default::default()
+                };
+                let config = PointConfig::new(
+                    point.base.point_id,
+                    DataType::Control,
+                    ProtocolAddress::Modbus(modbus_addr),
+                )
+                .with_transform(transform);
+                configs.push(config);
+            }
+        }
+    }
+
+    // Process adjustment points
+    for point in &runtime_config.adjustment_points {
+        if let Some(ref mappings_json) = point.base.protocol_mappings {
+            if let Some((
+                slave_id,
+                function_code,
+                register,
+                data_type_str,
+                byte_order_str,
+                bit_pos,
+            )) = parse_modbus_mapping(mappings_json)
+            {
+                let modbus_addr = ModbusAddress {
+                    slave_id,
+                    function_code,
+                    register,
+                    format: parse_data_format(&data_type_str),
+                    byte_order: parse_byte_order(&byte_order_str),
+                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                };
+                let transform = TransformConfig {
+                    scale: point.scale,
+                    offset: point.offset,
+                    ..Default::default()
+                };
+                let config = PointConfig::new(
+                    point.base.point_id,
+                    DataType::Adjustment,
+                    ProtocolAddress::Modbus(modbus_addr),
+                )
+                .with_transform(transform);
+                configs.push(config);
+            }
+        }
     }
 
     configs
@@ -814,108 +888,170 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
 // CAN Channel Creation
 // ============================================================================
 
-#[cfg(feature = "can")]
+/// CAN protocol mapping from protocol_mappings JSON field
+#[cfg(all(feature = "can", target_os = "linux"))]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct CanProtocolMapping {
+    can_id: u32,
+    start_bit: u32,
+    bit_length: u32,
+    #[serde(default = "default_can_data_type")]
+    data_type: String,
+    #[serde(default = "default_scale")]
+    scale: f64,
+    #[serde(default)]
+    offset: f64,
+}
+
+#[cfg(all(feature = "can", target_os = "linux"))]
+fn default_can_data_type() -> String {
+    "uint16".to_string()
+}
+
+#[cfg(all(feature = "can", target_os = "linux"))]
+fn default_scale() -> f64 {
+    1.0
+}
+
+#[cfg(all(feature = "can", target_os = "linux"))]
 /// Convert RuntimeChannelConfig to IGW CanPoint list for CAN protocol.
 ///
-/// Maps CanMapping records from voltage.db to igw's CanPoint structure.
+/// Parses CAN configuration from each point's protocol_mappings JSON field.
 /// Scale and offset are applied during decoding in the protocol layer.
 pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<CanPoint> {
-    let mut configs = Vec::with_capacity(runtime_config.can_mappings.len());
+    let mut configs = Vec::new();
 
-    for mapping in &runtime_config.can_mappings {
-        let point = CanPoint {
-            point_id: mapping.point_id,
+    // Helper to parse protocol_mappings JSON and create CanPoint
+    let parse_can_point = |point_id: u32, protocol_mappings: &Option<String>| -> Option<CanPoint> {
+        let json_str = protocol_mappings.as_ref()?;
+        let mapping: CanProtocolMapping = serde_json::from_str(json_str)
+            .map_err(|e| {
+                tracing::warn!(
+                    point_id,
+                    error = %e,
+                    "Failed to parse CAN protocol_mappings JSON"
+                );
+                e
+            })
+            .ok()?;
+
+        Some(CanPoint {
+            point_id,
             can_id: mapping.can_id,
             byte_offset: (mapping.start_bit / 8) as u8,
             bit_position: (mapping.start_bit % 8) as u8,
             bit_length: mapping.bit_length as u8,
-            data_type: mapping.data_type.clone(),
+            data_type: mapping.data_type,
             scale: mapping.scale,
             offset: mapping.offset,
-        };
-        configs.push(point);
+        })
+    };
+
+    // Collect from all point types
+    for pt in &runtime_config.telemetry_points {
+        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+            configs.push(can_point);
+        }
+    }
+    for pt in &runtime_config.signal_points {
+        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+            configs.push(can_point);
+        }
+    }
+    for pt in &runtime_config.control_points {
+        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+            configs.push(can_point);
+        }
+    }
+    for pt in &runtime_config.adjustment_points {
+        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+            configs.push(can_point);
+        }
     }
 
     configs
 }
 
-#[cfg(feature = "can")]
+#[cfg(all(feature = "can", target_os = "linux"))]
 /// Convert runtime CAN mappings to IGW PointConfig format (for RedisDataStore).
 ///
 /// This conversion is used to register points with the data store for proper
 /// data transformation and storage.
+/// Parses CAN configuration from each point's protocol_mappings JSON field.
 pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
     use igw::core::point::ProtocolAddress;
-    
-    let mut configs = Vec::with_capacity(runtime_config.can_mappings.len());
 
-    for mapping in &runtime_config.can_mappings {
-        // Determine data type from telemetry_type
-        let data_type = match mapping.telemetry_type.as_str() {
-            "T" | "telemetry" => DataType::Telemetry,
-            "S" | "signal" => DataType::Signal,
-            "C" | "control" => DataType::Control,
-            "A" | "adjustment" => DataType::Adjustment,
-            _ => DataType::Telemetry,
-        };
+    let mut configs = Vec::new();
 
-        // Build CAN protocol address (simplified, as CAN addresses are implicit in frames)
-        let protocol_addr = ProtocolAddress::Generic(format!(
+    // Helper to build protocol address from CAN mapping
+    let build_protocol_addr = |protocol_mappings: &Option<String>| -> Option<ProtocolAddress> {
+        let json_str = protocol_mappings.as_ref()?;
+        let mapping: CanProtocolMapping = serde_json::from_str(json_str).ok()?;
+        Some(ProtocolAddress::Generic(format!(
             "can_id:0x{:X},start_bit:{},len:{}",
             mapping.can_id, mapping.start_bit, mapping.bit_length
-        ));
+        )))
+    };
 
-        // Look up the corresponding point to get transform parameters
-        let transform = match data_type {
-            DataType::Telemetry => runtime_config
-                .telemetry_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    scale: p.scale,
-                    offset: p.offset,
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Signal => runtime_config
-                .signal_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Control => runtime_config
-                .control_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    reverse: p.reverse,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-            DataType::Adjustment => runtime_config
-                .adjustment_points
-                .iter()
-                .find(|p| p.base.point_id == mapping.point_id)
-                .map(|p| TransformConfig {
-                    scale: p.scale,
-                    offset: p.offset,
-                    ..Default::default()
-                })
-                .unwrap_or_default(),
-        };
+    // Telemetry points
+    for pt in &runtime_config.telemetry_points {
+        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let transform = TransformConfig {
+                scale: pt.scale,
+                offset: pt.offset,
+                reverse: pt.reverse,
+                ..Default::default()
+            };
+            let config = PointConfig::new(pt.base.point_id, DataType::Telemetry, protocol_addr)
+                .with_transform(transform);
+            configs.push(config);
+        }
+    }
 
-        let config = PointConfig::new(mapping.point_id, data_type, protocol_addr);
-        configs.push(config.with_transform(transform));
+    // Signal points
+    for pt in &runtime_config.signal_points {
+        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let transform = TransformConfig {
+                reverse: pt.reverse,
+                ..Default::default()
+            };
+            let config = PointConfig::new(pt.base.point_id, DataType::Signal, protocol_addr)
+                .with_transform(transform);
+            configs.push(config);
+        }
+    }
+
+    // Control points
+    for pt in &runtime_config.control_points {
+        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let transform = TransformConfig {
+                reverse: pt.reverse,
+                ..Default::default()
+            };
+            let config = PointConfig::new(pt.base.point_id, DataType::Control, protocol_addr)
+                .with_transform(transform);
+            configs.push(config);
+        }
+    }
+
+    // Adjustment points
+    for pt in &runtime_config.adjustment_points {
+        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let transform = TransformConfig {
+                scale: pt.scale,
+                offset: pt.offset,
+                ..Default::default()
+            };
+            let config = PointConfig::new(pt.base.point_id, DataType::Adjustment, protocol_addr)
+                .with_transform(transform);
+            configs.push(config);
+        }
     }
 
     configs
 }
 
-#[cfg(feature = "can")]
+#[cfg(all(feature = "can", target_os = "linux"))]
 /// Create an IGW CAN channel with the given configuration.
 ///
 /// This function creates a CanClient from igw library with the specified
@@ -972,6 +1108,7 @@ mod tests {
                 signal_name: "temperature".to_string(),
                 description: None,
                 unit: Some("C".to_string()),
+                protocol_mappings: None,
             },
             scale: 1.0,
             offset: 0.0,
@@ -985,6 +1122,7 @@ mod tests {
                 signal_name: "status".to_string(),
                 description: None,
                 unit: None,
+                protocol_mappings: None,
             },
             reverse: false,
         });
@@ -995,6 +1133,7 @@ mod tests {
                 signal_name: "switch".to_string(),
                 description: None,
                 unit: None,
+                protocol_mappings: None,
             },
             reverse: false,
             control_type: "latching".to_string(),
@@ -1009,6 +1148,7 @@ mod tests {
                 signal_name: "setpoint".to_string(),
                 description: None,
                 unit: Some("C".to_string()),
+                protocol_mappings: None,
             },
             min_value: None,
             max_value: None,
@@ -1048,35 +1188,46 @@ mod tests {
 
     #[test]
     fn test_convert_to_modbus_point_configs() {
-        use crate::core::config::ModbusMapping;
+        // Create a runtime config with embedded protocol_mappings
+        let base_config = ChannelConfig {
+            core: ChannelCore {
+                id: 1,
+                name: "test_modbus".to_string(),
+                description: None,
+                protocol: "modbus_tcp".to_string(),
+                enabled: true,
+            },
+            parameters: HashMap::new(),
+            logging: Default::default(),
+        };
+        let mut runtime_config = RuntimeChannelConfig::from_base(base_config);
 
-        let mut runtime_config = create_test_runtime_config();
-
-        // Add Modbus mappings
-        runtime_config.modbus_mappings = vec![
-            ModbusMapping {
-                channel_id: 1,
+        // Add telemetry point with embedded Modbus mapping
+        runtime_config.telemetry_points.push(TelemetryPoint {
+            base: Point {
                 point_id: 100,
-                telemetry_type: "T".to_string(),
-                slave_id: 1,
-                function_code: 3,
-                register_address: 0,
-                data_type: "float32".to_string(),
-                byte_order: "ABCD".to_string(),
-                bit_position: 0,
+                signal_name: "voltage".to_string(),
+                description: None,
+                unit: Some("V".to_string()),
+                protocol_mappings: Some(r#"{"slave_id":1,"function_code":3,"register_address":0,"data_type":"float32","byte_order":"ABCD"}"#.to_string()),
             },
-            ModbusMapping {
-                channel_id: 1,
+            scale: 1.0,
+            offset: 0.0,
+            data_type: "float32".to_string(),
+            reverse: false,
+        });
+
+        // Add signal point with embedded Modbus mapping (with bit_position)
+        runtime_config.signal_points.push(SignalPoint {
+            base: Point {
                 point_id: 101,
-                telemetry_type: "S".to_string(),
-                slave_id: 1,
-                function_code: 1,
-                register_address: 10,
-                data_type: "bool".to_string(),
-                byte_order: "ABCD".to_string(),
-                bit_position: 5,
+                signal_name: "status".to_string(),
+                description: None,
+                unit: None,
+                protocol_mappings: Some(r#"{"slave_id":1,"function_code":1,"register_address":10,"data_type":"bool","byte_order":"ABCD","bit_position":5}"#.to_string()),
             },
-        ];
+            reverse: false,
+        });
 
         let configs = convert_to_modbus_point_configs(&runtime_config);
 

@@ -2,9 +2,9 @@ name: Code Check
 
 on:
   push:
-    branches: [ main, develop, feature/* ]
+    branches: [main, develop, feature/*]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,60 +17,60 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: true
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
 
-    # Free disk space by removing unnecessary pre-installed software
-    - name: Free Disk Space
-      run: |
-        echo "=== Before cleanup ==="
-        df -h /
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/swift
-        sudo apt-get clean
-        docker system prune -af || true
-        echo "=== After cleanup ==="
-        df -h /
+      # Free disk space by removing unnecessary pre-installed software
+      - name: Free Disk Space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/swift
+          sudo apt-get clean
+          docker system prune -af || true
+          echo "=== After cleanup ==="
+          df -h /
 
-    # Install protoc for gRPC compilation (required by cargo check)
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v3
-      with:
-        version: "23.x"
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # Install protoc for gRPC compilation (required by cargo check)
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-    # Setup Rust toolchain
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
+      # Setup Rust toolchain
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-    # Cache Cargo dependencies (unified key, no target/ to save space)
-    - name: Cache Dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      # Cache Cargo dependencies (unified key, no target/ to save space)
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-    # Rust quality checks
-    - name: Check Rust Format
-      run: cargo fmt --all -- --check
+      # Rust quality checks
+      - name: Check Rust Format
+        run: cargo fmt --all -- --check
 
-    - name: Run Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-    - name: Check Compilation
-      run: cargo check --workspace
+      - name: Check Compilation
+        run: cargo check --workspace
 
   # Job 2: Unit Tests (no Redis instance needed)
   unit-tests:
@@ -79,54 +79,54 @@ jobs:
     needs: quality-check
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: true
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
 
-    # Free disk space by removing unnecessary pre-installed software
-    - name: Free Disk Space
-      run: |
-        echo "=== Before cleanup ==="
-        df -h /
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/swift
-        sudo apt-get clean
-        docker system prune -af || true
-        echo "=== After cleanup ==="
-        df -h /
+      # Free disk space by removing unnecessary pre-installed software
+      - name: Free Disk Space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/swift
+          sudo apt-get clean
+          docker system prune -af || true
+          echo "=== After cleanup ==="
+          df -h /
 
-    # Install protoc for gRPC compilation
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v3
-      with:
-        version: "23.x"
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # Install protoc for gRPC compilation
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-    # Setup Rust toolchain
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
+      # Setup Rust toolchain
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
-    # Cache Cargo dependencies (unified key, no target/ to save space)
-    - name: Cache Dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      # Cache Cargo dependencies (unified key, no target/ to save space)
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-    # Run all unit tests
-    - name: Run Unit Tests
-      run: cargo test --workspace --lib --bins
-      env:
-        RUST_LOG: warn  # Reduce noise in unit tests
+      # Run all unit tests
+      - name: Run Unit Tests
+        run: cargo test --workspace --lib --bins
+        env:
+          RUST_LOG: warn # Reduce noise in unit tests
 
   # Job 3: Configuration Validation with Monarch
   config-validation:
@@ -135,125 +135,118 @@ jobs:
     needs: unit-tests
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: true
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
 
-    # Free disk space by removing unnecessary pre-installed software
-    - name: Free Disk Space
-      run: |
-        echo "=== Before cleanup ==="
-        df -h /
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/swift
-        sudo apt-get clean
-        docker system prune -af || true
-        echo "=== After cleanup ==="
-        df -h /
+      # Free disk space by removing unnecessary pre-installed software
+      - name: Free Disk Space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/swift
+          sudo apt-get clean
+          docker system prune -af || true
+          echo "=== After cleanup ==="
+          df -h /
 
-    # Setup Rust toolchain
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
+      # Setup Rust toolchain
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
-    # Cache Cargo dependencies (unified key, no target/ to save space)
-    - name: Cache Dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      # Cache Cargo dependencies (unified key, no target/ to save space)
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-    # Build and install Monarch
-    - name: Install Monarch
-      run: |
-        echo "Building and installing Monarch..."
-        cargo install --path tools/monarch --locked --force
-        echo "Monarch installed successfully"
+      # Build and install Monarch
+      - name: Install Monarch
+        run: |
+          echo "Building and installing Monarch..."
+          cargo install --path tools/monarch --locked --force
+          echo "Monarch installed successfully"
 
-    # Create temporary directories for validation
-    - name: Setup Test Environment
-      run: |
-        export TEST_CONFIG_DIR="/tmp/monarch_ci_config"
-        export TEST_DB_DIR="/tmp/monarch_ci_db"
-        mkdir -p $TEST_CONFIG_DIR $TEST_DB_DIR
-        echo "TEST_CONFIG_DIR=$TEST_CONFIG_DIR" >> $GITHUB_ENV
-        echo "TEST_DB_DIR=$TEST_DB_DIR" >> $GITHUB_ENV
+      # Create temporary directories for validation
+      - name: Setup Test Environment
+        run: |
+          export TEST_CONFIG_DIR="/tmp/monarch_ci_config"
+          export TEST_DB_DIR="/tmp/monarch_ci_db"
+          mkdir -p $TEST_CONFIG_DIR $TEST_DB_DIR
+          echo "TEST_CONFIG_DIR=$TEST_CONFIG_DIR" >> $GITHUB_ENV
+          echo "TEST_DB_DIR=$TEST_DB_DIR" >> $GITHUB_ENV
 
-    # Copy configuration files to test directory
-    - name: Prepare Configuration
-      run: |
-        cp -r config/* $TEST_CONFIG_DIR/ || echo "No config directory found"
-        # If config doesn't exist, try config.template
-        if [ ! -d "$TEST_CONFIG_DIR/comsrv" ]; then
-          echo "Using config.template as fallback"
-          cp -r config.template/* $TEST_CONFIG_DIR/ || true
-        fi
-        ls -la $TEST_CONFIG_DIR/
+      # Copy configuration files to test directory
+      - name: Prepare Configuration
+        run: |
+          cp -r config/* $TEST_CONFIG_DIR/ || echo "No config directory found"
+          # If config doesn't exist, try config.template
+          if [ ! -d "$TEST_CONFIG_DIR/comsrv" ]; then
+            echo "Using config.template as fallback"
+            cp -r config.template/* $TEST_CONFIG_DIR/ || true
+          fi
+          ls -la $TEST_CONFIG_DIR/
 
-    # Validate configuration syntax and structure
-    - name: Validate Configuration
-      run: |
-        echo "Validating configuration files..."
-        monarch validate --detailed --config-path $TEST_CONFIG_DIR || {
-          echo "::warning::Configuration validation failed, but continuing"
-        }
+      # Validate configuration syntax and structure
+      - name: Validate Configuration
+        run: |
+          echo "Validating configuration files..."
+          monarch validate --detailed --config-path $TEST_CONFIG_DIR
 
-    # Initialize database schemas in test directory
-    - name: Initialize Database Schemas
-      run: |
-        echo "Initializing database schemas..."
-        monarch init --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
+      # Initialize database schemas in test directory
+      - name: Initialize Database Schemas
+        run: |
+          echo "Initializing database schemas..."
+          monarch init --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
 
-        # Verify databases were created
-        echo "Checking created databases:"
-        ls -la $TEST_DB_DIR/
+          # Verify databases were created
+          echo "Checking created databases:"
+          ls -la $TEST_DB_DIR/
 
-    # Sync configuration to test database (dry-run equivalent)
-    - name: Test Configuration Sync
-      run: |
-        echo "Testing configuration sync process..."
-        monarch sync --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR || {
-          echo "::warning::Configuration sync had issues"
-          exit 0  # Don't fail CI for now, just warn
-        }
+      # Sync configuration to test database (dry-run equivalent)
+      - name: Test Configuration Sync
+        run: |
+          echo "Testing configuration sync process..."
+          monarch sync --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
 
-    # Check configuration status
-    - name: Check Configuration Status
-      run: |
-        echo "Checking configuration status..."
-        monarch status --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR || {
-          echo "::warning::Status check reported differences"
-        }
+      # Check configuration status
+      - name: Check Configuration Status
+        run: |
+          echo "Checking configuration status..."
+          monarch status --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
 
-    # Optional: Test export functionality
-    - name: Test Configuration Export
-      run: |
-        echo "Testing export functionality..."
-        export EXPORT_DIR="/tmp/monarch_export_test"
-        mkdir -p $EXPORT_DIR
+      # Optional: Test export functionality
+      - name: Test Configuration Export
+        run: |
+          echo "Testing export functionality..."
+          export EXPORT_DIR="/tmp/monarch_export_test"
+          mkdir -p $EXPORT_DIR
 
-        # Try to export (this tests round-trip capability)
-        monarch export all --config-path $EXPORT_DIR --db-path $TEST_DB_DIR || {
-          echo "::warning::Export test failed, but this is optional"
-        }
+          # Try to export (this tests round-trip capability)
+          monarch export all --config-path $EXPORT_DIR --db-path $TEST_DB_DIR || {
+            echo "::warning::Export test failed, but this is optional"
+          }
 
-        # Clean up export test
-        rm -rf $EXPORT_DIR
+          # Clean up export test
+          rm -rf $EXPORT_DIR
 
-    # Clean up test directories
-    - name: Cleanup
-      if: always()
-      run: |
-        rm -rf $TEST_CONFIG_DIR $TEST_DB_DIR
-        echo "Test directories cleaned up"
+      # Clean up test directories
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf $TEST_CONFIG_DIR $TEST_DB_DIR
+          echo "Test directories cleaned up"
 
   # Job 4: Integration Tests (requires Redis)
   integration-tests:
@@ -262,90 +255,90 @@ jobs:
     needs: [unit-tests, config-validation]
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: true
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
 
-    # Free disk space by removing unnecessary pre-installed software
-    - name: Free Disk Space
-      run: |
-        echo "=== Before cleanup ==="
-        df -h /
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/swift
-        sudo apt-get clean
-        docker system prune -af || true
-        echo "=== After cleanup ==="
-        df -h /
+      # Free disk space by removing unnecessary pre-installed software
+      - name: Free Disk Space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/swift
+          sudo apt-get clean
+          docker system prune -af || true
+          echo "=== After cleanup ==="
+          df -h /
 
-    # Install protoc for gRPC compilation
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v3
-      with:
-        version: "23.x"
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # Install protoc for gRPC compilation
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-    # Setup Rust toolchain
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
+      # Setup Rust toolchain
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
-    # Cache Cargo dependencies (unified key, no target/ to save space)
-    - name: Cache Dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      # Cache Cargo dependencies (unified key, no target/ to save space)
+      - name: Cache Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-    # Clean Monarch Binary Cache (prevent schema mismatch)
-    - name: Clean Monarch Binary Cache
-      run: |
-        echo "Cleaning cached Monarch binaries to prevent schema mismatch..."
-        rm -f target/debug/monarch target/release/monarch
+      # Clean Monarch Binary Cache (prevent schema mismatch)
+      - name: Clean Monarch Binary Cache
+        run: |
+          echo "Cleaning cached Monarch binaries to prevent schema mismatch..."
+          rm -f target/debug/monarch target/release/monarch
 
-    # Build & Start Redis
-    - name: Build & Start Redis
-      run: |
-        echo "Starting Redis container..."
-        docker compose up -d voltage-redis
+      # Build & Start Redis
+      - name: Build & Start Redis
+        run: |
+          echo "Starting Redis container..."
+          docker compose up -d voltage-redis
 
-        echo "Waiting for Redis to be ready..."
-        for i in {1..30}; do
-          if docker compose exec -T voltage-redis redis-cli ping >/dev/null 2>&1; then
-            echo "✓ Redis is ready and responding to ping"
-            exit 0
-          fi
-          echo "Waiting for Redis to start... ($i/30)"
-          sleep 2
-        done
+          echo "Waiting for Redis to be ready..."
+          for i in {1..30}; do
+            if docker compose exec -T voltage-redis redis-cli ping >/dev/null 2>&1; then
+              echo "✓ Redis is ready and responding to ping"
+              exit 0
+            fi
+            echo "Waiting for Redis to start... ($i/30)"
+            sleep 2
+          done
 
-        echo "Redis failed to start in time" >&2
-        docker compose logs voltage-redis
-        exit 1
+          echo "Redis failed to start in time" >&2
+          docker compose logs voltage-redis
+          exit 1
 
-    # Run integration tests (sequential execution to avoid race conditions)
-    - name: Run Integration Tests
-      env:
-        REDIS_URL: redis://localhost:6379
-        VOLTAGE_DB_PATH: /tmp/test_voltage.db
-        RUST_LOG: debug  # More verbose for integration tests
-      run: |
-        # Clean Redis test database
-        docker compose exec -T voltage-redis redis-cli FLUSHDB
-        # Run integration tests (single-threaded to avoid race conditions)
-        cargo test --workspace --test '*' -- --test-threads=1
+      # Run integration tests (sequential execution to avoid race conditions)
+      - name: Run Integration Tests
+        env:
+          REDIS_URL: redis://localhost:6379
+          VOLTAGE_DB_PATH: /tmp/test_voltage.db
+          RUST_LOG: debug # More verbose for integration tests
+        run: |
+          # Clean Redis test database
+          docker compose exec -T voltage-redis redis-cli FLUSHDB
+          # Run integration tests (single-threaded to avoid race conditions)
+          cargo test --workspace --test '*' -- --test-threads=1
 
-    # Cleanup Docker resources
-    - name: Stop Redis
-      if: always()
-      run: |
-        docker compose down -v --rmi local
-        docker system prune -f
+      # Cleanup Docker resources
+      - name: Stop Redis
+        if: always()
+        run: |
+          docker compose down -v --rmi local
+          docker system prune -f

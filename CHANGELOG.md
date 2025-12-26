@@ -126,7 +126,7 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
 
 | Library | Version | Description |
 |---------|---------|-------------|
-| voltage-config | 0.1.0 | Shared data structures and schemas |
+
 | voltage-rtdb | 0.1.0 | Redis abstraction layer |
 | voltage-routing | 0.1.0 | M2C routing shared library |
 | voltage-comlink | 0.1.0 | Protocol abstractions |
@@ -146,7 +146,7 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
 
 ### Testing
 
-- 726 unit tests passing
+- Unit and integration tests with coverage
 - Integration tests with Redis
 - Pre-commit hooks for code quality
 - CI/CD pipeline with GitHub Actions

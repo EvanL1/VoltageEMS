@@ -32,15 +32,15 @@ services:
     # Complete /dev access for all industrial devices (serial, CAN, GPIO, I2C, SPI, etc.)
     volumes:
       - /dev:/dev:rw # Mount entire /dev directory with read-write access
-      - /opt/MonarchEdge/config/comsrv:/app/config/comsrv:ro
-      - /opt/MonarchEdge/data:/app/data:rw
-      - /opt/MonarchEdge/logs:/app/logs
+      - ${VOLTAGE_BASE_PATH:-./data}/config/comsrv:/app/config/comsrv:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
+      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
       - redis-socket:/run/redis:ro
     environment:
       - SERVICE_NAME=comsrv
       - SERVICE_PORT=6001
-      - RUST_LOG=info
-      - REDIS_URL=redis://voltage-redis:6379
+      - RUST_LOG=${RUST_LOG:-info}
+      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - CSV_BASE_PATH=/app/config/comsrv
       - CONFIG_BASE_PATH=/app/config/comsrv
@@ -61,8 +61,8 @@ services:
     environment:
       - SERVICE_NAME=modsrv
       - SERVICE_PORT=6002
-      - RUST_LOG=info
-      - REDIS_URL=redis://voltage-redis:6379
+      - RUST_LOG=${RUST_LOG:-info}
+      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - LOG_DIR=/app/logs
       - NO_PROXY="*"
@@ -71,9 +71,9 @@ services:
       voltage-redis:
         condition: service_healthy
     volumes:
-      - /opt/MonarchEdge/config:/app/config:ro
-      - /opt/MonarchEdge/data:/app/data:rw
-      - /opt/MonarchEdge/logs:/app/logs
+      - ${VOLTAGE_BASE_PATH:-./data}/config:/app/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
+      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
       - redis-socket:/run/redis:ro # Read-only access to Unix socket
     restart: unless-stopped
 
@@ -95,10 +95,10 @@ services:
       - influxdb-config:/etc/influxdb2
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=voltage123
-      - DOCKER_INFLUXDB_INIT_ORG=voltage
-      - DOCKER_INFLUXDB_INIT_BUCKET=history
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_USERNAME:-admin}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_PASSWORD:?INFLUXDB_PASSWORD must be set in .env}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-voltage}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET:-history}
       - NO_PROXY="*"
       - no_proxy="*"
     restart: unless-stopped
@@ -117,16 +117,17 @@ services:
     environment:
       - SERVICE_NAME=hissrv
       - SERVICE_PORT=6004
-      - INFLUXDB_URL=http://localhost:8086
-      - INFLUXDB_ORG=voltage
-      - INFLUXDB_BUCKET=history
-      - REDIS_URL=redis://localhost:6379
+      - INFLUXDB_URL=${INFLUXDB_URL:-http://127.0.0.1:8086}
+      - INFLUXDB_ORG=${INFLUXDB_ORG:-voltage}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-history}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:-}
+      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - /opt/MonarchEdge/config/hissrv:/app/config:ro
-      - /opt/MonarchEdge/logs:/app/logs
+      - ${VOLTAGE_BASE_PATH:-./data}/config/hissrv:/app/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy
@@ -143,17 +144,17 @@ services:
     environment:
       - SERVICE_NAME=apigateway
       - SERVICE_PORT=6005
-      - REDIS_URL=redis://localhost:6379
-      - COMSRV_URL=http://localhost:6001
-      - MODSRV_URL=http://localhost:6002
+      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
+      - COMSRV_URL=${COMSRV_URL:-http://127.0.0.1:6001}
+      - MODSRV_URL=${MODSRV_URL:-http://127.0.0.1:6002}
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - /opt/MonarchEdge/config/apigateway:/app/config:ro
-      - /opt/MonarchEdge/data:/app/data:rw
-      - /opt/MonarchEdge/logs:/app/logs
+      - ${VOLTAGE_BASE_PATH:-./data}/config/apigateway:/app/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
+      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy
@@ -168,13 +169,13 @@ services:
     environment:
       - SERVICE_NAME=netsrv
       - SERVICE_PORT=6006
-      - REDIS_URL=redis://localhost:6379
+      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - /opt/MonarchEdge/config/netsrv:/app/config:ro
-      - /opt/MonarchEdge/logs:/app/logs
+      - ${VOLTAGE_BASE_PATH:-./data}/config/netsrv:/app/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy
@@ -189,15 +190,15 @@ services:
     environment:
       - SERVICE_NAME=alarmsrv
       - SERVICE_PORT=6007
-      - REDIS_URL=redis://localhost:6379
+      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - /opt/MonarchEdge/config/alarmsrv:/app/config:ro
-      - /opt/MonarchEdge/data:/app/data:rw
-      - /opt/MonarchEdge/logs:/app/logs
+      - ${VOLTAGE_BASE_PATH:-./data}/config/alarmsrv:/app/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
+      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy

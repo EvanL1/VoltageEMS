@@ -10,10 +10,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Installation directories
-INSTALL_DIR="/opt/MonarchEdge"
+# Installation directories (configurable via environment variables)
+# Default: /opt/voltageems for production, can be overridden
+INSTALL_DIR="${VOLTAGE_INSTALL_DIR:-${INSTALL_DIR:-/opt/voltageems}}"
 # Allow logs to be stored on external storage if available
-LOG_DIR="${LOG_DIR:-/extp/logs}"
+LOG_DIR="${VOLTAGE_LOG_DIR:-${LOG_DIR:-$INSTALL_DIR/logs}}"
 
 # Save the directory where installation was launched (for cleanup later)
 LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
