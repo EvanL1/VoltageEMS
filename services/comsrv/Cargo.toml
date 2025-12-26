@@ -17,7 +17,7 @@ path = "src/main.rs"
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum", "openapi"] }
 
 # IGW - Industrial Gateway Protocol Library
-igw = { version = "=0.2.10", default-features = false, features = ["virtual-channel", "modbus", "modbus-rtu", "can", "tracing-support"] }
+igw = { version = "0.2.11", default-features = false, features = ["virtual-channel", "tracing-support", "modbus", "gpio"] }
 
 errors = { path = "../../libs/errors", features = ["axum-support"] }
 # voltage-comlink removed - types moved to core/channels/types.rs
@@ -86,9 +86,9 @@ redis = { workspace = true }  # For integration tests only
 
 [features]
 default = ["modbus", "can", "swagger-ui", "openapi"]
-modbus = []
-can = []
-gpio = []  # GPIO protocol support (Linux only, via igw gpio feature)
+modbus = ["igw/modbus"]  # Modbus TCP + RTU
+can = ["igw/can"]                          # CAN protocol (Linux only)
+gpio = ["igw/gpio"]                        # GPIO protocol (Linux only)
 swagger-ui = ["utoipa-swagger-ui"]   # Swagger UI documentation (enabled by default for development)
 openapi = []                         # OpenAPI schema generation for types
 integration = []                     # Integration tests requiring real Redis and voltage.db

@@ -129,10 +129,8 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
 
 | voltage-rtdb | 0.1.0 | Redis abstraction layer |
 | voltage-routing | 0.1.0 | M2C routing shared library |
-| voltage-comlink | 0.1.0 | Protocol abstractions |
 | voltage-model | 0.1.0 | Model calculation library |
 | voltage-rules | 0.1.0 | Rule engine library |
-| voltage-protocols | 0.1.0 | Protocol implementations |
 | voltage-schema-macro | 0.1.0 | Schema derivation macros |
 | common | 0.1.0 | Shared utilities |
 

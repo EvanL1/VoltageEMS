@@ -6,8 +6,6 @@
 //! - `instance_redis_sync.rs` - Redis synchronization
 //! - `instance_data.rs` - Data loading and querying
 
-#![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
-
 use crate::config::{InstanceRedisKeys, ModsrvQueries};
 use anyhow::{anyhow, Result};
 use sqlx::SqlitePool;

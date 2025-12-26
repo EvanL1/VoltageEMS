@@ -1162,8 +1162,7 @@ async fn validate_point_uniqueness(
 ///
 /// Only provide fields you want to update. Fields are type-specific:
 /// - **Common**: signal_name, description, unit, reverse
-/// - **T/A**: scale, offset, data_type (same fields for Telemetry and Adjustment)
-/// - **C only**: control_type, on_value, off_value, pulse_duration_ms
+/// - **T/A/C**: scale, offset, data_type
 #[derive(Debug, Clone, serde::Deserialize, utoipa::ToSchema)]
 pub struct PointUpdateRequest {
     /// Point signal name (all types)
@@ -1178,51 +1177,21 @@ pub struct PointUpdateRequest {
     #[schema(example = "V")]
     pub unit: Option<String>,
 
-    /// Scale factor for raw value conversion (T/A only)
+    /// Scale factor for raw value conversion (T/A/C)
     #[schema(example = 0.1)]
     pub scale: Option<f64>,
 
-    /// Offset for raw value conversion (T/A only)
+    /// Offset for raw value conversion (T/A/C)
     #[schema(example = 0.0)]
     pub offset: Option<f64>,
 
-    /// Data type: float32, int16, uint16, int32, uint32 (T/A only)
+    /// Data type: float32, int16, uint16, int32, uint32 (T/A/C)
     #[schema(example = "float32")]
     pub data_type: Option<String>,
 
     /// Reverse logic (false=normal, true=inverted) (all types)
     #[schema(example = false)]
     pub reverse: Option<bool>,
-
-    // ========== Control-specific fields (C only) ==========
-    /// Control type: momentary or sustained (C only)
-    #[schema(example = "momentary")]
-    pub control_type: Option<String>,
-
-    /// Value for ON state (C only)
-    #[schema(example = 1)]
-    pub on_value: Option<u16>,
-
-    /// Value for OFF state (C only)
-    #[schema(example = 0)]
-    pub off_value: Option<u16>,
-
-    /// Pulse duration in milliseconds for momentary control (C only)
-    #[schema(example = 500)]
-    pub pulse_duration_ms: Option<u32>,
-
-    // ========== Legacy fields (not stored in database) ==========
-    /// Minimum allowed value (DEPRECATED - not stored in database)
-    #[schema(example = 0.0)]
-    pub min_value: Option<f64>,
-
-    /// Maximum allowed value (DEPRECATED - not stored in database)
-    #[schema(example = 1000.0)]
-    pub max_value: Option<f64>,
-
-    /// Adjustment step size (DEPRECATED - not stored in database)
-    #[schema(example = 0.5)]
-    pub step: Option<f64>,
 }
 
 /// Update a point (supports all four types: T/S/C/A)
@@ -1328,14 +1297,7 @@ async fn update_point_handler_inner<R: Rtdb>(
         || update.scale.is_some()
         || update.offset.is_some()
         || update.data_type.is_some()
-        || update.reverse.is_some()
-        || update.control_type.is_some()
-        || update.on_value.is_some()
-        || update.off_value.is_some()
-        || update.pulse_duration_ms.is_some()
-        || update.min_value.is_some()
-        || update.max_value.is_some()
-        || update.step.is_some();
+        || update.reverse.is_some();
 
     if !has_update {
         return Err(AppError::bad_request("No fields provided for update"));

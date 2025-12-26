@@ -37,10 +37,11 @@ COPY . .
 # Optional: swagger-ui (for development/debugging)
 RUN if [ "$ENABLE_SWAGGER_UI" = "1" ]; then \
         echo "Building with Swagger UI enabled"; \
-        cargo build --release -p comsrv -p modsrv --features "swagger-ui"; \
-    else \
-        echo "Building with default features (production)"; \
         cargo build --release -p comsrv -p modsrv; \
+    else \
+        echo "Building without Swagger UI (production)"; \
+        cargo build --release -p comsrv --no-default-features --features "modbus,can,openapi" && \
+        cargo build --release -p modsrv --no-default-features --features "redis,sqlite"; \
     fi
 
 # ============================================================================

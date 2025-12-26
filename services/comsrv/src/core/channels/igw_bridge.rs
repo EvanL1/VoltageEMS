@@ -41,7 +41,7 @@ use igw::protocols::can::{CanClient, CanConfig, CanPoint};
 use igw::{ConnectionState, Protocol, ProtocolClient};
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
-use igw::protocols::gpio::{GpioChannel, GpioChannelConfig, GpioDirection, GpioPinConfig};
+use igw::protocols::gpio::{GpioChannel, GpioChannelConfig, GpioPinConfig};
 
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ChannelStatus;
@@ -67,6 +67,9 @@ pub enum ProtocolClientImpl {
     Virtual(VirtualChannel),
     /// Modbus TCP or RTU channel
     Modbus(ModbusChannel),
+    /// GPIO channel for digital I/O
+    #[cfg(all(feature = "gpio", target_os = "linux"))]
+    Gpio(GpioChannel),
     /// CAN channel (LYNK protocol)
     #[cfg(all(feature = "can", target_os = "linux"))]
     Can(CanClient),
@@ -187,6 +190,38 @@ impl ProtocolClientImpl {
         self.set_log_handler(Arc::new(TracingLogHandler));
         self.set_log_config(ChannelLogConfig::default());
     }
+
+    /// Get diagnostics information from the protocol.
+    ///
+    /// Returns error count and last error for monitoring GPIO/CAN read failures.
+    pub async fn diagnostics(&self) -> Option<(u64, Option<String>)> {
+        match self {
+            Self::Virtual(_) => None, // VirtualChannel doesn't track errors
+            Self::Modbus(c) => {
+                if let Ok(diag) = c.diagnostics().await {
+                    Some((diag.error_count, diag.last_error))
+                } else {
+                    None
+                }
+            },
+            #[cfg(all(target_os = "linux", feature = "gpio"))]
+            Self::Gpio(c) => {
+                if let Ok(diag) = c.diagnostics().await {
+                    Some((diag.error_count, diag.last_error))
+                } else {
+                    None
+                }
+            },
+            #[cfg(all(feature = "can", target_os = "linux"))]
+            Self::Can(c) => {
+                if let Ok(diag) = c.diagnostics().await {
+                    Some((diag.error_count, diag.last_error))
+                } else {
+                    None
+                }
+            },
+        }
+    }
 }
 
 // ============================================================================
@@ -214,23 +249,22 @@ pub struct IgwChannelWrapper<R: Rtdb> {
 }
 
 impl<R: Rtdb> IgwChannelWrapper<R> {
-    /// Create a new IGW channel wrapper with command processing and storage.
+    /// Create a new IGW channel wrapper with command processing, storage, and polling.
+    ///
+    /// Polling is always enabled - all channels need periodic data acquisition.
+    ///
+    /// # Arguments
+    /// * `protocol` - The protocol client implementation
+    /// * `channel_id` - Unique channel identifier
+    /// * `store` - Data store for persisting polled data
+    /// * `command_rx` - Receiver for control commands
+    /// * `poll_interval_ms` - Polling interval in milliseconds
     pub fn new(
         protocol: ProtocolClientImpl,
         channel_id: u32,
         store: Arc<RedisDataStore<R>>,
         command_rx: mpsc::Receiver<ChannelCommand>,
-    ) -> Self {
-        Self::new_with_polling(protocol, channel_id, store, command_rx, false)
-    }
-
-    /// Create a new IGW channel wrapper with optional polling task.
-    pub fn new_with_polling(
-        protocol: ProtocolClientImpl,
-        channel_id: u32,
-        store: Arc<RedisDataStore<R>>,
-        command_rx: mpsc::Receiver<ChannelCommand>,
-        enable_polling: bool,
+        poll_interval_ms: u64,
     ) -> Self {
         let protocol = Arc::new(RwLock::new(protocol));
         let protocol_clone = Arc::clone(&protocol);
@@ -240,20 +274,17 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
             Self::run_command_executor(protocol_clone, command_rx, channel_id).await;
         });
 
-        // Start polling task if requested
-        let polling_handle = if enable_polling {
-            let protocol_clone = Arc::clone(&protocol);
-            let store_clone = Arc::clone(&store);
+        // Start polling task with configured interval
+        let protocol_clone = Arc::clone(&protocol);
+        let store_clone = Arc::clone(&store);
+        let polling_handle = Some(tokio::spawn(async move {
+            run_polling_task(protocol_clone, store_clone, channel_id, poll_interval_ms).await;
+        }));
 
-            info!("Ch{} 启动轮询任务 (enable_polling=true)", channel_id);
-
-            Some(tokio::spawn(async move {
-                run_polling_task(protocol_clone, store_clone, channel_id).await;
-            }))
-        } else {
-            info!("Ch{} 不启动轮询任务 (enable_polling=false)", channel_id);
-            None
-        };
+        info!(
+            "Ch{} 启动轮询任务 (间隔: {}ms)",
+            channel_id, poll_interval_ms
+        );
 
         Self {
             protocol,
@@ -381,47 +412,54 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     }
 }
 
-/// Run the polling task for event-driven protocols (CAN).
+/// Run the polling task for event-driven protocols (GPIO/CAN).
 ///
 /// Periodically calls poll_once() to retrieve cached data and write to store.
+/// The polling interval is configurable via `poll_interval_ms`.
 async fn run_polling_task<R: Rtdb>(
     protocol: Arc<RwLock<ProtocolClientImpl>>,
     store: Arc<RedisDataStore<R>>,
     channel_id: u32,
+    poll_interval_ms: u64,
 ) {
-    info!("Ch{} polling task started", channel_id);
+    info!(
+        "Ch{} polling task started (interval: {}ms)",
+        channel_id, poll_interval_ms
+    );
 
     // Wait a bit for the connection to be established
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-    // Poll every 1 second
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(1000));
+    // Use configured poll interval
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(poll_interval_ms));
+
+    // Track previous error count to detect new errors
+    let mut prev_error_count: u64 = 0;
 
     loop {
         interval.tick().await;
 
-        // Check if still connected
-        let is_connected = {
-            let guard = protocol.read().await;
-            guard.connection_state().is_connected()
-        };
-
-        if !is_connected {
-            info!("Ch{} polling task停止: 连接已断开", channel_id);
-            break;
-        }
-
-        // Poll data
+        // Poll data (no connection check needed - GPIO/CAN are always "connected")
         let mut protocol_guard = protocol.write().await;
         match protocol_guard.poll_once().await {
             Ok(batch) => {
                 let count = batch.len();
                 if count > 0 {
-                    info!("Ch{} polling获取到 {} 个数据点", channel_id, count);
+                    debug!("Ch{} polling获取到 {} 个数据点", channel_id, count);
                     if let Err(e) = store.write_batch(channel_id, batch).await {
                         error!("Ch{} 写入Redis失败: {}", channel_id, e);
-                    } else {
-                        info!("Ch{} 成功写入 {} 个数据点到Redis", channel_id, count);
+                    }
+                }
+
+                // Check for partial read failures (GPIO/CAN may have some pins fail)
+                if let Some((error_count, last_error)) = protocol_guard.diagnostics().await {
+                    if error_count > prev_error_count {
+                        let new_errors = error_count - prev_error_count;
+                        warn!(
+                            "Ch{} 部分读取失败: {} 个新错误, 最后错误: {:?}",
+                            channel_id, new_errors, last_error
+                        );
+                        prev_error_count = error_count;
                     }
                 }
             },
@@ -430,8 +468,6 @@ async fn run_polling_task<R: Rtdb>(
             },
         }
     }
-
-    info!("Ch{} polling task terminated", channel_id);
 }
 
 // ============================================================================
@@ -838,9 +874,8 @@ pub fn create_gpio_channel(
     // Configure DI pins from signal points (遥信)
     for pt in &runtime_config.signal_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
-            let pin_config =
-                GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id.to_string())
-                    .with_active_low(pt.reverse);
+            let pin_config = GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id)
+                .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);
         }
@@ -850,7 +885,7 @@ pub fn create_gpio_channel(
     for pt in &runtime_config.control_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
             let pin_config =
-                GpioPinConfig::digital_output(default_chip, gpio_num, pt.base.point_id.to_string())
+                GpioPinConfig::digital_output(default_chip, gpio_num, pt.base.point_id)
                     .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);

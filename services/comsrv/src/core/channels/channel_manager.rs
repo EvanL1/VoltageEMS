@@ -290,7 +290,14 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
 
         // 6. Create IgwChannelWrapper with command processing and storage
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        // Virtual channel uses default 1000ms polling
+        let poll_interval_ms = runtime_config
+            .base
+            .parameters
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000);
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (virtual)", channel_id);
@@ -340,7 +347,12 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
 
         // 7. Create IgwChannelWrapper with command processing and storage
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        // Modbus uses internal polling, external polling as backup (default 1000ms)
+        let poll_interval_ms = params
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000);
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (modbus_tcp)", channel_id);
@@ -390,7 +402,12 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
 
         // 7. Create IgwChannelWrapper with command processing and storage
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        // Modbus uses internal polling, external polling as backup (default 1000ms)
+        let poll_interval_ms = params
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000);
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (modbus_rtu)", channel_id);
@@ -429,8 +446,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         // 5. Setup command trigger for M2C control (DO commands)
         let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
 
-        // 6. Create IgwChannelWrapper with command processing and storage
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx);
+        // 6. Create IgwChannelWrapper
+        // GPIO needs faster polling (default 200ms for responsive DI detection)
+        let poll_interval_ms = runtime_config
+            .base
+            .parameters
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(200);
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (gpio)", channel_id);
@@ -481,8 +505,13 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         // 6. Setup command trigger (CAN is read-only, but we still create the trigger for consistency)
         let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
 
-        // 7. Create IgwChannelWrapper with polling enabled for CAN (event-driven protocol)
-        let wrapper = IgwChannelWrapper::new_with_polling(protocol, channel_id, store, rx, true);
+        // 7. Create IgwChannelWrapper
+        // CAN is event-driven, needs faster polling (default 200ms)
+        let poll_interval_ms = params
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(200);
+        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
         info!("Ch{} created via IGW (can)", channel_id);
