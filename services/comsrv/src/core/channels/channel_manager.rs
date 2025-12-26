@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::core::channels::igw_bridge::{
     convert_to_igw_point_configs, create_modbus_channel, create_modbus_rtu_channel,
@@ -17,7 +17,10 @@ use crate::core::channels::igw_bridge::{
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 use crate::core::channels::igw_bridge::create_gpio_channel;
-
+#[cfg(feature = "can")]
+use crate::core::channels::igw_bridge::{
+    convert_to_can_point_configs, convert_can_to_igw_point_configs, create_can_channel,
+};
 use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
@@ -216,12 +219,23 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 self.create_igw_gpio_channel(channel_id, &runtime_config)
                     .await?
             },
+            #[cfg(feature = "can")]
+            "can" => {
+                // IGW path: Use igw::CanClient with RedisDataStore
+                self.create_igw_can_channel(channel_id, &runtime_config)
+                    .await?
+            },
             _ => {
                 // All protocols now use IGW - unsupported protocols should error
+                let mut supported_protocols = vec!["virtual", "modbus_tcp", "modbus_rtu"];
+                
                 #[cfg(all(target_os = "linux", feature = "gpio"))]
-                let supported = "virtual, modbus_tcp, modbus_rtu, gpio";
-                #[cfg(not(all(target_os = "linux", feature = "gpio")))]
-                let supported = "virtual, modbus_tcp, modbus_rtu";
+                supported_protocols.push("gpio");
+                
+                #[cfg(feature = "can")]
+                supported_protocols.push("can");
+                
+                let supported = supported_protocols.join(", ");
 
                 return Err(anyhow::anyhow!(
                     "Unsupported protocol '{}' for channel {}. Supported: {}",
@@ -422,6 +436,59 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         info!("Ch{} created via IGW (gpio)", channel_id);
         Ok((channel_impl, command_trigger))
     }
+
+    /// Create IGW-based CAN channel.
+    ///
+    /// Uses igw::CanClient with RedisDataStore for data persistence.
+    /// CAN protocol is event-driven and read-only (no M2C control).
+    #[cfg(feature = "can")]
+    async fn create_igw_can_channel(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+    ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
+        debug!("Ch{} creating via IGW CAN path", channel_id);
+
+        // 1. Create RedisDataStore for this channel
+        let store = Arc::new(RedisDataStore::new(
+            Arc::clone(&self.rtdb),
+            Arc::clone(&self.routing_cache),
+        ));
+
+        // 2. Convert CAN mappings to IGW formats
+        let can_point_configs = convert_to_can_point_configs(runtime_config);
+        let igw_point_configs = convert_can_to_igw_point_configs(runtime_config);
+        
+        if can_point_configs.is_empty() {
+            warn!("Ch{} has no CAN point mappings configured", channel_id);
+        }
+        
+        store.set_point_configs(channel_id, igw_point_configs);
+
+        // 3. Start background flush task for write buffer
+        store.start_flush_task();
+
+        // 4. Extract CAN interface from runtime config parameters
+        let params = &runtime_config.base.parameters;
+        let can_interface = params
+            .get("device")
+            .and_then(|v| v.as_str())
+            .unwrap_or("can0");
+
+        // 5. Create CanClient via igw_bridge
+        let protocol = create_can_channel(channel_id, can_interface, can_point_configs);
+
+        // 6. Setup command trigger (CAN is read-only, but we still create the trigger for consistency)
+        let (command_trigger, rx) = self.create_command_trigger(channel_id).await?;
+
+        // 7. Create IgwChannelWrapper with polling enabled for CAN (event-driven protocol)
+        let wrapper = IgwChannelWrapper::new_with_polling(protocol, channel_id, store, rx, true);
+        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+
+        info!("Ch{} created via IGW (can)", channel_id);
+        Ok((channel_impl, command_trigger))
+    }
+
 
     /// Load channel configuration from SQLite
     async fn load_channel_configuration(

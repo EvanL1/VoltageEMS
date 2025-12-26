@@ -191,19 +191,23 @@ impl ComsrvSqliteLoader {
     }
 
     /// Load all points for a RuntimeChannelConfig with protocol-aware mapping
-    /// Protocol mappings are now embedded in each point's protocol_mappings field
     pub async fn load_runtime_channel_points(
         &self,
         runtime_config: &mut RuntimeChannelConfig,
     ) -> Result<()> {
-        // Clear existing points
+        use crate::core::config::{GpioMapping, ModbusMapping, VirtualMapping};
+
+        // Clear existing points and mappings
         runtime_config.telemetry_points.clear();
         runtime_config.signal_points.clear();
         runtime_config.control_points.clear();
         runtime_config.adjustment_points.clear();
+        runtime_config.modbus_mappings.clear();
+        runtime_config.virtual_mappings.clear();
+        runtime_config.can_mappings.clear();
 
         let channel_id = runtime_config.id();
-        tracing::debug!("Ch{} loading points", channel_id);
+        let protocol = runtime_config.protocol().to_string(); // Clone to avoid borrow conflict
 
         // Load telemetry points from telemetry_points table (with embedded protocol mappings)
         let telem_rows = sqlx::query(
@@ -255,7 +259,177 @@ impl ComsrvSqliteLoader {
             ComSrvError::ConfigError(format!("Failed to load adjustment points: {}", e))
         })?;
 
-        // Protocol mappings are now stored directly in point.base.protocol_mappings
+        // Helper function to parse protocol mappings from JSON field
+        let mut parse_mappings = |protocol_mappings_json: Option<String>,
+                                  point_id: u32,
+                                  telemetry_type: &str,
+                                  data_type: &str,
+                                  scale: f64,
+                                  offset: f64|
+         -> Result<()> {
+            if let Some(json_str) = protocol_mappings_json {
+                if json_str.trim().is_empty() || json_str == "null" || json_str == "{}" {
+                    return Ok(());
+                }
+
+                match protocol.to_lowercase().as_str() {
+                    "modbus_tcp" | "modbus_rtu" | "modbus" => {
+                        if let Ok(mapping_data) =
+                            serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            let mapping = ModbusMapping {
+                                channel_id,
+                                point_id,
+                                telemetry_type: telemetry_type.to_string(),
+                                slave_id: mapping_data
+                                    .get("slave_id")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(1) as u8,
+                                function_code: mapping_data
+                                    .get("function_code")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(3)
+                                    as u8,
+                                register_address: mapping_data
+                                    .get("register_address")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                                    as u16,
+                                data_type: mapping_data
+                                    .get("data_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("uint16")
+                                    .to_string(),
+                                byte_order: mapping_data
+                                    .get("byte_order")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("ABCD")
+                                    .to_string(),
+                                bit_position: mapping_data
+                                    .get("bit_position")
+                                    .and_then(|v| v.as_i64())
+                                    .map(|v| v as u8)
+                                    .unwrap_or(0),
+                            };
+                            runtime_config.modbus_mappings.push(mapping);
+                        }
+                    },
+                    "virtual" => {
+                        if let Ok(mapping_data) =
+                            serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            let mapping = VirtualMapping {
+                                channel_id,
+                                point_id,
+                                telemetry_type: telemetry_type.to_string(),
+                                expression: mapping_data
+                                    .get("expression")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                update_interval: mapping_data
+                                    .get("update_interval")
+                                    .and_then(|v| v.as_i64())
+                                    .map(|v| v as u32),
+                                initial_value: mapping_data
+                                    .get("initial_value")
+                                    .and_then(|v| v.as_f64()),
+                                noise_range: mapping_data
+                                    .get("noise_range")
+                                    .and_then(|v| v.as_f64()),
+                            };
+                            runtime_config.virtual_mappings.push(mapping);
+                        }
+                    },
+                    "di_do" | "gpio" | "dido" => {
+                        if let Ok(mapping_data) =
+                            serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            let mapping = GpioMapping {
+                                channel_id,
+                                point_id,
+                                telemetry_type: telemetry_type.to_string(),
+                                gpio_number: mapping_data
+                                    .get("gpio_number")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0)
+                                    as u32,
+                            };
+                            runtime_config.gpio_mappings.push(mapping);
+                        }
+                    },
+                    "can" => {
+                        use crate::core::config::CanMapping;
+                        if let Ok(mapping_data) =
+                            serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            // Extract byte_offset and bit_position from JSON
+                            let byte_offset = mapping_data
+                                .get("byte_offset")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as u32;
+                            let bit_position = mapping_data
+                                .get("bit_position")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as u32;
+                            
+                            // Calculate start_bit = byte_offset * 8 + bit_position
+                            let start_bit = byte_offset * 8 + bit_position;
+                            
+                            let mapping = CanMapping {
+                                channel_id,
+                                point_id,
+                                telemetry_type: telemetry_type.to_string(),
+                                can_id: mapping_data
+                                    .get("can_id")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as u32,
+                                msg_name: mapping_data
+                                    .get("msg_name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                signal_name: mapping_data
+                                    .get("signal_name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                start_bit,
+                                bit_length: mapping_data
+                                    .get("bit_length")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as u32,
+                                byte_order: mapping_data
+                                    .get("byte_order")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("ABCD")
+                                    .to_string(),
+                                data_type: data_type.to_string(),
+                                signed: mapping_data
+                                    .get("signed")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false),
+                                // Use scale/offset from telemetry_points table, not from JSON
+                                scale,
+                                offset,
+                                min_value: mapping_data
+                                    .get("min_value")
+                                    .and_then(|v| v.as_f64()),
+                                max_value: mapping_data
+                                    .get("max_value")
+                                    .and_then(|v| v.as_f64()),
+                                unit: mapping_data
+                                    .get("unit")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                            };
+                            runtime_config.can_mappings.push(mapping);
+                        }
+                    },
+                    _ => {
+                        // Other protocols don't have mappings yet
+                    },
+                }
+            }
+            Ok(())
+        };
 
         // Process telemetry points
         for row in telem_rows {
@@ -274,15 +448,15 @@ impl ComsrvSqliteLoader {
                 .unwrap_or_else(|_| "float32".to_string());
             let description: Option<String> = row.try_get("description").ok();
 
-            // Get protocol mappings JSON directly
+            // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
+            parse_mappings(protocol_mappings, point_id as u32, "T", &data_type, scale, offset)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
                 signal_name,
                 description,
                 unit,
-                protocol_mappings,
             };
 
             let point = TelemetryPoint {
@@ -305,20 +479,20 @@ impl ComsrvSqliteLoader {
             })?;
             let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
             let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            let _data_type: String = row
+            let data_type: String = row
                 .try_get("data_type")
                 .unwrap_or_else(|_| "uint16".to_string());
             let description: Option<String> = row.try_get("description").ok();
 
-            // Get protocol mappings JSON directly
+            // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
+            parse_mappings(protocol_mappings, point_id as u32, "S", &data_type, 1.0, 0.0)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
                 signal_name,
                 description,
                 unit,
-                protocol_mappings,
             };
 
             let point = SignalPoint {
@@ -338,20 +512,20 @@ impl ComsrvSqliteLoader {
             })?;
             let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
             let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            let _data_type: String = row
+            let data_type: String = row
                 .try_get("data_type")
                 .unwrap_or_else(|_| "bool".to_string());
             let description: Option<String> = row.try_get("description").ok();
 
-            // Get protocol mappings JSON directly
+            // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
+            parse_mappings(protocol_mappings, point_id as u32, "C", &data_type, 1.0, 0.0)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
                 signal_name,
                 description,
                 unit,
-                protocol_mappings,
             };
 
             let point = ControlPoint {
@@ -382,15 +556,15 @@ impl ComsrvSqliteLoader {
                 .unwrap_or_else(|_| "float32".to_string());
             let description: Option<String> = row.try_get("description").ok();
 
-            // Get protocol mappings JSON directly
+            // Parse protocol mappings from JSON field
             let protocol_mappings: Option<String> = row.try_get("protocol_mappings").ok();
+            parse_mappings(protocol_mappings, point_id as u32, "A", &data_type, scale, offset)?;
 
             let base_point = Point {
                 point_id: point_id as u32,
                 signal_name,
                 description,
                 unit,
-                protocol_mappings,
             };
 
             let point = AdjustmentPoint {
@@ -681,17 +855,10 @@ mod tests {
         assert_eq!(runtime_config.control_points.len(), 1);
         assert_eq!(runtime_config.adjustment_points.len(), 1);
 
-        // Verify protocol_mappings JSON is preserved in points
-        let telemetry_point = &runtime_config.telemetry_points[0];
-        assert!(
-            telemetry_point.base.protocol_mappings.is_some(),
-            "Telemetry point should have protocol_mappings"
-        );
-        let json_str = telemetry_point.base.protocol_mappings.as_ref().unwrap();
-        assert!(
-            json_str.contains("register_address"),
-            "protocol_mappings should contain register_address"
-        );
+        // Verify Modbus mappings loaded
+        assert_eq!(runtime_config.modbus_mappings.len(), 2);
+        assert_eq!(runtime_config.modbus_mappings[0].point_id, 1);
+        assert_eq!(runtime_config.modbus_mappings[0].register_address, 100);
     }
 
     #[tokio::test]
@@ -713,16 +880,12 @@ mod tests {
         // Verify loaded points
         assert_eq!(runtime_config.telemetry_points.len(), 1);
 
-        // Verify protocol_mappings JSON is preserved for virtual channel
-        let telemetry_point = &runtime_config.telemetry_points[0];
-        assert!(
-            telemetry_point.base.protocol_mappings.is_some(),
-            "Virtual point should have protocol_mappings"
-        );
-        let json_str = telemetry_point.base.protocol_mappings.as_ref().unwrap();
-        assert!(
-            json_str.contains("update_interval"),
-            "protocol_mappings should contain update_interval"
+        // Verify Virtual mappings loaded
+        assert_eq!(runtime_config.virtual_mappings.len(), 1);
+        assert_eq!(runtime_config.virtual_mappings[0].point_id, 1);
+        assert_eq!(
+            runtime_config.virtual_mappings[0].update_interval,
+            Some(1000)
         );
     }
 
