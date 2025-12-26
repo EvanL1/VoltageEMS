@@ -3,60 +3,17 @@
 
 channels:
   - id: 1
-    name: "PCS#1"
-    description: "变流器 #1"
-    protocol: "modbus_tcp"
-    enabled: true
+    name: "lynk_serial_can"
+    description: "CAN 总线协议 - Discover LYNK Serial 接口"
+    protocol: "can"                         # 通用 CAN 协议
+    enabled: true                          # 默认禁用，需要时启用
     parameters:
-      host: "192.168.1.10"
-      port: 502
-      connect_timeout_ms: 3000
-      read_timeout_ms: 3000
-    logging:
-      enabled: true
-      level: "info"
-
-  - id: 2
-    name: "BAMS#1"
-    description: "电池管理系统 #1 (Ampace)"
-    protocol: "modbus_tcp"
-    enabled: true
-    parameters:
-      host: "192.168.1.100"
-      port: 502
-      connect_timeout_ms: 3000
-      read_timeout_ms: 3000
-    logging:
-      enabled: true
-      level: "info"
-
-  - id: 3
-    name: "GENSET#1"
-    description: "柴油发电机组 #1"
-    protocol: "modbus_rtu"
-    enabled: true
-    parameters:
-      device: "/dev/ttyS4"
-      baud_rate: 9600
-      data_bits: 8
-      stop_bits: 1
-      parity: "N"
-      connect_timeout_ms: 3000
-      read_timeout_ms: 3000
-      retry_interval_ms: 2000
-    logging:
-      enabled: true
-      level: "info"
-
-  - id: 4
-    name: "ECU1170_GPIO"
-    description: "ECU-1170 本机 DI/DO"
-    protocol: "di_do"
-    enabled: false  # 默认禁用，待硬件就绪后启用
-    parameters:
-      driver: "sysfs"
-      gpio_base_path: "/sys/class/gpio"
-      di_poll_interval_ms: 200
+      device: "can0"                   # CAN 设备路径 (如 can0, can1)
+      bitrate: 250000                       # 波特率 250kbps (Discover LYNK 规范)
+      connect_timeout_ms: 3000              # 连接超时
+      read_timeout_ms: 3000                 # 读取超时
+      retry_interval_ms: 2000               # 重连间隔
+      rx_poll_interval_ms: 50               # 接收轮询周期 (50ms)
     logging:
       enabled: true
       level: "info"

@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use igw::core::data::{DataBatch, DataType};
 use igw::core::error::GatewayError;
@@ -34,6 +34,10 @@ use igw::core::point::{
 use igw::core::traits::{AdjustmentCommand, ControlCommand, WriteResult};
 use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
 use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
+
+#[cfg(feature = "can")]
+use igw::protocols::can::{CanClient, CanConfig, CanPoint};
+
 use igw::{ConnectionState, Protocol, ProtocolClient};
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
@@ -63,9 +67,9 @@ pub enum ProtocolClientImpl {
     Virtual(VirtualChannel),
     /// Modbus TCP or RTU channel
     Modbus(ModbusChannel),
-    /// GPIO channel for digital I/O (Linux only)
-    #[cfg(all(target_os = "linux", feature = "gpio"))]
-    Gpio(GpioChannel),
+    /// CAN channel (LYNK protocol)
+    #[cfg(feature = "can")]
+    Can(CanClient),
 }
 
 impl ProtocolClientImpl {
@@ -76,6 +80,8 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.poll_once().await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.poll_once().await,
+            #[cfg(feature = "can")]
+            Self::Can(c) => c.poll_once().await,
         }
     }
 
@@ -86,6 +92,8 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.connect().await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.connect().await,
+            #[cfg(feature = "can")]
+            Self::Can(c) => c.connect().await,
         }
     }
 
@@ -96,6 +104,8 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.disconnect().await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.disconnect().await,
+            #[cfg(feature = "can")]
+            Self::Can(c) => c.disconnect().await,
         }
     }
 
@@ -106,6 +116,8 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.connection_state(),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.connection_state(),
+            #[cfg(feature = "can")]
+            Self::Can(c) => c.connection_state(),
         }
     }
 
@@ -119,6 +131,8 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.write_control(commands).await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.write_control(commands).await,
+            #[cfg(feature = "can")]
+            Self::Can(c) => c.write_control(commands).await,
         }
     }
 
@@ -132,30 +146,36 @@ impl ProtocolClientImpl {
             Self::Modbus(c) => c.write_adjustment(commands).await,
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(c) => c.write_adjustment(commands).await,
+            #[cfg(feature = "can")]
+            Self::Can(c) => c.write_adjustment(commands).await,
         }
     }
 
     /// Set the log handler for protocol-level logging.
     ///
-    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel are no-ops.
+    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel and CanClient are no-ops.
     pub fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
         match self {
             Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
             Self::Modbus(c) => c.set_log_handler(handler),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
+            #[cfg(feature = "can")]
+            Self::Can(_) => {}, // CanClient doesn't implement LoggableProtocol yet
         }
     }
 
     /// Set the log configuration.
     ///
-    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel are no-ops.
+    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel and CanClient are no-ops.
     pub fn set_log_config(&mut self, config: ChannelLogConfig) {
         match self {
             Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
             Self::Modbus(c) => c.set_log_config(config),
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
+            #[cfg(feature = "can")]
+            Self::Can(_) => {}, // CanClient doesn't implement LoggableProtocol yet
         }
     }
 
@@ -179,6 +199,13 @@ impl ProtocolClientImpl {
 /// - Holds an IGW ProtocolClient implementation (enum-based)
 /// - Spawns a background task to process incoming commands
 /// - Provides access to the underlying protocol for status queries
+/// Wrapper for IGW protocol clients that integrates with comsrv's command system.
+///
+/// This wrapper:
+/// - Holds an IGW ProtocolClient implementation (enum-based)
+/// - Spawns a background task to process incoming commands
+/// - Provides access to the underlying protocol for status queries
+/// - For event-driven protocols (CAN), starts a polling task for data acquisition
 pub struct IgwChannelWrapper<R: Rtdb> {
     /// The IGW protocol client (enum-based for AFIT compatibility)
     protocol: Arc<RwLock<ProtocolClientImpl>>,
@@ -188,6 +215,8 @@ pub struct IgwChannelWrapper<R: Rtdb> {
     store: Arc<RedisDataStore<R>>,
     /// Command executor task handle
     _executor_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Polling task handle (for event-driven protocols)
+    _polling_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl<R: Rtdb> IgwChannelWrapper<R> {
@@ -198,6 +227,17 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
         store: Arc<RedisDataStore<R>>,
         command_rx: mpsc::Receiver<ChannelCommand>,
     ) -> Self {
+        Self::new_with_polling(protocol, channel_id, store, command_rx, false)
+    }
+
+    /// Create a new IGW channel wrapper with optional polling task.
+    pub fn new_with_polling(
+        protocol: ProtocolClientImpl,
+        channel_id: u32,
+        store: Arc<RedisDataStore<R>>,
+        command_rx: mpsc::Receiver<ChannelCommand>,
+        enable_polling: bool,
+    ) -> Self {
         let protocol = Arc::new(RwLock::new(protocol));
         let protocol_clone = Arc::clone(&protocol);
 
@@ -206,11 +246,27 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
             Self::run_command_executor(protocol_clone, command_rx, channel_id).await;
         });
 
+        // Start polling task if requested
+        let polling_handle = if enable_polling {
+            let protocol_clone = Arc::clone(&protocol);
+            let store_clone = Arc::clone(&store);
+            
+            info!("Ch{} 启动轮询任务 (enable_polling=true)", channel_id);
+            
+            Some(tokio::spawn(async move {
+                run_polling_task(protocol_clone, store_clone, channel_id).await;
+            }))
+        } else {
+            info!("Ch{} 不启动轮询任务 (enable_polling=false)", channel_id);
+            None
+        };
+
         Self {
             protocol,
             channel_id,
             store,
             _executor_handle: Some(executor_handle),
+            _polling_handle: polling_handle,
         }
     }
 
@@ -329,6 +385,59 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
 
         debug!("Ch{} igw command executor stopped", channel_id);
     }
+}
+
+/// Run the polling task for event-driven protocols (CAN).
+///
+/// Periodically calls poll_once() to retrieve cached data and write to store.
+async fn run_polling_task<R: Rtdb>(
+    protocol: Arc<RwLock<ProtocolClientImpl>>,
+    store: Arc<RedisDataStore<R>>,
+    channel_id: u32,
+) {
+    info!("Ch{} polling task started", channel_id);
+    
+    // Wait a bit for the connection to be established
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+    
+    // Poll every 1 second
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(1000));
+    
+    loop {
+        interval.tick().await;
+        
+        // Check if still connected
+        let is_connected = {
+            let guard = protocol.read().await;
+            guard.connection_state().is_connected()
+        };
+        
+        if !is_connected {
+            info!("Ch{} polling task停止: 连接已断开", channel_id);
+            break;
+        }
+        
+        // Poll data
+        let mut protocol_guard = protocol.write().await;
+        match protocol_guard.poll_once().await {
+            Ok(batch) => {
+                let count = batch.len();
+                if count > 0 {
+                    info!("Ch{} polling获取到 {} 个数据点", channel_id, count);
+                    if let Err(e) = store.write_batch(channel_id, batch).await {
+                        error!("Ch{} 写入Redis失败: {}", channel_id, e);
+                    } else {
+                        info!("Ch{} 成功写入 {} 个数据点到Redis", channel_id, count);
+                    }
+                }
+            },
+            Err(e) => {
+                warn!("Ch{} polling错误: {}", channel_id, e);
+            },
+        }
+    }
+    
+    info!("Ch{} polling task terminated", channel_id);
 }
 
 // ============================================================================
@@ -700,6 +809,138 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
         }))
     }
 }
+
+// ============================================================================
+// CAN Channel Creation
+// ============================================================================
+
+#[cfg(feature = "can")]
+/// Convert RuntimeChannelConfig to IGW CanPoint list for CAN protocol.
+///
+/// Maps CanMapping records from voltage.db to igw's CanPoint structure.
+/// Scale and offset are applied during decoding in the protocol layer.
+pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<CanPoint> {
+    let mut configs = Vec::with_capacity(runtime_config.can_mappings.len());
+
+    for mapping in &runtime_config.can_mappings {
+        let point = CanPoint {
+            point_id: mapping.point_id,
+            can_id: mapping.can_id,
+            byte_offset: (mapping.start_bit / 8) as u8,
+            bit_position: (mapping.start_bit % 8) as u8,
+            bit_length: mapping.bit_length as u8,
+            data_type: mapping.data_type.clone(),
+            scale: mapping.scale,
+            offset: mapping.offset,
+        };
+        configs.push(point);
+    }
+
+    configs
+}
+
+#[cfg(feature = "can")]
+/// Convert runtime CAN mappings to IGW PointConfig format (for RedisDataStore).
+///
+/// This conversion is used to register points with the data store for proper
+/// data transformation and storage.
+pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
+    use igw::core::point::ProtocolAddress;
+    
+    let mut configs = Vec::with_capacity(runtime_config.can_mappings.len());
+
+    for mapping in &runtime_config.can_mappings {
+        // Determine data type from telemetry_type
+        let data_type = match mapping.telemetry_type.as_str() {
+            "T" | "telemetry" => DataType::Telemetry,
+            "S" | "signal" => DataType::Signal,
+            "C" | "control" => DataType::Control,
+            "A" | "adjustment" => DataType::Adjustment,
+            _ => DataType::Telemetry,
+        };
+
+        // Build CAN protocol address (simplified, as CAN addresses are implicit in frames)
+        let protocol_addr = ProtocolAddress::Generic(format!(
+            "can_id:0x{:X},start_bit:{},len:{}",
+            mapping.can_id, mapping.start_bit, mapping.bit_length
+        ));
+
+        // Look up the corresponding point to get transform parameters
+        let transform = match data_type {
+            DataType::Telemetry => runtime_config
+                .telemetry_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    scale: p.scale,
+                    offset: p.offset,
+                    reverse: p.reverse,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+            DataType::Signal => runtime_config
+                .signal_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    reverse: p.reverse,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+            DataType::Control => runtime_config
+                .control_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    reverse: p.reverse,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+            DataType::Adjustment => runtime_config
+                .adjustment_points
+                .iter()
+                .find(|p| p.base.point_id == mapping.point_id)
+                .map(|p| TransformConfig {
+                    scale: p.scale,
+                    offset: p.offset,
+                    ..Default::default()
+                })
+                .unwrap_or_default(),
+        };
+
+        let config = PointConfig::new(mapping.point_id, data_type, protocol_addr);
+        configs.push(config.with_transform(transform));
+    }
+
+    configs
+}
+
+#[cfg(feature = "can")]
+/// Create an IGW CAN channel with the given configuration.
+///
+/// This function creates a CanClient from igw library with the specified
+/// CAN interface and point configurations.
+pub fn create_can_channel(
+    _channel_id: u32,
+    can_interface: &str,
+    points: Vec<CanPoint>,
+) -> ProtocolClientImpl {
+    let config = CanConfig {
+        can_interface: can_interface.to_string(),
+        bitrate: 250000,
+        rx_poll_interval_ms: 50,
+        data_read_interval_ms: 1000,
+    };
+
+    let mut client = CanClient::new(config);
+    client.add_points(points);
+
+    ProtocolClientImpl::Can(client)
+}
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
 
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
