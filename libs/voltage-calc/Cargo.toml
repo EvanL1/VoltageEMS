@@ -31,3 +31,6 @@ tracing = { workspace = true }
 [dev-dependencies]
 # No dev dependencies needed
 
+[lints]
+workspace = true
+

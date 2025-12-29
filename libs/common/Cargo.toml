@@ -58,3 +58,6 @@ schemars = { version = "0.8", optional = true }
 tokio-test = "0.4"
 tempfile = { workspace = true }
 rand = { workspace = true }
+
+[lints]
+workspace = true

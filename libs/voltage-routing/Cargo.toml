@@ -16,3 +16,6 @@ voltage-rtdb = { path = "../voltage-rtdb" }
 
 [dev-dependencies]
 tokio = { workspace = true }
+
+[lints]
+workspace = true

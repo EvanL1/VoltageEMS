@@ -37,3 +37,6 @@ memory-backend = []
 [dev-dependencies]
 tokio = { workspace = true }
 serial_test = "3.0"
+
+[lints]
+workspace = true

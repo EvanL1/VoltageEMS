@@ -24,6 +24,12 @@ license = "MIT OR Apache-2.0"
 # Clippy lints configuration
 # Run with: cargo clippy --workspace -- -W clippy::unwrap_used -W clippy::expect_used
 
+[workspace.lints.clippy]
+# Type casting relaxed rules (for numeric/timestamp conversions)
+cast-possible-truncation = "allow"
+cast-possible-wrap = "allow"
+cast-sign-loss = "allow"
+
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }

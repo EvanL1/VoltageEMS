@@ -63,3 +63,6 @@ default = ["redis", "sqlite", "swagger-ui"]
 redis = []
 sqlite = []
 swagger-ui = ["utoipa-swagger-ui", "common/openapi"]  # Swagger UI documentation (enabled by default for development)
+
+[lints]
+workspace = true

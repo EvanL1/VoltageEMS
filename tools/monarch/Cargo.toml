@@ -55,3 +55,6 @@ reqwest = { workspace = true }
 [features]
 default = ["lib-mode"]
 lib-mode = ["comsrv", "modsrv"]  # rules merged into modsrv
+
+[lints]
+workspace = true
