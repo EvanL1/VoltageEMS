@@ -11,8 +11,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Installation directories (configurable via environment variables)
-# Default: /opt/voltageems for production, can be overridden
-INSTALL_DIR="${VOLTAGE_INSTALL_DIR:-${INSTALL_DIR:-/opt/voltageems}}"
+# Default: /opt/MonarchEdge for production, can be overridden
+INSTALL_DIR="${VOLTAGE_INSTALL_DIR:-${INSTALL_DIR:-/opt/MonarchEdge}}"
 # Allow logs to be stored on external storage if available
 LOG_DIR="${VOLTAGE_LOG_DIR:-${LOG_DIR:-$INSTALL_DIR/logs}}"
 
@@ -22,13 +22,13 @@ LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
 # =============================================================================
 # Command Line Arguments
 # =============================================================================
-AUTO_MODE=false
+AUTO_MODE=true  # Default to auto mode for production deployments
 SHOW_HELP=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --auto|-y|--yes)
-            AUTO_MODE=true
+        -i|--interactive)
+            AUTO_MODE=false
             shift
             ;;
         --help|-h)
@@ -37,29 +37,29 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
-            echo "Usage: $0 [--auto|-y] [--help|-h]"
+            echo "Usage: $0 [-i|--interactive] [--help|-h]"
             exit 1
             ;;
     esac
 done
 
 if [[ "$SHOW_HELP" == true ]]; then
-    echo "VoltageEMS ARM64 Installation Script"
+    echo "MonarchEdge ARM64 Installation Script"
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --auto, -y, --yes   Auto mode: skip all confirmations, update all changed images"
+    echo "  -i, --interactive   Interactive mode: prompt for confirmations"
     echo "  --help, -h          Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                  Interactive installation"
-    echo "  $0 --auto           Automatic update (no prompts)"
+    echo "  $0                  Automatic update (default, no prompts)"
+    echo "  $0 -i               Interactive installation with prompts"
     exit 0
 fi
 
-if [[ "$AUTO_MODE" == true ]]; then
-    echo -e "${BLUE}Running in AUTO mode - all confirmations will be skipped${NC}"
+if [[ "$AUTO_MODE" == false ]]; then
+    echo -e "${BLUE}Running in INTERACTIVE mode - will prompt for confirmations${NC}"
 fi
 
 # Docker Compose V1/V2 compatibility functions
@@ -290,10 +290,10 @@ update_service() {
         docker rm "$container" 2>/dev/null || true
     done
 
-    # Step 3: Start new containers
+    # Step 3: Start new containers (--no-deps avoids recreating running dependencies)
     for container in $containers; do
         local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
-        run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d "$service"
+        run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service"
     done
 
     # Step 4: Health check (wait for containers to start)
@@ -310,7 +310,7 @@ update_service() {
         docker tag "$backup_tag" "$image" 2>/dev/null || true
         for container in $containers; do
             local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
-            run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d "$service"
+            run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service"
         done
         echo -e "    ${YELLOW}Rollback completed${NC}"
         return 1
@@ -388,6 +388,35 @@ select_python_services() {
             echo ""
             ;;
     esac
+}
+
+# Ensure core services are running (called after image update/install)
+# This fixes the issue where services need manual restart after installation
+ensure_core_services_running() {
+    echo ""
+    echo -e "${BLUE}Ensuring core services are running...${NC}"
+
+    local services_started=0
+    local core_containers=("voltage-redis" "voltageems-comsrv" "voltageems-modsrv")
+
+    for container in "${core_containers[@]}"; do
+        if ! docker ps --filter "name=^${container}$" --filter "status=running" -q 2>/dev/null | grep -q .; then
+            local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
+            echo "  Starting $service..."
+            # Use --no-deps to avoid recreating already-running dependencies
+            run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service" 2>/dev/null || true
+            ((services_started++))
+        else
+            echo -e "  ${GREEN}✓${NC} $container: already running"
+        fi
+    done
+
+    if [[ $services_started -gt 0 ]]; then
+        echo ""
+        echo -e "${GREEN}✓ Started $services_started service(s)${NC}"
+        # Wait for services to be healthy
+        sleep 3
+    fi
 }
 
 # =============================================================================
@@ -686,9 +715,15 @@ if command -v docker &> /dev/null; then
             if [[ ${#SKIPPED_IMAGES[@]} -gt 0 ]]; then
                 echo "  • ${#SKIPPED_IMAGES[@]} image(s) skipped (unchanged)"
             fi
+
+            # Ensure core services are running (even if images unchanged)
+            ensure_core_services_running
         else
             echo -e "${YELLOW}Skipping image update.${NC}"
             echo -e "${GREEN}[SKIPPED] Docker images${NC}"
+
+            # Still ensure core services are running
+            ensure_core_services_running
         fi
     else
         # No existing images - first installation
@@ -994,15 +1029,15 @@ fi
 
 # Create system-wide environment variables for Docker Compose
 echo "Creating system environment variables..."
-$SUDO tee /etc/profile.d/voltageems.sh > /dev/null << EOF
+$SUDO tee /etc/profile.d/monarchedge.sh > /dev/null << EOF
 # VoltageEMS Docker environment variables
 # Generated by install.sh on $(date)
 # User: $ACTUAL_USER (UID=$ACTUAL_UID, GID=$ACTUAL_GID)
 export HOST_UID=$ACTUAL_UID
 export HOST_GID=$ACTUAL_GID
 EOF
-$SUDO chmod 644 /etc/profile.d/voltageems.sh
-echo -e "${GREEN}✓ Environment variables exported to /etc/profile.d/voltageems.sh${NC}"
+$SUDO chmod 644 /etc/profile.d/monarchedge.sh
+echo -e "${GREEN}✓ Environment variables exported to /etc/profile.d/monarchedge.sh${NC}"
 
 echo "Permissions configured:"
 echo "  User: $ACTUAL_USER (UID=$ACTUAL_UID)"
@@ -1162,7 +1197,7 @@ echo "  monarch init --force  - Reset database (WARNING: deletes all data)"
 echo "  monarch sync          - Sync configuration files to database"
 echo ""
 echo "Quick Start:"
-echo -e "  ${YELLOW}source /etc/profile.d/voltageems.sh${NC}  - Load environment variables (or re-login)"
+echo -e "  ${YELLOW}source /etc/profile.d/monarchedge.sh${NC}  - Load environment variables (or re-login)"
 echo "  docker-compose up -d   - Start all services"
 echo "  docker-compose down    - Stop all services"
 echo "  docker-compose ps      - Check service status"
