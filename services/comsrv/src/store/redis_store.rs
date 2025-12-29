@@ -104,12 +104,23 @@ impl<R: Rtdb> RedisDataStore<R> {
         }
     }
 
-    /// Get point type for a specific point, defaulting to Telemetry if unknown.
+    /// Get point type for a specific point.
+    ///
+    /// # Panics
+    /// Panics if point type is not registered. This is intentional (Fail Fast)
+    /// to catch configuration errors immediately rather than silently writing
+    /// to wrong Redis keys.
     fn get_point_type(&self, channel_id: u32, point_id: u32) -> PointType {
         self.point_types
             .get(&(channel_id, point_id))
             .map(|r| *r)
-            .unwrap_or(PointType::Telemetry)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Point type not registered for Ch{}:Point{}. \
+                     Call register_point_types() before polling.",
+                    channel_id, point_id
+                )
+            })
     }
 
     /// Convert DataBatch to ChannelPointUpdates for voltage-routing.
@@ -360,11 +371,23 @@ mod tests {
             ],
         );
 
-        // Verify lookups
+        // Verify lookups for registered points
         assert_eq!(store.get_point_type(9903, 1), PointType::Telemetry);
         assert_eq!(store.get_point_type(9903, 2), PointType::Signal);
         assert_eq!(store.get_point_type(9903, 3), PointType::Control);
-        // Unknown point defaults to Telemetry
-        assert_eq!(store.get_point_type(9903, 999), PointType::Telemetry);
+        // Note: Unregistered points now panic (Fail Fast principle)
+        // See test_unregistered_point_panics for panic behavior
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Point type not registered")]
+    async fn test_unregistered_point_panics() {
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(RoutingCache::new());
+
+        let store = RedisDataStore::new(rtdb, routing_cache);
+
+        // Don't register any points, accessing should panic
+        store.get_point_type(9999, 1);
     }
 }
