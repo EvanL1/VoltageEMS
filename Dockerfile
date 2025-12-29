@@ -29,19 +29,14 @@ ENV CARGO_BUILD_JOBS=${BUILD_JOBS}
 # Copy entire source code
 COPY . .
 
-# Build release binaries (only services, no apps or tools)
-# Note: rules service has been merged into modsrv
-# Default features:
-#   - comsrv: modbus, gpio, openapi (all enabled by default)
-#   - modsrv: redis, sqlite (enabled by default)
-# Optional: swagger-ui (for development/debugging)
+# Build release binaries (default features include all protocols)
+# swagger-ui is optional, only enabled for development
 RUN if [ "$ENABLE_SWAGGER_UI" = "1" ]; then \
-        echo "Building with Swagger UI enabled"; \
-        cargo build --release -p comsrv -p modsrv; \
+    echo "Building with Swagger UI"; \
+    cargo build --release -p comsrv -p modsrv --features "swagger-ui"; \
     else \
-        echo "Building without Swagger UI (production)"; \
-        cargo build --release -p comsrv --no-default-features --features "modbus,can,openapi" && \
-        cargo build --release -p modsrv --no-default-features --features "redis,sqlite"; \
+    echo "Building with default features"; \
+    cargo build --release -p comsrv -p modsrv; \
     fi
 
 # ============================================================================

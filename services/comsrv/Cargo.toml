@@ -82,7 +82,7 @@ http-body-util = "0.1"
 redis = { workspace = true }  # For integration tests only
 
 [features]
-default = ["modbus", "can", "gpio", "swagger-ui", "openapi"]
+default = ["modbus", "can", "gpio", "openapi"]
 modbus = ["igw/modbus"]  # Modbus TCP + RTU
 can = ["igw/can"]                          # CAN protocol (Linux only)
 gpio = ["igw/gpio"]                        # GPIO protocol (Linux only)

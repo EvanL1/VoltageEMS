@@ -32,7 +32,7 @@ cast-sign-loss = "allow"
 
 [workspace.dependencies]
 # Async runtime
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.35", default-features = true, features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # Web frameworks

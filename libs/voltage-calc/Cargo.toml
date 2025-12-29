@@ -10,7 +10,7 @@ description = "Unified calculation library for VoltageEMS - expression evaluatio
 evalexpr = { workspace = true }
 
 # Async sync primitives (RwLock for state)
-tokio = { workspace = true, default-features = false, features = ["sync"] }
+tokio = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

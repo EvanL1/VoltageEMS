@@ -700,15 +700,8 @@ pub fn create_gpio_channel(
 ) -> Box<dyn ChannelRuntime> {
     use std::time::Duration;
 
-    let mut gpio_config = GpioChannelConfig::new();
-
-    // Get default chip from channel parameters or use "gpiochip0"
-    let default_chip = runtime_config
-        .base
-        .parameters
-        .get("gpio_chip")
-        .and_then(|v| v.as_str())
-        .unwrap_or("gpiochip0");
+    // Use sysfs driver - simpler and works directly with global GPIO numbers
+    let mut gpio_config = GpioChannelConfig::new_sysfs("/sys/class/gpio");
 
     // Get poll interval from parameters
     if let Some(interval_ms) = runtime_config
@@ -728,22 +721,21 @@ pub fn create_gpio_channel(
         json.get("gpio_number")?.as_u64().map(|n| n as u32)
     };
 
-    // Configure DI pins from signal points
+    // Configure DI pins from signal points (using sysfs with global GPIO numbers)
     for pt in &runtime_config.signal_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
-            let pin_config = GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id)
+            let pin_config = GpioPinConfig::digital_input_sysfs(gpio_num, pt.base.point_id)
                 .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);
         }
     }
 
-    // Configure DO pins from control points
+    // Configure DO pins from control points (using sysfs with global GPIO numbers)
     for pt in &runtime_config.control_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
-            let pin_config =
-                GpioPinConfig::digital_output(default_chip, gpio_num, pt.base.point_id)
-                    .with_active_low(pt.reverse);
+            let pin_config = GpioPinConfig::digital_output_sysfs(gpio_num, pt.base.point_id)
+                .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);
         }

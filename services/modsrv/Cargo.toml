@@ -59,7 +59,7 @@ tower = { workspace = true }
 http-body-util = "0.1"
 
 [features]
-default = ["redis", "sqlite", "swagger-ui"]
+default = ["redis", "sqlite"]
 redis = []
 sqlite = []
 swagger-ui = ["utoipa-swagger-ui", "common/openapi"]  # Swagger UI documentation (enabled by default for development)
