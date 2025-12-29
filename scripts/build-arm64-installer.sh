@@ -396,10 +396,16 @@ if [[ -d "$BUILD_DIR/docker" ]]; then
     copy_docker_images "$BUILD_DIR/docker" "$TEMP_PKG_DIR/docker"
 fi
 
-# 3. CLI tools (binary files)
-if [[ -d "$BUILD_DIR/tools" ]]; then
-    mkdir -p "$TEMP_PKG_DIR/tools"
-    cp "$BUILD_DIR/tools/monarch" "$TEMP_PKG_DIR/tools/" 2>/dev/null || true
+# 3. CLI tools (binary files) - CRITICAL: monarch must exist
+mkdir -p "$TEMP_PKG_DIR/tools"
+if [[ -f "$BUILD_DIR/tools/monarch" ]]; then
+    cp "$BUILD_DIR/tools/monarch" "$TEMP_PKG_DIR/tools/"
+    echo -e "${GREEN}✓ Copied monarch CLI to installer${NC}"
+else
+    echo -e "${RED}Error: monarch binary not found at $BUILD_DIR/tools/monarch${NC}"
+    echo "Build aborted - monarch CLI is required for installation"
+    rm -rf "$TEMP_PKG_DIR"
+    exit 1
 fi
 
 # 4. Helper scripts
