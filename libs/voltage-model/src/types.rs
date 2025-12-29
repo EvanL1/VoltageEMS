@@ -109,6 +109,79 @@ impl PointType {
     pub fn is_output(&self) -> bool {
         self.is_action()
     }
+
+    // ========================================================================
+    // Internal ID Encoding/Decoding for point_id collision avoidance
+    // ========================================================================
+
+    /// Offset between point type ranges (~1 billion points per type).
+    ///
+    /// This ensures different point types can use the same original point_id
+    /// without colliding in the internal representation.
+    ///
+    /// # Layout
+    /// - Telemetry: 0x00000000 - 0x3FFFFFFF
+    /// - Signal:    0x40000000 - 0x7FFFFFFF
+    /// - Control:   0x80000000 - 0xBFFFFFFF
+    /// - Adjustment: 0xC0000000 - 0xFFFFFFFF
+    pub const OFFSET: u32 = u32::MAX / 4; // 0x3FFFFFFF ≈ 1.07 billion
+
+    /// Get the type offset for this point type.
+    ///
+    /// # Examples
+    /// ```
+    /// # use voltage_model::PointType;
+    /// assert_eq!(PointType::Telemetry.type_offset(), 0);
+    /// assert_eq!(PointType::Signal.type_offset(), PointType::OFFSET);
+    /// assert_eq!(PointType::Control.type_offset(), PointType::OFFSET * 2);
+    /// ```
+    pub fn type_offset(&self) -> u32 {
+        match self {
+            PointType::Telemetry => 0,
+            PointType::Signal => Self::OFFSET,
+            PointType::Control => Self::OFFSET * 2,
+            PointType::Adjustment => Self::OFFSET * 3,
+        }
+    }
+
+    /// Convert an original point_id to an internal_id that encodes the type.
+    ///
+    /// Used when building protocol configurations (igw_bridge.rs).
+    ///
+    /// # Examples
+    /// ```
+    /// # use voltage_model::PointType;
+    /// // Signal point_id=1 becomes internal_id = 0x40000001
+    /// let internal = PointType::Signal.to_internal_id(1);
+    /// assert_eq!(internal, PointType::OFFSET + 1);
+    /// ```
+    pub fn to_internal_id(&self, point_id: u32) -> u32 {
+        point_id + self.type_offset()
+    }
+
+    /// Decode an internal_id back to (PointType, original_point_id).
+    ///
+    /// Used when writing data to Redis (redis_store.rs).
+    ///
+    /// # Examples
+    /// ```
+    /// # use voltage_model::PointType;
+    /// let internal = PointType::Signal.to_internal_id(5);
+    /// let (pt, id) = PointType::from_internal_id(internal);
+    /// assert_eq!(pt, PointType::Signal);
+    /// assert_eq!(id, 5);
+    /// ```
+    pub fn from_internal_id(internal_id: u32) -> (Self, u32) {
+        let type_index = internal_id / Self::OFFSET;
+        let original_id = internal_id % Self::OFFSET;
+        let point_type = match type_index {
+            0 => PointType::Telemetry,
+            1 => PointType::Signal,
+            2 => PointType::Control,
+            _ => PointType::Adjustment, // 3 or overflow wraps to Adjustment
+        };
+        (point_type, original_id)
+    }
 }
 
 impl fmt::Display for PointType {
@@ -132,12 +205,6 @@ impl std::str::FromStr for PointType {
                 s
             )),
         }
-    }
-}
-
-impl Default for PointType {
-    fn default() -> Self {
-        Self::Telemetry
     }
 }
 
@@ -224,8 +291,63 @@ mod tests {
     }
 
     #[test]
-    fn test_point_type_default() {
-        assert_eq!(PointType::default(), PointType::Telemetry);
+    fn test_internal_id_roundtrip() {
+        // Test all point types with various point_ids
+        for (pt, original_id) in [
+            (PointType::Telemetry, 1),
+            (PointType::Telemetry, 100),
+            (PointType::Signal, 1),
+            (PointType::Signal, 8),
+            (PointType::Control, 1),
+            (PointType::Control, 8),
+            (PointType::Adjustment, 1),
+            (PointType::Adjustment, 1000),
+        ] {
+            let internal = pt.to_internal_id(original_id);
+            let (recovered_type, recovered_id) = PointType::from_internal_id(internal);
+            assert_eq!(
+                recovered_type, pt,
+                "Type mismatch for {:?} id={}",
+                pt, original_id
+            );
+            assert_eq!(
+                recovered_id, original_id,
+                "ID mismatch for {:?} id={}",
+                pt, original_id
+            );
+        }
+    }
+
+    #[test]
+    fn test_internal_id_no_collision() {
+        // Signal point_id=1 and Control point_id=1 should have different internal IDs
+        let signal_internal = PointType::Signal.to_internal_id(1);
+        let control_internal = PointType::Control.to_internal_id(1);
+        assert_ne!(
+            signal_internal, control_internal,
+            "Signal and Control internal IDs should differ"
+        );
+
+        // Verify they decode correctly
+        let (s_type, s_id) = PointType::from_internal_id(signal_internal);
+        let (c_type, c_id) = PointType::from_internal_id(control_internal);
+        assert_eq!(s_type, PointType::Signal);
+        assert_eq!(c_type, PointType::Control);
+        assert_eq!(s_id, 1);
+        assert_eq!(c_id, 1);
+    }
+
+    #[test]
+    fn test_type_offset_values() {
+        // Verify offsets are non-overlapping
+        assert_eq!(PointType::Telemetry.type_offset(), 0);
+        assert_eq!(PointType::Signal.type_offset(), PointType::OFFSET);
+        assert_eq!(PointType::Control.type_offset(), PointType::OFFSET * 2);
+        assert_eq!(PointType::Adjustment.type_offset(), PointType::OFFSET * 3);
+
+        // Verify OFFSET is large enough (about 1 billion) - use const_assert or static check
+        // PointType::OFFSET = u32::MAX / 4 = 0x3FFFFFFF ≈ 1.07 billion
+        // This is verified at compile time by the constant definition
     }
 
     #[test]

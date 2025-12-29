@@ -272,7 +272,7 @@ pub struct ControlPoint {
     pub on_value: u16,
 
     /// Control value for OFF/CLOSE command
-    #[serde(default)]
+    #[serde(default = "default_off_value")]
     pub off_value: u16,
 
     /// Pulse duration in milliseconds (for momentary controls)
@@ -796,6 +796,10 @@ fn default_control_type() -> String {
 
 fn default_on_value() -> u16 {
     1
+}
+
+fn default_off_value() -> u16 {
+    0
 }
 
 // Default implementations

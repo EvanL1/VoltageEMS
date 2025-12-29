@@ -146,20 +146,54 @@ impl ComsrvSqliteLoader {
             let enabled: bool = row
                 .try_get("enabled")
                 .map_err(|e| ComSrvError::ConfigError(format!("Failed to get enabled: {}", e)))?;
-            let config_json: String = row.try_get("config").unwrap_or_else(|_| "{}".to_string());
+            let config_json: Option<String> = row
+                .try_get("config")
+                .map_err(|e| ComSrvError::ConfigError(format!("Failed to get config: {}", e)))?;
+            let config_json = config_json.unwrap_or_else(|| "{}".to_string());
 
             // Parse additional config from JSON
             let extra_config: serde_json::Value =
-                serde_json::from_str(&config_json).unwrap_or_else(|_| serde_json::json!({}));
+                serde_json::from_str(&config_json).map_err(|e| {
+                    ComSrvError::ConfigError(format!(
+                        "Invalid channel config JSON for channel {}: {}",
+                        channel_id, e
+                    ))
+                })?;
+            let extra_config_obj = extra_config.as_object().ok_or_else(|| {
+                ComSrvError::ConfigError(format!(
+                    "Invalid channel config for channel {}: expected JSON object",
+                    channel_id
+                ))
+            })?;
+
+            let description = match extra_config_obj.get("description") {
+                None => None,
+                Some(serde_json::Value::String(s)) => Some(s.clone()),
+                Some(_) => {
+                    return Err(ComSrvError::ConfigError(format!(
+                        "Invalid channel config for channel {}: 'description' must be a string",
+                        channel_id
+                    )));
+                },
+            };
 
             // Parse parameters from config JSON
             // Read from the "parameters" field in the JSON, not from top level
             let mut parameters = HashMap::new();
-            if let Some(serde_json::Value::Object(obj)) = extra_config.get("parameters") {
-                for (key, value) in obj {
-                    // Use JSON value directly (parameters field expects serde_json::Value)
-                    parameters.insert(key.clone(), value.clone());
-                }
+            match extra_config_obj.get("parameters") {
+                None => {},
+                Some(serde_json::Value::Object(obj)) => {
+                    for (key, value) in obj {
+                        // Use JSON value directly (parameters field expects serde_json::Value)
+                        parameters.insert(key.clone(), value.clone());
+                    }
+                },
+                Some(_) => {
+                    return Err(ComSrvError::ConfigError(format!(
+                        "Invalid channel config for channel {}: 'parameters' must be an object",
+                        channel_id
+                    )));
+                },
             }
 
             // Create channel config (without runtime fields)
@@ -167,10 +201,7 @@ impl ComsrvSqliteLoader {
                 core: crate::core::config::ChannelCore {
                     id: channel_id,
                     name: name.clone(),
-                    description: extra_config
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string()),
+                    description,
                     protocol: protocol.clone(),
                     enabled,
                 },

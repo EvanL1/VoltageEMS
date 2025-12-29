@@ -211,14 +211,18 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // ========================================================================
 
         // Get instance metadata (product_name, properties)
-        let instance_row: (String, String) =
+        let instance_row: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT product_name, properties FROM instances WHERE instance_id = ?")
                 .bind(instance_id as i32)
-                .fetch_one(&self.pool)
+                .fetch_optional(&self.pool)
                 .await
-                .map_err(|_| anyhow!("Instance {} not found", instance_id))?;
+                .map_err(|e| anyhow!("Failed to load instance {} metadata: {}", instance_id, e))?;
 
-        let (product_name, properties_json) = instance_row;
+        let Some((product_name, properties_json)) = instance_row else {
+            return Err(anyhow!("Instance {} not found", instance_id));
+        };
+
+        let properties_json = properties_json.unwrap_or_else(|| "{}".to_string());
 
         match data_type {
             Some("measurement") => {
@@ -271,8 +275,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             },
             Some("property") => {
                 // Return instance properties (stored as JSON in instances table)
-                let properties: serde_json::Value =
-                    serde_json::from_str(&properties_json).unwrap_or(serde_json::json!({}));
+                let properties: serde_json::Value = serde_json::from_str(&properties_json)
+                    .map_err(|e| {
+                        anyhow!(
+                            "Invalid properties JSON for instance {}: {}",
+                            instance_id,
+                            e
+                        )
+                    })?;
                 Ok(properties)
             },
             None => {
@@ -317,8 +327,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     a_map.insert(signal_name.clone(), point);
                 }
 
-                let properties: serde_json::Value =
-                    serde_json::from_str(&properties_json).unwrap_or(serde_json::json!({}));
+                let properties: serde_json::Value = serde_json::from_str(&properties_json)
+                    .map_err(|e| {
+                        anyhow!(
+                            "Invalid properties JSON for instance {}: {}",
+                            instance_id,
+                            e
+                        )
+                    })?;
 
                 Ok(serde_json::json!({
                     "measurements": m_map,

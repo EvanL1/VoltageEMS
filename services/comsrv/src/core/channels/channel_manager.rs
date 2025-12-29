@@ -162,36 +162,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         }
     }
 
-    /// Extract point types from RuntimeChannelConfig for registration.
-    ///
-    /// Used to register point types with RedisDataStore before polling,
-    /// ensuring data is written to correct Redis keys (T/S/C/A).
-    fn extract_point_types(config: &RuntimeChannelConfig) -> Vec<(u32, voltage_model::PointType)> {
-        use voltage_model::PointType;
-
-        let mut types = Vec::with_capacity(
-            config.telemetry_points.len()
-                + config.signal_points.len()
-                + config.control_points.len()
-                + config.adjustment_points.len(),
-        );
-
-        for pt in &config.telemetry_points {
-            types.push((pt.base.point_id, PointType::Telemetry));
-        }
-        for pt in &config.signal_points {
-            types.push((pt.base.point_id, PointType::Signal));
-        }
-        for pt in &config.control_points {
-            types.push((pt.base.point_id, PointType::Control));
-        }
-        for pt in &config.adjustment_points {
-            types.push((pt.base.point_id, PointType::Adjustment));
-        }
-
-        types
-    }
-
     /// Create channel
     pub async fn create_channel(
         &self,
@@ -328,10 +298,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
-        // Register point types for correct Redis key mapping
-        let point_types = Self::extract_point_types(runtime_config);
-        store.register_point_types(channel_id, point_types);
-
+        // Point types are encoded in internal_id by igw_bridge - no registration needed
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
@@ -388,10 +355,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
-        // Register point types for correct Redis key mapping
-        let point_types = Self::extract_point_types(runtime_config);
-        store.register_point_types(channel_id, point_types);
-
+        // Point types are encoded in internal_id by igw_bridge - no registration needed
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
@@ -448,10 +412,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
-        // Register point types for correct Redis key mapping
-        let point_types = Self::extract_point_types(runtime_config);
-        store.register_point_types(channel_id, point_types);
-
+        // Point types are encoded in internal_id by igw_bridge - no registration needed
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
@@ -500,10 +461,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(200);
 
-        // Register point types for correct Redis key mapping
-        let point_types = Self::extract_point_types(&runtime_config);
-        store.register_point_types(channel_id, point_types);
-
+        // Point types are encoded in internal_id by igw_bridge - no registration needed
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
@@ -562,10 +520,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(200);
 
-        // Register point types for correct Redis key mapping
-        let point_types = Self::extract_point_types(&runtime_config);
-        store.register_point_types(channel_id, point_types);
-
+        // Point types are encoded in internal_id by igw_bridge - no registration needed
         let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
         let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
 
@@ -804,9 +759,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
             // Get existing point IDs from Redis
             let config = voltage_rtdb::KeySpaceConfig::production();
-            // Convert FourRemote to PointType via string (both have same T/S/C/A representation)
-            let point_type = voltage_model::PointType::from_str(four_remote.as_str())
-                .expect("FourRemote and PointType have matching string representations");
+            let point_type: voltage_model::PointType = four_remote;
             let channel_key = config.channel_key(channel_id, point_type);
 
             // Check if Redis key exists (defensive verification)
@@ -877,8 +830,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             );
 
             // Build ChannelPointUpdate vector for missing points (using voltage-routing)
-            let point_type = voltage_model::PointType::from_str(four_remote.as_str())
-                .unwrap_or(voltage_model::PointType::Telemetry);
             let updates: Vec<voltage_routing::ChannelPointUpdate> = missing_point_ids
                 .iter()
                 .map(|point_id| voltage_routing::ChannelPointUpdate {
@@ -926,7 +877,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
         let config = CommandTriggerConfig {
             channel_id,
-            ..Default::default()
+            timeout_seconds: 1, // Default BLPOP timeout
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel(100);

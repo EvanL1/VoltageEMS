@@ -61,8 +61,21 @@ fn load_csv_file(path: &Path, field_type: &str) -> Result<Vec<Value>> {
                     continue;
                 }
 
+                // Parse ID - skip row if invalid or zero
+                let id: u32 = match record.get(0).unwrap_or("").parse() {
+                    Ok(id) if id > 0 => id,
+                    _ => {
+                        eprintln!(
+                            "[csv_loader] Warning: skipping {} row with invalid id: {:?}",
+                            field_type,
+                            record.get(0)
+                        );
+                        continue;
+                    },
+                };
+
                 let mut obj = json!({
-                    "id": record.get(0).unwrap_or("").parse::<u32>().unwrap_or(0),
+                    "id": id,
                     "name": record.get(1).unwrap_or("")
                 });
 
@@ -80,8 +93,20 @@ fn load_csv_file(path: &Path, field_type: &str) -> Result<Vec<Value>> {
                     continue;
                 }
 
+                // Parse ID - skip row if invalid or zero
+                let id: u32 = match record.get(0).unwrap_or("").parse() {
+                    Ok(id) if id > 0 => id,
+                    _ => {
+                        eprintln!(
+                            "[csv_loader] Warning: skipping properties row with invalid id: {:?}",
+                            record.get(0)
+                        );
+                        continue;
+                    },
+                };
+
                 json!({
-                    "id": record.get(0).unwrap_or("").parse::<u32>().unwrap_or(0),
+                    "id": id,
                     "name": record.get(1).unwrap_or(""),
                     "unit": record.get(2).unwrap_or(""),
                     "description": record.get(3).unwrap_or("")

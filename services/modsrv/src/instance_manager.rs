@@ -214,11 +214,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         let mut instances = Vec::new();
         for (instance_id, instance_name, product_name, properties_json, _created_at) in rows {
-            let properties: HashMap<String, serde_json::Value> = if let Some(json) = properties_json
-            {
-                serde_json::from_str(&json).unwrap_or_default()
-            } else {
-                HashMap::new()
+            let properties: HashMap<String, serde_json::Value> = match properties_json {
+                Some(json) => serde_json::from_str(&json).map_err(|e| {
+                    anyhow!(
+                        "Invalid properties JSON for instance {}: {}",
+                        instance_id,
+                        e
+                    )
+                })?,
+                None => HashMap::new(),
             };
 
             instances.push(Instance {
@@ -296,11 +300,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         let mut instances = Vec::new();
         for (instance_id, instance_name, product_name, properties_json, _created_at) in rows {
-            let properties: HashMap<String, serde_json::Value> = if let Some(json) = properties_json
-            {
-                serde_json::from_str(&json).unwrap_or_default()
-            } else {
-                HashMap::new()
+            let properties: HashMap<String, serde_json::Value> = match properties_json {
+                Some(json) => serde_json::from_str(&json).map_err(|e| {
+                    anyhow!(
+                        "Invalid properties JSON for instance {}: {}",
+                        instance_id,
+                        e
+                    )
+                })?,
+                None => HashMap::new(),
             };
 
             instances.push(Instance {
@@ -391,11 +399,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         let mut instances = Vec::new();
         for (instance_id, instance_name, product_name, properties_json, _created_at) in rows {
-            let properties: HashMap<String, serde_json::Value> = if let Some(json) = properties_json
-            {
-                serde_json::from_str(&json).unwrap_or_default()
-            } else {
-                HashMap::new()
+            let properties: HashMap<String, serde_json::Value> = match properties_json {
+                Some(json) => serde_json::from_str(&json).map_err(|e| {
+                    anyhow!(
+                        "Invalid properties JSON for instance {}: {}",
+                        instance_id,
+                        e
+                    )
+                })?,
+                None => HashMap::new(),
             };
 
             instances.push(Instance {
@@ -498,10 +510,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let row = row.ok_or_else(|| anyhow!("Instance not found: {}", instance_id))?;
 
         let (instance_name, product_name, properties_json, _created_at) = row;
-        let properties: HashMap<String, serde_json::Value> = if let Some(json) = properties_json {
-            serde_json::from_str(&json).unwrap_or_default()
-        } else {
-            HashMap::new()
+        let properties: HashMap<String, serde_json::Value> = match properties_json {
+            Some(json) => serde_json::from_str(&json).map_err(|e| {
+                anyhow!(
+                    "Invalid properties JSON for instance {}: {}",
+                    instance_id,
+                    e
+                )
+            })?,
+            None => HashMap::new(),
         };
 
         // Load point routings from routing tables and generate Redis keys dynamically

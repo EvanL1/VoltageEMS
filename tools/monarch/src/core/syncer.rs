@@ -1131,10 +1131,20 @@ impl ConfigSyncer {
         if let Some(instances_array) = instances_data.get("instances").and_then(|v| v.as_array()) {
             // Array format: instances: [{instance_id: 1, instance_name: "x", product_name: "y", ...}]
             for instance_data in instances_array {
-                let instance_id = instance_data
-                    .get("instance_id")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                // Parse and validate instance_id (required, must be > 0)
+                let instance_id = match instance_data.get("instance_id").and_then(|v| v.as_u64()) {
+                    Some(id) if id > 0 => id as u32,
+                    _ => {
+                        errors.push(SyncError {
+                            item: "Instance definition".to_string(),
+                            error: format!(
+                                "Invalid or missing instance_id: {:?}",
+                                instance_data.get("instance_id")
+                            ),
+                        });
+                        continue;
+                    },
+                };
 
                 let instance_name = instance_data
                     .get("instance_name")
@@ -1370,10 +1380,23 @@ impl ConfigSyncer {
 
         let mut success_count = 0;
         for mapping in mappings.iter() {
-            let channel_id = mapping
+            // Parse and validate channel_id (required, must be > 0)
+            let channel_id = match mapping
                 .get("channel_id")
                 .and_then(|v| v.parse::<i32>().ok())
-                .unwrap_or(0);
+            {
+                Some(id) if id > 0 => id,
+                _ => {
+                    errors.push(SyncError {
+                        item: format!("Routing for {}", instance_name),
+                        error: format!(
+                            "Invalid or missing channel_id: {:?}",
+                            mapping.get("channel_id")
+                        ),
+                    });
+                    continue;
+                },
+            };
             let channel_type = mapping.get("channel_type").cloned().unwrap_or_default();
 
             // Validate channel_type before inserting
@@ -1391,15 +1414,47 @@ impl ConfigSyncer {
                 continue;
             }
 
-            let channel_point_id = mapping
+            // Parse and validate channel_point_id (required, must be > 0)
+            let channel_point_id = match mapping
                 .get("channel_point_id")
                 .and_then(|v| v.parse::<i32>().ok())
-                .unwrap_or(0);
+            {
+                Some(id) if id > 0 => id,
+                _ => {
+                    errors.push(SyncError {
+                        item: format!(
+                            "Routing {}:{} for {}",
+                            channel_id, channel_type, instance_name
+                        ),
+                        error: format!(
+                            "Invalid or missing channel_point_id: {:?}",
+                            mapping.get("channel_point_id")
+                        ),
+                    });
+                    continue;
+                },
+            };
             let instance_type = mapping.get("instance_type").cloned().unwrap_or_default();
-            let instance_point_id = mapping
+            // Parse and validate instance_point_id (required, must be > 0)
+            let instance_point_id = match mapping
                 .get("instance_point_id")
                 .and_then(|v| v.parse::<i32>().ok())
-                .unwrap_or(0);
+            {
+                Some(id) if id > 0 => id,
+                _ => {
+                    errors.push(SyncError {
+                        item: format!(
+                            "Routing {}:{} for {}",
+                            channel_id, channel_type, instance_name
+                        ),
+                        error: format!(
+                            "Invalid or missing instance_point_id: {:?}",
+                            mapping.get("instance_point_id")
+                        ),
+                    });
+                    continue;
+                },
+            };
 
             // Insert into appropriate routing table based on instance_type
             // M (Measurement) points go to measurement_routing (from T/S channels)

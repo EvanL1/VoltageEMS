@@ -227,7 +227,7 @@ pub fn write_channel_batch_buffered(
     // Get current timestamp
     let timestamp_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
+        .expect("System time should be after UNIX epoch")
         .as_millis() as i64;
 
     let config = KeySpaceConfig::production();

@@ -48,6 +48,7 @@ use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ChannelStatus;
 use crate::core::config::RuntimeChannelConfig;
 use crate::store::RedisDataStore;
+use voltage_model::PointType;
 use voltage_rtdb::Rtdb;
 
 // ============================================================================
@@ -319,14 +320,18 @@ async fn run_polling_task<R: Rtdb>(
 /// - Signal: reverse boolean transformation
 /// - Control: reverse boolean transformation
 /// - Adjustment: scale/offset transformation
+///
+/// **Important**: Uses `PointType::to_internal_id()` to encode type into point_id,
+/// avoiding collisions when different types share the same original point_id.
 pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
     let mut configs = Vec::new();
 
     // Convert telemetry points with scale/offset transformation
     for pt in &runtime_config.telemetry_points {
+        let internal_id = PointType::Telemetry.to_internal_id(pt.base.point_id);
         configs.push(
             PointConfig::new(
-                pt.base.point_id,
+                internal_id,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -341,9 +346,10 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 
     // Convert signal points with reverse transformation
     for pt in &runtime_config.signal_points {
+        let internal_id = PointType::Signal.to_internal_id(pt.base.point_id);
         configs.push(
             PointConfig::new(
-                pt.base.point_id,
+                internal_id,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -356,9 +362,10 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 
     // Convert control points with reverse transformation
     for pt in &runtime_config.control_points {
+        let internal_id = PointType::Control.to_internal_id(pt.base.point_id);
         configs.push(
             PointConfig::new(
-                pt.base.point_id,
+                internal_id,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -371,9 +378,10 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 
     // Convert adjustment points with scale/offset transformation
     for pt in &runtime_config.adjustment_points {
+        let internal_id = PointType::Adjustment.to_internal_id(pt.base.point_id);
         configs.push(
             PointConfig::new(
-                pt.base.point_id,
+                internal_id,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -392,6 +400,8 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 ///
 /// Extracts Modbus mapping information from each point's embedded protocol_mappings JSON field.
 /// This replaces the old approach of using separate modbus_mappings collection.
+///
+/// **Important**: Uses `PointType::to_internal_id()` to encode type into point_id.
 pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
     let mut configs = Vec::new();
 
@@ -410,12 +420,62 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 return None;
             },
         };
+
+        if !v.is_object() {
+            warn!(
+                "Point {} has invalid protocol_mappings (expected JSON object): {}",
+                point_id, v
+            );
+            return None;
+        }
+
+        fn parse_u64_field(v: &serde_json::Value, key: &str) -> Option<u64> {
+            let raw = v.get(key)?;
+            raw.as_u64()
+                .or_else(|| raw.as_i64().and_then(|n| u64::try_from(n).ok()))
+                .or_else(|| raw.as_str().and_then(|s| s.parse::<u64>().ok()))
+        }
+
+        let slave_id: u8 = match parse_u64_field(&v, "slave_id").and_then(|n| u8::try_from(n).ok())
+        {
+            Some(n) => n,
+            None => {
+                warn!(
+                    "Point {} protocol_mappings missing/invalid 'slave_id': {}",
+                    point_id, v
+                );
+                return None;
+            },
+        };
+
+        let function_code: u8 =
+            match parse_u64_field(&v, "function_code").and_then(|n| u8::try_from(n).ok()) {
+                Some(n) => n,
+                None => {
+                    warn!(
+                        "Point {} protocol_mappings missing/invalid 'function_code': {}",
+                        point_id, v
+                    );
+                    return None;
+                },
+            };
+
+        let register: u16 =
+            match parse_u64_field(&v, "register_address").and_then(|n| u16::try_from(n).ok()) {
+                Some(n) => n,
+                None => {
+                    warn!(
+                        "Point {} protocol_mappings missing/invalid 'register_address': {}",
+                        point_id, v
+                    );
+                    return None;
+                },
+            };
+
         Some((
-            v.get("slave_id").and_then(|x| x.as_u64()).unwrap_or(1) as u8,
-            v.get("function_code").and_then(|x| x.as_u64()).unwrap_or(3) as u8,
-            v.get("register_address")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0) as u16,
+            slave_id,
+            function_code,
+            register,
             v.get("data_type")
                 .and_then(|x| x.as_str())
                 .unwrap_or("uint16")
@@ -424,7 +484,9 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 .and_then(|x| x.as_str())
                 .unwrap_or("ABCD")
                 .to_string(),
-            v.get("bit_position").and_then(|x| x.as_u64()).unwrap_or(0) as u8,
+            parse_u64_field(&v, "bit_position")
+                .and_then(|n| u8::try_from(n).ok())
+                .unwrap_or(0),
         ))
     }
 
@@ -440,6 +502,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 bit_pos,
             )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
+                let internal_id = PointType::Telemetry.to_internal_id(point.base.point_id);
                 let modbus_addr = ModbusAddress {
                     slave_id,
                     function_code,
@@ -454,9 +517,8 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     reverse: point.reverse,
                     ..Default::default()
                 };
-                let config =
-                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
-                        .with_transform(transform);
+                let config = PointConfig::new(internal_id, ProtocolAddress::Modbus(modbus_addr))
+                    .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -474,6 +536,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 bit_pos,
             )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
+                let internal_id = PointType::Signal.to_internal_id(point.base.point_id);
                 let modbus_addr = ModbusAddress {
                     slave_id,
                     function_code,
@@ -486,9 +549,8 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     reverse: point.reverse,
                     ..Default::default()
                 };
-                let config =
-                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
-                        .with_transform(transform);
+                let config = PointConfig::new(internal_id, ProtocolAddress::Modbus(modbus_addr))
+                    .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -506,6 +568,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 bit_pos,
             )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
+                let internal_id = PointType::Control.to_internal_id(point.base.point_id);
                 let modbus_addr = ModbusAddress {
                     slave_id,
                     function_code,
@@ -518,9 +581,8 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     reverse: point.reverse,
                     ..Default::default()
                 };
-                let config =
-                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
-                        .with_transform(transform);
+                let config = PointConfig::new(internal_id, ProtocolAddress::Modbus(modbus_addr))
+                    .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -538,6 +600,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 bit_pos,
             )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
+                let internal_id = PointType::Adjustment.to_internal_id(point.base.point_id);
                 let modbus_addr = ModbusAddress {
                     slave_id,
                     function_code,
@@ -551,9 +614,8 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     offset: point.offset,
                     ..Default::default()
                 };
-                let config =
-                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
-                        .with_transform(transform);
+                let config = PointConfig::new(internal_id, ProtocolAddress::Modbus(modbus_addr))
+                    .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -689,6 +751,10 @@ pub fn create_modbus_rtu_channel(
 /// Note: Only available on Linux with `gpio` feature enabled.
 /// Storage is handled by the service layer (ChannelManager) after polling.
 ///
+/// **Important**: Uses `PointType::to_internal_id()` to encode type into point_id.
+/// This is critical for GPIO where Signal (DI) and Control (DO) often share
+/// the same original point_id range (e.g., 1-8).
+///
 /// # Arguments
 ///
 /// * `channel_id` - Unique channel identifier
@@ -722,9 +788,11 @@ pub fn create_gpio_channel(
     };
 
     // Configure DI pins from signal points (using sysfs with global GPIO numbers)
+    // Use internal_id to avoid collision with control points
     for pt in &runtime_config.signal_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
-            let pin_config = GpioPinConfig::digital_input_sysfs(gpio_num, pt.base.point_id)
+            let internal_id = PointType::Signal.to_internal_id(pt.base.point_id);
+            let pin_config = GpioPinConfig::digital_input_sysfs(gpio_num, internal_id)
                 .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);
@@ -732,9 +800,11 @@ pub fn create_gpio_channel(
     }
 
     // Configure DO pins from control points (using sysfs with global GPIO numbers)
+    // Use internal_id to avoid collision with signal points
     for pt in &runtime_config.control_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
-            let pin_config = GpioPinConfig::digital_output_sysfs(gpio_num, pt.base.point_id)
+            let internal_id = PointType::Control.to_internal_id(pt.base.point_id);
+            let pin_config = GpioPinConfig::digital_output_sysfs(gpio_num, internal_id)
                 .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);
@@ -815,53 +885,60 @@ fn default_scale() -> f64 {
 ///
 /// Parses CAN configuration from each point's protocol_mappings JSON field.
 /// Scale and offset are applied during decoding in the protocol layer.
+///
+/// **Important**: Uses `PointType::to_internal_id()` to encode type into point_id.
 pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<CanPoint> {
     let mut configs = Vec::new();
 
     // Helper to parse protocol_mappings JSON and create CanPoint
-    let parse_can_point = |point_id: u32, protocol_mappings: &Option<String>| -> Option<CanPoint> {
-        let json_str = protocol_mappings.as_ref()?;
-        let mapping: CanProtocolMapping = serde_json::from_str(json_str)
-            .map_err(|e| {
-                tracing::warn!(
-                    point_id,
-                    error = %e,
-                    "Failed to parse CAN protocol_mappings JSON"
-                );
-                e
+    let parse_can_point =
+        |internal_id: u32, protocol_mappings: &Option<String>| -> Option<CanPoint> {
+            let json_str = protocol_mappings.as_ref()?;
+            let mapping: CanProtocolMapping = serde_json::from_str(json_str)
+                .map_err(|e| {
+                    tracing::warn!(
+                        internal_id,
+                        error = %e,
+                        "Failed to parse CAN protocol_mappings JSON"
+                    );
+                    e
+                })
+                .ok()?;
+
+            Some(CanPoint {
+                point_id: internal_id,
+                can_id: mapping.can_id,
+                byte_offset: (mapping.start_bit / 8) as u8,
+                bit_position: (mapping.start_bit % 8) as u8,
+                bit_length: mapping.bit_length as u8,
+                data_type: mapping.data_type,
+                scale: mapping.scale,
+                offset: mapping.offset,
             })
-            .ok()?;
+        };
 
-        Some(CanPoint {
-            point_id,
-            can_id: mapping.can_id,
-            byte_offset: (mapping.start_bit / 8) as u8,
-            bit_position: (mapping.start_bit % 8) as u8,
-            bit_length: mapping.bit_length as u8,
-            data_type: mapping.data_type,
-            scale: mapping.scale,
-            offset: mapping.offset,
-        })
-    };
-
-    // Collect from all point types
+    // Collect from all point types with internal_id encoding
     for pt in &runtime_config.telemetry_points {
-        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+        let internal_id = PointType::Telemetry.to_internal_id(pt.base.point_id);
+        if let Some(can_point) = parse_can_point(internal_id, &pt.base.protocol_mappings) {
             configs.push(can_point);
         }
     }
     for pt in &runtime_config.signal_points {
-        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+        let internal_id = PointType::Signal.to_internal_id(pt.base.point_id);
+        if let Some(can_point) = parse_can_point(internal_id, &pt.base.protocol_mappings) {
             configs.push(can_point);
         }
     }
     for pt in &runtime_config.control_points {
-        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+        let internal_id = PointType::Control.to_internal_id(pt.base.point_id);
+        if let Some(can_point) = parse_can_point(internal_id, &pt.base.protocol_mappings) {
             configs.push(can_point);
         }
     }
     for pt in &runtime_config.adjustment_points {
-        if let Some(can_point) = parse_can_point(pt.base.point_id, &pt.base.protocol_mappings) {
+        let internal_id = PointType::Adjustment.to_internal_id(pt.base.point_id);
+        if let Some(can_point) = parse_can_point(internal_id, &pt.base.protocol_mappings) {
             configs.push(can_point);
         }
     }
@@ -875,6 +952,8 @@ pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 /// This conversion is used to register points with the data store for proper
 /// data transformation and storage.
 /// Parses CAN configuration from each point's protocol_mappings JSON field.
+///
+/// **Important**: Uses `PointType::to_internal_id()` to encode type into point_id.
 pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
     use igw::core::point::ProtocolAddress;
 
@@ -893,14 +972,14 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
     // Telemetry points
     for pt in &runtime_config.telemetry_points {
         if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let internal_id = PointType::Telemetry.to_internal_id(pt.base.point_id);
             let transform = TransformConfig {
                 scale: pt.scale,
                 offset: pt.offset,
                 reverse: pt.reverse,
                 ..Default::default()
             };
-            let config =
-                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
+            let config = PointConfig::new(internal_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -908,12 +987,12 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
     // Signal points
     for pt in &runtime_config.signal_points {
         if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let internal_id = PointType::Signal.to_internal_id(pt.base.point_id);
             let transform = TransformConfig {
                 reverse: pt.reverse,
                 ..Default::default()
             };
-            let config =
-                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
+            let config = PointConfig::new(internal_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -921,12 +1000,12 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
     // Control points
     for pt in &runtime_config.control_points {
         if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let internal_id = PointType::Control.to_internal_id(pt.base.point_id);
             let transform = TransformConfig {
                 reverse: pt.reverse,
                 ..Default::default()
             };
-            let config =
-                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
+            let config = PointConfig::new(internal_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -934,13 +1013,13 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
     // Adjustment points
     for pt in &runtime_config.adjustment_points {
         if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
+            let internal_id = PointType::Adjustment.to_internal_id(pt.base.point_id);
             let transform = TransformConfig {
                 scale: pt.scale,
                 offset: pt.offset,
                 ..Default::default()
             };
-            let config =
-                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
+            let config = PointConfig::new(internal_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -1064,23 +1143,29 @@ mod tests {
 
     #[test]
     fn test_convert_to_igw_point_configs() {
+        use voltage_model::PointType;
+
         let runtime_config = create_test_runtime_config();
         let configs = convert_to_igw_point_configs(&runtime_config);
 
         assert_eq!(configs.len(), 4);
 
-        // Check telemetry point (point type is tracked by application layer, not igw)
-        let telemetry = configs.iter().find(|c| c.id == 10).unwrap();
+        // Check telemetry point - now uses internal_id
+        let telemetry_internal = PointType::Telemetry.to_internal_id(10);
+        let telemetry = configs.iter().find(|c| c.id == telemetry_internal).unwrap();
         assert_eq!(telemetry.name, Some("temperature".to_string()));
 
-        // Check signal point exists
-        assert!(configs.iter().any(|c| c.id == 20));
+        // Check signal point exists with internal_id
+        let signal_internal = PointType::Signal.to_internal_id(20);
+        assert!(configs.iter().any(|c| c.id == signal_internal));
 
-        // Check control point exists
-        assert!(configs.iter().any(|c| c.id == 30));
+        // Check control point exists with internal_id
+        let control_internal = PointType::Control.to_internal_id(30);
+        assert!(configs.iter().any(|c| c.id == control_internal));
 
-        // Check adjustment point exists
-        assert!(configs.iter().any(|c| c.id == 40));
+        // Check adjustment point exists with internal_id
+        let adjustment_internal = PointType::Adjustment.to_internal_id(40);
+        assert!(configs.iter().any(|c| c.id == adjustment_internal));
     }
 
     #[test]
@@ -1126,12 +1211,15 @@ mod tests {
             reverse: false,
         });
 
+        use voltage_model::PointType;
+
         let configs = convert_to_modbus_point_configs(&runtime_config);
 
         assert_eq!(configs.len(), 2);
 
-        // Check first point (telemetry, float32) - point type tracked by application layer
-        let pt1 = configs.iter().find(|c| c.id == 100).unwrap();
+        // Check first point (telemetry, float32) - now uses internal_id encoding
+        let telemetry_internal = PointType::Telemetry.to_internal_id(100);
+        let pt1 = configs.iter().find(|c| c.id == telemetry_internal).unwrap();
         if let ProtocolAddress::Modbus(addr) = &pt1.address {
             assert_eq!(addr.slave_id, 1);
             assert_eq!(addr.function_code, 3);
@@ -1142,8 +1230,9 @@ mod tests {
             panic!("Expected ModbusAddress");
         }
 
-        // Check second point (signal, bool with bit_position) - point type tracked by application layer
-        let pt2 = configs.iter().find(|c| c.id == 101).unwrap();
+        // Check second point (signal, bool with bit_position) - now uses internal_id encoding
+        let signal_internal = PointType::Signal.to_internal_id(101);
+        let pt2 = configs.iter().find(|c| c.id == signal_internal).unwrap();
         if let ProtocolAddress::Modbus(addr) = &pt2.address {
             assert_eq!(addr.slave_id, 1);
             assert_eq!(addr.function_code, 1);

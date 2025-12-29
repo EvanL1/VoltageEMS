@@ -303,7 +303,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         let exec_key = format!("rule:{}:exec", rule_id);
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .expect("System time should be after UNIX epoch")
             .as_secs();
 
         // Write timestamp

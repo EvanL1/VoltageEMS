@@ -228,15 +228,6 @@ pub struct PointData {
     pub timestamp: i64,
 }
 
-impl Default for PointData {
-    fn default() -> Self {
-        Self {
-            value: ProtocolValue::Float(0.0),
-            timestamp: 0,
-        }
-    }
-}
-
 /// Point data mapping
 pub type PointDataMap = HashMap<u32, PointData>;
 

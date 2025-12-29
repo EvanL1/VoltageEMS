@@ -8,6 +8,7 @@
 //! - Reloading all channels from database
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
+#![allow(clippy::type_complexity)] // parse_channel_config return type
 
 use crate::api::routes::AppState;
 use crate::core::config::{ChannelCore, ChannelLoggingConfig};
@@ -21,33 +22,85 @@ use voltage_rtdb::Rtdb;
 
 /// Parse channel config JSON into description, parameters, and logging
 fn parse_channel_config(
+    channel_id: u32,
     config_str: Option<String>,
-) -> (
-    Option<String>,
-    std::collections::HashMap<String, serde_json::Value>,
-    ChannelLoggingConfig,
-) {
-    let config_obj = config_str
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default();
+) -> Result<
+    (
+        Option<String>,
+        std::collections::HashMap<String, serde_json::Value>,
+        ChannelLoggingConfig,
+    ),
+    AppError,
+> {
+    let config_obj = match config_str {
+        None => serde_json::Map::new(),
+        Some(s) => {
+            let value: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
+                tracing::error!("Ch{} invalid config JSON: {}", channel_id, e);
+                AppError::internal_error(format!(
+                    "Invalid channel config JSON for {}: {}",
+                    channel_id, e
+                ))
+            })?;
+            value.as_object().cloned().ok_or_else(|| {
+                tracing::error!("Ch{} config must be a JSON object", channel_id);
+                AppError::internal_error(format!(
+                    "Invalid channel config for {}: expected JSON object",
+                    channel_id
+                ))
+            })?
+        },
+    };
 
-    let description = config_obj
-        .get("description")
-        .and_then(|d| d.as_str().map(|s| s.to_string()));
+    let description = match config_obj.get("description") {
+        None => None,
+        Some(d) => Some(
+            d.as_str()
+                .ok_or_else(|| {
+                    tracing::error!(
+                        "Ch{} config field 'description' must be a string",
+                        channel_id
+                    );
+                    AppError::internal_error(format!(
+                        "Invalid channel config for {}: 'description' must be a string",
+                        channel_id
+                    ))
+                })?
+                .to_string(),
+        ),
+    };
 
-    let parameters = config_obj
-        .get("parameters")
-        .and_then(|p| p.as_object())
-        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-        .unwrap_or_default();
+    let parameters = match config_obj.get("parameters") {
+        None => std::collections::HashMap::new(),
+        Some(p) => p
+            .as_object()
+            .ok_or_else(|| {
+                tracing::error!(
+                    "Ch{} config field 'parameters' must be an object",
+                    channel_id
+                );
+                AppError::internal_error(format!(
+                    "Invalid channel config for {}: 'parameters' must be an object",
+                    channel_id
+                ))
+            })?
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    };
 
-    let logging = config_obj
-        .get("logging")
-        .and_then(|l| serde_json::from_value(l.clone()).ok())
-        .unwrap_or_default();
+    let logging = match config_obj.get("logging") {
+        None => ChannelLoggingConfig::default(),
+        Some(l) => serde_json::from_value(l.clone()).map_err(|e| {
+            tracing::error!("Ch{} invalid logging config: {}", channel_id, e);
+            AppError::internal_error(format!(
+                "Invalid channel logging config for {}: {}",
+                channel_id, e
+            ))
+        })?,
+    };
 
-    (description, parameters, logging)
+    Ok((description, parameters, logging))
 }
 
 /// Build channel config JSON from description, parameters, and logging
@@ -582,7 +635,7 @@ pub async fn update_channel_handler<R: Rtdb>(
 
     // Extract current configuration for restoration and apply requested updates
     let (previous_description, previous_parameters, _previous_logging) =
-        parse_channel_config(current_config_str.clone());
+        parse_channel_config(id, current_config_str.clone())?;
 
     let mut description = previous_description.clone();
     let mut parameters = previous_parameters.clone();
@@ -790,7 +843,7 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
     };
 
     // 2. Parse config for runtime (before early return so we can populate description correctly)
-    let (description, parameters, _logging) = parse_channel_config(config_str);
+    let (description, parameters, _logging) = parse_channel_config(id, config_str)?;
 
     // 3. Check if state actually changed
     if current_enabled == req.enabled {
@@ -1077,21 +1130,18 @@ pub async fn reload_configuration_handler<R: Rtdb>(
             db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == *id)
         {
             // Load description and parameters from config JSON
-            let (description, parameters): (
-                Option<String>,
-                std::collections::HashMap<String, serde_json::Value>,
-            ) = {
-                let config_str: Option<String> =
-                    sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
-                        .bind(*id as i64)
-                        .fetch_optional(&state.sqlite_pool)
-                        .await
-                        .ok()
-                        .flatten();
+            let config_str: Option<String> =
+                sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
+                    .bind(*id as i64)
+                    .fetch_optional(&state.sqlite_pool)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Load channel {} config: {}", id, e);
+                        AppError::internal_error("Database operation failed")
+                    })?
+                    .flatten();
 
-                let (desc, params, _logging) = parse_channel_config(config_str);
-                (desc, params)
-            };
+            let (description, parameters, _logging) = parse_channel_config(*id, config_str)?;
 
             let channel_config = ChannelConfig {
                 core: ChannelCore {
@@ -1135,21 +1185,18 @@ pub async fn reload_configuration_handler<R: Rtdb>(
             db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == *id)
         {
             // Load description and parameters from config JSON
-            let (description, parameters): (
-                Option<String>,
-                std::collections::HashMap<String, serde_json::Value>,
-            ) = {
-                let config_str: Option<String> =
-                    sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
-                        .bind(*id as i64)
-                        .fetch_optional(&state.sqlite_pool)
-                        .await
-                        .ok()
-                        .flatten();
+            let config_str: Option<String> =
+                sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
+                    .bind(*id as i64)
+                    .fetch_optional(&state.sqlite_pool)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Load channel {} config: {}", id, e);
+                        AppError::internal_error("Database operation failed")
+                    })?
+                    .flatten();
 
-                let (desc, params, _logging) = parse_channel_config(config_str);
-                (desc, params)
-            };
+            let (description, parameters, _logging) = parse_channel_config(*id, config_str)?;
 
             let manager = state.channel_manager.write().await;
 

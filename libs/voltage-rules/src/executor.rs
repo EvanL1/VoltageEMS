@@ -337,13 +337,20 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             let instance_id = match var.instance {
                 Some(id) => id,
                 None => {
-                    tracing::warn!("Var {}: no instance specified", var.name);
-                    continue;
+                    return Err(crate::error::RuleError::ExecutionError(format!(
+                        "Variable '{}' is missing instance_id",
+                        var.name
+                    )));
                 },
             };
 
             let point_type = var.point_type.as_deref().unwrap_or("measurement");
-            let point = var.point.unwrap_or(0);
+            let point = var.point.ok_or_else(|| {
+                crate::error::RuleError::ExecutionError(format!(
+                    "Variable '{}' is missing point_id",
+                    var.name
+                ))
+            })?;
 
             // Construct key: "inst:{id}:M" or "inst:{id}:A"
             let key = if point_type == "action" {
@@ -530,18 +537,66 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             0.0
         };
 
-        let instance_id = variable.instance.unwrap_or(0);
-        let point = variable.point.unwrap_or(0);
+        let Some(instance_id) = variable.instance else {
+            tracing::error!(
+                "Rule action skipped: variable '{}' missing instance_id",
+                variable.name
+            );
+            return ActionResult {
+                target_type: "instance".to_string(),
+                target_id: 0,
+                point_type: variable
+                    .point_type
+                    .as_deref()
+                    .unwrap_or("action")
+                    .to_string(),
+                point_id: 0,
+                value: resolved_value.to_string(),
+                success: false,
+            };
+        };
+
+        let Some(point) = variable.point else {
+            tracing::error!(
+                "Rule action skipped: variable '{}' missing point_id (instance_id={})",
+                variable.name,
+                instance_id
+            );
+            return ActionResult {
+                target_type: "instance".to_string(),
+                target_id: instance_id,
+                point_type: variable
+                    .point_type
+                    .as_deref()
+                    .unwrap_or("action")
+                    .to_string(),
+                point_id: 0,
+                value: resolved_value.to_string(),
+                success: false,
+            };
+        };
 
         // Use voltage_routing to set the action point
-        let result = set_action_point(
+        let routed = match set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_id,
             &point.to_string(),
             resolved_value,
         )
-        .await;
+        .await
+        {
+            Ok(outcome) => outcome.routed,
+            Err(e) => {
+                tracing::error!(
+                    "Rule action write failed (instance_id={}, point_id={}): {}",
+                    instance_id,
+                    point,
+                    e
+                );
+                false
+            },
+        };
 
         ActionResult {
             target_type: "instance".to_string(),
@@ -553,7 +608,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 .to_string(),
             point_id: point,
             value: resolved_value.to_string(),
-            success: result.is_ok(),
+            success: routed,
         }
     }
 
@@ -568,8 +623,38 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         value: f64,
         calc: &CalculationRule,
     ) -> ActionResult {
-        let instance_id = variable.instance.unwrap_or(0);
-        let point = variable.point.unwrap_or(0);
+        let Some(instance_id) = variable.instance else {
+            tracing::error!(
+                "Calc output skipped: variable '{}' missing instance_id (output='{}')",
+                variable.name,
+                calc.output
+            );
+            return ActionResult {
+                target_type: "instance".to_string(),
+                target_id: 0,
+                point_type: variable.point_type.as_deref().unwrap_or("M").to_string(),
+                point_id: 0,
+                value: value.to_string(),
+                success: false,
+            };
+        };
+
+        let Some(point) = variable.point else {
+            tracing::error!(
+                "Calc output skipped: variable '{}' missing point_id (instance_id={}, output='{}')",
+                variable.name,
+                instance_id,
+                calc.output
+            );
+            return ActionResult {
+                target_type: "instance".to_string(),
+                target_id: instance_id,
+                point_type: variable.point_type.as_deref().unwrap_or("M").to_string(),
+                point_id: 0,
+                value: value.to_string(),
+                success: false,
+            };
+        };
         let point_type = variable.point_type.as_deref().unwrap_or("M");
 
         let success = match point_type {
@@ -581,7 +666,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             },
             "A" | "action" => {
                 // Use M2C routing for action points
-                set_action_point(
+                match set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
                     instance_id,
@@ -589,7 +674,18 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     value,
                 )
                 .await
-                .is_ok()
+                {
+                    Ok(outcome) => outcome.routed,
+                    Err(e) => {
+                        tracing::error!(
+                            "Calc action write failed (instance_id={}, point_id={}): {}",
+                            instance_id,
+                            point,
+                            e
+                        );
+                        false
+                    },
+                }
             },
             _ => {
                 tracing::warn!(

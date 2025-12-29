@@ -98,13 +98,27 @@ pub async fn get_all_channels<R: Rtdb>(
         let channel_id = channel_id_i64 as u32;
 
         // Extract description from config JSON
-        let description = config_str
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.as_object().cloned())
-            .and_then(|obj| {
+        let description = match config_str {
+            None => None,
+            Some(s) => {
+                let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
+                    tracing::error!("Ch{} invalid config JSON: {}", channel_id, e);
+                    AppError::internal_error(format!(
+                        "Invalid channel config JSON for {}: {}",
+                        channel_id, e
+                    ))
+                })?;
+                let obj = v.as_object().ok_or_else(|| {
+                    tracing::error!("Ch{} config must be a JSON object", channel_id);
+                    AppError::internal_error(format!(
+                        "Invalid channel config for {}: expected JSON object",
+                        channel_id
+                    ))
+                })?;
                 obj.get("description")
                     .and_then(|d| d.as_str().map(|s| s.to_string()))
-            });
+            },
+        };
 
         // Get runtime status if channel is running
         let (connected, last_update) = if let Some(channel_impl) = manager.get_channel(channel_id) {
@@ -291,45 +305,86 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
         .parse::<u32>()
         .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
 
-    let (name, protocol, enabled, description, parameters, logging_config) = if let Ok(row) =
-        sqlx::query_as::<_, (String, String, bool, Option<String>)>(
-            "SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?",
-        )
-        .bind(id_u16 as i64)
-        .fetch_one(&state.sqlite_pool)
-        .await
-    {
-        let config_obj = row
-            .3
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
+    let row = sqlx::query_as::<_, (String, String, bool, Option<String>)>(
+        "SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?",
+    )
+    .bind(id_u16 as i64)
+    .fetch_optional(&state.sqlite_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Load channel {}: {}", id_u16, e);
+        AppError::internal_error("Database operation failed")
+    })?;
 
-        let mut obj = config_obj;
-
-        // Extract description
-        let desc = obj
-            .remove("description")
-            .and_then(|d| d.as_str().map(|s| s.to_string()));
-
-        // Extract logging config
-        let logging = obj
-            .remove("logging")
-            .and_then(|l| {
-                serde_json::from_value::<crate::core::config::ChannelLoggingConfig>(l).ok()
-            })
-            .unwrap_or_default();
-
-        // Extract parameters (the actual protocol parameters)
-        let params = obj
-            .remove("parameters")
-            .and_then(|p| p.as_object().cloned())
-            .map(|obj| obj.into_iter().collect())
-            .unwrap_or_default();
-
-        (row.0, row.1, row.2, desc, params, logging)
-    } else {
+    let Some((name, protocol, enabled, config_str)) = row else {
         return Err(AppError::not_found(format!("Channel {} not found", id_u16)));
+    };
+
+    let mut obj = match config_str {
+        None => serde_json::Map::new(),
+        Some(s) => {
+            let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
+                tracing::error!("Ch{} invalid config JSON: {}", id_u16, e);
+                AppError::internal_error(format!(
+                    "Invalid channel config JSON for {}: {}",
+                    id_u16, e
+                ))
+            })?;
+            v.as_object().cloned().ok_or_else(|| {
+                tracing::error!("Ch{} config must be a JSON object", id_u16);
+                AppError::internal_error(format!(
+                    "Invalid channel config for {}: expected JSON object",
+                    id_u16
+                ))
+            })?
+        },
+    };
+
+    // Extract description
+    let description = match obj.remove("description") {
+        None => None,
+        Some(d) => Some(
+            d.as_str()
+                .ok_or_else(|| {
+                    tracing::error!("Ch{} config field 'description' must be a string", id_u16);
+                    AppError::internal_error(format!(
+                        "Invalid channel config for {}: 'description' must be a string",
+                        id_u16
+                    ))
+                })?
+                .to_string(),
+        ),
+    };
+
+    // Extract logging config
+    let logging_config = match obj.remove("logging") {
+        None => crate::core::config::ChannelLoggingConfig::default(),
+        Some(l) => {
+            serde_json::from_value::<crate::core::config::ChannelLoggingConfig>(l).map_err(|e| {
+                tracing::error!("Ch{} invalid logging config: {}", id_u16, e);
+                AppError::internal_error(format!(
+                    "Invalid channel logging config for {}: {}",
+                    id_u16, e
+                ))
+            })?
+        },
+    };
+
+    // Extract parameters (the actual protocol parameters)
+    let parameters = match obj.remove("parameters") {
+        None => std::collections::HashMap::new(),
+        Some(p) => p
+            .as_object()
+            .cloned()
+            .ok_or_else(|| {
+                tracing::error!("Ch{} config field 'parameters' must be an object", id_u16);
+                AppError::internal_error(format!(
+                    "Invalid channel config for {}: 'parameters' must be an object",
+                    id_u16
+                ))
+            })?
+            .into_iter()
+            .collect(),
     };
 
     let manager = state.channel_manager.read().await;
@@ -554,14 +609,28 @@ pub async fn search_channels<R: Rtdb>(
         let channel_id = id as u32;
 
         // Extract description from config JSON
-        let description = config_str
-            .as_ref()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .and_then(|v| {
-                v.get("description")
+        let description = match config_str {
+            None => None,
+            Some(s) => {
+                let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
+                    tracing::error!("Ch{} invalid config JSON: {}", channel_id, e);
+                    AppError::internal_error(format!(
+                        "Invalid channel config JSON for {}: {}",
+                        channel_id, e
+                    ))
+                })?;
+                let obj = v.as_object().ok_or_else(|| {
+                    tracing::error!("Ch{} config must be a JSON object", channel_id);
+                    AppError::internal_error(format!(
+                        "Invalid channel config for {}: expected JSON object",
+                        channel_id
+                    ))
+                })?;
+                obj.get("description")
                     .and_then(|d| d.as_str())
                     .map(String::from)
-            });
+            },
+        };
 
         // Get runtime connected status
         let connected = manager

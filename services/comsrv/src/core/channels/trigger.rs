@@ -88,15 +88,6 @@ pub struct CommandTriggerConfig {
     pub timeout_seconds: u64,
 }
 
-impl Default for CommandTriggerConfig {
-    fn default() -> Self {
-        Self {
-            channel_id: 0,
-            timeout_seconds: default_timeout(), // Use the same default function
-        }
-    }
-}
-
 fn default_timeout() -> u64 {
     1 // Use a 1 second timeout to reduce connection pool contention; select! ensures timely response.
 }
@@ -905,15 +896,6 @@ mod tests {
     // ========================================================================
     // CommandTriggerConfig Tests
     // ========================================================================
-
-    #[test]
-    fn test_command_trigger_config_default() {
-        let config = CommandTriggerConfig::default();
-
-        assert_eq!(config.channel_id, 0);
-        // Default trait now uses default_timeout() function for consistency
-        assert_eq!(config.timeout_seconds, 1);
-    }
 
     #[test]
     fn test_command_trigger_config_creation() {

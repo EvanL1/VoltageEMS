@@ -280,15 +280,6 @@ fn default_max_files() -> u32 {
 // Default implementations
 // ============================================================================
 
-impl Default for ApiConfig {
-    fn default() -> Self {
-        Self {
-            host: default_api_host(),
-            port: 0, // Placeholder - services should provide their own default port
-        }
-    }
-}
-
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {

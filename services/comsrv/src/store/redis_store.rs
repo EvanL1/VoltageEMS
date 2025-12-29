@@ -30,8 +30,7 @@ use igw::core::error::Result as IgwResult;
 use igw::core::point::PointConfig;
 use igw::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
-use voltage_model::KeySpaceConfig;
-use voltage_model::PointType;
+use voltage_model::{KeySpaceConfig, PointType};
 use voltage_routing::ChannelPointUpdate;
 use voltage_rtdb::{RoutingCache, Rtdb, WriteBuffer, WriteBufferConfig};
 
@@ -42,6 +41,10 @@ use voltage_rtdb::{RoutingCache, Rtdb, WriteBuffer, WriteBufferConfig};
 ///
 /// IGW handles all data transformations (scale/offset/reverse) in poll_once(),
 /// so this store receives already-transformed data and writes it directly.
+///
+/// Point type is encoded in the internal_id using `PointType::to_internal_id()`,
+/// and decoded using `PointType::from_internal_id()` when writing to Redis.
+/// This avoids point_id collisions when different types share the same original ID.
 ///
 /// It handles:
 /// - Redis Hash writes via WriteBuffer (high-performance buffered writes)
@@ -55,9 +58,6 @@ pub struct RedisDataStore<R: Rtdb> {
     write_buffer: Arc<WriteBuffer>,
     /// Point configurations cache (channel_id -> configs)
     point_configs: DashMap<u32, Vec<PointConfig>>,
-    /// Point type mapping: (channel_id, point_id) -> PointType
-    /// Since igw no longer tracks point types, the application layer must maintain this.
-    point_types: DashMap<(u32, u32), PointType>,
     /// Event subscribers
     subscribers: Arc<RwLock<Vec<DataEventSender>>>,
     /// KeySpace configuration
@@ -77,7 +77,6 @@ impl<R: Rtdb> RedisDataStore<R> {
             routing_cache,
             write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
             point_configs: DashMap::new(),
-            point_types: DashMap::new(),
             subscribers: Arc::new(RwLock::new(Vec::new())),
             key_config: KeySpaceConfig::production(),
         }
@@ -93,37 +92,11 @@ impl<R: Rtdb> RedisDataStore<R> {
         });
     }
 
-    /// Register point types for a channel.
-    ///
-    /// Since igw no longer tracks point types, the application layer must call this
-    /// method to register the mapping from (channel_id, point_id) -> PointType.
-    /// This is typically called by ChannelManager when creating a channel.
-    pub fn register_point_types(&self, channel_id: u32, types: Vec<(u32, PointType)>) {
-        for (point_id, point_type) in types {
-            self.point_types.insert((channel_id, point_id), point_type);
-        }
-    }
-
-    /// Get point type for a specific point.
-    ///
-    /// # Panics
-    /// Panics if point type is not registered. This is intentional (Fail Fast)
-    /// to catch configuration errors immediately rather than silently writing
-    /// to wrong Redis keys.
-    fn get_point_type(&self, channel_id: u32, point_id: u32) -> PointType {
-        self.point_types
-            .get(&(channel_id, point_id))
-            .map(|r| *r)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Point type not registered for Ch{}:Point{}. \
-                     Call register_point_types() before polling.",
-                    channel_id, point_id
-                )
-            })
-    }
-
     /// Convert DataBatch to ChannelPointUpdates for voltage-routing.
+    ///
+    /// The internal_id from IGW encodes both point type and original point_id.
+    /// We decode it using `PointType::from_internal_id()` to get the correct
+    /// Redis key (type) and field (original point_id).
     ///
     /// Note: IGW has already applied transformations (scale/offset/reverse) in poll_once(),
     /// so point.value is already the final transformed value.
@@ -131,16 +104,21 @@ impl<R: Rtdb> RedisDataStore<R> {
         let mut updates = Vec::with_capacity(batch.len());
 
         for point in batch.iter() {
+            // Decode internal_id to get point_type and original point_id
+            let (point_type, original_point_id) = PointType::from_internal_id(point.id);
+
             // IGW returns already-transformed values
             let value = point.value.as_f64().unwrap_or(0.0);
-            let point_type = self.get_point_type(channel_id, point.id);
 
-            debug!("[{:?}] Point {}: value={:.2}", point_type, point.id, value);
+            debug!(
+                "[{:?}] Point {} (internal_id={}): value={:.2}",
+                point_type, original_point_id, point.id, value
+            );
 
             updates.push(ChannelPointUpdate {
                 channel_id,
                 point_type,
-                point_id: point.id,
+                point_id: original_point_id, // Use original point_id for Redis field
                 value,
                 raw_value: None, // IGW doesn't expose pre-transform values
                 cascade_depth: 0,
@@ -306,28 +284,56 @@ mod tests {
     use voltage_rtdb::helpers::create_test_rtdb;
 
     #[tokio::test]
-    async fn test_redis_store_write_read() {
+    async fn test_redis_store_write_with_internal_id() {
         let rtdb = create_test_rtdb();
         let routing_cache = Arc::new(RoutingCache::new());
 
         let store = RedisDataStore::new(rtdb, routing_cache);
 
-        // Register point types first
-        store.register_point_types(
-            9901,
-            vec![(1, PointType::Telemetry), (2, PointType::Signal)],
-        );
+        // Create a batch with internal_ids (simulating what igw returns)
+        // Signal point_id=1 and Control point_id=1 should have different internal_ids
+        let signal_internal = PointType::Signal.to_internal_id(1);
+        let control_internal = PointType::Control.to_internal_id(1);
 
-        // Create a batch using new API (no data_type in DataPoint)
         let mut batch = DataBatch::default();
-        batch.add(DataPoint::new(1, 25.5));
-        batch.add(DataPoint::new(2, true));
+        batch.add(DataPoint::new(signal_internal, true)); // DI
+        batch.add(DataPoint::new(control_internal, false)); // DO
 
-        // Write
+        // Write - this should decode internal_ids correctly and write to different Redis keys
         store.write_batch(9901, batch).await.unwrap();
 
         // Note: In-memory test rtdb doesn't persist, so we can't verify reads
-        // This test just ensures the code compiles and runs without panics
+        // This test ensures the code compiles and runs without panics
+    }
+
+    #[tokio::test]
+    async fn test_batch_to_updates_decodes_internal_id() {
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(RoutingCache::new());
+
+        let store = RedisDataStore::new(rtdb, routing_cache);
+
+        // Simulate GPIO data with Signal point_id=1 and Control point_id=1
+        let signal_internal = PointType::Signal.to_internal_id(1);
+        let control_internal = PointType::Control.to_internal_id(1);
+
+        let mut batch = DataBatch::default();
+        batch.add(DataPoint::new(signal_internal, 1.0)); // DI value
+        batch.add(DataPoint::new(control_internal, 0.0)); // DO value
+
+        let updates = store.batch_to_updates(5, &batch);
+
+        assert_eq!(updates.len(), 2);
+
+        // First update should be Signal with original point_id=1
+        assert_eq!(updates[0].point_type, PointType::Signal);
+        assert_eq!(updates[0].point_id, 1);
+        assert_eq!(updates[0].value, 1.0);
+
+        // Second update should be Control with original point_id=1
+        assert_eq!(updates[1].point_type, PointType::Control);
+        assert_eq!(updates[1].point_id, 1);
+        assert_eq!(updates[1].value, 0.0);
     }
 
     #[tokio::test]
@@ -337,57 +343,21 @@ mod tests {
 
         let store = RedisDataStore::new(rtdb, routing_cache);
 
-        // Set configs using new API (no DataType in PointConfig)
+        // Set configs using new API (with internal_id)
+        let internal_id = PointType::Telemetry.to_internal_id(1);
         let configs = vec![PointConfig::new(
-            1,
+            internal_id,
             igw::core::point::ProtocolAddress::Generic("test".to_string()),
         )];
         store.set_point_configs(9902, configs);
 
-        // Get config
-        let config = store.get_point_config(9902, 1);
+        // Get config by internal_id
+        let config = store.get_point_config(9902, internal_id);
         assert!(config.is_some());
-        assert_eq!(config.unwrap().id, 1);
+        assert_eq!(config.unwrap().id, internal_id);
 
         // Get all configs
         let all = store.get_all_point_configs(9902);
         assert_eq!(all.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_point_type_mapping() {
-        let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(RoutingCache::new());
-
-        let store = RedisDataStore::new(rtdb, routing_cache);
-
-        // Register point types
-        store.register_point_types(
-            9903,
-            vec![
-                (1, PointType::Telemetry),
-                (2, PointType::Signal),
-                (3, PointType::Control),
-            ],
-        );
-
-        // Verify lookups for registered points
-        assert_eq!(store.get_point_type(9903, 1), PointType::Telemetry);
-        assert_eq!(store.get_point_type(9903, 2), PointType::Signal);
-        assert_eq!(store.get_point_type(9903, 3), PointType::Control);
-        // Note: Unregistered points now panic (Fail Fast principle)
-        // See test_unregistered_point_panics for panic behavior
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "Point type not registered")]
-    async fn test_unregistered_point_panics() {
-        let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(RoutingCache::new());
-
-        let store = RedisDataStore::new(rtdb, routing_cache);
-
-        // Don't register any points, accessing should panic
-        store.get_point_type(9999, 1);
     }
 }
