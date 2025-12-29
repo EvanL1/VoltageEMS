@@ -17,7 +17,7 @@ path = "src/main.rs"
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum", "openapi"] }
 
 # IGW - Industrial Gateway Protocol Library
-igw = { version = "0.2.12", default-features = false, features = ["virtual-channel", "tracing-support", "modbus", "gpio"] }
+igw = { version = "0.2.13", default-features = false, features = ["virtual-channel", "tracing-support", "modbus", "gpio"] }
 
 errors = { path = "../../libs/errors", features = ["axum-support"] }
 # voltage-comlink removed - types moved to core/channels/types.rs
