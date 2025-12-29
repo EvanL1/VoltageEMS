@@ -20,10 +20,10 @@ pub use crate::core::config::FourRemote;
 pub use channel_manager::{ChannelEntry, ChannelManager, ChannelMetadata, ChannelStats};
 pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand};
 
-// IGW bridge types
+// IGW bridge types (ProtocolClientImpl removed - now using Box<dyn ChannelRuntime>)
 pub use igw_bridge::{
     convert_to_igw_point_configs as convert_to_point_configs, create_virtual_channel, ChannelImpl,
-    IgwChannelWrapper, ProtocolClientImpl,
+    IgwChannelWrapper,
 };
 
 /// Initialize channels module

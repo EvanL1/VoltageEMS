@@ -1290,6 +1290,136 @@ impl CsvFields for AdjustmentPoint {
     }
 }
 
+// ============================================================================
+// Point View Types for Configuration Access
+// ============================================================================
+//
+// These types provide a unified view over different point types (T/S/C/A)
+// for convenient access to point configuration data.
+
+/// Wrapper for point types providing unified access to point configuration.
+///
+/// This wrapper provides a unified view over different point types (T/S/C/A)
+/// for easy iteration and access to common fields.
+#[allow(dead_code)]
+pub struct PointView<'a> {
+    point_id: u32,
+    signal_name: &'a str,
+    protocol_mappings: Option<&'a str>,
+    scale: Option<f64>,
+    offset: Option<f64>,
+    reverse: bool,
+}
+
+#[allow(dead_code)]
+impl PointView<'_> {
+    pub fn point_id(&self) -> u32 {
+        self.point_id
+    }
+
+    pub fn signal_name(&self) -> &str {
+        self.signal_name
+    }
+
+    pub fn protocol_mappings(&self) -> Option<&str> {
+        self.protocol_mappings
+    }
+
+    pub fn scale(&self) -> Option<f64> {
+        self.scale
+    }
+
+    pub fn offset(&self) -> Option<f64> {
+        self.offset
+    }
+
+    pub fn reverse(&self) -> bool {
+        self.reverse
+    }
+}
+
+impl<'a> From<&'a TelemetryPoint> for PointView<'a> {
+    fn from(p: &'a TelemetryPoint) -> Self {
+        Self {
+            point_id: p.base.point_id,
+            signal_name: &p.base.signal_name,
+            protocol_mappings: p.base.protocol_mappings.as_deref(),
+            scale: Some(p.scale),
+            offset: Some(p.offset),
+            reverse: p.reverse,
+        }
+    }
+}
+
+impl<'a> From<&'a SignalPoint> for PointView<'a> {
+    fn from(p: &'a SignalPoint) -> Self {
+        Self {
+            point_id: p.base.point_id,
+            signal_name: &p.base.signal_name,
+            protocol_mappings: p.base.protocol_mappings.as_deref(),
+            scale: None,
+            offset: None,
+            reverse: p.reverse,
+        }
+    }
+}
+
+impl<'a> From<&'a ControlPoint> for PointView<'a> {
+    fn from(p: &'a ControlPoint) -> Self {
+        Self {
+            point_id: p.base.point_id,
+            signal_name: &p.base.signal_name,
+            protocol_mappings: p.base.protocol_mappings.as_deref(),
+            scale: None,
+            offset: None,
+            reverse: p.reverse,
+        }
+    }
+}
+
+impl<'a> From<&'a AdjustmentPoint> for PointView<'a> {
+    fn from(p: &'a AdjustmentPoint) -> Self {
+        Self {
+            point_id: p.base.point_id,
+            signal_name: &p.base.signal_name,
+            protocol_mappings: p.base.protocol_mappings.as_deref(),
+            scale: Some(p.scale),
+            offset: Some(p.offset),
+            reverse: false, // Adjustment points don't have reverse
+        }
+    }
+}
+
+impl RuntimeChannelConfig {
+    /// Get parameters as JSON string (for igw RuntimeChannelView compatibility).
+    ///
+    /// This method serializes the parameters HashMap to a JSON string.
+    /// Returns None if serialization fails.
+    pub fn get_parameters_json(&self) -> Option<String> {
+        serde_json::to_string(&self.base.parameters).ok()
+    }
+
+    /// Get telemetry points as PointView iterator.
+    pub fn telemetry_point_views(&self) -> impl Iterator<Item = PointView<'_>> {
+        self.telemetry_points.iter().map(PointView::from)
+    }
+
+    /// Get signal points as PointView iterator.
+    pub fn signal_point_views(&self) -> impl Iterator<Item = PointView<'_>> {
+        self.signal_points.iter().map(PointView::from)
+    }
+
+    /// Get control points as PointView iterator.
+    pub fn control_point_views(&self) -> impl Iterator<Item = PointView<'_>> {
+        self.control_points.iter().map(PointView::from)
+    }
+
+    /// Get adjustment points as PointView iterator.
+    pub fn adjustment_point_views(&self) -> impl Iterator<Item = PointView<'_>> {
+        self.adjustment_points.iter().map(PointView::from)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {

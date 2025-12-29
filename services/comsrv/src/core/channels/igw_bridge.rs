@@ -12,7 +12,7 @@
 //! ChannelManager
 //!         ↓ create_*_channel() + IgwChannelWrapper::new()
 //! IgwChannelWrapper
-//!         ├─ protocol: ProtocolClientImpl (enum-based, replaces dyn ProtocolClient)
+//!         ├─ protocol: Box<dyn ChannelRuntime> (dynamic dispatch via async_trait)
 //!         ├─ store: RedisDataStore (service layer storage)
 //!         └─ poll_once() → protocol.poll_once() → store.write_batch()
 //! ```
@@ -22,24 +22,25 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
-use igw::core::data::{DataBatch, DataType};
-use igw::core::error::GatewayError;
-use igw::core::logging::{
-    ChannelLogConfig, ChannelLogHandler, LoggableProtocol, TracingLogHandler,
-};
 use igw::core::point::{
     ByteOrder, DataFormat, ModbusAddress, PointConfig, ProtocolAddress, TransformConfig,
     VirtualAddress,
 };
-use igw::core::traits::{AdjustmentCommand, ControlCommand, WriteResult};
+use igw::core::traits::PollResult;
 use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
 use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 
+// ChannelRuntime trait and wrappers from igw
+use igw::gateway::wrappers::{ModbusRuntime, VirtualRuntime};
+use igw::gateway::ChannelRuntime;
+
+#[cfg(all(feature = "can", target_os = "linux"))]
+use igw::gateway::wrappers::CanRuntime;
 #[cfg(all(feature = "can", target_os = "linux"))]
 use igw::protocols::can::{CanClient, CanConfig, CanPoint};
 
-use igw::{ConnectionState, Protocol, ProtocolClient};
-
+#[cfg(all(target_os = "linux", feature = "gpio"))]
+use igw::gateway::wrappers::GpioRuntime;
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 use igw::protocols::gpio::{GpioChannel, GpioChannelConfig, GpioPinConfig};
 
@@ -50,201 +51,26 @@ use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
 // ============================================================================
-// ProtocolClientImpl - Enum-based protocol dispatch (replaces Box<dyn ProtocolClient>)
-// ============================================================================
-
-/// Enum-based protocol client implementation.
-///
-/// This replaces `Box<dyn ProtocolClient>` to work with igw 0.2.2's AFIT
-/// (Async Functions In Traits) which makes `ProtocolClient` not dyn-compatible.
-///
-/// Benefits:
-/// - Compile-time type safety
-/// - No vtable overhead
-/// - Exhaustive match ensures all protocols are handled
-pub enum ProtocolClientImpl {
-    /// Virtual channel for testing and simulation
-    Virtual(VirtualChannel),
-    /// Modbus TCP or RTU channel
-    Modbus(ModbusChannel),
-    /// GPIO channel for digital I/O
-    #[cfg(all(feature = "gpio", target_os = "linux"))]
-    Gpio(GpioChannel),
-    /// CAN channel (LYNK protocol)
-    #[cfg(all(feature = "can", target_os = "linux"))]
-    Can(CanClient),
-}
-
-impl ProtocolClientImpl {
-    /// Poll once to get data from the device.
-    pub async fn poll_once(&mut self) -> Result<DataBatch, GatewayError> {
-        match self {
-            Self::Virtual(c) => c.poll_once().await,
-            Self::Modbus(c) => c.poll_once().await,
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(c) => c.poll_once().await,
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(c) => c.poll_once().await,
-        }
-    }
-
-    /// Connect to the device.
-    pub async fn connect(&mut self) -> Result<(), GatewayError> {
-        match self {
-            Self::Virtual(c) => c.connect().await,
-            Self::Modbus(c) => c.connect().await,
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(c) => c.connect().await,
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(c) => c.connect().await,
-        }
-    }
-
-    /// Disconnect from the device.
-    pub async fn disconnect(&mut self) -> Result<(), GatewayError> {
-        match self {
-            Self::Virtual(c) => c.disconnect().await,
-            Self::Modbus(c) => c.disconnect().await,
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(c) => c.disconnect().await,
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(c) => c.disconnect().await,
-        }
-    }
-
-    /// Get the current connection state.
-    pub fn connection_state(&self) -> ConnectionState {
-        match self {
-            Self::Virtual(c) => c.connection_state(),
-            Self::Modbus(c) => c.connection_state(),
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(c) => c.connection_state(),
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(c) => c.connection_state(),
-        }
-    }
-
-    /// Write control commands to the device.
-    pub async fn write_control(
-        &mut self,
-        commands: &[ControlCommand],
-    ) -> Result<WriteResult, GatewayError> {
-        match self {
-            Self::Virtual(c) => c.write_control(commands).await,
-            Self::Modbus(c) => c.write_control(commands).await,
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(c) => c.write_control(commands).await,
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(c) => c.write_control(commands).await,
-        }
-    }
-
-    /// Write adjustment commands to the device.
-    pub async fn write_adjustment(
-        &mut self,
-        commands: &[AdjustmentCommand],
-    ) -> Result<WriteResult, GatewayError> {
-        match self {
-            Self::Virtual(c) => c.write_adjustment(commands).await,
-            Self::Modbus(c) => c.write_adjustment(commands).await,
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(c) => c.write_adjustment(commands).await,
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(c) => c.write_adjustment(commands).await,
-        }
-    }
-
-    /// Set the log handler for protocol-level logging.
-    ///
-    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel and CanClient are no-ops.
-    pub fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        match self {
-            Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
-            Self::Modbus(c) => c.set_log_handler(handler),
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(_) => {}, // CanClient doesn't implement LoggableProtocol yet
-        }
-    }
-
-    /// Set the log configuration.
-    ///
-    /// Only ModbusChannel supports logging; VirtualChannel and GpioChannel and CanClient are no-ops.
-    pub fn set_log_config(&mut self, config: ChannelLogConfig) {
-        match self {
-            Self::Virtual(_) => {}, // VirtualChannel doesn't implement LoggableProtocol
-            Self::Modbus(c) => c.set_log_config(config),
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(_) => {}, // GpioChannel doesn't implement LoggableProtocol
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(_) => {}, // CanClient doesn't implement LoggableProtocol yet
-        }
-    }
-
-    /// Configure logging with TracingLogHandler (default config).
-    ///
-    /// This is a convenience method that sets up tracing integration
-    /// for ModbusChannel. VirtualChannel is a no-op.
-    pub fn enable_tracing_logs(&mut self) {
-        self.set_log_handler(Arc::new(TracingLogHandler));
-        self.set_log_config(ChannelLogConfig::default());
-    }
-
-    /// Get diagnostics information from the protocol.
-    ///
-    /// Returns error count and last error for monitoring GPIO/CAN read failures.
-    pub async fn diagnostics(&self) -> Option<(u64, Option<String>)> {
-        match self {
-            Self::Virtual(_) => None, // VirtualChannel doesn't track errors
-            Self::Modbus(c) => {
-                if let Ok(diag) = c.diagnostics().await {
-                    Some((diag.error_count, diag.last_error))
-                } else {
-                    None
-                }
-            },
-            #[cfg(all(target_os = "linux", feature = "gpio"))]
-            Self::Gpio(c) => {
-                if let Ok(diag) = c.diagnostics().await {
-                    Some((diag.error_count, diag.last_error))
-                } else {
-                    None
-                }
-            },
-            #[cfg(all(feature = "can", target_os = "linux"))]
-            Self::Can(c) => {
-                if let Ok(diag) = c.diagnostics().await {
-                    Some((diag.error_count, diag.last_error))
-                } else {
-                    None
-                }
-            },
-        }
-    }
-}
-
-// ============================================================================
 // IgwChannelWrapper - Protocol wrapper with storage integration
 // ============================================================================
 
 /// Wrapper for IGW protocol clients that integrates with comsrv's command system.
 ///
 /// This wrapper:
-/// - Holds an IGW ProtocolClient implementation (enum-based)
+/// - Holds an IGW `ChannelRuntime` implementation (dynamic dispatch via `async_trait`)
 /// - Spawns a background task to process incoming commands
 /// - Provides access to the underlying protocol for status queries
-/// - For event-driven protocols (CAN), starts a polling task for data acquisition
+/// - Starts a polling task for data acquisition
 pub struct IgwChannelWrapper<R: Rtdb> {
-    /// The IGW protocol client (enum-based for AFIT compatibility)
-    protocol: Arc<RwLock<ProtocolClientImpl>>,
+    /// The IGW protocol client (Box<dyn ChannelRuntime> for dynamic dispatch)
+    protocol: Arc<RwLock<Box<dyn ChannelRuntime>>>,
     /// Channel ID
     channel_id: u32,
     /// Data store for persisting polled data
     store: Arc<RedisDataStore<R>>,
     /// Command executor task handle
     _executor_handle: Option<tokio::task::JoinHandle<()>>,
-    /// Polling task handle (for event-driven protocols)
+    /// Polling task handle
     _polling_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -254,13 +80,13 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     /// Polling is always enabled - all channels need periodic data acquisition.
     ///
     /// # Arguments
-    /// * `protocol` - The protocol client implementation
+    /// * `protocol` - The protocol client implementation (Box<dyn ChannelRuntime>)
     /// * `channel_id` - Unique channel identifier
     /// * `store` - Data store for persisting polled data
     /// * `command_rx` - Receiver for control commands
     /// * `poll_interval_ms` - Polling interval in milliseconds
     pub fn new(
-        protocol: ProtocolClientImpl,
+        protocol: Box<dyn ChannelRuntime>,
         channel_id: u32,
         store: Arc<RedisDataStore<R>>,
         command_rx: mpsc::Receiver<ChannelCommand>,
@@ -298,29 +124,33 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     /// Poll once and write data to store.
     ///
     /// This is the main data acquisition method:
-    /// 1. Call protocol.poll_once() to get DataBatch from device
+    /// 1. Call protocol.poll_once() to get PollResult from device
     /// 2. Write the batch to RedisDataStore (with transformations and routing)
     pub async fn poll_once(&self) -> crate::error::Result<usize> {
         let mut protocol = self.protocol.write().await;
-        let batch = protocol
-            .poll_once()
-            .await
-            .map_err(|e| crate::error::ComSrvError::ProtocolError(e.to_string()))?;
+        let result: PollResult = protocol.poll_once().await;
 
-        let count = batch.len();
+        // Check failures first before moving data
+        if result.has_failures() {
+            warn!(
+                "Ch{} poll partial failures: {:?}",
+                self.channel_id, result.failures
+            );
+        }
+
+        let count = result.data.len();
         if count > 0 {
             self.store
-                .write_batch(self.channel_id, batch)
+                .write_batch(self.channel_id, result.data)
                 .await
                 .map_err(|e| crate::error::ComSrvError::storage(e.to_string()))?;
-            // Note: igw already logs poll results at debug level
         }
 
         Ok(count)
     }
 
     /// Get the protocol client for status queries.
-    pub fn protocol(&self) -> &Arc<RwLock<ProtocolClientImpl>> {
+    pub fn protocol(&self) -> &Arc<RwLock<Box<dyn ChannelRuntime>>> {
         &self.protocol
     }
 
@@ -348,14 +178,21 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     }
 
     /// Check if connected.
+    ///
+    /// Note: ChannelRuntime doesn't expose connection state directly.
+    /// We use diagnostics as a proxy - if diagnostics succeed, we assume connected.
     pub async fn is_connected(&self) -> bool {
         let protocol = self.protocol.read().await;
-        protocol.connection_state().is_connected()
+        // If diagnostics returns Ok, we consider it connected
+        protocol.diagnostics().await.is_ok()
     }
 
     /// Run the command executor loop.
+    ///
+    /// Uses ChannelRuntime's `write_control` and `write_adjustment` which
+    /// take `&[(u32, f64)]` tuples instead of command structs.
     async fn run_command_executor(
-        protocol: Arc<RwLock<ProtocolClientImpl>>,
+        protocol: Arc<RwLock<Box<dyn ChannelRuntime>>>,
         mut command_rx: mpsc::Receiver<ChannelCommand>,
         channel_id: u32,
     ) {
@@ -368,16 +205,13 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
                 ChannelCommand::Control {
                     point_id, value, ..
                 } => {
-                    let commands = vec![ControlCommand::latching(point_id, value != 0.0)];
-                    match protocol_guard.write_control(&commands).await {
-                        Ok(result) => {
-                            if result.is_success() {
+                    // ChannelRuntime uses (u32, f64) tuples
+                    match protocol_guard.write_control(&[(point_id, value)]).await {
+                        Ok(success_count) => {
+                            if success_count > 0 {
                                 debug!("Ch{} control pt{} = {} ok", channel_id, point_id, value);
                             } else {
-                                warn!(
-                                    "Ch{} control pt{} partial: {:?}",
-                                    channel_id, point_id, result.failures
-                                );
+                                warn!("Ch{} control pt{} = {} failed", channel_id, point_id, value);
                             }
                         },
                         Err(e) => {
@@ -388,15 +222,15 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
                 ChannelCommand::Adjustment {
                     point_id, value, ..
                 } => {
-                    let adjustments = vec![AdjustmentCommand::new(point_id, value)];
-                    match protocol_guard.write_adjustment(&adjustments).await {
-                        Ok(result) => {
-                            if result.is_success() {
+                    // ChannelRuntime uses (u32, f64) tuples
+                    match protocol_guard.write_adjustment(&[(point_id, value)]).await {
+                        Ok(success_count) => {
+                            if success_count > 0 {
                                 debug!("Ch{} adjustment pt{} = {} ok", channel_id, point_id, value);
                             } else {
                                 warn!(
-                                    "Ch{} adjustment pt{} partial: {:?}",
-                                    channel_id, point_id, result.failures
+                                    "Ch{} adjustment pt{} = {} failed",
+                                    channel_id, point_id, value
                                 );
                             }
                         },
@@ -412,12 +246,12 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     }
 }
 
-/// Run the polling task for event-driven protocols (GPIO/CAN).
+/// Run the polling task for all channels.
 ///
-/// Periodically calls poll_once() to retrieve cached data and write to store.
+/// Periodically calls poll_once() to retrieve data and write to store.
 /// The polling interval is configurable via `poll_interval_ms`.
 async fn run_polling_task<R: Rtdb>(
-    protocol: Arc<RwLock<ProtocolClientImpl>>,
+    protocol: Arc<RwLock<Box<dyn ChannelRuntime>>>,
     store: Arc<RedisDataStore<R>>,
     channel_id: u32,
     poll_interval_ms: u64,
@@ -439,33 +273,34 @@ async fn run_polling_task<R: Rtdb>(
     loop {
         interval.tick().await;
 
-        // Poll data (no connection check needed - GPIO/CAN are always "connected")
+        // Poll data using ChannelRuntime interface
         let mut protocol_guard = protocol.write().await;
-        match protocol_guard.poll_once().await {
-            Ok(batch) => {
-                let count = batch.len();
-                if count > 0 {
-                    debug!("Ch{} polling获取到 {} 个数据点", channel_id, count);
-                    if let Err(e) = store.write_batch(channel_id, batch).await {
-                        error!("Ch{} 写入Redis失败: {}", channel_id, e);
-                    }
-                }
+        let result: PollResult = protocol_guard.poll_once().await;
 
-                // Check for partial read failures (GPIO/CAN may have some pins fail)
-                if let Some((error_count, last_error)) = protocol_guard.diagnostics().await {
-                    if error_count > prev_error_count {
-                        let new_errors = error_count - prev_error_count;
-                        warn!(
-                            "Ch{} 部分读取失败: {} 个新错误, 最后错误: {:?}",
-                            channel_id, new_errors, last_error
-                        );
-                        prev_error_count = error_count;
-                    }
-                }
-            },
-            Err(e) => {
-                warn!("Ch{} polling错误: {}", channel_id, e);
-            },
+        // Log partial failures from poll result (before moving data)
+        let failure_count = result.failures.len();
+        if failure_count > 0 {
+            warn!("Ch{} 部分读取失败: {} 个点失败", channel_id, failure_count);
+        }
+
+        let count = result.data.len();
+        if count > 0 {
+            debug!("Ch{} polling获取到 {} 个数据点", channel_id, count);
+            if let Err(e) = store.write_batch(channel_id, result.data).await {
+                error!("Ch{} 写入Redis失败: {}", channel_id, e);
+            }
+        }
+
+        // Check diagnostics for accumulated errors
+        if let Ok(diag) = protocol_guard.diagnostics().await {
+            if diag.error_count > prev_error_count {
+                let new_errors = diag.error_count - prev_error_count;
+                warn!(
+                    "Ch{} 累计错误: {} 个新错误, 最后错误: {:?}",
+                    channel_id, new_errors, diag.last_error
+                );
+                prev_error_count = diag.error_count;
+            }
         }
     }
 }
@@ -489,7 +324,6 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
         configs.push(
             PointConfig::new(
                 pt.base.point_id,
-                DataType::Telemetry,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -507,7 +341,6 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
         configs.push(
             PointConfig::new(
                 pt.base.point_id,
-                DataType::Signal,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -523,7 +356,6 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
         configs.push(
             PointConfig::new(
                 pt.base.point_id,
-                DataType::Control,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -539,7 +371,6 @@ pub fn convert_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
         configs.push(
             PointConfig::new(
                 pt.base.point_id,
-                DataType::Adjustment,
                 ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
             )
             .with_name(&pt.base.signal_name)
@@ -562,8 +393,20 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
     let mut configs = Vec::new();
 
     // Helper to parse modbus config from protocol_mappings JSON
-    fn parse_modbus_mapping(json_str: &str) -> Option<(u8, u8, u16, String, String, u8)> {
-        let v: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    fn parse_modbus_mapping(
+        json_str: &str,
+        point_id: u32,
+    ) -> Option<(u8, u8, u16, String, String, u8)> {
+        let v: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "Point {} has invalid protocol_mappings JSON: {}",
+                    point_id, e
+                );
+                return None;
+            },
+        };
         Some((
             v.get("slave_id").and_then(|x| x.as_u64()).unwrap_or(1) as u8,
             v.get("function_code").and_then(|x| x.as_u64()).unwrap_or(3) as u8,
@@ -592,7 +435,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 data_type_str,
                 byte_order_str,
                 bit_pos,
-            )) = parse_modbus_mapping(mappings_json)
+            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
                 let modbus_addr = ModbusAddress {
                     slave_id,
@@ -608,12 +451,9 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     reverse: point.reverse,
                     ..Default::default()
                 };
-                let config = PointConfig::new(
-                    point.base.point_id,
-                    DataType::Telemetry,
-                    ProtocolAddress::Modbus(modbus_addr),
-                )
-                .with_transform(transform);
+                let config =
+                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
+                        .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -629,7 +469,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 data_type_str,
                 byte_order_str,
                 bit_pos,
-            )) = parse_modbus_mapping(mappings_json)
+            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
                 let modbus_addr = ModbusAddress {
                     slave_id,
@@ -643,12 +483,9 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     reverse: point.reverse,
                     ..Default::default()
                 };
-                let config = PointConfig::new(
-                    point.base.point_id,
-                    DataType::Signal,
-                    ProtocolAddress::Modbus(modbus_addr),
-                )
-                .with_transform(transform);
+                let config =
+                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
+                        .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -664,7 +501,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 data_type_str,
                 byte_order_str,
                 bit_pos,
-            )) = parse_modbus_mapping(mappings_json)
+            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
                 let modbus_addr = ModbusAddress {
                     slave_id,
@@ -678,12 +515,9 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     reverse: point.reverse,
                     ..Default::default()
                 };
-                let config = PointConfig::new(
-                    point.base.point_id,
-                    DataType::Control,
-                    ProtocolAddress::Modbus(modbus_addr),
-                )
-                .with_transform(transform);
+                let config =
+                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
+                        .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -699,7 +533,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 data_type_str,
                 byte_order_str,
                 bit_pos,
-            )) = parse_modbus_mapping(mappings_json)
+            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
             {
                 let modbus_addr = ModbusAddress {
                     slave_id,
@@ -714,12 +548,9 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     offset: point.offset,
                     ..Default::default()
                 };
-                let config = PointConfig::new(
-                    point.base.point_id,
-                    DataType::Adjustment,
-                    ProtocolAddress::Modbus(modbus_addr),
-                )
-                .with_transform(transform);
+                let config =
+                    PointConfig::new(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
+                        .with_transform(transform);
                 configs.push(config);
             }
         }
@@ -759,21 +590,26 @@ fn parse_byte_order(s: &str) -> ByteOrder {
 // Channel Factory Functions
 // ============================================================================
 
-/// Create an IGW VirtualChannel.
+/// Create an IGW VirtualChannel wrapped as ChannelRuntime.
 ///
 /// Note: The channel no longer holds a store reference. Storage is handled
 /// by the service layer (ChannelManager) after polling.
 pub fn create_virtual_channel(
-    _channel_id: u32,
+    channel_id: u32,
     channel_name: &str,
     point_configs: Vec<PointConfig>,
-) -> ProtocolClientImpl {
+) -> Box<dyn ChannelRuntime> {
     let config = VirtualChannelConfig::new(channel_name).with_points(point_configs);
+    let channel = VirtualChannel::new(config);
 
-    ProtocolClientImpl::Virtual(VirtualChannel::new(config))
+    Box::new(VirtualRuntime::new(
+        channel_id,
+        channel_name.to_string(),
+        channel,
+    ))
 }
 
-/// Create an IGW ModbusChannel for TCP mode.
+/// Create an IGW ModbusChannel for TCP mode wrapped as ChannelRuntime.
 ///
 /// Note: The channel no longer holds a store reference. Storage is handled
 /// by the service layer (ChannelManager) after polling.
@@ -789,19 +625,28 @@ pub fn create_modbus_channel(
     host: &str,
     port: u16,
     point_configs: Vec<PointConfig>,
-) -> ProtocolClientImpl {
+) -> Box<dyn ChannelRuntime> {
+    use igw::core::logging::{ChannelLogConfig, LoggableProtocol, TracingLogHandler};
+
     let address = format!("{}:{}", host, port);
 
     let config = ModbusChannelConfig::tcp(&address)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
 
-    let mut client = ProtocolClientImpl::Modbus(ModbusChannel::new(config, channel_id));
-    client.enable_tracing_logs();
-    client
+    let mut channel = ModbusChannel::new(config, channel_id);
+    // Enable tracing logs before wrapping
+    channel.set_log_handler(Arc::new(TracingLogHandler));
+    channel.set_log_config(ChannelLogConfig::default());
+
+    Box::new(ModbusRuntime::new(
+        channel_id,
+        format!("modbus_tcp_{}", channel_id),
+        channel,
+    ))
 }
 
-/// Create an IGW ModbusChannel for RTU (serial) mode.
+/// Create an IGW ModbusChannel for RTU (serial) mode wrapped as ChannelRuntime.
 ///
 /// Note: The channel no longer holds a store reference. Storage is handled
 /// by the service layer (ChannelManager) after polling.
@@ -817,30 +662,39 @@ pub fn create_modbus_rtu_channel(
     device: &str,
     baud_rate: u32,
     point_configs: Vec<PointConfig>,
-) -> ProtocolClientImpl {
+) -> Box<dyn ChannelRuntime> {
+    use igw::core::logging::{ChannelLogConfig, LoggableProtocol, TracingLogHandler};
+
     let config = ModbusChannelConfig::rtu(device, baud_rate)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
 
-    let mut client = ProtocolClientImpl::Modbus(ModbusChannel::new(config, channel_id));
-    client.enable_tracing_logs();
-    client
+    let mut channel = ModbusChannel::new(config, channel_id);
+    // Enable tracing logs before wrapping
+    channel.set_log_handler(Arc::new(TracingLogHandler));
+    channel.set_log_config(ChannelLogConfig::default());
+
+    Box::new(ModbusRuntime::new(
+        channel_id,
+        format!("modbus_rtu_{}", channel_id),
+        channel,
+    ))
 }
 
-/// Create an IGW GpioChannel for digital I/O.
+/// Create an IGW GpioChannel for digital I/O wrapped as ChannelRuntime.
 ///
 /// Note: Only available on Linux with `gpio` feature enabled.
 /// Storage is handled by the service layer (ChannelManager) after polling.
 ///
 /// # Arguments
 ///
-/// * `_channel_id` - Unique channel identifier
+/// * `channel_id` - Unique channel identifier
 /// * `runtime_config` - Channel configuration containing GPIO pin mappings
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 pub fn create_gpio_channel(
-    _channel_id: u32,
+    channel_id: u32,
     runtime_config: &RuntimeChannelConfig,
-) -> ProtocolClientImpl {
+) -> Box<dyn ChannelRuntime> {
     use std::time::Duration;
 
     let mut gpio_config = GpioChannelConfig::new();
@@ -892,16 +746,21 @@ pub fn create_gpio_channel(
         }
     }
 
-    ProtocolClientImpl::Gpio(GpioChannel::new(gpio_config))
+    let channel = GpioChannel::new(gpio_config);
+    Box::new(GpioRuntime::new(
+        channel_id,
+        format!("gpio_{}", channel_id),
+        channel,
+    ))
 }
 
 // ============================================================================
 // ChannelImpl - Unified IGW-based channel implementation
 // ============================================================================
 
-/// Channel implementation wrapping IGW ProtocolClient.
+/// Channel implementation wrapping IGW ChannelRuntime.
 ///
-/// All protocols (Modbus TCP/RTU, Virtual) now use IGW implementations.
+/// All protocols (Modbus TCP/RTU, Virtual, GPIO, CAN) use IGW's ChannelRuntime trait.
 /// The wrapper is held as Arc<RwLock<...>> for shared ownership and interior mutability.
 pub type ChannelImpl<R> = Arc<RwLock<IgwChannelWrapper<R>>>;
 
@@ -1045,8 +904,8 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
                 reverse: pt.reverse,
                 ..Default::default()
             };
-            let config = PointConfig::new(pt.base.point_id, DataType::Telemetry, protocol_addr)
-                .with_transform(transform);
+            let config =
+                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -1058,8 +917,8 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
                 reverse: pt.reverse,
                 ..Default::default()
             };
-            let config = PointConfig::new(pt.base.point_id, DataType::Signal, protocol_addr)
-                .with_transform(transform);
+            let config =
+                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -1071,8 +930,8 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
                 reverse: pt.reverse,
                 ..Default::default()
             };
-            let config = PointConfig::new(pt.base.point_id, DataType::Control, protocol_addr)
-                .with_transform(transform);
+            let config =
+                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -1085,8 +944,8 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
                 offset: pt.offset,
                 ..Default::default()
             };
-            let config = PointConfig::new(pt.base.point_id, DataType::Adjustment, protocol_addr)
-                .with_transform(transform);
+            let config =
+                PointConfig::new(pt.base.point_id, protocol_addr).with_transform(transform);
             configs.push(config);
         }
     }
@@ -1095,15 +954,15 @@ pub fn convert_can_to_igw_point_configs(runtime_config: &RuntimeChannelConfig) -
 }
 
 #[cfg(all(feature = "can", target_os = "linux"))]
-/// Create an IGW CAN channel with the given configuration.
+/// Create an IGW CAN channel with the given configuration wrapped as ChannelRuntime.
 ///
 /// This function creates a CanClient from igw library with the specified
 /// CAN interface and point configurations.
 pub fn create_can_channel(
-    _channel_id: u32,
+    channel_id: u32,
     can_interface: &str,
     points: Vec<CanPoint>,
-) -> ProtocolClientImpl {
+) -> Box<dyn ChannelRuntime> {
     let config = CanConfig {
         can_interface: can_interface.to_string(),
         bitrate: 250000,
@@ -1114,7 +973,11 @@ pub fn create_can_channel(
     let mut client = CanClient::new(config);
     client.add_points(points);
 
-    ProtocolClientImpl::Can(client)
+    Box::new(CanRuntime::new(
+        channel_id,
+        format!("can_{}", channel_id),
+        client,
+    ))
 }
 
 // ============================================================================
@@ -1211,22 +1074,18 @@ mod tests {
 
         assert_eq!(configs.len(), 4);
 
-        // Check telemetry point
+        // Check telemetry point (point type is tracked by application layer, not igw)
         let telemetry = configs.iter().find(|c| c.id == 10).unwrap();
-        assert_eq!(telemetry.data_type, DataType::Telemetry);
         assert_eq!(telemetry.name, Some("temperature".to_string()));
 
-        // Check signal point
-        let signal = configs.iter().find(|c| c.id == 20).unwrap();
-        assert_eq!(signal.data_type, DataType::Signal);
+        // Check signal point exists
+        assert!(configs.iter().any(|c| c.id == 20));
 
-        // Check control point
-        let control = configs.iter().find(|c| c.id == 30).unwrap();
-        assert_eq!(control.data_type, DataType::Control);
+        // Check control point exists
+        assert!(configs.iter().any(|c| c.id == 30));
 
-        // Check adjustment point
-        let adjustment = configs.iter().find(|c| c.id == 40).unwrap();
-        assert_eq!(adjustment.data_type, DataType::Adjustment);
+        // Check adjustment point exists
+        assert!(configs.iter().any(|c| c.id == 40));
     }
 
     #[test]
@@ -1276,9 +1135,8 @@ mod tests {
 
         assert_eq!(configs.len(), 2);
 
-        // Check first point (telemetry, float32)
+        // Check first point (telemetry, float32) - point type tracked by application layer
         let pt1 = configs.iter().find(|c| c.id == 100).unwrap();
-        assert_eq!(pt1.data_type, DataType::Telemetry);
         if let ProtocolAddress::Modbus(addr) = &pt1.address {
             assert_eq!(addr.slave_id, 1);
             assert_eq!(addr.function_code, 3);
@@ -1289,9 +1147,8 @@ mod tests {
             panic!("Expected ModbusAddress");
         }
 
-        // Check second point (signal, bool with bit_position)
+        // Check second point (signal, bool with bit_position) - point type tracked by application layer
         let pt2 = configs.iter().find(|c| c.id == 101).unwrap();
-        assert_eq!(pt2.data_type, DataType::Signal);
         if let ProtocolAddress::Modbus(addr) = &pt2.address {
             assert_eq!(addr.slave_id, 1);
             assert_eq!(addr.function_code, 1);

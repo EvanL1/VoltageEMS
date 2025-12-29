@@ -216,9 +216,9 @@ impl From<anyhow::Error> for ComSrvError {
     }
 }
 
-impl From<voltage_modbus::ModbusError> for ComSrvError {
-    fn from(err: voltage_modbus::ModbusError) -> Self {
-        ComSrvError::ProtocolError(format!("Modbus: {}", err))
+impl From<igw::GatewayError> for ComSrvError {
+    fn from(err: igw::GatewayError) -> Self {
+        ComSrvError::ProtocolError(format!("Protocol: {}", err))
     }
 }
 

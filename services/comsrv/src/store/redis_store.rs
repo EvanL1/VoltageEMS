@@ -22,10 +22,10 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{broadcast, RwLock};
 use tracing::debug;
 
-use igw::core::data::{DataBatch, DataPoint, DataType};
+use igw::core::data::{DataBatch, DataPoint};
 use igw::core::error::Result as IgwResult;
 use igw::core::point::PointConfig;
 use igw::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
@@ -55,6 +55,9 @@ pub struct RedisDataStore<R: Rtdb> {
     write_buffer: Arc<WriteBuffer>,
     /// Point configurations cache (channel_id -> configs)
     point_configs: DashMap<u32, Vec<PointConfig>>,
+    /// Point type mapping: (channel_id, point_id) -> PointType
+    /// Since igw no longer tracks point types, the application layer must maintain this.
+    point_types: DashMap<(u32, u32), PointType>,
     /// Event subscribers
     subscribers: Arc<RwLock<Vec<DataEventSender>>>,
     /// KeySpace configuration
@@ -74,6 +77,7 @@ impl<R: Rtdb> RedisDataStore<R> {
             routing_cache,
             write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
             point_configs: DashMap::new(),
+            point_types: DashMap::new(),
             subscribers: Arc::new(RwLock::new(Vec::new())),
             key_config: KeySpaceConfig::production(),
         }
@@ -89,14 +93,23 @@ impl<R: Rtdb> RedisDataStore<R> {
         });
     }
 
-    /// Convert igw DataType to voltage PointType.
-    fn to_point_type(data_type: DataType) -> PointType {
-        match data_type {
-            DataType::Telemetry => PointType::Telemetry,
-            DataType::Signal => PointType::Signal,
-            DataType::Control => PointType::Control,
-            DataType::Adjustment => PointType::Adjustment,
+    /// Register point types for a channel.
+    ///
+    /// Since igw no longer tracks point types, the application layer must call this
+    /// method to register the mapping from (channel_id, point_id) -> PointType.
+    /// This is typically called by ChannelManager when creating a channel.
+    pub fn register_point_types(&self, channel_id: u32, types: Vec<(u32, PointType)>) {
+        for (point_id, point_type) in types {
+            self.point_types.insert((channel_id, point_id), point_type);
         }
+    }
+
+    /// Get point type for a specific point, defaulting to Telemetry if unknown.
+    fn get_point_type(&self, channel_id: u32, point_id: u32) -> PointType {
+        self.point_types
+            .get(&(channel_id, point_id))
+            .map(|r| *r)
+            .unwrap_or(PointType::Telemetry)
     }
 
     /// Convert DataBatch to ChannelPointUpdates for voltage-routing.
@@ -109,17 +122,13 @@ impl<R: Rtdb> RedisDataStore<R> {
         for point in batch.iter() {
             // IGW returns already-transformed values
             let value = point.value.as_f64().unwrap_or(0.0);
+            let point_type = self.get_point_type(channel_id, point.id);
 
-            debug!(
-                "[{}] Point {}: value={:.2}",
-                point.data_type.as_str(),
-                point.id,
-                value
-            );
+            debug!("[{:?}] Point {}: value={:.2}", point_type, point.id, value);
 
             updates.push(ChannelPointUpdate {
                 channel_id,
-                point_type: Self::to_point_type(point.data_type),
+                point_type,
                 point_id: point.id,
                 value,
                 raw_value: None, // IGW doesn't expose pre-transform values
@@ -132,20 +141,15 @@ impl<R: Rtdb> RedisDataStore<R> {
 
     /// Notify all subscribers of a data event.
     ///
-    /// Optimized to move the event to the last subscriber, avoiding one clone.
+    /// Uses broadcast channel - all subscribers receive the event.
     async fn notify_subscribers(&self, event: DataEvent) {
         let subscribers = self.subscribers.read().await;
-        let len = subscribers.len();
-        if len == 0 {
+        if subscribers.is_empty() {
             return;
         }
-        // Clone for all but the last subscriber, move to the last one
-        for (i, sender) in subscribers.iter().enumerate() {
-            if i == len - 1 {
-                let _ = sender.try_send(event);
-                return;
-            }
-            let _ = sender.try_send(event.clone());
+        // Broadcast sends to all subscribers at once
+        for sender in subscribers.iter() {
+            let _ = sender.send(event.clone());
         }
     }
 }
@@ -178,21 +182,22 @@ impl<R: Rtdb> RedisDataStore<R> {
     }
 
     /// Read a single point from Redis.
+    ///
+    /// Tries all point types until a value is found.
     pub async fn read_point(&self, channel_id: u32, point_id: u32) -> IgwResult<Option<DataPoint>> {
         // Try to read from each point type
-        for data_type in [
-            DataType::Telemetry,
-            DataType::Signal,
-            DataType::Control,
-            DataType::Adjustment,
+        for point_type in [
+            PointType::Telemetry,
+            PointType::Signal,
+            PointType::Control,
+            PointType::Adjustment,
         ] {
-            let point_type = Self::to_point_type(data_type);
             let key = self.key_config.channel_key(channel_id, point_type);
 
             if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, &point_id.to_string()).await {
                 let value_str = String::from_utf8_lossy(&value_bytes);
                 if let Ok(value) = value_str.parse::<f64>() {
-                    return Ok(Some(DataPoint::new(point_id, data_type, value)));
+                    return Ok(Some(DataPoint::new(point_id, value)));
                 }
             }
         }
@@ -204,13 +209,12 @@ impl<R: Rtdb> RedisDataStore<R> {
     pub async fn read_all(&self, channel_id: u32) -> IgwResult<DataBatch> {
         let mut batch = DataBatch::default();
 
-        for data_type in [
-            DataType::Telemetry,
-            DataType::Signal,
-            DataType::Control,
-            DataType::Adjustment,
+        for point_type in [
+            PointType::Telemetry,
+            PointType::Signal,
+            PointType::Control,
+            PointType::Adjustment,
         ] {
-            let point_type = Self::to_point_type(data_type);
             let key = self.key_config.channel_key(channel_id, point_type);
 
             if let Ok(values) = self.rtdb.hash_get_all(&key).await {
@@ -219,7 +223,7 @@ impl<R: Rtdb> RedisDataStore<R> {
                     if let (Ok(point_id), Ok(value)) =
                         (point_id_str.parse::<u32>(), value_str.parse::<f64>())
                     {
-                        batch.add(DataPoint::new(point_id, data_type, value));
+                        batch.add(DataPoint::new(point_id, value));
                     }
                 }
             }
@@ -229,8 +233,11 @@ impl<R: Rtdb> RedisDataStore<R> {
     }
 
     /// Subscribe to data events.
+    ///
+    /// Creates a new broadcast channel and registers the sender with the store.
+    /// Returns the receiver for receiving events.
     pub fn subscribe(&self) -> DataEventReceiver {
-        let (tx, rx) = mpsc::channel(1024);
+        let (tx, rx) = broadcast::channel(1024);
 
         let subscribers = self.subscribers.clone();
         tokio::spawn(async move {
@@ -294,10 +301,16 @@ mod tests {
 
         let store = RedisDataStore::new(rtdb, routing_cache);
 
-        // Create a batch
+        // Register point types first
+        store.register_point_types(
+            9901,
+            vec![(1, PointType::Telemetry), (2, PointType::Signal)],
+        );
+
+        // Create a batch using new API (no data_type in DataPoint)
         let mut batch = DataBatch::default();
-        batch.add(DataPoint::telemetry(1, 25.5));
-        batch.add(DataPoint::signal(2, true));
+        batch.add(DataPoint::new(1, 25.5));
+        batch.add(DataPoint::new(2, true));
 
         // Write
         store.write_batch(9901, batch).await.unwrap();
@@ -313,10 +326,9 @@ mod tests {
 
         let store = RedisDataStore::new(rtdb, routing_cache);
 
-        // Set configs
+        // Set configs using new API (no DataType in PointConfig)
         let configs = vec![PointConfig::new(
             1,
-            igw::core::data::DataType::Telemetry,
             igw::core::point::ProtocolAddress::Generic("test".to_string()),
         )];
         store.set_point_configs(9902, configs);
@@ -329,5 +341,30 @@ mod tests {
         // Get all configs
         let all = store.get_all_point_configs(9902);
         assert_eq!(all.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_point_type_mapping() {
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(RoutingCache::new());
+
+        let store = RedisDataStore::new(rtdb, routing_cache);
+
+        // Register point types
+        store.register_point_types(
+            9903,
+            vec![
+                (1, PointType::Telemetry),
+                (2, PointType::Signal),
+                (3, PointType::Control),
+            ],
+        );
+
+        // Verify lookups
+        assert_eq!(store.get_point_type(9903, 1), PointType::Telemetry);
+        assert_eq!(store.get_point_type(9903, 2), PointType::Signal);
+        assert_eq!(store.get_point_type(9903, 3), PointType::Control);
+        // Unknown point defaults to Telemetry
+        assert_eq!(store.get_point_type(9903, 999), PointType::Telemetry);
     }
 }
