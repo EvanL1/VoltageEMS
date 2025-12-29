@@ -108,7 +108,7 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
         }));
 
         info!(
-            "Ch{} 启动轮询任务 (间隔: {}ms)",
+            "Ch{} started polling task (interval: {}ms)",
             channel_id, poll_interval_ms
         );
 
@@ -280,14 +280,17 @@ async fn run_polling_task<R: Rtdb>(
         // Log partial failures from poll result (before moving data)
         let failure_count = result.failures.len();
         if failure_count > 0 {
-            warn!("Ch{} 部分读取失败: {} 个点失败", channel_id, failure_count);
+            warn!(
+                "Ch{} partial read failure: {} points failed",
+                channel_id, failure_count
+            );
         }
 
         let count = result.data.len();
         if count > 0 {
-            debug!("Ch{} polling获取到 {} 个数据点", channel_id, count);
+            debug!("Ch{} polling got {} data points", channel_id, count);
             if let Err(e) = store.write_batch(channel_id, result.data).await {
-                error!("Ch{} 写入Redis失败: {}", channel_id, e);
+                error!("Ch{} failed to write to Redis: {}", channel_id, e);
             }
         }
 
@@ -296,7 +299,7 @@ async fn run_polling_task<R: Rtdb>(
             if diag.error_count > prev_error_count {
                 let new_errors = diag.error_count - prev_error_count;
                 warn!(
-                    "Ch{} 累计错误: {} 个新错误, 最后错误: {:?}",
+                    "Ch{} accumulated errors: {} new errors, last error: {:?}",
                     channel_id, new_errors, diag.last_error
                 );
                 prev_error_count = diag.error_count;
@@ -725,7 +728,7 @@ pub fn create_gpio_channel(
         json.get("gpio_number")?.as_u64().map(|n| n as u32)
     };
 
-    // Configure DI pins from signal points (遥信)
+    // Configure DI pins from signal points
     for pt in &runtime_config.signal_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
             let pin_config = GpioPinConfig::digital_input(default_chip, gpio_num, pt.base.point_id)
@@ -735,7 +738,7 @@ pub fn create_gpio_channel(
         }
     }
 
-    // Configure DO pins from control points (遥控)
+    // Configure DO pins from control points
     for pt in &runtime_config.control_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
             let pin_config =
