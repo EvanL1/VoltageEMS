@@ -198,12 +198,6 @@ jobs:
           fi
           ls -la $TEST_CONFIG_DIR/
 
-      # Validate configuration syntax and structure
-      - name: Validate Configuration
-        run: |
-          echo "Validating configuration files..."
-          monarch validate --detailed --config-path $TEST_CONFIG_DIR
-
       # Initialize database schemas in test directory
       - name: Initialize Database Schemas
         run: |
@@ -214,7 +208,13 @@ jobs:
           echo "Checking created databases:"
           ls -la $TEST_DB_DIR/
 
-      # Sync configuration to test database (dry-run equivalent)
+      # Validate configuration syntax and structure (dry-run sync)
+      - name: Validate Configuration
+        run: |
+          echo "Validating configuration files..."
+          monarch sync --dry-run --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
+
+      # Sync configuration to test database
       - name: Test Configuration Sync
         run: |
           echo "Testing configuration sync process..."
