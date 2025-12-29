@@ -9,9 +9,8 @@ description = "Unified calculation library for VoltageEMS - expression evaluatio
 # Expression evaluation
 evalexpr = { workspace = true }
 
-# Async support
-async-trait = { workspace = true }
-tokio = { workspace = true }
+# Async sync primitives (RwLock for state)
+tokio = { workspace = true, default-features = false, features = ["sync"] }
 
 # Serialization
 serde = { workspace = true }
@@ -30,6 +29,5 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-# tokio-test removed - not used in tests
+# No dev dependencies needed
 
