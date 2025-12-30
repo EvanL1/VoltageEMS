@@ -1565,16 +1565,26 @@ impl ConfigSyncer {
                 .unwrap_or(0);
 
             // Store the complete flow_json (entire rule content for vue-flow/node-red)
-            let flow_json = rule_data
-                .get("flow_json")
-                .map(|v| serde_json::to_string(v).unwrap_or_default())
-                .unwrap_or_else(|| serde_json::to_string(&rule_data).unwrap_or_default());
+            let flow_json = match rule_data.get("flow_json") {
+                Some(v) => serde_json::to_string(v).map_err(|e| {
+                    anyhow::anyhow!("Rule '{}': Failed to serialize flow_json: {}", name, e)
+                })?,
+                None => serde_json::to_string(&rule_data).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Rule '{}': Failed to serialize rule_data as flow_json: {}",
+                        name,
+                        e
+                    )
+                })?,
+            };
 
             // nodes_json is required - extract from rule_data or use empty array
-            let nodes_json = rule_data
-                .get("nodes")
-                .map(|v| serde_json::to_string(v).unwrap_or_default())
-                .unwrap_or_else(|| "[]".to_string());
+            let nodes_json = match rule_data.get("nodes") {
+                Some(v) => serde_json::to_string(v).map_err(|e| {
+                    anyhow::anyhow!("Rule '{}': Failed to serialize nodes: {}", name, e)
+                })?,
+                None => "[]".to_string(),
+            };
 
             sqlx::query(
                 "INSERT INTO rules (name, description, flow_json, nodes_json, enabled, priority)

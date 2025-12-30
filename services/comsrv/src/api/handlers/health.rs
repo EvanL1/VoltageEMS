@@ -38,7 +38,7 @@ pub async fn get_service_status<R: Rtdb>(
     // Get actual service start time and calculate uptime
     let start_time = get_service_start_time();
     let uptime_duration = Utc::now() - start_time;
-    let uptime_seconds = uptime_duration.num_seconds().max(0).try_into().unwrap_or(0);
+    let uptime_seconds = uptime_duration.num_seconds().max(0) as u64;
 
     let status = ServiceStatus {
         name: "Communication Service".to_string(),

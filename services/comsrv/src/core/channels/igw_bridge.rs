@@ -406,10 +406,11 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
     let mut configs = Vec::new();
 
     // Helper to parse modbus config from protocol_mappings JSON
+    // Returns: (slave_id, function_code, register, data_type, byte_order, bit_position)
     fn parse_modbus_mapping(
         json_str: &str,
         point_id: u32,
-    ) -> Option<(u8, u8, u16, String, String, u8)> {
+    ) -> Option<(u8, u8, u16, String, String, Option<u8>)> {
         let v: serde_json::Value = match serde_json::from_str(json_str) {
             Ok(v) => v,
             Err(e) => {
@@ -484,9 +485,8 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                 .and_then(|x| x.as_str())
                 .unwrap_or("ABCD")
                 .to_string(),
-            parse_u64_field(&v, "bit_position")
-                .and_then(|n| u8::try_from(n).ok())
-                .unwrap_or(0),
+            // bit_position: None means not set, Some(0) means bit 0
+            parse_u64_field(&v, "bit_position").and_then(|n| u8::try_from(n).ok()),
         ))
     }
 
@@ -509,7 +509,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     register,
                     format: parse_data_format(&data_type_str),
                     byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                    bit_position: bit_pos,
                 };
                 let transform = TransformConfig {
                     scale: point.scale,
@@ -543,7 +543,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     register,
                     format: parse_data_format(&data_type_str),
                     byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                    bit_position: bit_pos,
                 };
                 let transform = TransformConfig {
                     reverse: point.reverse,
@@ -575,7 +575,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     register,
                     format: parse_data_format(&data_type_str),
                     byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                    bit_position: bit_pos,
                 };
                 let transform = TransformConfig {
                     reverse: point.reverse,
@@ -607,7 +607,7 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
                     register,
                     format: parse_data_format(&data_type_str),
                     byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: if bit_pos > 0 { Some(bit_pos) } else { None },
+                    bit_position: bit_pos,
                 };
                 let transform = TransformConfig {
                     scale: point.scale,
