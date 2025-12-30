@@ -364,19 +364,23 @@ class WebSocketManager:
             await self.send_message(client_id, error_msg)
 
     async def _push_rule_data_to_client(self, client_id: str, rule_id: str):
-        """推送规则监控数据到客户端（简化版）
+        """推送规则监控数据到客户端
 
-        从 rule:{rule_id}:exec 的 node_details 中提取每个节点的变量值。
+        从 rule:{rule_id}:exec 读取完整执行信息。
         消息格式：
         {
             "type": "data_batch",
+            "timestamp": 1234567890,
             "data": {
-                "source": "rule",
                 "rule_id": 1,
-                "execution_path": ["start", "node-xxx", "end"],
-                "node_variables": {
-                    "node-xxx": {"X1": 0.0},
-                    "node-yyy": {"X1": 999, "X2": 42290}
+                "variables": {},
+                "last_execution": {
+                    "success": true,
+                    "timestamp": 1234567890,
+                    "error": null,
+                    "execution_path": ["start", "node-xxx", "end"],
+                    "variable_values": {},
+                    "node_details": {...}
                 }
             }
         }
@@ -384,47 +388,56 @@ class WebSocketManager:
         try:
             redis = self.redis_client.redis_client
 
-            # 只读取执行结果: rule:{rule_id}:exec
+            # 读取执行结果: rule:{rule_id}:exec
             exec_key = f"rule:{rule_id}:exec"
             exec_data = await redis.hgetall(exec_key)
 
             if not exec_data:
                 return
 
-            # 提取执行路径和节点变量
-            raw_path = []
+            # 解析各字段
+            exec_timestamp = int(exec_data.get("timestamp", 0))
+            success = exec_data.get("success", "false").lower() == "true"
+            error = exec_data.get("error") or None
+            if error == "":
+                error = None
+
+            execution_path = []
             if "execution_path" in exec_data:
                 try:
-                    raw_path = json.loads(exec_data["execution_path"])
+                    execution_path = json.loads(exec_data["execution_path"])
                 except json.JSONDecodeError:
                     pass
 
-            node_vars = {}
+            variable_values = {}
+            if "variable_values" in exec_data:
+                try:
+                    variable_values = json.loads(exec_data["variable_values"])
+                except json.JSONDecodeError:
+                    pass
+
+            node_details = {}
             if "node_details" in exec_data:
                 try:
-                    details = json.loads(exec_data["node_details"])
-                    for node_id, detail in details.items():
-                        if "input_values" in detail:
-                            node_vars[node_id] = detail["input_values"]
+                    node_details = json.loads(exec_data["node_details"])
                 except json.JSONDecodeError:
                     pass
 
-            # 构建带变量的执行路径
-            execution_path = []
-            for node_id in raw_path:
-                node = {"id": node_id}
-                if node_id in node_vars:
-                    node["variables"] = node_vars[node_id]
-                execution_path.append(node)
-
-            # 简化后的消息
+            # 构建消息
             monitor_message = {
                 "type": "data_batch",
                 "timestamp": int(time.time()),
                 "data": {
-                    "source": "rule",
-                    "rule_id": rule_id,
-                    "execution_path": execution_path
+                    "rule_id": int(rule_id) if isinstance(rule_id, str) else rule_id,
+                    "variables": {},
+                    "last_execution": {
+                        "success": success,
+                        "timestamp": exec_timestamp,
+                        "error": error,
+                        "execution_path": execution_path,
+                        "variable_values": variable_values,
+                        "node_details": node_details
+                    }
                 }
             }
 
