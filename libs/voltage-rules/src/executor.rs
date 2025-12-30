@@ -490,7 +490,17 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
 
         let operator = cond.operator.as_deref().unwrap_or("==");
 
-        let left = values.get(var_name).copied().unwrap_or(0.0);
+        // Variable must exist in values, otherwise condition fails
+        let left = match values.get(var_name) {
+            Some(&v) => v,
+            None => {
+                tracing::warn!(
+                    "Variable '{}' not found in values, condition fails",
+                    var_name
+                );
+                return false;
+            },
+        };
         let right = match &cond.value {
             Some(v) => {
                 if let Some(n) = v.as_f64() {
@@ -498,8 +508,17 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 } else if let Some(n) = v.as_i64() {
                     n as f64
                 } else if let Some(s) = v.as_str() {
-                    // Could be a variable reference
-                    values.get(s).copied().unwrap_or(s.parse().unwrap_or(0.0))
+                    // Could be a variable reference - must exist if referenced
+                    match values.get(s) {
+                        Some(&v) => v,
+                        None => match s.parse::<f64>() {
+                            Ok(n) => n,
+                            Err(_) => {
+                                tracing::warn!("Variable '{}' not found and not a number", s);
+                                return false;
+                            },
+                        },
+                    }
                 } else {
                     0.0
                 }
