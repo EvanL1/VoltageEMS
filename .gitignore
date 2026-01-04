@@ -21,8 +21,6 @@ benchmarks
 docs/
 
 # Claude and dot files
-CLAUDE.md
-AGENTS.md
 .claude/
 .*
 !.env

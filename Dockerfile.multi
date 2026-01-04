@@ -1,0 +1,47 @@
+# VoltageEMS Multi-Architecture Dockerfile
+# Uses pre-compiled binaries from cargo-zigbuild
+# Supports: ARM64 (Alpine/musl) and AMD64 (Debian/glibc)
+
+ARG BASE_IMAGE=alpine:3.19
+FROM ${BASE_IMAGE}
+
+# Install runtime dependencies based on base image
+# Alpine uses apk, Debian uses apt-get
+RUN if command -v apk >/dev/null 2>&1; then \
+      apk add --no-cache ca-certificates tzdata; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates tzdata procps && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+WORKDIR /app
+
+# Copy pre-compiled binaries from host
+# TARGET is set by build script based on architecture
+ARG TARGET=aarch64-unknown-linux-musl
+COPY target/${TARGET}/release/comsrv /usr/local/bin/comsrv
+COPY target/${TARGET}/release/modsrv /usr/local/bin/modsrv
+
+# Make binaries executable
+RUN chmod +x /usr/local/bin/*
+
+# Copy default configuration from template
+COPY config.template/ /app/config/
+
+# Create necessary directories with proper permissions
+RUN mkdir -p data logs && \
+    mkdir -p logs/channels logs/models && \
+    mkdir -p logs/comsrv logs/modsrv && \
+    chmod -R 775 config data logs
+
+# Default environment variables
+ENV RUST_LOG=info
+ENV REDIS_URL=redis://localhost:6379
+
+# Health check - verify at least one service is running
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["/bin/sh", "-c", "pgrep -x comsrv || pgrep -x modsrv || exit 1"]
+
+# Default to comsrv, but can be overridden in docker-compose
+CMD ["comsrv"]

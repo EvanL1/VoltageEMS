@@ -1,4 +1,4 @@
-name: Release ARM64 Installer
+name: Release Multi-Arch Installer
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  TARGET: aarch64-unknown-linux-musl
 
 jobs:
   # ============================================================================
@@ -53,15 +52,22 @@ jobs:
           cargo clippy --workspace -- -D warnings
 
   # ============================================================================
-  # Job 2: Build ARM64 Installer
+  # Job 2: Build Multi-Arch Installers (Parallel Matrix)
   # ============================================================================
   build:
-    name: Build ARM64 Installer
+    name: Build ${{ matrix.arch }} Installer
     runs-on: ubuntu-latest
     needs: pre-check
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      artifact_name: ${{ steps.version.outputs.artifact_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-unknown-linux-musl
+            docker_platform: linux/arm64
+          - arch: amd64
+            target: x86_64-unknown-linux-gnu
+            docker_platform: linux/amd64
 
     steps:
       - uses: actions/checkout@v4
@@ -69,35 +75,29 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      # Free disk space (GitHub runner has limited space)
       - name: Free Disk Space
         run: |
           echo "=== Before cleanup ==="
           df -h /
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          sudo rm -rf /usr/local/lib/android /usr/share/swift /opt/hostedtoolcache/CodeQL
           sudo apt-get clean
           docker system prune -af --volumes || true
           echo "=== After cleanup ==="
           df -h /
 
-      # Extract version from git tag
       - name: Extract Version
         id: version
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "artifact_name=MonarchEdge-arm64-${VERSION}.run" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
+          echo "artifact_name=MonarchEdge-${{ matrix.arch }}-${VERSION}.run" >> $GITHUB_OUTPUT
+          echo "Building version $VERSION for ${{ matrix.arch }}"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-unknown-linux-musl
+          targets: ${{ matrix.target }}
 
       - name: Cache Cargo Dependencies
         uses: actions/cache@v4
@@ -107,15 +107,13 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: ${{ runner.os }}-cargo-arm64-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-arm64-
+            ${{ runner.os }}-cargo-${{ matrix.arch }}-
             ${{ runner.os }}-cargo-
 
-      # Install Zig and cargo-zigbuild for cross-compilation
       - name: Install Cross-Compilation Tools
         run: |
-          # Install Zig
           ZIG_VERSION="0.13.0"
           echo "Installing Zig ${ZIG_VERSION}..."
           wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
@@ -123,62 +121,46 @@ jobs:
           sudo mv "zig-linux-x86_64-${ZIG_VERSION}" /opt/zig
           echo "/opt/zig" >> $GITHUB_PATH
 
-          # Install cargo-zigbuild
           echo "Installing cargo-zigbuild..."
           cargo install cargo-zigbuild --locked || true
-
-          # Verify installation
-          echo "Zig version: $(/opt/zig/zig version)"
-          echo "cargo-zigbuild version: $(cargo zigbuild --version)"
 
       - name: Install Packaging Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y makeself
 
-      # Setup QEMU for ARM64 Docker image building
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64
+          platforms: ${{ matrix.docker_platform }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          platforms: linux/arm64
+          platforms: ${{ matrix.docker_platform }}
 
-      # Build the ARM64 installer package
-      - name: Build ARM64 Installer
+      - name: Build Installer
         run: |
-          chmod +x scripts/build-arm64-installer.sh
-          chmod +x scripts/offline/build-monarch-arm64.sh || true
-          ./scripts/build-arm64-installer.sh "${{ steps.version.outputs.version }}"
-        env:
-          ENABLE_SWAGGER_UI: "0"
+          chmod +x scripts/build-installer.sh
+          ./scripts/build-installer.sh "${{ steps.version.outputs.version }}" "${{ matrix.arch }}" "${{ matrix.target }}"
 
-      # Verify build artifacts exist
       - name: Verify Build Artifacts
         run: |
           ARTIFACT="release/${{ steps.version.outputs.artifact_name }}"
-
           if [[ ! -f "$ARTIFACT" ]]; then
             echo "ERROR: Build artifact not found: $ARTIFACT"
             ls -la release/ || echo "release directory not found"
             exit 1
           fi
-
           echo "Build artifact:"
           ls -lh "$ARTIFACT"
-
-          # Calculate SHA256 checksum
           sha256sum "$ARTIFACT" > "release/${{ steps.version.outputs.artifact_name }}.sha256"
-          echo "SHA256 checksum:"
           cat "release/${{ steps.version.outputs.artifact_name }}.sha256"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: arm64-installer
+          name: ${{ matrix.arch }}-installer
           path: |
             release/${{ steps.version.outputs.artifact_name }}
             release/${{ steps.version.outputs.artifact_name }}.sha256
@@ -200,43 +182,55 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download Artifacts
+      - name: Extract Version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: arm64-installer
           path: release/
+          pattern: '*-installer'
+          merge-multiple: true
 
       - name: List Downloaded Artifacts
         run: ls -la release/
 
-      # Generate release notes from tag annotation and commit history
       - name: Generate Release Notes
         run: |
-          VERSION="${{ needs.build.outputs.version }}"
+          VERSION="${{ steps.version.outputs.version }}"
           TAG_NAME="${GITHUB_REF_NAME}"
 
-          cat > release_notes.md << 'EOF'
-          ## MonarchEdge ${{ needs.build.outputs.version }}
+          cat > release_notes.md << EOF
+          ## MonarchEdge ${VERSION}
+
+          ### Downloads
+
+          | Architecture | Installer | Checksum |
+          |--------------|-----------|----------|
+          | ARM64 (树莓派/ARM开发板) | MonarchEdge-arm64-${VERSION}.run | .sha256 |
+          | AMD64 (x86_64 服务器) | MonarchEdge-amd64-${VERSION}.run | .sha256 |
 
           ### Installation
 
-          1. Copy the installer to your ARM64 device:
-             ```bash
-             scp MonarchEdge-arm64-${{ needs.build.outputs.version }}.run user@device:/tmp/
-             ```
-
-          2. Run the installer:
-             ```bash
-             chmod +x /tmp/MonarchEdge-arm64-${{ needs.build.outputs.version }}.run
-             sudo /tmp/MonarchEdge-arm64-${{ needs.build.outputs.version }}.run
-             ```
-
-          3. Start services:
-             ```bash
+          1. Download the installer for your architecture
+          2. Copy to target device:
+             \`\`\`bash
+             scp MonarchEdge-<arch>-${VERSION}.run user@device:/tmp/
+             \`\`\`
+          3. Run installer:
+             \`\`\`bash
+             chmod +x /tmp/MonarchEdge-<arch>-${VERSION}.run
+             sudo /tmp/MonarchEdge-<arch>-${VERSION}.run
+             \`\`\`
+          4. Start services:
+             \`\`\`bash
              cd /opt/MonarchEdge
              docker-compose up -d
              monarch sync all
-             ```
+             \`\`\`
 
           ### Package Contents
 
@@ -247,22 +241,22 @@ jobs:
 
           ### Verify Download
 
-          ```bash
-          sha256sum -c MonarchEdge-arm64-${{ needs.build.outputs.version }}.run.sha256
-          ```
+          \`\`\`bash
+          sha256sum -c MonarchEdge-<arch>-${VERSION}.run.sha256
+          \`\`\`
 
           EOF
 
-          # Try to get tag annotation for release notes
+          # Add tag message if exists
           TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME" 2>/dev/null || echo "")
-          if [[ -n "$TAG_MESSAGE" && "$TAG_MESSAGE" != "" ]]; then
+          if [[ -n "$TAG_MESSAGE" ]]; then
             echo "" >> release_notes.md
             echo "### Release Notes" >> release_notes.md
             echo "" >> release_notes.md
             echo "$TAG_MESSAGE" >> release_notes.md
           fi
 
-          # Get commits since previous tag
+          # Add commits since previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [[ -n "$PREV_TAG" ]]; then
             echo "" >> release_notes.md
@@ -271,19 +265,20 @@ jobs:
             git log --pretty=format:"- %s" "$PREV_TAG".."$TAG_NAME" >> release_notes.md || true
           fi
 
-          echo "Generated release notes:"
           cat release_notes.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: MonarchEdge ${{ needs.build.outputs.version }}
+          name: MonarchEdge ${{ steps.version.outputs.version }}
           body_path: release_notes.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            release/${{ needs.build.outputs.artifact_name }}
-            release/${{ needs.build.outputs.artifact_name }}.sha256
+            release/MonarchEdge-arm64-${{ steps.version.outputs.version }}.run
+            release/MonarchEdge-arm64-${{ steps.version.outputs.version }}.run.sha256
+            release/MonarchEdge-amd64-${{ steps.version.outputs.version }}.run
+            release/MonarchEdge-amd64-${{ steps.version.outputs.version }}.run.sha256
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
