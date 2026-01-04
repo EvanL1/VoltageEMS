@@ -1,5 +1,14 @@
-# Rust build artifacts
-target/
+# Rust build artifacts - exclude most but allow release binaries for cross-compilation
+target/**/deps/
+target/**/build/
+target/**/.fingerprint/
+target/**/incremental/
+target/**/examples/
+target/debug/
+target/doc/
+target/.rustc_info.json
+target/.cargo-lock
+# Keep: target/*/release/comsrv, target/*/release/modsrv, target/*/release/monarch
 **/*.rs.bk
 *.pdb
 
