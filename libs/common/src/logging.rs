@@ -1252,11 +1252,20 @@ fn store_logging_task_handle(handle: tokio::task::JoinHandle<()>) {
     let handles =
         LOGGING_TASK_HANDLES.get_or_init(|| Arc::new(tokio::sync::RwLock::new(Vec::new())));
 
-    // Spawn a task to store the handle to avoid blocking in async context
-    let handles = Arc::clone(handles);
-    tokio::spawn(async move {
-        handles.write().await.push(handle);
-    });
+    // Try to store synchronously first to avoid timing issues with shutdown
+    // Fall back to spawn only if lock is held (rare case)
+    match handles.try_write() {
+        Ok(mut guard) => {
+            guard.push(handle);
+        },
+        Err(_) => {
+            // Lock is held, spawn async task as fallback
+            let handles = Arc::clone(handles);
+            tokio::spawn(async move {
+                handles.write().await.push(handle);
+            });
+        },
+    }
 }
 
 /// Shutdown all background logging tasks

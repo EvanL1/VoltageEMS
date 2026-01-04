@@ -118,11 +118,14 @@ impl<R: Rtdb> RedisDataStore<R> {
 
         // Wait for task to finish
         if let Some(handle) = handle {
+            // Get abort handle before timeout consumes the JoinHandle
+            let abort_handle = handle.abort_handle();
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
                 Ok(Ok(())) => debug!("RedisDataStore flush task stopped gracefully"),
                 Ok(Err(e)) => warn!("RedisDataStore flush task panicked: {}", e),
                 Err(_) => {
                     warn!("RedisDataStore flush task did not stop in time, aborting");
+                    abort_handle.abort();
                 },
             }
         }
