@@ -3,7 +3,7 @@
 
 use std::fmt::Display;
 use std::str::FromStr;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Get configuration value with priority: DB > ENV > Default
 ///
@@ -78,22 +78,29 @@ use crate::redis::RedisClient;
 use std::time::Duration;
 
 #[cfg(feature = "redis")]
+/// Default maximum retry attempts for Redis connection (60 attempts * 5s = 5 minutes)
+pub const DEFAULT_REDIS_MAX_ATTEMPTS: u32 = 60;
+
+#[cfg(feature = "redis")]
 /// Try to connect to Redis with multiple candidates and retry logic
 ///
 /// # Arguments
 /// * `candidates` - List of (source_name, redis_url) pairs to try
 /// * `retry_interval` - How long to wait between retry attempts
+/// * `max_attempts` - Maximum number of retry attempts (0 = infinite)
 ///
 /// # Returns
-/// * Tuple of (successful_url, redis_client)
+/// * `Ok((successful_url, redis_client))` on success
+/// * `Err(message)` if max_attempts exceeded
 pub async fn connect_redis_with_retry(
     candidates: Vec<(&str, String)>,
     retry_interval: Duration,
-) -> (String, RedisClient) {
-    let mut attempt = 0;
+    max_attempts: u32,
+) -> Result<(String, RedisClient), String> {
+    let mut attempt = 0u32;
 
     loop {
-        attempt += 1;
+        attempt = attempt.saturating_add(1);
         debug!("Redis try #{}", attempt);
 
         for (source, url) in &candidates {
@@ -105,7 +112,7 @@ pub async fn connect_redis_with_retry(
                     match client.ping().await {
                         Ok(_) => {
                             info!("Redis connected ({})", source);
-                            return (url.clone(), client);
+                            return Ok((url.clone(), client));
                         },
                         Err(e) => {
                             warn!("Redis ping {}: {}", url, e);
@@ -118,7 +125,27 @@ pub async fn connect_redis_with_retry(
             }
         }
 
-        warn!("Redis retry in {:?}", retry_interval);
+        // Check max attempts (0 = infinite)
+        if max_attempts > 0 && attempt >= max_attempts {
+            let msg = format!(
+                "Redis connection failed after {} attempts ({}s total)",
+                attempt,
+                attempt as u64 * retry_interval.as_secs()
+            );
+            error!("{}", msg);
+            return Err(msg);
+        }
+
+        warn!(
+            "Redis retry in {:?} (attempt {}/{})",
+            retry_interval,
+            attempt,
+            if max_attempts == 0 {
+                "∞".to_string()
+            } else {
+                max_attempts.to_string()
+            }
+        );
         tokio::time::sleep(retry_interval).await;
     }
 }

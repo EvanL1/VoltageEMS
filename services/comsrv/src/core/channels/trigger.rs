@@ -252,7 +252,13 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                             };
 
                                             let point_id: u32 = match legacy_trigger.get("point_id").and_then(|v| v.as_u64()) {
-                                                Some(id) => id as u32,
+                                                Some(id) => match u32::try_from(id) {
+                                                    Ok(id) => id,
+                                                    Err(_) => {
+                                                        error!("point_id overflow q={} id={}", queue, id);
+                                                        continue;
+                                                    }
+                                                },
                                                 None => {
                                                     error!("No point_id q={}", queue);
                                                     continue;

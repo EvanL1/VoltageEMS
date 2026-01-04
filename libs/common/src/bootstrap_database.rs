@@ -9,7 +9,9 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-use crate::config_loader::{build_redis_candidates, connect_redis_with_retry};
+use crate::config_loader::{
+    build_redis_candidates, connect_redis_with_retry, DEFAULT_REDIS_MAX_ATTEMPTS,
+};
 use crate::redis::RedisClient;
 
 /// Database connection configuration
@@ -108,8 +110,10 @@ pub async fn setup_redis_with_timeout(
 
     info!("Redis: {} candidates", candidates.len());
 
-    // Connect with retry logic
-    let (url, client) = connect_redis_with_retry(candidates, timeout).await;
+    // Connect with retry logic (use default max attempts)
+    let (url, client) = connect_redis_with_retry(candidates, timeout, DEFAULT_REDIS_MAX_ATTEMPTS)
+        .await
+        .map_err(VoltageError::Internal)?;
 
     info!("Redis connected: {}", url);
     Ok((url, Arc::new(client)))
@@ -152,7 +156,10 @@ pub async fn setup_redis_with_config(
 
     // Connect with retry logic using custom config
     let timeout = tokio::time::Duration::from_secs(redis_config.connection_timeout);
-    let (url, _) = connect_redis_with_retry(candidates.clone(), timeout).await;
+    let (url, _) =
+        connect_redis_with_retry(candidates.clone(), timeout, DEFAULT_REDIS_MAX_ATTEMPTS)
+            .await
+            .map_err(VoltageError::Internal)?;
 
     // Create client with custom configuration
     let mut final_config = redis_config;

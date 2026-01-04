@@ -308,7 +308,9 @@ impl<S: StateStore> CalcEngine<S> {
                 Function::new(|args| {
                     let tuple = args.as_tuple()?;
                     let value = to_f64(&tuple[0])?;
-                    let decimals = tuple[1].as_int()? as i32;
+                    let decimals_i64 = tuple[1].as_int()?;
+                    // Clamp to valid i32 range for decimal places
+                    let decimals = decimals_i64.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
                     Ok(Value::Float(builtin_functions::round(value, decimals)))
                 }),
             )
