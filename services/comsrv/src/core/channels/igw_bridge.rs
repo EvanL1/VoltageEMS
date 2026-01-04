@@ -69,10 +69,10 @@ pub struct IgwChannelWrapper<R: Rtdb> {
     channel_id: u32,
     /// Data store for persisting polled data
     store: Arc<RedisDataStore<R>>,
-    /// Command executor task handle
-    _executor_handle: Option<tokio::task::JoinHandle<()>>,
-    /// Polling task handle
-    _polling_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Command executor task handle (used for cleanup on disconnect)
+    executor_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Polling task handle (used for cleanup on disconnect)
+    polling_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl<R: Rtdb> IgwChannelWrapper<R> {
@@ -117,8 +117,8 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
             protocol,
             channel_id,
             store,
-            _executor_handle: Some(executor_handle),
-            _polling_handle: polling_handle,
+            executor_handle: Some(executor_handle),
+            polling_handle,
         }
     }
 
@@ -169,8 +169,38 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
             .map_err(|e| crate::error::ComSrvError::ConnectionError(e.to_string()))
     }
 
-    /// Disconnect the protocol client.
-    pub async fn disconnect(&self) -> crate::error::Result<()> {
+    /// Shutdown all background tasks (polling and command executor).
+    ///
+    /// This method aborts the polling and executor tasks to prevent resource leaks
+    /// when a channel is removed or reconfigured via hot-reload.
+    pub fn shutdown(&mut self) {
+        // Abort polling task
+        if let Some(handle) = self.polling_handle.take() {
+            if !handle.is_finished() {
+                info!("Ch{} aborting polling task", self.channel_id);
+                handle.abort();
+            }
+        }
+
+        // Abort executor task
+        if let Some(handle) = self.executor_handle.take() {
+            if !handle.is_finished() {
+                info!("Ch{} aborting executor task", self.channel_id);
+                handle.abort();
+            }
+        }
+    }
+
+    /// Disconnect the protocol client and shutdown background tasks.
+    ///
+    /// This method ensures proper cleanup when a channel is removed:
+    /// 1. First aborts all background tasks (polling, executor)
+    /// 2. Then disconnects the underlying protocol
+    pub async fn disconnect(&mut self) -> crate::error::Result<()> {
+        // First shutdown background tasks to prevent orphaned tasks
+        self.shutdown();
+
+        // Then disconnect protocol
         let mut protocol = self.protocol.write().await;
         protocol
             .disconnect()
