@@ -92,7 +92,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     ///
     /// The task runs until `shutdown()` is called or the store is dropped.
     /// Uses interior mutability so this can be called on Arc<RedisDataStore>.
-    pub fn start_flush_task(&self) {
+    pub async fn start_flush_task(&self) {
         let buffer = Arc::clone(&self.write_buffer);
         let rtdb = Arc::clone(&self.rtdb);
         let shutdown = Arc::clone(&self.shutdown_notify);
@@ -101,9 +101,7 @@ impl<R: Rtdb> RedisDataStore<R> {
             buffer.flush_loop_with_shutdown(&*rtdb, shutdown).await;
         });
 
-        // Use blocking_write since we're not in async context here
-        // and this is only called once during channel creation
-        *self.flush_handle.blocking_write() = Some(handle);
+        *self.flush_handle.write().await = Some(handle);
     }
 
     /// Shutdown the flush task gracefully.

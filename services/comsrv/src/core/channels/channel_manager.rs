@@ -281,7 +281,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         store.set_point_configs(channel_id, point_configs.clone());
 
         // 3. Start background flush task for write buffer
-        store.start_flush_task();
+        store.start_flush_task().await;
 
         // 4. Create VirtualChannel (no store - storage handled by IgwChannelWrapper)
         let protocol = create_virtual_channel(channel_id, runtime_config.name(), point_configs);
@@ -328,7 +328,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         store.set_point_configs(channel_id, point_configs.clone());
 
         // 3. Start background flush task for write buffer
-        store.start_flush_task();
+        store.start_flush_task().await;
 
         // 4. Extract host/port from runtime config parameters
         let params = &runtime_config.base.parameters;
@@ -385,7 +385,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         store.set_point_configs(channel_id, point_configs.clone());
 
         // 3. Start background flush task for write buffer
-        store.start_flush_task();
+        store.start_flush_task().await;
 
         // 4. Extract device/baud_rate from runtime config parameters
         let params = &runtime_config.base.parameters;
@@ -444,7 +444,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         store.set_point_configs(channel_id, point_configs);
 
         // 3. Start background flush task for write buffer
-        store.start_flush_task();
+        store.start_flush_task().await;
 
         // 4. Create GpioChannel via igw_bridge
         let protocol = create_gpio_channel(channel_id, runtime_config);
@@ -498,7 +498,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         store.set_point_configs(channel_id, igw_point_configs);
 
         // 3. Start background flush task for write buffer
-        store.start_flush_task();
+        store.start_flush_task().await;
 
         // 4. Extract CAN interface from runtime config parameters
         let params = &runtime_config.base.parameters;
