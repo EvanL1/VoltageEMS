@@ -145,7 +145,12 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
             1 => &mut signal_mappings,
             2 => &mut control_mappings,
             3 => &mut adjustment_mappings,
-            _ => unreachable!(),
+            _ => {
+                return Err(AppError::internal_error(format!(
+                    "Invalid table index: {}",
+                    table_idx
+                )));
+            },
         };
 
         for (point_id, signal_name, protocol_mappings_json) in rows {
@@ -169,8 +174,12 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
                 serde_json::Value::Object(serde_json::Map::new())
             };
 
+            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
+                AppError::internal_error(format!("point_id {} out of range", point_id))
+            })?;
+
             target_vec.push(crate::dto::PointMappingDetail {
-                point_id: point_id as u32,
+                point_id: point_id_u32,
                 signal_name,
                 protocol_data,
             });
@@ -587,7 +596,12 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
             "S" => "signal_points",
             "C" => "control_points",
             "A" => "adjustment_points",
-            _ => unreachable!(),
+            other => {
+                return Err(AppError::bad_request(format!(
+                    "Invalid four_remote type: '{}'. Must be T, S, C, or A",
+                    other
+                )));
+            },
         };
 
         // Merge/Replace

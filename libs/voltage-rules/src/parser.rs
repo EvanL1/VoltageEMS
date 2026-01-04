@@ -222,7 +222,10 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let point = var.get("point").and_then(|v| v.as_u64()).map(|n| n as u32);
+        let point = var
+            .get("point")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| u32::try_from(n).ok());
 
         let formula = var
             .get("formula")

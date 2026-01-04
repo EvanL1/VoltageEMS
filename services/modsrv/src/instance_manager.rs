@@ -313,7 +313,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             });
         }
 
-        Ok((total as u32, instances))
+        let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
+        Ok((total_u32, instances))
     }
 
     /// Search instances by name with fuzzy matching
@@ -412,7 +413,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             });
         }
 
-        Ok((total as u32, instances))
+        let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
+        Ok((total_u32, instances))
     }
 
     /// Rename an instance

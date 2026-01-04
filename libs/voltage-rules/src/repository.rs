@@ -158,9 +158,17 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
 
     let enabled = rule.get("enabled").and_then(Value::as_bool).unwrap_or(true);
 
-    let priority = rule.get("priority").and_then(Value::as_i64).unwrap_or(0) as u32;
+    let priority = rule
+        .get("priority")
+        .and_then(Value::as_i64)
+        .and_then(|n| u32::try_from(n).ok())
+        .unwrap_or(0);
 
-    let cooldown_ms = rule.get("cooldown_ms").and_then(Value::as_i64).unwrap_or(0) as u64;
+    let cooldown_ms = rule
+        .get("cooldown_ms")
+        .and_then(Value::as_i64)
+        .and_then(|n| u64::try_from(n).ok())
+        .unwrap_or(0);
 
     // Get format type (default: "vue-flow")
     let format = rule
