@@ -4,6 +4,7 @@
 
 use crate::core::config::ChannelRedisKeys;
 use common::timeouts;
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -326,18 +327,31 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                         }
                                     };
 
-                                    // ★ Timestamp deduplication check
-                                    let last_ts = last_ts_map.get(&point_id).map(|v| *v).unwrap_or(0);
-                                    if current_ts <= last_ts {
-                                        debug!("Skip pt{}: ts={} (same)", point_id, current_ts);
+                                    // ★ Atomic timestamp deduplication using entry API
+                                    // This prevents race conditions where two concurrent handlers
+                                    // could both pass the check and execute the same command
+                                    let should_execute = match last_ts_map.entry(point_id) {
+                                        Entry::Occupied(mut entry) => {
+                                            if current_ts > *entry.get() {
+                                                entry.insert(current_ts);
+                                                true
+                                            } else {
+                                                debug!("Skip pt{}: ts={} (same)", point_id, current_ts);
+                                                false
+                                            }
+                                        }
+                                        Entry::Vacant(entry) => {
+                                            entry.insert(current_ts);
+                                            true
+                                        }
+                                    };
+
+                                    if !should_execute {
                                         continue;
                                     }
 
                                     // ★ Timestamp changed - execute command
                                     debug!("Exec pt{}: val={} ts={}", point_id, value, current_ts);
-
-                                    // Update last_ts
-                                    last_ts_map.insert(point_id, current_ts);
 
                                     // Build metadata without json! macro to avoid clippy warnings
                                     let mut metadata = serde_json::Map::new();

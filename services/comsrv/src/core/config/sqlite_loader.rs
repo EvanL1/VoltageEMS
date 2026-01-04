@@ -305,8 +305,12 @@ impl ComsrvSqliteLoader {
                 .ok()
                 .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
 
+            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
+                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
+            })?;
+
             let base_point = Point {
-                point_id: point_id as u32,
+                point_id: point_id_u32,
                 signal_name,
                 description,
                 unit,
@@ -339,8 +343,12 @@ impl ComsrvSqliteLoader {
                 .ok()
                 .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
 
+            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
+                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
+            })?;
+
             let base_point = Point {
-                point_id: point_id as u32,
+                point_id: point_id_u32,
                 signal_name,
                 description,
                 unit,
@@ -370,8 +378,12 @@ impl ComsrvSqliteLoader {
                 .ok()
                 .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
 
+            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
+                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
+            })?;
+
             let base_point = Point {
-                point_id: point_id as u32,
+                point_id: point_id_u32,
                 signal_name,
                 description,
                 unit,
@@ -409,8 +421,12 @@ impl ComsrvSqliteLoader {
                 .ok()
                 .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
 
+            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
+                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
+            })?;
+
             let base_point = Point {
-                point_id: point_id as u32,
+                point_id: point_id_u32,
                 signal_name,
                 description,
                 unit,

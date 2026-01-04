@@ -91,10 +91,15 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
     };
     instance_manager.create_instance(req.clone()).await?;
 
-    // Try to create instance with the same ID, should fail
+    // Try to create instance with the same name, should fail (UNIQUE constraint)
     let result = instance_manager.create_instance(req).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("already exists"));
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("UNIQUE constraint") || err_msg.contains("already exists"),
+        "Expected UNIQUE constraint or already exists error, got: {}",
+        err_msg
+    );
 
     env.cleanup().await?;
     Ok(())

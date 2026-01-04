@@ -6,7 +6,7 @@
 //! - `instance_redis_sync.rs` - Redis synchronization
 //! - `instance_data.rs` - Data loading and querying
 
-use crate::config::{InstanceRedisKeys, ModsrvQueries};
+use crate::config::InstanceRedisKeys;
 use anyhow::{anyhow, Result};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -70,23 +70,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             return Err(anyhow!("Invalid instance name: {}", e));
         }
 
-        // 2. Check if instance name already exists (enforces uniqueness)
-        let exists = sqlx::query_scalar::<_, bool>(ModsrvQueries::CHECK_INSTANCE_NAME_EXISTS)
-            .bind(&instance_name)
-            .fetch_one(&self.pool)
-            .await?;
-
-        if exists {
-            return Err(anyhow!(
-                "Instance with name '{}' already exists. Please choose a different name.",
-                instance_name
-            ));
-        }
-
-        // 3. Verify product exists
+        // 2. Verify product exists
+        // Note: Name uniqueness is enforced by database UNIQUE constraint.
+        // We rely on the constraint rather than check-then-act to avoid race conditions.
         let product = self.product_loader.get_product(&req.product_name).await?;
 
-        // 4. Begin transaction for atomic creation
+        // 3. Begin transaction for atomic creation
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
@@ -98,7 +87,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             },
         };
 
-        // 5. Create instance in SQLite within transaction
+        // 4. Create instance in SQLite within transaction
         let properties_json = serde_json::to_string(&req.properties)?;
 
         if let Err(e) = sqlx::query(
@@ -119,7 +108,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             return Err(anyhow!("Failed to create instance: {}", e));
         }
 
-        // 6. Create point routings for measurement and action points within transaction
+        // 5. Create point routings for measurement and action points within transaction
         // Measurement point routing - maps point IDs to Redis keys
         let mut measurement_point_routings = HashMap::new();
         // Action point routing - maps point IDs to Redis keys
@@ -137,7 +126,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             action_point_routings.insert(point.action_id, redis_key);
         }
 
-        // 7. Commit transaction first (ensure database persistence)
+        // 6. Commit transaction first (ensure database persistence)
         if let Err(e) = tx.commit().await {
             error!(
                 "Failed to commit transaction for instance {}: {}",
@@ -146,7 +135,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             return Err(anyhow!("Database transaction commit failed: {}", e));
         }
 
-        // 8. Best effort register instance in Redis (after commit, allow failure)
+        // 7. Best effort register instance in Redis (after commit, allow failure)
         info!("Registering instance {} in Redis", instance_name);
         if let Err(e) = self
             .register_instance_in_redis(

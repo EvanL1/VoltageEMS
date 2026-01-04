@@ -170,10 +170,15 @@ async fn test_create_instance_already_exists() {
     let result1 = manager.create_instance(req.clone()).await;
     assert!(result1.is_ok());
 
-    // Second creation with same ID should fail
+    // Second creation with same name should fail (UNIQUE constraint)
     let result2 = manager.create_instance(req).await;
     assert!(result2.is_err());
-    assert!(result2.unwrap_err().to_string().contains("already exists"));
+    let err_msg = result2.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("UNIQUE constraint") || err_msg.contains("already exists"),
+        "Expected UNIQUE constraint or already exists error, got: {}",
+        err_msg
+    );
 }
 
 #[tokio::test]

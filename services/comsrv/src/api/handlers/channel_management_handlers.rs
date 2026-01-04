@@ -435,7 +435,13 @@ pub async fn create_channel_handler<R: Rtdb>(
             .await
             .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
 
-        let next_id = (max_id.unwrap_or(0) + 1) as u32;
+        let max_val = max_id.unwrap_or(0);
+        let next_id_i64 = max_val.checked_add(1).ok_or_else(|| {
+            AppError::internal_error("Channel ID overflow: max_id + 1 overflowed")
+        })?;
+        let next_id = u32::try_from(next_id_i64).map_err(|_| {
+            AppError::internal_error(format!("Channel ID {} exceeds u32 max", next_id_i64))
+        })?;
         tracing::debug!("Auto ID: {}", next_id);
         next_id
     };
