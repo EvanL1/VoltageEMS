@@ -95,7 +95,9 @@ pub async fn get_all_channels<R: Rtdb>(
     let mut all_channels = Vec::new();
 
     for (channel_id_i64, name, protocol, enabled, config_str) in db_channels {
-        let channel_id = channel_id_i64 as u32;
+        let channel_id = u32::try_from(channel_id_i64).map_err(|_| {
+            AppError::internal_error(format!("Channel ID {} out of range", channel_id_i64))
+        })?;
 
         // Extract description from config JSON
         let description = match config_str {
@@ -606,7 +608,9 @@ pub async fn search_channels<R: Rtdb>(
     // Build response (with embedded point definitions)
     let mut list: Vec<serde_json::Value> = Vec::with_capacity(channels.len());
     for (id, name, protocol, enabled, config_str) in channels {
-        let channel_id = id as u32;
+        let channel_id = u32::try_from(id).map_err(|_| {
+            AppError::internal_error(format!("Channel ID {} out of range", id))
+        })?;
 
         // Extract description from config JSON
         let description = match config_str {

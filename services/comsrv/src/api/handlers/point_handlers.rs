@@ -790,11 +790,12 @@ pub async fn create_signal_point_handler<R: Rtdb>(
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     // Extract standard fields from payload
-    let payload_point_id = payload
+    let payload_point_id_u64 = payload
         .get("point_id")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?
-        as u32;
+        .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?;
+    let payload_point_id = u32::try_from(payload_point_id_u64)
+        .map_err(|_| AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64)))?;
 
     let signal_name = payload
         .get("signal_name")
@@ -902,11 +903,12 @@ pub async fn create_control_point_handler<R: Rtdb>(
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     // Extract standard fields from payload
-    let payload_point_id = payload
+    let payload_point_id_u64 = payload
         .get("point_id")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?
-        as u32;
+        .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?;
+    let payload_point_id = u32::try_from(payload_point_id_u64)
+        .map_err(|_| AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64)))?;
 
     let signal_name = payload
         .get("signal_name")
@@ -1009,11 +1011,12 @@ pub async fn create_adjustment_point_handler<R: Rtdb>(
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     // Extract standard fields from payload
-    let payload_point_id = payload
+    let payload_point_id_u64 = payload
         .get("point_id")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?
-        as u32;
+        .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?;
+    let payload_point_id = u32::try_from(payload_point_id_u64)
+        .map_err(|_| AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64)))?;
 
     let signal_name = payload
         .get("signal_name")
@@ -1550,7 +1553,12 @@ async fn get_point_config_handler_inner<R: Rtdb>(
             "SELECT point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings FROM {} WHERE channel_id = ? AND point_id = ?",
             table
         ),
-        _ => unreachable!(),
+        other => {
+            return Err(AppError::internal_error(format!(
+                "Invalid table name: {}",
+                other
+            )));
+        },
     };
 
     #[allow(clippy::type_complexity)]
@@ -2566,7 +2574,12 @@ async fn process_create_operation<R: Rtdb>(
                 .await
                 .map_err(|e| format!("Failed to insert: {}", e))?;
         },
-        _ => unreachable!(),
+        other => {
+            return Err(format!(
+                "Invalid point type '{}'. Must be T, S, C, or A",
+                other
+            ));
+        },
     }
 
     Ok(())

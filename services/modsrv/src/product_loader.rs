@@ -261,14 +261,14 @@ impl ProductLoader {
         .fetch_all(&self.pool)
         .await?
         .into_iter()
-        .map(
-            |(measurement_id, name, unit, description)| MeasurementPoint {
-                measurement_id: measurement_id as u32,
+        .filter_map(|(measurement_id, name, unit, description)| {
+            u32::try_from(measurement_id).ok().map(|id| MeasurementPoint {
+                measurement_id: id,
                 name,
                 unit,
                 description,
-            },
-        )
+            })
+        })
         .collect();
 
         // Get action points
@@ -284,11 +284,13 @@ impl ProductLoader {
         .fetch_all(&self.pool)
         .await?
         .into_iter()
-        .map(|(action_id, name, unit, description)| ActionPoint {
-            action_id: action_id as u32,
-            name,
-            unit,
-            description,
+        .filter_map(|(action_id, name, unit, description)| {
+            u32::try_from(action_id).ok().map(|id| ActionPoint {
+                action_id: id,
+                name,
+                unit,
+                description,
+            })
         })
         .collect();
 
