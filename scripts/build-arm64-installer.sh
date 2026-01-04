@@ -277,9 +277,9 @@ for service in $SERVICES; do
     echo -e "${GREEN}✓ Built $service${NC}"
 done
 
-# Build Docker image
+# Build Docker image for ARM64
 echo -e "${BLUE}Creating Docker image with $CPU_CORES parallel jobs...${NC}"
-docker build \
+docker buildx build --platform linux/arm64 --load \
     --build-arg BUILD_JOBS=$CPU_CORES \
     --build-arg ENABLE_SWAGGER_UI="$ENABLE_SWAGGER" \
     -t voltageems:latest .
