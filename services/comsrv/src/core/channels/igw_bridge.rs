@@ -881,6 +881,23 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
     }
 }
 
+/// Drop implementation for defensive cleanup.
+///
+/// Ensures background tasks are aborted even if the wrapper is dropped
+/// without an explicit call to `disconnect()`. This prevents task leaks
+/// in edge cases where the channel is dropped unexpectedly.
+impl<R: Rtdb> Drop for IgwChannelWrapper<R> {
+    fn drop(&mut self) {
+        if self.executor_handle.is_some() || self.polling_handle.is_some() {
+            warn!(
+                "Ch{} IgwChannelWrapper dropped without explicit cleanup, aborting tasks",
+                self.channel_id
+            );
+            self.shutdown();
+        }
+    }
+}
+
 // ============================================================================
 // CAN Channel Creation
 // ============================================================================
