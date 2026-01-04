@@ -83,6 +83,9 @@ where
 static GUARDS: OnceLock<Arc<Mutex<Vec<WorkerGuard>>>> = OnceLock::new();
 // API logger guard - separate to allow independent lifecycle
 static API_GUARD: OnceLock<Arc<Mutex<Option<WorkerGuard>>>> = OnceLock::new();
+// Background logging task handles (SIGHUP handler, compression task)
+static LOGGING_TASK_HANDLES: OnceLock<Arc<tokio::sync::RwLock<Vec<tokio::task::JoinHandle<()>>>>> =
+    OnceLock::new();
 
 // ============================================================================
 // Log Root Directory Configuration
@@ -816,11 +819,13 @@ pub fn reopen_logs_now() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Install SIGHUP listener to reopen logs on demand (Unix only)
+///
+/// The task handle is stored internally and can be stopped via `shutdown_logging_tasks()`.
 pub fn enable_sighup_log_reopen() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             match signal(SignalKind::hangup()) {
                 Ok(mut hup) => loop {
                     hup.recv().await;
@@ -831,6 +836,9 @@ pub fn enable_sighup_log_reopen() {
                 Err(e) => tracing::warn!("SIGHUP handler: {}", e),
             }
         });
+
+        // Store handle for cleanup
+        store_logging_task_handle(handle);
     }
 }
 
@@ -899,8 +907,10 @@ pub fn get_log_level() -> String {
 use tokio::time::{interval, Duration};
 
 /// Start background log compression task
+///
+/// The task handle is stored internally and can be stopped via `shutdown_logging_tasks()`.
 pub fn start_log_compression_task(log_dir: PathBuf, service_name: String) {
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         // Initial delay of 1 minute to let service fully start
         tokio::time::sleep(Duration::from_secs(60)).await;
 
@@ -914,6 +924,9 @@ pub fn start_log_compression_task(log_dir: PathBuf, service_name: String) {
             }
         }
     });
+
+    // Store handle for cleanup
+    store_logging_task_handle(handle);
 }
 
 /// Compress log files older than 7 days, delete compressed logs older than 365 days
@@ -1228,4 +1241,43 @@ pub async fn http_request_logger(
     }
 
     response
+}
+
+// ============================================================================
+// Logging Task Lifecycle Management
+// ============================================================================
+
+/// Store a logging task handle for later cleanup
+fn store_logging_task_handle(handle: tokio::task::JoinHandle<()>) {
+    let handles =
+        LOGGING_TASK_HANDLES.get_or_init(|| Arc::new(tokio::sync::RwLock::new(Vec::new())));
+
+    // Spawn a task to store the handle to avoid blocking in async context
+    let handles = Arc::clone(handles);
+    tokio::spawn(async move {
+        handles.write().await.push(handle);
+    });
+}
+
+/// Shutdown all background logging tasks
+///
+/// Call this during service shutdown to cleanly stop:
+/// - SIGHUP log reopen handler
+/// - Log compression task
+///
+/// # Example
+/// ```ignore
+/// // In shutdown handler
+/// common::logging::shutdown_logging_tasks().await;
+/// ```
+pub async fn shutdown_logging_tasks() {
+    if let Some(handles) = LOGGING_TASK_HANDLES.get() {
+        let mut guard = handles.write().await;
+        for handle in guard.drain(..) {
+            if !handle.is_finished() {
+                handle.abort();
+            }
+        }
+        tracing::debug!("Logging tasks shutdown complete");
+    }
 }

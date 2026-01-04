@@ -22,8 +22,8 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::{broadcast, RwLock};
-use tracing::debug;
+use tokio::sync::{broadcast, Notify, RwLock};
+use tracing::{debug, warn};
 
 use igw::core::data::{DataBatch, DataPoint};
 use igw::core::error::Result as IgwResult;
@@ -62,6 +62,10 @@ pub struct RedisDataStore<R: Rtdb> {
     subscribers: Arc<RwLock<Vec<DataEventSender>>>,
     /// KeySpace configuration
     key_config: KeySpaceConfig,
+    /// Flush task handle for cleanup (uses RwLock for interior mutability)
+    flush_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
+    /// Shutdown signal for flush task
+    shutdown_notify: Arc<Notify>,
 }
 
 impl<R: Rtdb> RedisDataStore<R> {
@@ -79,17 +83,49 @@ impl<R: Rtdb> RedisDataStore<R> {
             point_configs: DashMap::new(),
             subscribers: Arc::new(RwLock::new(Vec::new())),
             key_config: KeySpaceConfig::production(),
+            flush_handle: RwLock::new(None),
+            shutdown_notify: Arc::new(Notify::new()),
         }
     }
 
     /// Start the background flush task for the write buffer.
+    ///
+    /// The task runs until `shutdown()` is called or the store is dropped.
+    /// Uses interior mutability so this can be called on Arc<RedisDataStore>.
     pub fn start_flush_task(&self) {
         let buffer = Arc::clone(&self.write_buffer);
         let rtdb = Arc::clone(&self.rtdb);
+        let shutdown = Arc::clone(&self.shutdown_notify);
 
-        tokio::spawn(async move {
-            buffer.flush_loop(&*rtdb).await;
+        let handle = tokio::spawn(async move {
+            buffer.flush_loop_with_shutdown(&*rtdb, shutdown).await;
         });
+
+        // Use blocking_write since we're not in async context here
+        // and this is only called once during channel creation
+        *self.flush_handle.blocking_write() = Some(handle);
+    }
+
+    /// Shutdown the flush task gracefully.
+    ///
+    /// Sends shutdown signal and waits for the task to complete (with timeout).
+    pub async fn shutdown(&self) {
+        // Signal shutdown
+        self.shutdown_notify.notify_one();
+
+        // Take the handle
+        let handle = self.flush_handle.write().await.take();
+
+        // Wait for task to finish
+        if let Some(handle) = handle {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+                Ok(Ok(())) => debug!("RedisDataStore flush task stopped gracefully"),
+                Ok(Err(e)) => warn!("RedisDataStore flush task panicked: {}", e),
+                Err(_) => {
+                    warn!("RedisDataStore flush task did not stop in time, aborting");
+                },
+            }
+        }
     }
 
     /// Convert DataBatch to ChannelPointUpdates for voltage-routing.
@@ -274,6 +310,30 @@ impl<R: Rtdb> RedisDataStore<R> {
         self.point_configs.remove(&channel_id);
 
         Ok(())
+    }
+}
+
+/// Drop implementation for defensive cleanup.
+///
+/// Ensures the flush task is aborted if the store is dropped without
+/// explicit shutdown. This prevents orphaned tasks in edge cases.
+///
+/// Uses try_write() to avoid blocking, which is necessary when running
+/// inside a tokio runtime (e.g., in tests).
+impl<R: Rtdb> Drop for RedisDataStore<R> {
+    fn drop(&mut self) {
+        // Use try_write to avoid blocking in async context (e.g., tokio tests)
+        // If we can't acquire the lock, the task will be cleaned up by tokio anyway
+        if let Ok(mut guard) = self.flush_handle.try_write() {
+            if let Some(handle) = guard.take() {
+                if !handle.is_finished() {
+                    warn!("RedisDataStore dropped without shutdown, aborting flush task");
+                    // Signal shutdown first to allow graceful exit
+                    self.shutdown_notify.notify_one();
+                    handle.abort();
+                }
+            }
+        }
     }
 }
 

@@ -261,6 +261,45 @@ impl WriteBuffer {
         }
     }
 
+    /// Background flush loop with shutdown support - runs until shutdown signal
+    ///
+    /// Like `flush_loop`, but accepts a shutdown notify to gracefully stop.
+    /// Performs a final flush before exiting to ensure no data is lost.
+    ///
+    /// # Arguments
+    /// * `rtdb` - Redis connection
+    /// * `shutdown` - Notify to signal shutdown
+    pub async fn flush_loop_with_shutdown<R>(&self, rtdb: &R, shutdown: Arc<Notify>)
+    where
+        R: Rtdb,
+    {
+        let interval = Duration::from_millis(self.config.flush_interval_ms);
+
+        loop {
+            tokio::select! {
+                biased;  // Check shutdown first
+
+                _ = shutdown.notified() => {
+                    tracing::debug!("WriteBuffer received shutdown signal");
+                    // Final flush to ensure no data loss
+                    if let Err(e) = self.flush(rtdb).await {
+                        tracing::warn!(error = %e, "WriteBuffer final flush failed");
+                    }
+                    break;
+                }
+                _ = tokio::time::sleep(interval) => {}
+                _ = self.flush_notify.notified() => {}
+            }
+
+            if let Err(e) = self.flush(rtdb).await {
+                tracing::warn!(error = %e, "WriteBuffer flush failed");
+                self.stats.flush_errors.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        tracing::debug!("WriteBuffer flush loop stopped");
+    }
+
     /// Flush all pending data to Redis
     ///
     /// Returns the number of fields flushed.
