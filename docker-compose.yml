@@ -114,8 +114,8 @@ services:
 
   # History Service - 历史数据存储 (端口 6004)
   hissrv:
-    image: voltage-hissrv:latest
-    container_name: voltage-hissrv
+    image: voltageems-ss:latest
+    container_name: voltageems-hissrv
     network_mode: host
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
@@ -130,7 +130,7 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/hissrv:/app/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/config/hissrv:/app/services/hissrv/config:ro
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
@@ -141,8 +141,8 @@ services:
 
   # API Gateway - API 网关、WebSocket、认证 (端口 6005)
   apigateway:
-    image: voltage-apigateway:latest
-    container_name: voltage-apigateway
+    image: voltageems-ss:latest
+    container_name: voltageems-apigateway
     network_mode: host
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
@@ -156,8 +156,8 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/apigateway:/app/config:ro
-      - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
+      - ${VOLTAGE_BASE_PATH:-./data}/config/apigateway:/app/services/apigateway/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
@@ -166,8 +166,8 @@ services:
 
   # Network Service - 网络通讯服务 MQTT (端口 6006)
   netsrv:
-    image: voltage-netsrv:latest
-    container_name: voltage-netsrv
+    image: voltageems-ss:latest
+    container_name: voltageems-netsrv
     network_mode: host
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
@@ -178,7 +178,7 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/netsrv:/app/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/config/netsrv:/app/services/netsrv/config:ro
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
@@ -187,8 +187,8 @@ services:
 
   # Alarm Service - 告警管理服务 (端口 6007)
   alarmsrv:
-    image: voltage-alarmsrv:latest
-    container_name: voltage-alarmsrv
+    image: voltageems-ss:latest
+    container_name: voltageems-alarmsrv
     network_mode: host
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
@@ -200,8 +200,8 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/alarmsrv:/app/config:ro
-      - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
+      - ${VOLTAGE_BASE_PATH:-./data}/config/alarmsrv:/app/services/alarmsrv/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:

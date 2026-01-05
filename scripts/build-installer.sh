@@ -106,27 +106,28 @@ copy_docker_images() {
     fi
 }
 
-build_python_service() {
-    local service=$1
-    local context="$ROOT_DIR/services/$service"
-    local tag="voltage-$service:latest"
-    local output="$BUILD_DIR/docker/$service.tar.gz"
+# Build unified Python services image for ARM64
+build_python_services() {
+    local context="$ROOT_DIR"
+    local dockerfile="$ROOT_DIR/services/python-services/Dockerfile"
+    local tag="voltageems-ss:latest"
+    local output="$BUILD_DIR/docker/python-services.tar.gz"
 
-    if [[ ! -f "$context/Dockerfile" ]]; then
-        echo -e "${YELLOW}Warning: Dockerfile not found for $service, skipping${NC}"
-        return 0
+    if [[ ! -f "$dockerfile" ]]; then
+        echo -e "${RED}Error: Unified Python services Dockerfile not found: $dockerfile${NC}"
+        return 1
     fi
 
-    echo -e "${BLUE}Building $tag for $ARCH...${NC}"
-    docker buildx build --platform $DOCKER_PLATFORM --load \
-        -f "$context/Dockerfile" \
+    echo -e "${BLUE}Building unified Python services image $tag for $ARCH...${NC}"
+    docker build --platform $DOCKER_PLATFORM \
+        -f "$dockerfile" \
         -t "$tag" \
         "$context"
 
     if [ $? -eq 0 ]; then
         docker save "$tag" | gzip > "$output"
         local size=$(ls -lh "$output" | awk '{print $5}')
-        echo -e "${GREEN}✓ Saved $service.tar.gz ($size)${NC}"
+        echo -e "${GREEN}✓ Saved python-services.tar.gz ($size)${NC}"
     else
         echo -e "${RED}Error: Failed to build $tag${NC}"
         return 1
@@ -136,7 +137,30 @@ build_python_service() {
 pull_and_save_image() {
     local image=$1
     local output_name=$2
+    local output_path="$BUILD_DIR/docker/$output_name"
 
+    # 优先尝试使用 skopeo (不需要本地 Docker 参与，完美解决架构和 manifest 问题)
+    if command -v skopeo &> /dev/null; then
+        echo -e "${BLUE}Using skopeo to directly fetch $image for $ARCH...${NC}"
+        local base_tar="${output_path%.gz}"
+        
+        # 补全官方镜像的完整路径 (skopeo 需要)
+        local full_image="$image"
+        [[ "$image" != *"/"* ]] && full_image="docker.io/library/$image"
+
+        if skopeo copy --override-os linux --override-arch "$ARCH" \
+            "docker://$full_image" \
+            "docker-archive:$base_tar:$image" > /dev/null; then
+            gzip -f "$base_tar"
+            local size=$(ls -lh "$output_path" | awk '{print $5}')
+            echo -e "${GREEN}✓ Saved $output_name using skopeo ($size)${NC}"
+            return 0
+        else
+            echo -e "${YELLOW}Warning: skopeo failed, falling back to docker...${NC}"
+        fi
+    fi
+
+    # 兜底逻辑：传统的 docker pull + save
     if docker image inspect "$image" &>/dev/null; then
         echo -e "${GREEN}Using existing local image: $image${NC}"
     else
@@ -144,8 +168,8 @@ pull_and_save_image() {
         docker pull --platform $DOCKER_PLATFORM "$image"
     fi
 
-    docker save "$image" | gzip > "$BUILD_DIR/docker/$output_name"
-    local size=$(ls -lh "$BUILD_DIR/docker/$output_name" | awk '{print $5}')
+    docker save "$image" | gzip > "$output_path"
+    local size=$(ls -lh "$output_path" | awk '{print $5}')
     echo -e "${GREEN}✓ Saved $output_name ($size)${NC}"
 }
 
@@ -219,10 +243,8 @@ else
 fi
 
 # Build Python services
-echo -e "${BLUE}Building Python services...${NC}"
-for service in hissrv apigateway netsrv alarmsrv; do
-    build_python_service "$service"
-done
+echo -e "${BLUE}Building unified Python services...${NC}"
+build_python_services
 
 # Pull official images
 echo -e "${BLUE}Pulling official images...${NC}"
@@ -231,7 +253,7 @@ pull_and_save_image "influxdb:2-alpine" "voltage-influxdb.tar.gz"
 
 # Verify images
 echo -e "${YELLOW}Verifying Docker images...${NC}"
-for img in voltageems voltage-redis voltage-influxdb hissrv apigateway netsrv alarmsrv; do
+for img in voltageems voltage-redis voltage-influxdb python-services; do
     if [[ ! -f "$BUILD_DIR/docker/$img.tar.gz" ]]; then
         echo -e "${RED}$img.tar.gz not found!${NC}"
         exit 1

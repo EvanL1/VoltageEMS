@@ -95,6 +95,7 @@ declare -A TARBALL_TO_IMAGE=(
     ["voltageems.tar.gz"]="voltageems:latest"
     ["voltage-redis.tar.gz"]="redis:8-alpine"
     ["voltage-influxdb.tar.gz"]="influxdb:2-alpine"
+    ["python-services.tar.gz"]="voltageems-ss:latest"
     ["hissrv.tar.gz"]="voltage-hissrv:latest"
     ["apigateway.tar.gz"]="voltage-apigateway:latest"
     ["netsrv.tar.gz"]="voltage-netsrv:latest"
@@ -107,23 +108,20 @@ declare -A IMAGE_TO_CONTAINERS=(
     ["redis:8-alpine"]="voltage-redis"
     ["influxdb:2-alpine"]="voltage-influxdb"
     ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv"
-    ["voltage-hissrv:latest"]="voltage-hissrv"
-    ["voltage-apigateway:latest"]="voltage-apigateway"
-    ["voltage-netsrv:latest"]="voltage-netsrv"
-    ["voltage-alarmsrv:latest"]="voltage-alarmsrv"
+    ["voltageems-ss:latest"]="voltageems-hissrv voltageems-apigateway voltageems-netsrv voltageems-alarmsrv"
     ["voltage-apps:latest"]="voltage-apps"
 )
 
 # Container to service name mapping (for docker-compose)
 declare -A CONTAINER_TO_SERVICE=(
     ["voltage-redis"]="voltage-redis"
-    ["voltage-influxdb"]="voltage-influxdb"
+    ["voltage-influxdb"]="influxdb"
     ["voltageems-comsrv"]="comsrv"
     ["voltageems-modsrv"]="modsrv"
-    ["voltage-hissrv"]="hissrv"
-    ["voltage-apigateway"]="apigateway"
-    ["voltage-netsrv"]="netsrv"
-    ["voltage-alarmsrv"]="alarmsrv"
+    ["voltageems-hissrv"]="hissrv"
+    ["voltageems-apigateway"]="apigateway"
+    ["voltageems-netsrv"]="netsrv"
+    ["voltageems-alarmsrv"]="alarmsrv"
     ["voltage-apps"]="apps"
 )
 
@@ -186,17 +184,19 @@ get_tarball_image_id() {
     local tarball=$1
 
     # Extract manifest.json and get the Config (image ID)
-    # Format: [{"Config":"sha256:abc123...","RepoTags":["image:tag"],"Layers":[...]}]
-    local config_hash
-    config_hash=$(zcat "$tarball" 2>/dev/null | tar -xOf - manifest.json 2>/dev/null | \
-        sed -n 's/.*"Config":"\([^"]*\)".*/\1/p' | sed 's/\.json$//' | head -1)
+    # Support both docker save and skopeo formats
+    local raw_config
+    raw_config=$(zcat "$tarball" 2>/dev/null | tar -xOf - manifest.json 2>/dev/null | \
+        sed -n 's/.*"Config":"\([^"]*\)".*/\1/p' | head -1)
 
-    # Return first 12 chars of hash (same format as docker images output)
-    if [[ -n "$config_hash" ]]; then
-        echo "${config_hash:0:12}"
-    else
-        echo ""
-    fi
+    [[ -z "$raw_config" ]] && return
+
+    # Clean up the path (skopeo uses blobs/sha256/HASH, docker uses HASH.json or sha256:HASH)
+    local clean_hash
+    clean_hash=$(basename "$raw_config" | sed 's/\.json$//' | sed 's/sha256://')
+
+    # Return first 12 chars
+    echo "${clean_hash:0:12}"
 }
 
 # Get local image ID by image name
@@ -206,6 +206,7 @@ get_local_image_id() {
 }
 
 # Smart load: only load if image has changed
+# Special handling for multi-arch images (influxdb, redis)
 # Returns: 0 if loaded, 1 if skipped (unchanged), 2 if error
 smart_load_image() {
     local tarball=$1
@@ -255,7 +256,9 @@ smart_load_image() {
     if [[ -z "$local_id" ]]; then
         echo -n "  Loading $basename (new)... "
     else
-        echo -n "  Loading $basename (${local_id} → ${tarball_id})... "
+        echo -n "  Loading $basename (${local_id:0:12} → ${tarball_id:0:12})... "
+        # CRITICAL: Remove old image first, otherwise docker load may skip it!
+        docker rmi "$image" >/dev/null 2>&1 || true
     fi
 
     if docker load < "$tarball" >/dev/null 2>&1; then
@@ -632,7 +635,30 @@ if command -v docker &> /dev/null; then
             # If nothing was loaded, skip detection
             if [[ ${#LOADED_IMAGES[@]} -eq 0 ]]; then
                 echo ""
-                echo -e "  ${GREEN}All images unchanged - nothing to update${NC}"
+                echo -e "  ${GREEN}✓ All images unchanged (Image ID matches)${NC}"
+                echo -e "  ${GREEN}✓ No backup or restart needed${NC}"
+                
+                # Skip to Phase 3 directly (no updates needed)
+                echo ""
+                echo -e "${BLUE}Phase 2: Confirming updates...${NC}"
+                echo -e "${BLUE}No updates selected (all images unchanged).${NC}"
+                
+                # Skip Phase 3
+                echo ""
+                echo -e "${GREEN}[DONE] Smart update completed${NC}"
+                echo ""
+                echo -e "${BLUE}Update Summary:${NC}"
+                echo "  • ${#SKIPPED_IMAGES[@]} image(s) skipped (Image ID unchanged)"
+                
+                # List skipped images
+                for img in "${SKIPPED_IMAGES[@]}"; do
+                    local_id=$(get_local_image_id "$img")
+                    echo -e "    ${GREEN}✓${NC} $img (${local_id:0:12})"
+                done
+                
+                # Ensure core services are running
+                echo ""
+                ensure_core_services_running
             else
                 echo ""
                 echo "  Detecting changes vs running containers:"
@@ -702,19 +728,14 @@ if command -v docker &> /dev/null; then
                 TO_UPDATE+=("$image")
             done
 
-            # Python services: batch selection
+            # Python services: unified image
             if [[ ${#PYTHON_CHANGED[@]} -gt 0 ]]; then
-                # Extract service names from image names (voltage-hissrv:latest -> hissrv)
-                PYTHON_SVCS=()
+                # Check if unified Python services image changed
                 for img in "${PYTHON_CHANGED[@]}"; do
-                    svc=$(echo "$img" | sed 's/voltage-//' | cut -d: -f1)
-                    PYTHON_SVCS+=("$svc")
-                done
-
-                # shellcheck disable=SC2086
-                selected_svcs=$(select_python_services "${PYTHON_SVCS[@]}")
-                for svc in $selected_svcs; do
-                    TO_UPDATE+=("voltage-${svc}:latest")
+                    if [[ "$img" == "voltageems-ss:latest" ]]; then
+                        echo -e "  ${GREEN}Auto-confirmed: $img (unified Python services)${NC}"
+                        TO_UPDATE+=("$img")
+                    fi
                 done
             fi
 
@@ -802,15 +823,20 @@ if command -v docker &> /dev/null; then
 
         # Verify loaded images
         echo "Verifying loaded images..."
-        for image_name in voltageems:latest redis:8-alpine influxdb:2-alpine voltage-hissrv:latest voltage-apigateway:latest voltage-netsrv:latest voltage-alarmsrv:latest voltage-apps:latest; do
+        # NOTE: voltage-apps:latest is optional
+        for image_name in voltageems:latest redis:8-alpine influxdb:2-alpine voltageems-ss:latest voltage-apps:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
                 echo -e "${GREEN}present${NC} (created: $CREATED)"
             else
-                echo -e "${RED}missing!${NC}"
-                echo -e "${RED}ERROR: Expected image $image_name was not loaded properly${NC}"
-                exit 1
+                if [[ "$image_name" == "voltage-apps:latest" ]]; then
+                    echo -e "${YELLOW}missing (optional, skipping)${NC}"
+                else
+                    echo -e "${RED}missing!${NC}"
+                    echo -e "${RED}ERROR: Expected image $image_name was not loaded properly${NC}"
+                    exit 1
+                fi
             fi
         done
 
@@ -883,10 +909,55 @@ if [[ -d "config.template" ]]; then
     done
 
     echo -e "${GREEN}✓ Configuration templates installed${NC}"
-    echo -e "${YELLOW}Note: Copy config.template to config and customize before use${NC}"
 else
     echo -e "${YELLOW}Warning: config.template not found${NC}"
 fi
+
+# Install Python service configuration files
+# Python services configs go directly to config/ directory (not config.template/)
+# Try to copy from services/{service}/config/ first (development), then from installer package config/ (production)
+echo "Installing Python service configuration files..."
+PYTHON_SERVICES="hissrv apigateway netsrv alarmsrv"
+for service in $PYTHON_SERVICES; do
+    SERVICE_CONFIG_DIR="services/$service/config"
+    INSTALLER_CONFIG_DIR="config/$service"
+    
+    # Try to copy from services directory first (development scenario)
+    if [[ -d "$SERVICE_CONFIG_DIR" ]]; then
+        echo "  Copying $service configuration files from services directory..."
+        $SUDO mkdir -p "$INSTALL_DIR/config/$service"
+        
+        # Copy all files and directories from service config directory
+        find "$SERVICE_CONFIG_DIR" -type f \( -name "*.yaml" -o -name "*.yml" -o -name "*.json" -o -name "*.conf" -o -name "*.ini" -o -name "*.txt" \) | while read file; do
+            # Get relative path from service config directory
+            rel_path="${file#$SERVICE_CONFIG_DIR/}"
+            # Create directory structure if needed
+            if [[ "$rel_path" == *"/"* ]]; then
+                $SUDO mkdir -p "$INSTALL_DIR/config/$service/$(dirname "$rel_path")"
+            fi
+            # Copy file
+            $SUDO cp "$file" "$INSTALL_DIR/config/$service/$rel_path"
+        done
+        
+        # Also copy directories if they exist (for nested config structures)
+        find "$SERVICE_CONFIG_DIR" -mindepth 1 -type d | while read dir; do
+            rel_dir="${dir#$SERVICE_CONFIG_DIR/}"
+            $SUDO mkdir -p "$INSTALL_DIR/config/$service/$rel_dir"
+        done
+        
+        echo -e "    ${GREEN}✓ $service configuration files copied to $INSTALL_DIR/config/$service/${NC}"
+    # Fallback: copy from installer package config/ directory (production scenario)
+    elif [[ -d "$INSTALLER_CONFIG_DIR" ]]; then
+        echo "  Copying $service configuration files from installer package..."
+        $SUDO mkdir -p "$INSTALL_DIR/config/$service"
+        $SUDO cp -r "$INSTALLER_CONFIG_DIR"/* "$INSTALL_DIR/config/$service/" 2>/dev/null || true
+        echo -e "    ${GREEN}✓ $service configuration files copied from installer package${NC}"
+    else
+        echo -e "    ${YELLOW}⚠ $service config directory not found: $SERVICE_CONFIG_DIR or $INSTALLER_CONFIG_DIR${NC}"
+    fi
+done
+
+echo -e "${GREEN}✓ Python service configuration files installed${NC}"
 
 # Create a symlink if logs are external
 if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
@@ -995,11 +1066,13 @@ fi
 if [[ -z "$SUDO" ]]; then
     chown -R $ACTUAL_USER:docker "$INSTALL_DIR/data" 2>/dev/null || true
     chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config.template" 2>/dev/null || true
+    chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config" 2>/dev/null || true
     # Fix scripts directory if it exists
     [[ -d "$INSTALL_DIR/scripts" ]] && chown -R $ACTUAL_USER:docker "$INSTALL_DIR/scripts" 2>/dev/null || true
 else
     $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/data" 2>/dev/null || true
     $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config.template" 2>/dev/null || true
+    $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config" 2>/dev/null || true
     # Fix scripts directory if it exists
     [[ -d "$INSTALL_DIR/scripts" ]] && $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/scripts" 2>/dev/null || true
 fi
@@ -1074,9 +1147,11 @@ fi
 if [[ -z "$SUDO" ]]; then
     chmod -R 775 "$INSTALL_DIR/data"
     chmod -R 775 "$LOG_DIR"
+    [[ -d "$INSTALL_DIR/config" ]] && chmod -R 775 "$INSTALL_DIR/config" || true
 else
     $SUDO chmod -R 775 "$INSTALL_DIR/data"
     $SUDO chmod -R 775 "$LOG_DIR"
+    [[ -d "$INSTALL_DIR/config" ]] && $SUDO chmod -R 775 "$INSTALL_DIR/config" || true
 fi
 
 # Create system-wide environment variables for Docker Compose
@@ -1241,9 +1316,12 @@ echo "    - Frontend: 8080       (Vue.js + nginx)"
 echo ""
 echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
 echo "  Before starting services, you must:"
-echo "  1. Copy configuration template:"
-echo "     cp -r $INSTALL_DIR/config.template $INSTALL_DIR/config"
-echo "  2. Customize configuration files in config/ directory"
+echo "  1. Copy Rust service configuration template:"
+echo "     cp -r $INSTALL_DIR/config.template/comsrv $INSTALL_DIR/config/comsrv"
+echo "     cp -r $INSTALL_DIR/config.template/modsrv $INSTALL_DIR/config/modsrv"
+echo "  2. Customize configuration files in config/ directory:"
+echo "     - Rust services: config/comsrv/, config/modsrv/ (copy from config.template first)"
+echo "     - Python services: config/hissrv/, config/apigateway/, config/netsrv/, config/alarmsrv/ (already installed)"
 echo "  3. Sync configurations to database:"
 echo "     monarch sync"
 echo ""

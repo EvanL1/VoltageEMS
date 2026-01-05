@@ -1,47 +1,7 @@
-# VoltageEMS Multi-stage Build for Alpine Linux ARM64
-# Simplified single-layer build for reliability
-# Stage 1: Build binaries
-# Stage 2: Minimal runtime image
+# VoltageEMS Dockerfile for ARM64
+# Uses pre-compiled binaries from cargo-zigbuild for fast builds
+# No compilation happens in Docker - just packaging the pre-built binaries
 
-# ============================================================================
-# Stage 1: Builder
-# ============================================================================
-FROM rust:1.90-alpine AS builder
-
-# Accept build parallelism argument (defaults to 4 cores)
-ARG BUILD_JOBS=4
-
-# Swagger UI flag (disabled by default for production)
-ARG ENABLE_SWAGGER_UI=0
-
-# Install build dependencies
-RUN apk add --no-cache \
-    musl-dev \
-    pkgconfig \
-    openssl-dev \
-    curl
-
-WORKDIR /build
-
-# Set Cargo parallel build jobs
-ENV CARGO_BUILD_JOBS=${BUILD_JOBS}
-
-# Copy entire source code
-COPY . .
-
-# Build release binaries (default features include all protocols)
-# swagger-ui is optional, only enabled for development
-RUN if [ "$ENABLE_SWAGGER_UI" = "1" ]; then \
-    echo "Building with Swagger UI"; \
-    cargo build --release -p comsrv -p modsrv --features "swagger-ui"; \
-    else \
-    echo "Building with default features"; \
-    cargo build --release -p comsrv -p modsrv; \
-    fi
-
-# ============================================================================
-# Stage 2: Runtime Image
-# ============================================================================
 FROM alpine:3.19
 
 # Install only essential runtime dependencies
@@ -52,9 +12,10 @@ RUN apk add --no-cache \
 # Set working directory
 WORKDIR /app
 
-# Copy binaries from builder stage
-COPY --from=builder /build/target/release/comsrv /usr/local/bin/comsrv
-COPY --from=builder /build/target/release/modsrv /usr/local/bin/modsrv
+# Copy pre-compiled ARM64 binaries (built with cargo-zigbuild)
+# These are already built by the build script before Docker runs
+COPY target/aarch64-unknown-linux-musl/release/comsrv /usr/local/bin/comsrv
+COPY target/aarch64-unknown-linux-musl/release/modsrv /usr/local/bin/modsrv
 
 # Make binaries executable
 RUN chmod +x /usr/local/bin/*
