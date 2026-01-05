@@ -3597,9 +3597,7 @@ name = "voltage-rtdb"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bytes",
- "chrono",
  "dashmap 5.5.3",
  "parking_lot",
  "redis",

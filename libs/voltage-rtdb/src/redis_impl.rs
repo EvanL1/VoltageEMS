@@ -56,7 +56,7 @@ impl Rtdb for RedisRtdb {
         let client = self.client.clone();
         let key = key.to_string();
         async move {
-            let s = String::from_utf8(value.to_vec())?;
+            let s = std::str::from_utf8(value.as_ref())?.to_string();
             client.set(&key, s).await.map_err(|e| anyhow::anyhow!(e))
         }
     }
@@ -97,7 +97,9 @@ impl Rtdb for RedisRtdb {
         let key = key.to_string();
         let field = field.to_string();
         async move {
-            let s = String::from_utf8(value.to_vec()).context("UTF-8 conversion failed")?;
+            let s = std::str::from_utf8(value.as_ref())
+                .context("UTF-8 conversion failed")?
+                .to_string();
             client
                 .hset(&key, &field, s)
                 .await
@@ -129,7 +131,7 @@ impl Rtdb for RedisRtdb {
     ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send {
         let client = self.client.clone();
         let key = key.to_string();
-        let fields: Vec<String> = fields.iter().map(|s| s.to_string()).collect();
+        let fields: Vec<String> = fields.iter().copied().map(String::from).collect();
         async move {
             let field_refs: Vec<&str> = fields.iter().map(|s| s.as_str()).collect();
             let values: Vec<Option<String>> = client
@@ -151,7 +153,9 @@ impl Rtdb for RedisRtdb {
             let string_fields: Result<Vec<(String, String)>> = fields
                 .into_iter()
                 .map(|(k, v)| {
-                    let s = String::from_utf8(v.to_vec()).context("UTF-8 conversion failed")?;
+                    let s = std::str::from_utf8(v.as_ref())
+                        .context("UTF-8 conversion failed")?
+                        .to_string();
                     Ok((k, s))
                 })
                 .collect();
@@ -207,7 +211,9 @@ impl Rtdb for RedisRtdb {
         let client = self.client.clone();
         let key = key.to_string();
         async move {
-            let s = String::from_utf8(value.to_vec()).context("UTF-8 conversion failed")?;
+            let s = std::str::from_utf8(value.as_ref())
+                .context("UTF-8 conversion failed")?
+                .to_string();
             client
                 .lpush(&key, &s)
                 .await
@@ -220,7 +226,9 @@ impl Rtdb for RedisRtdb {
         let client = self.client.clone();
         let key = key.to_string();
         async move {
-            let s = String::from_utf8(value.to_vec()).context("UTF-8 conversion failed")?;
+            let s = std::str::from_utf8(value.as_ref())
+                .context("UTF-8 conversion failed")?
+                .to_string();
             client
                 .rpush(&key, &s)
                 .await
@@ -253,7 +261,7 @@ impl Rtdb for RedisRtdb {
         timeout_seconds: u64,
     ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send {
         let client = self.client.clone();
-        let keys: Vec<String> = keys.iter().map(|s| s.to_string()).collect();
+        let keys: Vec<String> = keys.iter().copied().map(String::from).collect();
         async move {
             let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
             let result: Option<(String, String)> = client
@@ -377,8 +385,9 @@ impl Rtdb for RedisRtdb {
                     let string_fields: Result<Vec<_>> = fields
                         .into_iter()
                         .map(|(f, v)| {
-                            let s =
-                                String::from_utf8(v.to_vec()).context("UTF-8 conversion failed")?;
+                            let s = std::str::from_utf8(v.as_ref())
+                                .context("UTF-8 conversion failed")?
+                                .to_owned();
                             Ok((f, s))
                         })
                         .collect();
@@ -490,12 +499,14 @@ mod tests {
 
         let action1 = rtdb.list_lpop(c_key).await.unwrap();
         assert!(action1.is_some());
-        let s1 = String::from_utf8(action1.unwrap().to_vec()).unwrap();
+        let action1 = action1.unwrap();
+        let s1 = std::str::from_utf8(action1.as_ref()).unwrap();
         assert!(s1.contains("c1"));
 
         let action2 = rtdb.list_lpop(a_key).await.unwrap();
         assert!(action2.is_some());
-        let s2 = String::from_utf8(action2.unwrap().to_vec()).unwrap();
+        let action2 = action2.unwrap();
+        let s2 = std::str::from_utf8(action2.as_ref()).unwrap();
         assert!(s2.contains("a1"));
     }
 

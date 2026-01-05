@@ -129,7 +129,7 @@ pub trait Rtdb: Send + Sync + 'static {
         fields: &[&str],
     ) -> impl Future<Output = Result<usize>> + Send {
         let key = key.to_string();
-        let fields: Vec<String> = fields.iter().map(|s| s.to_string()).collect();
+        let fields: Vec<String> = fields.iter().copied().map(String::from).collect();
         async move { self.hash_del_many(&key, &fields).await }
     }
 

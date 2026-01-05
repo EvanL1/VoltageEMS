@@ -8,7 +8,6 @@ license.workspace = true
 crate-type = ["rlib"]
 
 [dependencies]
-async-trait = { workspace = true }
 bytes = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -18,9 +17,8 @@ regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-uuid = { workspace = true }
-chrono = { workspace = true }
 tokio = { workspace = true }
+# Removed: async-trait (replaced by native impl Trait), chrono (unused), uuid (test-only)
 
 # Core dependencies for keyspace
 voltage-model = { path = "../voltage-model" }
@@ -37,6 +35,7 @@ memory-backend = []
 [dev-dependencies]
 tokio = { workspace = true }
 serial_test = "3.0"
+uuid = { workspace = true }  # Only used in tests
 
 [lints]
 workspace = true

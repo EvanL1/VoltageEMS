@@ -10,8 +10,24 @@ use crate::builtin_functions::{self, BuiltinFunctions};
 use crate::error::{CalcError, Result};
 use crate::state::StateStore;
 use evalexpr::{ContextWithMutableFunctions, ContextWithMutableVariables, Value};
+use regex::Regex;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+
+// Pre-compiled regex patterns for stateful function parsing (compiled once, used many times)
+// Using expect() for compile-time constant patterns that cannot fail
+static RE_INTEGRATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"integrate\s*\(\s*(\w+)(?:\s*,\s*([0-9.]+))?\s*\)")
+        .expect("RE_INTEGRATE: invalid regex pattern")
+});
+static RE_MOVING_AVG: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"moving_avg\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)")
+        .expect("RE_MOVING_AVG: invalid regex pattern")
+});
+static RE_RATE_OF_CHANGE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"rate_of_change\s*\(\s*(\w+)\s*\)")
+        .expect("RE_RATE_OF_CHANGE: invalid regex pattern")
+});
 
 /// CalcEngine - Formula evaluation engine
 ///
@@ -118,107 +134,117 @@ impl<S: StateStore> CalcEngine<S> {
     }
 
     /// Process integrate function calls
+    ///
+    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order
     async fn process_integrate(
         &self,
         formula: &str,
         variables: &HashMap<String, f64>,
     ) -> Result<String> {
+        // Collect all matches with their ranges and parameters (single scan)
+        let matches: Vec<_> = RE_INTEGRATE
+            .captures_iter(formula)
+            .filter_map(|caps| {
+                let m = caps.get(0)?;
+                let var_name = caps.get(1)?.as_str();
+                let factor: f64 = caps
+                    .get(2)
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(1.0);
+                Some((m.range(), var_name.to_string(), factor))
+            })
+            .collect();
+
+        if matches.is_empty() {
+            return Ok(formula.to_string());
+        }
+
         let mut result = formula.to_string();
 
-        // Match: integrate(var) or integrate(var, factor)
-        let re = regex::Regex::new(r"integrate\s*\(\s*(\w+)(?:\s*,\s*([0-9.]+))?\s*\)")
-            .map_err(|e| CalcError::expression(format!("Regex error: {}", e)))?;
-
-        while let Some(captures) = re.captures(&result) {
-            let full_match = captures
-                .get(0)
-                .ok_or_else(|| CalcError::expression("Regex capture group 0 missing"))?;
-            let var_name = captures
-                .get(1)
-                .ok_or_else(|| CalcError::expression("integrate: missing variable name"))?
-                .as_str();
-            let factor: f64 = captures
-                .get(2)
-                .and_then(|m| m.as_str().parse().ok())
-                .unwrap_or(1.0);
-
+        // Process in reverse order to preserve indices
+        for (range, var_name, factor) in matches.into_iter().rev() {
             let value = variables
-                .get(var_name)
+                .get(&var_name)
                 .copied()
                 .ok_or_else(|| CalcError::variable_not_found(format!("integrate: {}", var_name)))?;
 
-            let integrated = self.builtin.integrate(var_name, value, factor).await?;
-            result = result.replace(full_match.as_str(), &integrated.to_string());
+            let integrated = self.builtin.integrate(&var_name, value, factor).await?;
+            result.replace_range(range, &integrated.to_string());
         }
 
         Ok(result)
     }
 
     /// Process moving_avg function calls
+    ///
+    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order
     async fn process_moving_avg(
         &self,
         formula: &str,
         variables: &HashMap<String, f64>,
     ) -> Result<String> {
+        // Collect all matches with their ranges and parameters (single scan)
+        let matches: Vec<_> = RE_MOVING_AVG
+            .captures_iter(formula)
+            .filter_map(|caps| {
+                let m = caps.get(0)?;
+                let var_name = caps.get(1)?.as_str();
+                let window: usize = caps.get(2)?.as_str().parse().ok()?;
+                Some((m.range(), var_name.to_string(), window))
+            })
+            .collect();
+
+        if matches.is_empty() {
+            return Ok(formula.to_string());
+        }
+
         let mut result = formula.to_string();
 
-        // Match: moving_avg(var, window)
-        let re = regex::Regex::new(r"moving_avg\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)")
-            .map_err(|e| CalcError::expression(format!("Regex error: {}", e)))?;
-
-        while let Some(captures) = re.captures(&result) {
-            let full_match = captures
-                .get(0)
-                .ok_or_else(|| CalcError::expression("Regex capture group 0 missing"))?;
-            let var_name = captures
-                .get(1)
-                .ok_or_else(|| CalcError::expression("moving_avg: missing variable name"))?
-                .as_str();
-            let window: usize = captures
-                .get(2)
-                .ok_or_else(|| CalcError::expression("moving_avg: missing window size"))?
-                .as_str()
-                .parse()
-                .map_err(|e| CalcError::expression(format!("Invalid window size: {}", e)))?;
-
-            let value = variables.get(var_name).copied().ok_or_else(|| {
+        // Process in reverse order to preserve indices
+        for (range, var_name, window) in matches.into_iter().rev() {
+            let value = variables.get(&var_name).copied().ok_or_else(|| {
                 CalcError::variable_not_found(format!("moving_avg: {}", var_name))
             })?;
 
-            let avg = self.builtin.moving_avg(var_name, value, window).await?;
-            result = result.replace(full_match.as_str(), &avg.to_string());
+            let avg = self.builtin.moving_avg(&var_name, value, window).await?;
+            result.replace_range(range, &avg.to_string());
         }
 
         Ok(result)
     }
 
     /// Process rate_of_change function calls
+    ///
+    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order
     async fn process_rate_of_change(
         &self,
         formula: &str,
         variables: &HashMap<String, f64>,
     ) -> Result<String> {
+        // Collect all matches with their ranges and parameters (single scan)
+        let matches: Vec<_> = RE_RATE_OF_CHANGE
+            .captures_iter(formula)
+            .filter_map(|caps| {
+                let m = caps.get(0)?;
+                let var_name = caps.get(1)?.as_str();
+                Some((m.range(), var_name.to_string()))
+            })
+            .collect();
+
+        if matches.is_empty() {
+            return Ok(formula.to_string());
+        }
+
         let mut result = formula.to_string();
 
-        // Match: rate_of_change(var)
-        let re = regex::Regex::new(r"rate_of_change\s*\(\s*(\w+)\s*\)")
-            .map_err(|e| CalcError::expression(format!("Regex error: {}", e)))?;
-
-        while let Some(captures) = re.captures(&result) {
-            let full_match = captures
-                .get(0)
-                .ok_or_else(|| CalcError::expression("Regex capture group 0 missing"))?;
-            let var_name = captures
-                .get(1)
-                .ok_or_else(|| CalcError::expression("rate_of_change: missing variable name"))?
-                .as_str();
-
-            let value = variables.get(var_name).copied().ok_or_else(|| {
+        // Process in reverse order to preserve indices
+        for (range, var_name) in matches.into_iter().rev() {
+            let value = variables.get(&var_name).copied().ok_or_else(|| {
                 CalcError::variable_not_found(format!("rate_of_change: {}", var_name))
             })?;
 
-            let rate = self.builtin.rate_of_change(var_name, value).await?;
-            result = result.replace(full_match.as_str(), &rate.to_string());
+            let rate = self.builtin.rate_of_change(&var_name, value).await?;
+            result.replace_range(range, &rate.to_string());
         }
 
         Ok(result)

@@ -6,6 +6,10 @@
 use crate::PointType;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::sync::OnceLock;
+
+/// Cached production configuration (singleton, zero-allocation after first call)
+static PRODUCTION_CONFIG: OnceLock<KeySpaceConfig> = OnceLock::new();
 
 /// Keyspace configuration for Redis operations
 ///
@@ -73,6 +77,24 @@ impl KeySpaceConfig {
             target_prefix: None,
             inst_name_pattern: None,
         }
+    }
+
+    /// Get cached production configuration (zero-allocation after first call)
+    ///
+    /// Use this method in hot paths to avoid repeated String allocations.
+    /// The configuration is initialized once on first call and cached statically.
+    ///
+    /// ## Example
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// // Zero-allocation (uses cached singleton)
+    /// let config = KeySpaceConfig::production_cached();
+    /// let key = config.channel_key(1001, voltage_model::PointType::Telemetry);
+    /// ```
+    #[inline]
+    pub fn production_cached() -> &'static KeySpaceConfig {
+        PRODUCTION_CONFIG.get_or_init(Self::production)
     }
 
     /// Test environment configuration (fully isolated keyspace)

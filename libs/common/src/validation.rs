@@ -74,9 +74,10 @@ impl CsvHeaderValidator {
         // Check for missing required fields
         let missing: Vec<_> = expected_set.difference(&actual_set).collect();
         if !missing.is_empty() {
+            // Use clone() instead of to_string() to avoid extra deref chain
             let missing_str = missing
                 .iter()
-                .map(|s| s.to_string())
+                .map(|s| (**s).clone())
                 .collect::<Vec<_>>()
                 .join(", ");
             errors.push(format!(
@@ -89,9 +90,10 @@ impl CsvHeaderValidator {
         // Check for extra fields (warnings only)
         let extra: Vec<_> = actual_set.difference(&expected_set).collect();
         if !extra.is_empty() {
+            // Use clone() instead of to_string() to avoid extra deref chain
             let extra_str = extra
                 .iter()
-                .map(|s| s.to_string())
+                .map(|s| (**s).clone())
                 .collect::<Vec<_>>()
                 .join(", ");
             warnings.push(format!(

@@ -8,7 +8,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use parking_lot::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct MemoryRtdb {
     kv_store: Arc<DashMap<String, Bytes>>,
     hash_store: Arc<DashMap<String, DashMap<String, Bytes>>>,
-    list_store: Arc<DashMap<String, RwLock<Vec<Bytes>>>>,
+    list_store: Arc<DashMap<String, RwLock<VecDeque<Bytes>>>>,
     set_store: Arc<DashMap<String, DashSet<String>>>,
 }
 
@@ -101,7 +101,7 @@ impl Rtdb for MemoryRtdb {
                 .or_insert_with(|| Bytes::from("0"));
 
             // Parse current value (default to 0.0 if invalid, matching Redis behavior)
-            let current: f64 = match String::from_utf8(entry.to_vec()) {
+            let current: f64 = match std::str::from_utf8(entry.as_ref()) {
                 Ok(s) => s.parse().unwrap_or_else(|_| {
                     tracing::trace!(
                         key = %key_owned,
@@ -230,29 +230,25 @@ impl Rtdb for MemoryRtdb {
     fn list_lpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
         self.list_store
             .entry(key.to_string())
-            .or_insert_with(|| RwLock::new(Vec::new()))
+            .or_insert_with(|| RwLock::new(VecDeque::new()))
             .write()
-            .insert(0, value);
+            .push_front(value);
         async move { Ok(()) }
     }
 
     fn list_rpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
         self.list_store
             .entry(key.to_string())
-            .or_insert_with(|| RwLock::new(Vec::new()))
+            .or_insert_with(|| RwLock::new(VecDeque::new()))
             .write()
-            .push(value);
+            .push_back(value);
         async move { Ok(()) }
     }
 
     fn list_lpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
         let result = self.list_store.get(key).and_then(|list| {
             let mut list = list.write();
-            if list.is_empty() {
-                None
-            } else {
-                Some(list.remove(0))
-            }
+            list.pop_front()
         });
         async move { Ok(result) }
     }
@@ -260,7 +256,7 @@ impl Rtdb for MemoryRtdb {
     fn list_rpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
         let result = self.list_store.get(key).and_then(|list| {
             let mut list = list.write();
-            list.pop()
+            list.pop_back()
         });
         async move { Ok(result) }
     }
@@ -272,7 +268,7 @@ impl Rtdb for MemoryRtdb {
     ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send {
         // For blocking pop, we need to clone the list_store reference
         let list_store = self.list_store.clone();
-        let keys: Vec<String> = keys.iter().map(|s| s.to_string()).collect();
+        let keys: Vec<String> = keys.iter().copied().map(String::from).collect();
 
         async move {
             use tokio::time::{sleep, Duration, Instant};
@@ -286,8 +282,7 @@ impl Rtdb for MemoryRtdb {
                 for key in &keys {
                     if let Some(list) = list_store.get(key) {
                         let mut list = list.write();
-                        if !list.is_empty() {
-                            let value = list.remove(0);
+                        if let Some(value) = list.pop_front() {
                             return Ok(Some((key.clone(), value)));
                         }
                     }
@@ -328,7 +323,11 @@ impl Rtdb for MemoryRtdb {
             };
 
             if start_idx < stop_idx {
-                list[start_idx..stop_idx].to_vec()
+                list.iter()
+                    .skip(start_idx)
+                    .take(stop_idx - start_idx)
+                    .cloned()
+                    .collect()
             } else {
                 Vec::new()
             }
@@ -361,7 +360,12 @@ impl Rtdb for MemoryRtdb {
             };
 
             if start_idx < stop_idx && stop_idx <= list.len() {
-                *list = list[start_idx..stop_idx].to_vec();
+                *list = list
+                    .iter()
+                    .skip(start_idx)
+                    .take(stop_idx - start_idx)
+                    .cloned()
+                    .collect();
             } else {
                 list.clear();
             }
@@ -455,7 +459,7 @@ impl Rtdb for MemoryRtdb {
                 .or_insert_with(|| Bytes::from("0"));
 
             // Parse current value (default to 0 if invalid, matching Redis HINCRBY behavior)
-            let current: i64 = match String::from_utf8(entry.to_vec()) {
+            let current: i64 = match std::str::from_utf8(entry.as_ref()) {
                 Ok(s) => s.parse().unwrap_or_else(|_| {
                     tracing::trace!(
                         key = %key_owned,

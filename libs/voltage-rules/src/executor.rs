@@ -31,7 +31,8 @@ pub struct RuleExecutionResult {
     /// Matched condition expression (e.g., "X1>=49" or "X1>10 && X2<50")
     pub matched_condition: Option<String>,
     /// Variable values at execution time (for logging)
-    pub variable_values: HashMap<String, f64>,
+    /// Arc-shared to avoid cloning the full HashMap on each node
+    pub variable_values: Arc<HashMap<String, f64>>,
     /// Node execution details for debugging/visualization
     pub node_details: HashMap<String, NodeExecutionDetail>,
 }
@@ -58,8 +59,8 @@ pub struct ActionResult {
 pub struct NodeExecutionDetail {
     /// Node type: "start", "switch", "change", "end"
     pub node_type: String,
-    /// Variable values when entering this node
-    pub input_values: HashMap<String, f64>,
+    /// Variable values when entering this node (Arc-shared snapshot)
+    pub input_values: Arc<HashMap<String, f64>>,
     /// Condition evaluation results (for Switch nodes)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition_results: Option<Vec<ConditionResult>>,
@@ -124,7 +125,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             error: None,
             execution_path: vec![],
             matched_condition: None,
-            variable_values: HashMap::new(),
+            variable_values: Arc::new(HashMap::new()),
             node_details: HashMap::new(),
         };
 
@@ -133,6 +134,25 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         let mut current_id = rule.flow.start_node.as_str();
         let max_iterations = 100; // Prevent infinite loops
         let mut iterations = 0;
+
+        // Cached snapshot for avoiding repeated clones
+        let mut values_snapshot: Option<Arc<HashMap<String, f64>>> = None;
+
+        fn snapshot_or_reuse(
+            cache: &mut Option<Arc<HashMap<String, f64>>>,
+            values: &HashMap<String, f64>,
+            values_changed: bool,
+        ) -> Arc<HashMap<String, f64>> {
+            if !values_changed {
+                if let Some(snapshot) = cache.as_ref() {
+                    return Arc::clone(snapshot);
+                }
+            }
+
+            let snapshot = Arc::new(values.clone());
+            *cache = Some(Arc::clone(&snapshot));
+            snapshot
+        }
 
         loop {
             iterations += 1;
@@ -153,8 +173,8 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
 
             match node {
                 RuleNode::End => {
-                    // Save final variable values and mark success (move, not clone)
-                    result.variable_values = std::mem::take(&mut values);
+                    // Save final variable values and mark success (wrap in Arc)
+                    result.variable_values = Arc::new(std::mem::take(&mut values));
                     result.success = true;
                     break;
                 },
@@ -173,15 +193,20 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     wires,
                 } => {
                     // Read node-local variables
-                    if let Err(e) = self.read_rule_variables(variables, &mut values).await {
-                        result.error = Some(format!("Failed to read variables: {}", e));
-                        // Save variable values even on error (move, not clone - we're returning)
-                        result.variable_values = std::mem::take(&mut values);
-                        return Ok(result);
-                    }
+                    let values_changed =
+                        match self.read_rule_variables(variables, &mut values).await {
+                            Ok(changed) => changed,
+                            Err(e) => {
+                                result.error = Some(format!("Failed to read variables: {}", e));
+                                // Save variable values even on error (wrap in Arc)
+                                result.variable_values = Arc::new(std::mem::take(&mut values));
+                                return Ok(result);
+                            },
+                        };
 
-                    // Save variable values for logging
-                    result.variable_values = values.clone();
+                    // Snapshot values when entering this node (reuse cache if nothing changed)
+                    let snapshot = snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
+                    result.variable_values = Arc::clone(&snapshot);
 
                     // Evaluate all conditions for debugging/visualization
                     let condition_results = self.evaluate_all_conditions(rules, &values);
@@ -191,12 +216,12 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         self.evaluate_rule_switch_with_details(rules, wires, &values);
                     result.matched_condition = matched_cond;
 
-                    // Record node execution detail
+                    // Record node execution detail (reuse Arc snapshot)
                     result.node_details.insert(
                         current_id.to_string(),
                         NodeExecutionDetail {
                             node_type: "switch".to_string(),
-                            input_values: values.clone(),
+                            input_values: snapshot,
                             condition_results: Some(condition_results),
                             matched_port,
                             actions: None,
@@ -217,10 +242,19 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     wires,
                 } => {
                     // Read target variables
-                    if let Err(e) = self.read_rule_variables(variables, &mut values).await {
-                        result.error = Some(format!("Failed to read variables: {}", e));
-                        return Ok(result);
-                    }
+                    let values_changed =
+                        match self.read_rule_variables(variables, &mut values).await {
+                            Ok(changed) => changed,
+                            Err(e) => {
+                                result.error = Some(format!("Failed to read variables: {}", e));
+                                return Ok(result);
+                            },
+                        };
+
+                    // Snapshot values when entering this node (before executing actions)
+                    let input_snapshot =
+                        snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
+                    result.variable_values = Arc::clone(&input_snapshot);
 
                     // Execute value assignments and collect actions for this node
                     let mut node_actions = Vec::new();
@@ -238,7 +272,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         current_id.to_string(),
                         NodeExecutionDetail {
                             node_type: "change".to_string(),
-                            input_values: values.clone(),
+                            input_values: input_snapshot,
                             condition_results: None,
                             matched_port: None,
                             actions: Some(node_actions),
@@ -259,10 +293,19 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     wires,
                 } => {
                     // Read input variables
-                    if let Err(e) = self.read_rule_variables(variables, &mut values).await {
-                        result.error = Some(format!("Failed to read variables: {}", e));
-                        return Ok(result);
-                    }
+                    let values_changed =
+                        match self.read_rule_variables(variables, &mut values).await {
+                            Ok(changed) => changed,
+                            Err(e) => {
+                                result.error = Some(format!("Failed to read variables: {}", e));
+                                return Ok(result);
+                            },
+                        };
+
+                    // Snapshot values when entering this node (before calculation writes to values)
+                    let input_snapshot =
+                        snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
+                    result.variable_values = Arc::clone(&input_snapshot);
 
                     // Create CalcEngine with rule_id as context (for stateful functions)
                     let calc_engine =
@@ -292,12 +335,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         values.insert(calc.output.clone(), calc_result);
                     }
 
-                    // Record node execution detail
+                    // Values were modified by calculations; invalidate snapshot cache.
+                    values_snapshot = None;
                     result.node_details.insert(
                         current_id.to_string(),
                         NodeExecutionDetail {
                             node_type: "calculation".to_string(),
-                            input_values: values.clone(),
+                            input_values: input_snapshot,
                             condition_results: None,
                             matched_port: None,
                             actions: Some(node_actions),
@@ -325,7 +369,8 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         &self,
         variables: &[RuleVariable],
         values: &mut HashMap<String, f64>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        let mut values_changed = false;
         for var in variables {
             // Skip combined variables (formula-based) - they need separate calculation
             if !var.formula.is_empty() {
@@ -365,7 +410,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 Ok(Some(val_bytes)) => {
                     let val_str = String::from_utf8_lossy(&val_bytes);
                     if let Ok(val) = val_str.parse::<f64>() {
-                        values.insert(var.name.clone(), val);
+                        values_changed |= values.insert(var.name.clone(), val) != Some(val);
                     } else {
                         tracing::warn!(
                             "Var {}: '{}' not number at {}:{}",
@@ -374,21 +419,21 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                             key,
                             field
                         );
-                        values.insert(var.name.clone(), 0.0);
+                        values_changed |= values.insert(var.name.clone(), 0.0) != Some(0.0);
                     }
                 },
                 Ok(None) => {
                     tracing::warn!("Var {}: {}:{} not found", var.name, key, field);
-                    values.insert(var.name.clone(), 0.0);
+                    values_changed |= values.insert(var.name.clone(), 0.0) != Some(0.0);
                 },
                 Err(e) => {
                     tracing::error!("Var {} read err: {}", var.name, e);
-                    values.insert(var.name.clone(), 0.0);
+                    values_changed |= values.insert(var.name.clone(), 0.0) != Some(0.0);
                 },
             }
         }
 
-        Ok(())
+        Ok(values_changed)
     }
 
     /// Evaluate compact switch rules and return the next node ID with matched condition and port

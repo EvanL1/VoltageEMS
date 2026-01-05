@@ -88,7 +88,7 @@ pub async fn set_action_point<R>(
 where
     R: Rtdb,
 {
-    let config = voltage_rtdb::KeySpaceConfig::production();
+    let config = voltage_rtdb::KeySpaceConfig::production_cached();
 
     // Build M2C routing key and lookup target
     let route_key = format!("{}:A:{}", instance_id, point_id);
@@ -117,7 +117,7 @@ where
         // Use unified helper: writes channel Hash (value/ts/raw) + triggers TODO queue
         voltage_rtdb::helpers::set_channel_point_with_trigger(
             redis,
-            &config,
+            config,
             channel_id,
             point_type_enum,
             comsrv_point_id,
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn test_production_config_is_incomplete_for_m2c() {
         // Verify that raw production() config is NOT suitable for M2C
-        let config = voltage_rtdb::KeySpaceConfig::production();
+        let config = voltage_rtdb::KeySpaceConfig::production_cached();
 
         // Without for_m2c(), these fields are None
         assert!(

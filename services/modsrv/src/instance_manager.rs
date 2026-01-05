@@ -17,6 +17,40 @@ use voltage_rtdb::Rtdb;
 
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 
+/// Parse properties JSON string into HashMap
+fn parse_properties_json(
+    json: Option<String>,
+    instance_id: u32,
+) -> Result<HashMap<String, serde_json::Value>> {
+    match json {
+        Some(s) => serde_json::from_str(&s).map_err(|e| {
+            anyhow!(
+                "Invalid properties JSON for instance {}: {}",
+                instance_id,
+                e
+            )
+        }),
+        None => Ok(HashMap::new()),
+    }
+}
+
+/// Build Instance from database row tuple
+fn build_instance_from_row(row: (u32, String, String, Option<String>, String)) -> Result<Instance> {
+    let (instance_id, instance_name, product_name, properties_json, _created_at) = row;
+    let properties = parse_properties_json(properties_json, instance_id)?;
+    Ok(Instance {
+        core: crate::config::InstanceCore {
+            instance_id,
+            instance_name,
+            product_name,
+            properties,
+        },
+        measurement_mappings: None,
+        action_mappings: None,
+        created_at: None,
+    })
+}
+
 /// Instance Manager handles runtime instance lifecycle
 pub struct InstanceManager<R: Rtdb> {
     pub pool: SqlitePool,
@@ -201,31 +235,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         let rows = query.fetch_all(&self.pool).await?;
 
-        let mut instances = Vec::new();
-        for (instance_id, instance_name, product_name, properties_json, _created_at) in rows {
-            let properties: HashMap<String, serde_json::Value> = match properties_json {
-                Some(json) => serde_json::from_str(&json).map_err(|e| {
-                    anyhow!(
-                        "Invalid properties JSON for instance {}: {}",
-                        instance_id,
-                        e
-                    )
-                })?,
-                None => HashMap::new(),
-            };
-
-            instances.push(Instance {
-                core: crate::config::InstanceCore {
-                    instance_id,
-                    instance_name,
-                    product_name,
-                    properties,
-                },
-                measurement_mappings: None,
-                action_mappings: None,
-                created_at: None,
-            });
-        }
+        let instances = rows
+            .into_iter()
+            .map(build_instance_from_row)
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(instances)
     }
@@ -287,31 +300,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         let rows = data_query.fetch_all(&self.pool).await?;
 
-        let mut instances = Vec::new();
-        for (instance_id, instance_name, product_name, properties_json, _created_at) in rows {
-            let properties: HashMap<String, serde_json::Value> = match properties_json {
-                Some(json) => serde_json::from_str(&json).map_err(|e| {
-                    anyhow!(
-                        "Invalid properties JSON for instance {}: {}",
-                        instance_id,
-                        e
-                    )
-                })?,
-                None => HashMap::new(),
-            };
-
-            instances.push(Instance {
-                core: crate::config::InstanceCore {
-                    instance_id,
-                    instance_name,
-                    product_name,
-                    properties,
-                },
-                measurement_mappings: None,
-                action_mappings: None,
-                created_at: None,
-            });
-        }
+        let instances = rows
+            .into_iter()
+            .map(build_instance_from_row)
+            .collect::<Result<Vec<_>>>()?;
 
         let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
         Ok((total_u32, instances))
@@ -387,31 +379,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 .await?
             };
 
-        let mut instances = Vec::new();
-        for (instance_id, instance_name, product_name, properties_json, _created_at) in rows {
-            let properties: HashMap<String, serde_json::Value> = match properties_json {
-                Some(json) => serde_json::from_str(&json).map_err(|e| {
-                    anyhow!(
-                        "Invalid properties JSON for instance {}: {}",
-                        instance_id,
-                        e
-                    )
-                })?,
-                None => HashMap::new(),
-            };
-
-            instances.push(Instance {
-                core: crate::config::InstanceCore {
-                    instance_id,
-                    instance_name,
-                    product_name,
-                    properties,
-                },
-                measurement_mappings: None,
-                action_mappings: None,
-                created_at: None,
-            });
-        }
+        let instances = rows
+            .into_iter()
+            .map(build_instance_from_row)
+            .collect::<Result<Vec<_>>>()?;
 
         let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
         Ok((total_u32, instances))
@@ -501,16 +472,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let row = row.ok_or_else(|| anyhow!("Instance not found: {}", instance_id))?;
 
         let (instance_name, product_name, properties_json, _created_at) = row;
-        let properties: HashMap<String, serde_json::Value> = match properties_json {
-            Some(json) => serde_json::from_str(&json).map_err(|e| {
-                anyhow!(
-                    "Invalid properties JSON for instance {}: {}",
-                    instance_id,
-                    e
-                )
-            })?,
-            None => HashMap::new(),
-        };
+        let properties = parse_properties_json(properties_json, instance_id)?;
 
         // Load point routings from routing tables and generate Redis keys dynamically
         let mut measurement_point_routings = HashMap::new();

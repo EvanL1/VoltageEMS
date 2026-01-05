@@ -148,8 +148,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
         // Start ListQueue subscription task
         let task_handle = tokio::spawn(async move {
             let result =
-                Self::list_queue_loop(rtdb.clone(), command_tx, shutdown_rx, config, last_ts_map)
-                    .await;
+                Self::list_queue_loop(rtdb, command_tx, shutdown_rx, config, last_ts_map).await;
 
             if let Err(e) = result {
                 error!("Ch{} trigger err: {}", channel_id, e);
@@ -223,11 +222,11 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                         result = rtdb.list_blpop(&queues, timeout) => {
                             match result {
                                 Ok(Some((queue, data_bytes))) => {
-                                    let data = String::from_utf8(data_bytes.to_vec()).map_err(|e| {
+                                    let data = std::str::from_utf8(&data_bytes).map_err(|e| {
                                         crate::error::ComSrvError::data(
                                             format!("Failed to parse UTF-8: {}", e)
                                         )
-                                    })?;
+                                    })?.to_owned();
                                     // Determine the command type.
                                     let is_control = queue.contains(":C:");
                                     let point_type_str = if is_control { "C" } else { "A" };
@@ -275,11 +274,11 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                             // Read timestamp from :ts hash (Structure B)
                                             let current_ts: i64 = match rtdb.hash_get(&ts_key, &point_id.to_string()).await {
                                                 Ok(Some(ts_bytes)) => {
-                                                    let ts_str = String::from_utf8(ts_bytes.to_vec()).map_err(|e| {
+                                                    let ts_str = std::str::from_utf8(&ts_bytes).map_err(|e| {
                                                         crate::error::ComSrvError::data(
                                                             format!("Failed to parse UTF-8 timestamp: {}", e)
                                                         )
-                                                    })?;
+                                                    })?.to_owned();
                                                     match ts_str.parse() {
                                                         Ok(ts) => ts,
                                                         Err(e) => {
@@ -300,11 +299,11 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                             // Read value from Hash (legacy format compatibility)
                                             let value: f64 = match rtdb.hash_get(&channel_key, &point_id.to_string()).await {
                                                 Ok(Some(value_bytes)) => {
-                                                    let value_str = String::from_utf8(value_bytes.to_vec()).map_err(|e| {
+                                                    let value_str = std::str::from_utf8(&value_bytes).map_err(|e| {
                                                         crate::error::ComSrvError::data(
                                                             format!("Failed to parse UTF-8 value: {}", e)
                                                         )
-                                                    })?;
+                                                    })?.to_owned();
                                                     match value_str.parse() {
                                                         Ok(v) => v,
                                                         Err(e) => {
@@ -840,7 +839,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
 
-        let channel_cmd = CommandTrigger::<MemoryRtdb>::to_channel_command(ctrl_cmd.clone());
+        let channel_cmd = CommandTrigger::<MemoryRtdb>::to_channel_command(ctrl_cmd);
 
         // ChannelCommand is an enum, use pattern matching
         match channel_cmd {
@@ -866,7 +865,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
 
-        let channel_cmd = CommandTrigger::<MemoryRtdb>::to_channel_command(adj_cmd.clone());
+        let channel_cmd = CommandTrigger::<MemoryRtdb>::to_channel_command(adj_cmd);
 
         // ChannelCommand is an enum, use pattern matching
         match channel_cmd {

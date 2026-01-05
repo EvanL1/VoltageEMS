@@ -113,12 +113,10 @@ where
         .context("Failed to get timestamp")?
         .as_millis() as i64;
 
-    let config = KeySpaceConfig::production();
+    let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
     for ((channel_id, point_type), updates) in grouped {
-        let point_type_str = point_type.as_str();
-
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
         let mut instance_writes: HashMap<u32, Vec<(String, bytes::Bytes)>> = HashMap::new();
@@ -128,9 +126,10 @@ where
             let raw_value = update.raw_value.unwrap_or(update.value);
             points_3layer.push((update.point_id, update.value, raw_value));
 
-            // C2M routing lookup - directly use RoutingCache
-            let route_key = format!("{}:{}:{}", channel_id, point_type_str, update.point_id);
-            if let Some(target) = routing_cache.lookup_c2m(&route_key) {
+            // C2M routing lookup - zero-allocation using structured key
+            if let Some(target) =
+                routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
+            {
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
@@ -140,9 +139,11 @@ where
                     ));
             }
 
-            // C2C routing lookup - directly use RoutingCache
+            // C2C routing lookup - zero-allocation using structured key
             if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
-                if let Some(target) = routing_cache.lookup_c2c(&route_key) {
+                if let Some(target) =
+                    routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
+                {
                     c2c_forwards.push(ChannelPointUpdate {
                         channel_id: target.channel_id,
                         point_type: target.point_type,
@@ -230,12 +231,10 @@ pub fn write_channel_batch_buffered(
         .expect("System time should be after UNIX epoch")
         .as_millis() as i64;
 
-    let config = KeySpaceConfig::production();
+    let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
     for ((channel_id, point_type), updates) in grouped {
-        let point_type_str = point_type.as_str();
-
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
         // Use Arc<str> for field names to match WriteBuffer signature
@@ -246,9 +245,10 @@ pub fn write_channel_batch_buffered(
             let raw_value = update.raw_value.unwrap_or(update.value);
             points_3layer.push((update.point_id, update.value, raw_value));
 
-            // C2M routing lookup - directly use RoutingCache
-            let route_key = format!("{}:{}:{}", channel_id, point_type_str, update.point_id);
-            if let Some(target) = routing_cache.lookup_c2m(&route_key) {
+            // C2M routing lookup - zero-allocation using structured key
+            if let Some(target) =
+                routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
+            {
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
@@ -258,9 +258,11 @@ pub fn write_channel_batch_buffered(
                     ));
             }
 
-            // C2C routing lookup - directly use RoutingCache
+            // C2C routing lookup - zero-allocation using structured key
             if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
-                if let Some(target) = routing_cache.lookup_c2c(&route_key) {
+                if let Some(target) =
+                    routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
+                {
                     c2c_forwards.push(ChannelPointUpdate {
                         channel_id: target.channel_id,
                         point_type: target.point_type,

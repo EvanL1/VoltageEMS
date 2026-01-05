@@ -17,6 +17,34 @@ use crate::dto::{
 };
 use voltage_rtdb::Rtdb;
 
+/// Extract description field from config JSON string
+fn extract_description_from_config(
+    config_str: Option<&str>,
+    channel_id: u32,
+) -> Result<Option<String>, AppError> {
+    let Some(s) = config_str else {
+        return Ok(None);
+    };
+    let v: serde_json::Value = serde_json::from_str(s).map_err(|e| {
+        tracing::error!("Ch{} invalid config JSON: {}", channel_id, e);
+        AppError::internal_error(format!(
+            "Invalid channel config JSON for {}: {}",
+            channel_id, e
+        ))
+    })?;
+    let obj = v.as_object().ok_or_else(|| {
+        tracing::error!("Ch{} config must be a JSON object", channel_id);
+        AppError::internal_error(format!(
+            "Invalid channel config for {}: expected JSON object",
+            channel_id
+        ))
+    })?;
+    Ok(obj
+        .get("description")
+        .and_then(|d| d.as_str())
+        .map(String::from))
+}
+
 /// List all channels with pagination and filtering
 #[utoipa::path(
     get,
@@ -94,33 +122,11 @@ pub async fn get_all_channels<R: Rtdb>(
     let manager = state.channel_manager.read().await;
     let mut all_channels = Vec::new();
 
-    for (channel_id_i64, name, protocol, enabled, config_str) in db_channels {
-        let channel_id = u32::try_from(channel_id_i64).map_err(|_| {
-            AppError::internal_error(format!("Channel ID {} out of range", channel_id_i64))
-        })?;
+    for (id, name, protocol, enabled, config_str) in db_channels {
+        let channel_id = u32::try_from(id)
+            .map_err(|_| AppError::internal_error(format!("Channel ID {} out of range", id)))?;
 
-        // Extract description from config JSON
-        let description = match config_str {
-            None => None,
-            Some(s) => {
-                let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
-                    tracing::error!("Ch{} invalid config JSON: {}", channel_id, e);
-                    AppError::internal_error(format!(
-                        "Invalid channel config JSON for {}: {}",
-                        channel_id, e
-                    ))
-                })?;
-                let obj = v.as_object().ok_or_else(|| {
-                    tracing::error!("Ch{} config must be a JSON object", channel_id);
-                    AppError::internal_error(format!(
-                        "Invalid channel config for {}: expected JSON object",
-                        channel_id
-                    ))
-                })?;
-                obj.get("description")
-                    .and_then(|d| d.as_str().map(|s| s.to_string()))
-            },
-        };
+        let description = extract_description_from_config(config_str.as_deref(), channel_id)?;
 
         // Get runtime status if channel is running
         let (connected, last_update) = if let Some(channel_impl) = manager.get_channel(channel_id) {
@@ -611,29 +617,7 @@ pub async fn search_channels<R: Rtdb>(
         let channel_id = u32::try_from(id)
             .map_err(|_| AppError::internal_error(format!("Channel ID {} out of range", id)))?;
 
-        // Extract description from config JSON
-        let description = match config_str {
-            None => None,
-            Some(s) => {
-                let v: serde_json::Value = serde_json::from_str(&s).map_err(|e| {
-                    tracing::error!("Ch{} invalid config JSON: {}", channel_id, e);
-                    AppError::internal_error(format!(
-                        "Invalid channel config JSON for {}: {}",
-                        channel_id, e
-                    ))
-                })?;
-                let obj = v.as_object().ok_or_else(|| {
-                    tracing::error!("Ch{} config must be a JSON object", channel_id);
-                    AppError::internal_error(format!(
-                        "Invalid channel config for {}: expected JSON object",
-                        channel_id
-                    ))
-                })?;
-                obj.get("description")
-                    .and_then(|d| d.as_str())
-                    .map(String::from)
-            },
-        };
+        let description = extract_description_from_config(config_str.as_deref(), channel_id)?;
 
         // Get runtime connected status
         let connected = manager
@@ -641,34 +625,30 @@ pub async fn search_channels<R: Rtdb>(
             .map(|_| true) // Channel exists in runtime = running
             .unwrap_or(false);
 
-        let channel_id_i64 = id;
-        let telemetry_points =
-            fetch_point_names(&state.sqlite_pool, "telemetry_points", channel_id_i64)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Fetch T points for channel {}: {}", channel_id, e);
-                    AppError::internal_error("Database operation failed")
-                })?;
-        let signal_points = fetch_point_names(&state.sqlite_pool, "signal_points", channel_id_i64)
+        let telemetry_points = fetch_point_names(&state.sqlite_pool, "telemetry_points", id)
+            .await
+            .map_err(|e| {
+                tracing::error!("Fetch T points for channel {}: {}", channel_id, e);
+                AppError::internal_error("Database operation failed")
+            })?;
+        let signal_points = fetch_point_names(&state.sqlite_pool, "signal_points", id)
             .await
             .map_err(|e| {
                 tracing::error!("Fetch S points for channel {}: {}", channel_id, e);
                 AppError::internal_error("Database operation failed")
             })?;
-        let control_points =
-            fetch_point_names(&state.sqlite_pool, "control_points", channel_id_i64)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Fetch C points for channel {}: {}", channel_id, e);
-                    AppError::internal_error("Database operation failed")
-                })?;
-        let adjustment_points =
-            fetch_point_names(&state.sqlite_pool, "adjustment_points", channel_id_i64)
-                .await
-                .map_err(|e| {
-                    tracing::error!("Fetch A points for channel {}: {}", channel_id, e);
-                    AppError::internal_error("Database operation failed")
-                })?;
+        let control_points = fetch_point_names(&state.sqlite_pool, "control_points", id)
+            .await
+            .map_err(|e| {
+                tracing::error!("Fetch C points for channel {}: {}", channel_id, e);
+                AppError::internal_error("Database operation failed")
+            })?;
+        let adjustment_points = fetch_point_names(&state.sqlite_pool, "adjustment_points", id)
+            .await
+            .map_err(|e| {
+                tracing::error!("Fetch A points for channel {}: {}", channel_id, e);
+                AppError::internal_error("Database operation failed")
+            })?;
 
         list.push(serde_json::json!({
             "id": id,

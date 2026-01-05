@@ -629,11 +629,11 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     let reloadable_writer = ReloadableWriter::new(non_blocking);
     let reloadable_writer_arc = Arc::new(reloadable_writer);
 
-    // Store the reloadable writer globally
-    RELOADABLE_WRITER.get_or_init(|| reloadable_writer_arc.clone());
+    // Store the reloadable writer globally (Arc::clone is O(1) atomic counter increment)
+    RELOADABLE_WRITER.get_or_init(|| Arc::clone(&reloadable_writer_arc));
 
     // Wrap in newtype for MakeWriter implementation
-    let writer_handle = ReloadableWriterHandle(reloadable_writer_arc.clone());
+    let writer_handle = ReloadableWriterHandle(Arc::clone(&reloadable_writer_arc));
 
     // Business file layer (exclude api_access target)
     use tracing_subscriber::filter;

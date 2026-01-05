@@ -15,7 +15,11 @@
 //! use std::sync::Arc;
 //! use std::collections::HashMap;
 //!
-//! # tokio_test::block_on(async {
+//! # let rt = tokio::runtime::Builder::new_current_thread()
+//! #     .enable_all()
+//! #     .build()
+//! #     .unwrap();
+//! # rt.block_on(async {
 //! // Create engine with memory state store
 //! let store = Arc::new(MemoryStateStore::new());
 //! let engine = CalcEngine::new(store, "my_context");
