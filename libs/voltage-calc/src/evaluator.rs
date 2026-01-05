@@ -11,6 +11,7 @@ use crate::error::{CalcError, Result};
 use crate::state::StateStore;
 use evalexpr::{ContextWithMutableFunctions, ContextWithMutableVariables, Value};
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
@@ -113,37 +114,40 @@ impl<S: StateStore> CalcEngine<S> {
 
     /// Process stateful functions in formula and replace with computed values
     ///
+    /// Uses Cow<str> to avoid allocation when no functions are present (~70% of formulas).
     /// Pattern: function_name(arg1, arg2, ...)
-    async fn process_stateful_functions(
+    async fn process_stateful_functions<'a>(
         &self,
-        formula: &str,
+        formula: &'a str,
         variables: &HashMap<String, f64>,
-    ) -> Result<String> {
-        let mut result = formula.to_string();
+    ) -> Result<Cow<'a, str>> {
+        // Start with borrowed reference (zero allocation)
+        let result = Cow::Borrowed(formula);
 
         // Process integrate(var) or integrate(var, factor)
-        result = self.process_integrate(&result, variables).await?;
+        let result = self.process_integrate(result, variables).await?;
 
         // Process moving_avg(var, window)
-        result = self.process_moving_avg(&result, variables).await?;
+        let result = self.process_moving_avg(result, variables).await?;
 
         // Process rate_of_change(var)
-        result = self.process_rate_of_change(&result, variables).await?;
+        let result = self.process_rate_of_change(result, variables).await?;
 
         Ok(result)
     }
 
     /// Process integrate function calls
     ///
-    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order
-    async fn process_integrate(
+    /// Uses Cow pattern: returns borrowed input if no matches, owned result if modified.
+    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order.
+    async fn process_integrate<'a>(
         &self,
-        formula: &str,
+        formula: Cow<'a, str>,
         variables: &HashMap<String, f64>,
-    ) -> Result<String> {
+    ) -> Result<Cow<'a, str>> {
         // Collect all matches with their ranges and parameters (single scan)
         let matches: Vec<_> = RE_INTEGRATE
-            .captures_iter(formula)
+            .captures_iter(&formula)
             .filter_map(|caps| {
                 let m = caps.get(0)?;
                 let var_name = caps.get(1)?.as_str();
@@ -155,11 +159,13 @@ impl<S: StateStore> CalcEngine<S> {
             })
             .collect();
 
+        // Fast path: no matches, return borrowed input (zero allocation)
         if matches.is_empty() {
-            return Ok(formula.to_string());
+            return Ok(formula);
         }
 
-        let mut result = formula.to_string();
+        // Slow path: need to modify, convert to owned
+        let mut result = formula.into_owned();
 
         // Process in reverse order to preserve indices
         for (range, var_name, factor) in matches.into_iter().rev() {
@@ -172,20 +178,21 @@ impl<S: StateStore> CalcEngine<S> {
             result.replace_range(range, &integrated.to_string());
         }
 
-        Ok(result)
+        Ok(Cow::Owned(result))
     }
 
     /// Process moving_avg function calls
     ///
-    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order
-    async fn process_moving_avg(
+    /// Uses Cow pattern: returns borrowed input if no matches, owned result if modified.
+    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order.
+    async fn process_moving_avg<'a>(
         &self,
-        formula: &str,
+        formula: Cow<'a, str>,
         variables: &HashMap<String, f64>,
-    ) -> Result<String> {
+    ) -> Result<Cow<'a, str>> {
         // Collect all matches with their ranges and parameters (single scan)
         let matches: Vec<_> = RE_MOVING_AVG
-            .captures_iter(formula)
+            .captures_iter(&formula)
             .filter_map(|caps| {
                 let m = caps.get(0)?;
                 let var_name = caps.get(1)?.as_str();
@@ -194,11 +201,13 @@ impl<S: StateStore> CalcEngine<S> {
             })
             .collect();
 
+        // Fast path: no matches, return borrowed input (zero allocation)
         if matches.is_empty() {
-            return Ok(formula.to_string());
+            return Ok(formula);
         }
 
-        let mut result = formula.to_string();
+        // Slow path: need to modify, convert to owned
+        let mut result = formula.into_owned();
 
         // Process in reverse order to preserve indices
         for (range, var_name, window) in matches.into_iter().rev() {
@@ -210,20 +219,21 @@ impl<S: StateStore> CalcEngine<S> {
             result.replace_range(range, &avg.to_string());
         }
 
-        Ok(result)
+        Ok(Cow::Owned(result))
     }
 
     /// Process rate_of_change function calls
     ///
-    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order
-    async fn process_rate_of_change(
+    /// Uses Cow pattern: returns borrowed input if no matches, owned result if modified.
+    /// Optimized to O(n) by collecting all matches first, then replacing in reverse order.
+    async fn process_rate_of_change<'a>(
         &self,
-        formula: &str,
+        formula: Cow<'a, str>,
         variables: &HashMap<String, f64>,
-    ) -> Result<String> {
+    ) -> Result<Cow<'a, str>> {
         // Collect all matches with their ranges and parameters (single scan)
         let matches: Vec<_> = RE_RATE_OF_CHANGE
-            .captures_iter(formula)
+            .captures_iter(&formula)
             .filter_map(|caps| {
                 let m = caps.get(0)?;
                 let var_name = caps.get(1)?.as_str();
@@ -231,11 +241,13 @@ impl<S: StateStore> CalcEngine<S> {
             })
             .collect();
 
+        // Fast path: no matches, return borrowed input (zero allocation)
         if matches.is_empty() {
-            return Ok(formula.to_string());
+            return Ok(formula);
         }
 
-        let mut result = formula.to_string();
+        // Slow path: need to modify, convert to owned
+        let mut result = formula.into_owned();
 
         // Process in reverse order to preserve indices
         for (range, var_name) in matches.into_iter().rev() {
@@ -247,7 +259,7 @@ impl<S: StateStore> CalcEngine<S> {
             result.replace_range(range, &rate.to_string());
         }
 
-        Ok(result)
+        Ok(Cow::Owned(result))
     }
 
     /// Register stateless functions with evalexpr context

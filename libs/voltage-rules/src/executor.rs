@@ -20,6 +20,19 @@ use voltage_routing::set_action_point;
 use voltage_rtdb::traits::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
+/// Convert dynamic point type string to static str for zero-allocation ActionResult
+#[inline]
+fn point_type_to_static(pt: Option<&str>, default: &'static str) -> &'static str {
+    match pt {
+        Some("M") | Some("measurement") => "M",
+        Some("A") | Some("action") => "A",
+        Some("T") | Some("telemetry") => "T",
+        Some("S") | Some("status") => "S",
+        Some("C") | Some("control") => "C",
+        _ => default,
+    }
+}
+
 /// Result of executing a rule
 #[derive(Debug, Clone, Serialize)]
 pub struct RuleExecutionResult {
@@ -38,18 +51,20 @@ pub struct RuleExecutionResult {
 }
 
 /// Record of an executed action
-#[derive(Debug, Clone, Serialize)]
+///
+/// All fields are Copy types, making this struct zero-cost to clone.
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct ActionResult {
     /// Target type: "instance" or "channel"
-    pub target_type: String,
+    pub target_type: &'static str,
     /// Target ID (instance_id or channel_id)
     pub target_id: u32,
     /// Point type (M/A for instance, T/S/C/A for channel)
-    pub point_type: String,
+    pub point_type: &'static str,
     /// Point ID
     pub point_id: u32,
-    /// Value written
-    pub value: String,
+    /// Value written (f64 for zero-allocation)
+    pub value: f64,
     /// Whether the action succeeded
     pub success: bool,
 }
@@ -57,8 +72,8 @@ pub struct ActionResult {
 /// Execution details for a single node (for debugging/visualization)
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeExecutionDetail {
-    /// Node type: "start", "switch", "change", "end"
-    pub node_type: String,
+    /// Node type: "start", "switch", "change", "end", "calculation"
+    pub node_type: &'static str,
     /// Variable values when entering this node (Arc-shared snapshot)
     pub input_values: Arc<HashMap<String, f64>>,
     /// Condition evaluation results (for Switch nodes)
@@ -220,7 +235,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     result.node_details.insert(
                         current_id.to_string(),
                         NodeExecutionDetail {
-                            node_type: "switch".to_string(),
+                            node_type: "switch",
                             input_values: snapshot,
                             condition_results: Some(condition_results),
                             matched_port,
@@ -262,7 +277,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         let variable = variables.iter().find(|v| v.name == assignment.variables);
                         if let Some(var) = variable {
                             let executed = self.execute_rule_change(var, assignment, &values).await;
-                            node_actions.push(executed.clone());
+                            node_actions.push(executed);
                             result.actions_executed.push(executed);
                         }
                     }
@@ -271,7 +286,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     result.node_details.insert(
                         current_id.to_string(),
                         NodeExecutionDetail {
-                            node_type: "change".to_string(),
+                            node_type: "change",
                             input_values: input_snapshot,
                             condition_results: None,
                             matched_port: None,
@@ -327,7 +342,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         if let Some(var) = variables.iter().find(|v| v.name == calc.output) {
                             let action =
                                 self.write_calculation_result(var, calc_result, calc).await;
-                            node_actions.push(action.clone());
+                            node_actions.push(action);
                             result.actions_executed.push(action);
                         }
 
@@ -340,7 +355,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     result.node_details.insert(
                         current_id.to_string(),
                         NodeExecutionDetail {
-                            node_type: "calculation".to_string(),
+                            node_type: "calculation",
                             input_values: input_snapshot,
                             condition_results: None,
                             matched_port: None,
@@ -607,15 +622,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 variable.name
             );
             return ActionResult {
-                target_type: "instance".to_string(),
+                target_type: "instance",
                 target_id: 0,
-                point_type: variable
-                    .point_type
-                    .as_deref()
-                    .unwrap_or("action")
-                    .to_string(),
+                point_type: point_type_to_static(variable.point_type.as_deref(), "A"),
                 point_id: 0,
-                value: resolved_value.to_string(),
+                value: resolved_value,
                 success: false,
             };
         };
@@ -627,15 +638,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 instance_id
             );
             return ActionResult {
-                target_type: "instance".to_string(),
+                target_type: "instance",
                 target_id: instance_id,
-                point_type: variable
-                    .point_type
-                    .as_deref()
-                    .unwrap_or("action")
-                    .to_string(),
+                point_type: point_type_to_static(variable.point_type.as_deref(), "A"),
                 point_id: 0,
-                value: resolved_value.to_string(),
+                value: resolved_value,
                 success: false,
             };
         };
@@ -663,15 +670,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         };
 
         ActionResult {
-            target_type: "instance".to_string(),
+            target_type: "instance",
             target_id: instance_id,
-            point_type: variable
-                .point_type
-                .as_deref()
-                .unwrap_or("action")
-                .to_string(),
+            point_type: point_type_to_static(variable.point_type.as_deref(), "A"),
             point_id: point,
-            value: resolved_value.to_string(),
+            value: resolved_value,
             success: routed,
         }
     }
@@ -694,11 +697,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 calc.output
             );
             return ActionResult {
-                target_type: "instance".to_string(),
+                target_type: "instance",
                 target_id: 0,
-                point_type: variable.point_type.as_deref().unwrap_or("M").to_string(),
+                point_type: point_type_to_static(variable.point_type.as_deref(), "M"),
                 point_id: 0,
-                value: value.to_string(),
+                value,
                 success: false,
             };
         };
@@ -711,11 +714,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 calc.output
             );
             return ActionResult {
-                target_type: "instance".to_string(),
+                target_type: "instance",
                 target_id: instance_id,
-                point_type: variable.point_type.as_deref().unwrap_or("M").to_string(),
+                point_type: point_type_to_static(variable.point_type.as_deref(), "M"),
                 point_id: 0,
-                value: value.to_string(),
+                value,
                 success: false,
             };
         };
@@ -762,11 +765,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         };
 
         ActionResult {
-            target_type: "instance".to_string(),
+            target_type: "instance",
             target_id: instance_id,
-            point_type: point_type.to_string(),
+            point_type: point_type_to_static(Some(point_type), "M"),
             point_id: point,
-            value: value.to_string(),
+            value,
             success,
         }
     }
@@ -1131,7 +1134,7 @@ mod tests {
             result.execution_path
         );
         assert_eq!(result.actions_executed.len(), 1);
-        assert_eq!(result.actions_executed[0].value, "999");
+        assert_eq!(result.actions_executed[0].value, 999.0);
     }
 
     #[tokio::test]
@@ -1175,7 +1178,7 @@ mod tests {
             result.execution_path
         );
         assert_eq!(result.actions_executed.len(), 1);
-        assert_eq!(result.actions_executed[0].value, "1");
+        assert_eq!(result.actions_executed[0].value, 1.0);
     }
 
     #[tokio::test]

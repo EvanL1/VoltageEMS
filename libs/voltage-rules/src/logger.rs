@@ -306,11 +306,11 @@ mod tests {
     #[test]
     fn test_format_actions_success() {
         let actions = vec![ActionResult {
-            target_type: "instance".to_string(),
+            target_type: "instance",
             target_id: 5,
-            point_type: "A".to_string(),
+            point_type: "A",
             point_id: 2,
-            value: "1".to_string(),
+            value: 1.0,
             success: true,
         }];
 
@@ -320,11 +320,11 @@ mod tests {
     #[test]
     fn test_format_actions_failure() {
         let actions = vec![ActionResult {
-            target_type: "instance".to_string(),
+            target_type: "instance",
             target_id: 5,
-            point_type: "A".to_string(),
+            point_type: "A",
             point_id: 2,
-            value: "1".to_string(),
+            value: 1.0,
             success: false,
         }];
 
