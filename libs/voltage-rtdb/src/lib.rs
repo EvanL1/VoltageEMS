@@ -108,35 +108,18 @@ pub mod helpers {
     where
         R: Rtdb,
     {
-        // Step 1: Write to comsrv:{channel_id}:{A|C} Hash (three fields: value/ts/raw)
+        // Step 1: Write to separate hashes (value, ts, raw)
+        // - comsrv:{channel_id}:{type}      -> values
+        // - comsrv:{channel_id}:{type}:ts   -> timestamps
+        // - comsrv:{channel_id}:{type}:raw  -> raw values
         let channel_key = config.channel_key(channel_id, point_type);
-
-        // Field 1: {point_id} = value
-        rtdb.hash_set(
+        write_channel_points(
+            rtdb,
             &channel_key,
-            &point_id.to_string(),
-            Bytes::from(value.to_string()),
+            vec![(point_id, value, value)], // (point_id, value, raw_value)
+            timestamp_ms,
         )
-        .await
-        .context("Failed to write channel point value")?;
-
-        // Field 2: {point_id}:ts = timestamp
-        rtdb.hash_set(
-            &channel_key,
-            &format!("{}:ts", point_id),
-            Bytes::from(timestamp_ms.to_string()),
-        )
-        .await
-        .context("Failed to write channel point timestamp")?;
-
-        // Field 3: {point_id}:raw = value (same as value for now)
-        rtdb.hash_set(
-            &channel_key,
-            &format!("{}:raw", point_id),
-            Bytes::from(value.to_string()),
-        )
-        .await
-        .context("Failed to write channel point raw value")?;
+        .await?;
 
         // Step 2: Auto-trigger TODO queue (Write-Triggers-Routing pattern)
         let todo_key = config.todo_queue_key(channel_id, point_type);
@@ -158,13 +141,12 @@ pub mod helpers {
 
     // ==================== Batch Helpers ====================
 
-    /// Batch write channel points with 3-layer architecture (value + timestamp + raw)
+    /// Batch write channel points to Redis
     ///
-    /// This function efficiently writes multiple points to a channel hash using
-    /// the 3-layer data architecture:
-    /// - Layer 1: Engineering values (comsrv:{channel_id}:{type})
-    /// - Layer 2: Timestamps (comsrv:{channel_id}:{type}:ts)
-    /// - Layer 3: Raw values (comsrv:{channel_id}:{type}:raw)
+    /// Writes multiple points to three separate hashes:
+    /// - `{channel_key}`     → engineering values
+    /// - `{channel_key}:ts`  → timestamps
+    /// - `{channel_key}:raw` → raw values
     ///
     /// # Arguments
     /// * `rtdb` - RTDB trait object
@@ -175,7 +157,7 @@ pub mod helpers {
     /// # Returns
     /// * `Ok(usize)` - Number of points written
     /// * `Err(anyhow::Error)` - Write error
-    pub async fn set_channel_points_3layer<R>(
+    pub async fn write_channel_points<R>(
         rtdb: &R,
         channel_key: &str,
         points: Vec<(u32, f64, f64)>, // (point_id, value, raw_value)
@@ -193,7 +175,7 @@ pub mod helpers {
         // Pre-convert timestamp to Bytes once (clone is O(1) for Bytes)
         let timestamp_bytes = Bytes::from(timestamp_ms.to_string());
 
-        // Prepare 3-layer data
+        // Prepare data for three hashes
         let mut values = Vec::with_capacity(count);
         let mut timestamps = Vec::with_capacity(count);
         let mut raw_values = Vec::with_capacity(count);
@@ -211,7 +193,7 @@ pub mod helpers {
             raw_values.push((point_id_str, Bytes::from(raw_value.to_string())));
         }
 
-        // Write all 3 layers in a single pipeline
+        // Write all hashes in a single pipeline
         let ts_key = format!("{}:ts", channel_key);
         let raw_key = format!("{}:raw", channel_key);
 
@@ -221,20 +203,15 @@ pub mod helpers {
             (raw_key, raw_values),
         ])
         .await
-        .context("Failed to write channel 3-layer data")?;
+        .context("Failed to write channel points")?;
 
         Ok(count)
     }
 
-    /// Buffer channel points with 3-layer architecture (for WriteBuffer)
+    /// Buffer channel points for deferred write (via WriteBuffer)
     ///
-    /// This is a synchronous version that buffers writes instead of sending them
-    /// directly to Redis. Used with WriteBuffer for high-frequency updates.
-    ///
-    /// # Performance
-    /// Uses `Arc<str>` for field names to avoid String clones across 3 layers.
-    /// - Before: 3 String allocations per point (clone for each layer)
-    /// - After: 1 String allocation + 2 Arc::clone (O(1) atomic increment)
+    /// Synchronous version that buffers writes for later flush to Redis.
+    /// Used with WriteBuffer for high-frequency updates.
     ///
     /// # Arguments
     /// * `write_buffer` - WriteBuffer for aggregating writes
@@ -244,7 +221,7 @@ pub mod helpers {
     ///
     /// # Returns
     /// Number of points buffered
-    pub fn buffer_channel_points_3layer(
+    pub fn buffer_channel_points(
         write_buffer: &WriteBuffer,
         channel_key: &str,
         points: Vec<(u32, f64, f64)>, // (point_id, value, raw_value)
@@ -259,7 +236,7 @@ pub mod helpers {
         // Pre-convert timestamp to Bytes once
         let timestamp_bytes = Bytes::from(timestamp_ms.to_string());
 
-        // Prepare 3-layer data with Arc<str> for O(1) field name sharing
+        // Prepare data with Arc<str> for O(1) field name sharing
         let mut values = Vec::with_capacity(count);
         let mut timestamps = Vec::with_capacity(count);
         let mut raw_values = Vec::with_capacity(count);
@@ -274,7 +251,7 @@ pub mod helpers {
             raw_values.push((field, Bytes::from(raw_value.to_string())));
         }
 
-        // Buffer all 3 layers
+        // Buffer all hashes
         let ts_key = format!("{}:ts", channel_key);
         let raw_key = format!("{}:raw", channel_key);
 
@@ -288,8 +265,8 @@ pub mod helpers {
     /// Write a single point with automatic TODO queue trigger based on point type
     ///
     /// This function automatically determines whether to trigger the TODO queue:
-    /// - **Control/Adjustment types**: Write 3-layer data + trigger TODO queue
-    /// - **Telemetry/Signal types**: Write 3-layer data only (no TODO trigger)
+    /// - **Control/Adjustment types**: Write data + trigger TODO queue
+    /// - **Telemetry/Signal types**: Write data only (no TODO trigger)
     ///
     /// This implements the Write-Triggers-Routing pattern for downlink commands
     /// while avoiding unnecessary TODO triggers for uplink (read-only) data.
@@ -324,7 +301,7 @@ pub mod helpers {
 
         match point_type {
             PointType::Control | PointType::Adjustment => {
-                // Write 3-layer data + trigger TODO queue (Write-Triggers-Routing pattern)
+                // Write data + trigger TODO queue (Write-Triggers-Routing pattern)
                 set_channel_point_with_trigger(
                     rtdb,
                     config,
@@ -337,9 +314,9 @@ pub mod helpers {
                 .await?;
             },
             PointType::Telemetry | PointType::Signal => {
-                // Write 3-layer data only (no TODO trigger for uplink data)
+                // Write data only (no TODO trigger for uplink data)
                 let channel_key = config.channel_key(channel_id, point_type);
-                set_channel_points_3layer(
+                write_channel_points(
                     rtdb,
                     &channel_key,
                     vec![(point_id, value, value)], // (point_id, value, raw_value)

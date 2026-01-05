@@ -34,7 +34,7 @@ services:
       - /dev:/dev:rw # Mount entire /dev directory with read-write access
       - ${VOLTAGE_BASE_PATH:-./data}/config/comsrv:/app/config/comsrv:ro
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
-      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
+      - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro
     environment:
       - SERVICE_NAME=comsrv
@@ -44,7 +44,7 @@ services:
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - CSV_BASE_PATH=/app/config/comsrv
       - CONFIG_BASE_PATH=/app/config/comsrv
-      - LOG_DIR=/app/logs
+      - VOLTAGE_LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     depends_on:
@@ -64,7 +64,7 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - VOLTAGE_DB_PATH=/app/data/voltage.db
-      - LOG_DIR=/app/logs
+      - VOLTAGE_LOG_DIR=/app/logs
       - NO_PROXY="*"
       - no_proxy="*"
     depends_on:
@@ -73,7 +73,7 @@ services:
     volumes:
       - ${VOLTAGE_BASE_PATH:-./data}/config:/app/config:ro
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
-      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
+      - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro # Read-only access to Unix socket
     restart: unless-stopped
 
@@ -127,7 +127,7 @@ services:
       - no_proxy="*"
     volumes:
       - ${VOLTAGE_BASE_PATH:-./data}/config/hissrv:/app/config:ro
-      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
+      - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy
@@ -154,7 +154,7 @@ services:
     volumes:
       - ${VOLTAGE_BASE_PATH:-./data}/config/apigateway:/app/config:ro
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
-      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
+      - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy
@@ -175,7 +175,7 @@ services:
       - no_proxy="*"
     volumes:
       - ${VOLTAGE_BASE_PATH:-./data}/config/netsrv:/app/config:ro
-      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
+      - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy
@@ -198,7 +198,7 @@ services:
     volumes:
       - ${VOLTAGE_BASE_PATH:-./data}/config/alarmsrv:/app/config:ro
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
-      - ${VOLTAGE_BASE_PATH:-./data}/logs:/app/logs
+      - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
         condition: service_healthy

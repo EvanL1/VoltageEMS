@@ -2457,8 +2457,9 @@ async fn test_write_single_control_point() {
     let value = rtdb.hash_get(channel_key, "10").await.unwrap().unwrap();
     assert_eq!(value, bytes::Bytes::from("1"));
 
-    // Verify timestamp field exists
-    let ts = rtdb.hash_get(channel_key, "10:ts").await.unwrap().unwrap();
+    // Verify timestamp in separate :ts hash
+    let ts_key = format!("{}:ts", channel_key);
+    let ts = rtdb.hash_get(&ts_key, "10").await.unwrap().unwrap();
     assert!(!ts.is_empty(), "Timestamp field should exist");
 
     // Verify TODO queue
@@ -2592,8 +2593,9 @@ async fn test_write_control_persists_to_rtdb() {
     let value = rtdb.hash_get(channel_key, "12").await.unwrap().unwrap();
     assert_eq!(value, bytes::Bytes::from("1"));
 
-    // Verify timestamp field
-    let ts_bytes = rtdb.hash_get(channel_key, "12:ts").await.unwrap().unwrap();
+    // Verify timestamp in separate :ts hash
+    let ts_key = format!("{}:ts", channel_key);
+    let ts_bytes = rtdb.hash_get(&ts_key, "12").await.unwrap().unwrap();
     let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
     let ts: u64 = ts_str.parse().unwrap();
     assert_eq!(ts, response_timestamp);
@@ -2631,8 +2633,9 @@ async fn test_write_adjustment_persists_to_rtdb() {
     let value = rtdb.hash_get(channel_key, "202").await.unwrap().unwrap();
     assert_eq!(value, bytes::Bytes::from("380"));
 
-    // Verify timestamp field
-    let ts_bytes = rtdb.hash_get(channel_key, "202:ts").await.unwrap().unwrap();
+    // Verify timestamp in separate :ts hash
+    let ts_key = format!("{}:ts", channel_key);
+    let ts_bytes = rtdb.hash_get(&ts_key, "202").await.unwrap().unwrap();
     let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
     let ts: u64 = ts_str.parse().unwrap();
     assert_eq!(ts, response_timestamp);

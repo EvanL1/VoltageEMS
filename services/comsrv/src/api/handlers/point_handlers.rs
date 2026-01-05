@@ -794,8 +794,9 @@ pub async fn create_signal_point_handler<R: Rtdb>(
         .get("point_id")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?;
-    let payload_point_id = u32::try_from(payload_point_id_u64)
-        .map_err(|_| AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64)))?;
+    let payload_point_id = u32::try_from(payload_point_id_u64).map_err(|_| {
+        AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64))
+    })?;
 
     let signal_name = payload
         .get("signal_name")
@@ -907,8 +908,9 @@ pub async fn create_control_point_handler<R: Rtdb>(
         .get("point_id")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?;
-    let payload_point_id = u32::try_from(payload_point_id_u64)
-        .map_err(|_| AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64)))?;
+    let payload_point_id = u32::try_from(payload_point_id_u64).map_err(|_| {
+        AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64))
+    })?;
 
     let signal_name = payload
         .get("signal_name")
@@ -1015,8 +1017,9 @@ pub async fn create_adjustment_point_handler<R: Rtdb>(
         .get("point_id")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| AppError::bad_request("Missing field: point_id"))?;
-    let payload_point_id = u32::try_from(payload_point_id_u64)
-        .map_err(|_| AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64)))?;
+    let payload_point_id = u32::try_from(payload_point_id_u64).map_err(|_| {
+        AppError::bad_request(format!("point_id {} out of range", payload_point_id_u64))
+    })?;
 
     let signal_name = payload
         .get("signal_name")

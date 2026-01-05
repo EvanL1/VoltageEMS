@@ -1035,6 +1035,10 @@ $SUDO tee /etc/profile.d/monarchedge.sh > /dev/null << EOF
 # User: $ACTUAL_USER (UID=$ACTUAL_UID, GID=$ACTUAL_GID)
 export HOST_UID=$ACTUAL_UID
 export HOST_GID=$ACTUAL_GID
+
+# Docker Compose paths (absolute paths for safety)
+export VOLTAGE_BASE_PATH=$INSTALL_DIR/data
+export VOLTAGE_LOG_PATH=$LOG_DIR
 EOF
 $SUDO chmod 644 /etc/profile.d/monarchedge.sh
 echo -e "${GREEN}✓ Environment variables exported to /etc/profile.d/monarchedge.sh${NC}"

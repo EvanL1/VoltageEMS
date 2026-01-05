@@ -157,7 +157,7 @@ where
 
         // Write 3-layer channel data
         let channel_key = config.channel_key(channel_id, point_type);
-        let written = voltage_rtdb::helpers::set_channel_points_3layer(
+        let written = voltage_rtdb::helpers::write_channel_points(
             rtdb,
             &channel_key,
             points_3layer,
@@ -275,7 +275,7 @@ pub fn write_channel_batch_buffered(
 
         // Buffer 3-layer channel data
         let channel_key = config.channel_key(channel_id, point_type);
-        let buffered = voltage_rtdb::helpers::buffer_channel_points_3layer(
+        let buffered = voltage_rtdb::helpers::buffer_channel_points(
             write_buffer,
             &channel_key,
             points_3layer,

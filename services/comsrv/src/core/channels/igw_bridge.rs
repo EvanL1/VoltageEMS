@@ -236,8 +236,10 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
                 ChannelCommand::Control {
                     point_id, value, ..
                 } => {
-                    // ChannelRuntime uses (u32, f64) tuples
-                    match protocol_guard.write_control(&[(point_id, value)]).await {
+                    // Convert to internal_id: IGW pins use PointType offset encoding
+                    // to distinguish Control from Signal points with same point_id
+                    let internal_id = PointType::Control.to_internal_id(point_id);
+                    match protocol_guard.write_control(&[(internal_id, value)]).await {
                         Ok(success_count) => {
                             if success_count > 0 {
                                 debug!("Ch{} control pt{} = {} ok", channel_id, point_id, value);
@@ -253,8 +255,12 @@ impl<R: Rtdb> IgwChannelWrapper<R> {
                 ChannelCommand::Adjustment {
                     point_id, value, ..
                 } => {
-                    // ChannelRuntime uses (u32, f64) tuples
-                    match protocol_guard.write_adjustment(&[(point_id, value)]).await {
+                    // Convert to internal_id: IGW pins use PointType offset encoding
+                    let internal_id = PointType::Adjustment.to_internal_id(point_id);
+                    match protocol_guard
+                        .write_adjustment(&[(internal_id, value)])
+                        .await
+                    {
                         Ok(success_count) => {
                             if success_count > 0 {
                                 debug!("Ch{} adjustment pt{} = {} ok", channel_id, point_id, value);
@@ -1305,5 +1311,199 @@ mod tests {
         assert_eq!(parse_byte_order("big_endian"), ByteOrder::Abcd);
         assert_eq!(parse_byte_order("CDAB"), ByteOrder::Cdab);
         assert_eq!(parse_byte_order("DCBA"), ByteOrder::Dcba);
+    }
+
+    // ========================================================================
+    // Mock ChannelRuntime for testing command executor
+    // ========================================================================
+
+    use async_trait::async_trait;
+    use igw::core::data::DataBatch;
+    use igw::core::traits::{ConnectionState, Diagnostics, PollResult};
+    use igw::prelude::DataEventReceiver;
+    use igw::GatewayError;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Mock ChannelRuntime that captures write command IDs for verification.
+    struct MockChannelRuntime {
+        /// Last control command ID received
+        last_control_id: AtomicU32,
+        /// Last adjustment command ID received
+        last_adjustment_id: AtomicU32,
+    }
+
+    impl MockChannelRuntime {
+        fn new() -> Self {
+            Self {
+                last_control_id: AtomicU32::new(0),
+                last_adjustment_id: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ChannelRuntime for MockChannelRuntime {
+        fn id(&self) -> u32 {
+            999
+        }
+        fn name(&self) -> &str {
+            "mock"
+        }
+        fn protocol(&self) -> &str {
+            "mock"
+        }
+        fn is_event_driven(&self) -> bool {
+            false
+        }
+        async fn connect(&mut self) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn poll_once(&mut self) -> PollResult {
+            PollResult::success(DataBatch::default())
+        }
+        async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize, GatewayError> {
+            for (id, _) in commands {
+                self.last_control_id.store(*id, Ordering::SeqCst);
+            }
+            Ok(commands.len())
+        }
+        async fn write_adjustment(
+            &mut self,
+            adjustments: &[(u32, f64)],
+        ) -> Result<usize, GatewayError> {
+            for (id, _) in adjustments {
+                self.last_adjustment_id.store(*id, Ordering::SeqCst);
+            }
+            Ok(adjustments.len())
+        }
+        fn subscribe(&self) -> Option<DataEventReceiver> {
+            None
+        }
+        async fn start_events(&mut self) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn stop_events(&mut self) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn diagnostics(&self) -> Result<Diagnostics, GatewayError> {
+            Ok(Diagnostics {
+                protocol: "mock".to_string(),
+                connection_state: ConnectionState::Connected,
+                read_count: 0,
+                write_count: 0,
+                error_count: 0,
+                last_error: None,
+                extra: Default::default(),
+            })
+        }
+    }
+
+    /// Test that run_command_executor correctly converts point_id to internal_id
+    /// for Control and Adjustment commands.
+    ///
+    /// This is a critical test because IGW protocol implementations (GPIO, Modbus, etc.)
+    /// use internal_id to distinguish between different point types with the same point_id.
+    #[tokio::test]
+    async fn test_command_executor_uses_internal_id() {
+        use voltage_model::PointType;
+
+        let mock = Arc::new(RwLock::new(
+            Box::new(MockChannelRuntime::new()) as Box<dyn ChannelRuntime>
+        ));
+        let (tx, rx) = mpsc::channel::<ChannelCommand>(10);
+
+        // Spawn command executor
+        let mock_clone = Arc::clone(&mock);
+        let handle = tokio::spawn(async move {
+            IgwChannelWrapper::<voltage_rtdb::MemoryRtdb>::run_command_executor(
+                mock_clone, rx, 1, // channel_id
+            )
+            .await;
+        });
+
+        // Test Control command: point_id=5 should become internal_id=0x80000005
+        let control_point_id = 5u32;
+        tx.send(ChannelCommand::Control {
+            command_id: "test-ctrl-1".to_string(),
+            point_id: control_point_id,
+            value: 1.0,
+            timestamp: 0,
+        })
+        .await
+        .unwrap();
+
+        // Give executor time to process
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Verify internal_id was used
+        let expected_control_internal = PointType::Control.to_internal_id(control_point_id);
+
+        // The key assertion: internal_id should have Control offset (0x80000000 range)
+        assert!(
+            expected_control_internal >= PointType::OFFSET * 2,
+            "Control internal_id should be >= OFFSET*2 (0x80000000)"
+        );
+        assert!(
+            expected_control_internal < PointType::OFFSET * 3,
+            "Control internal_id should be < OFFSET*3 (0xC0000000)"
+        );
+
+        // Test Adjustment command: point_id=3 should become internal_id=0xC0000003
+        let adjustment_point_id = 3u32;
+        tx.send(ChannelCommand::Adjustment {
+            command_id: "test-adj-1".to_string(),
+            point_id: adjustment_point_id,
+            value: 42.5,
+            timestamp: 0,
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let expected_adjustment_internal =
+            PointType::Adjustment.to_internal_id(adjustment_point_id);
+
+        // Verify Adjustment internal_id is in correct range
+        assert!(
+            expected_adjustment_internal >= PointType::OFFSET * 3,
+            "Adjustment internal_id should be >= OFFSET*3 (0xC0000000)"
+        );
+
+        // Cleanup
+        drop(tx);
+        let _ = tokio::time::timeout(tokio::time::Duration::from_millis(100), handle).await;
+    }
+
+    /// Test the specific internal_id encoding for all four point types.
+    #[test]
+    fn test_internal_id_encoding_for_all_point_types() {
+        use voltage_model::PointType;
+
+        let point_id = 1u32;
+
+        // Telemetry: offset = 0
+        let telemetry_internal = PointType::Telemetry.to_internal_id(point_id);
+        assert_eq!(telemetry_internal, point_id); // No offset
+
+        // Signal: offset = OFFSET (0x40000000)
+        let signal_internal = PointType::Signal.to_internal_id(point_id);
+        assert_eq!(signal_internal, PointType::OFFSET + point_id);
+
+        // Control: offset = OFFSET * 2 (0x80000000)
+        let control_internal = PointType::Control.to_internal_id(point_id);
+        assert_eq!(control_internal, PointType::OFFSET * 2 + point_id);
+
+        // Adjustment: offset = OFFSET * 3 (0xC0000000)
+        let adjustment_internal = PointType::Adjustment.to_internal_id(point_id);
+        assert_eq!(adjustment_internal, PointType::OFFSET * 3 + point_id);
+
+        // Verify round-trip
+        let (pt, id) = PointType::from_internal_id(control_internal);
+        assert_eq!(pt, PointType::Control);
+        assert_eq!(id, point_id);
     }
 }

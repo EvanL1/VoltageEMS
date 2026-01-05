@@ -262,12 +262,14 @@ impl ProductLoader {
         .await?
         .into_iter()
         .filter_map(|(measurement_id, name, unit, description)| {
-            u32::try_from(measurement_id).ok().map(|id| MeasurementPoint {
-                measurement_id: id,
-                name,
-                unit,
-                description,
-            })
+            u32::try_from(measurement_id)
+                .ok()
+                .map(|id| MeasurementPoint {
+                    measurement_id: id,
+                    name,
+                    unit,
+                    description,
+                })
         })
         .collect();
 

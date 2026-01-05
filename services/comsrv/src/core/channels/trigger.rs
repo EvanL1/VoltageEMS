@@ -266,12 +266,14 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                                 }
                                             };
 
-                                            // For legacy format, read value and timestamp from Hash
+                                            // For legacy format, read value and timestamp from separate hashes
+                                            // Structure B: comsrv:{channel_id}:{type} for values
+                                            //              comsrv:{channel_id}:{type}:ts for timestamps
                                             let channel_key = format!("comsrv:{}:{}", channel_id, point_type_str);
-                                            let ts_field = format!("{}:ts", point_id);
+                                            let ts_key = format!("{}:ts", channel_key);
 
-                                            // Read timestamp from Hash
-                                            let current_ts: i64 = match rtdb.hash_get(&channel_key, &ts_field).await {
+                                            // Read timestamp from :ts hash (Structure B)
+                                            let current_ts: i64 = match rtdb.hash_get(&ts_key, &point_id.to_string()).await {
                                                 Ok(Some(ts_bytes)) => {
                                                     let ts_str = String::from_utf8(ts_bytes.to_vec()).map_err(|e| {
                                                         crate::error::ComSrvError::data(
