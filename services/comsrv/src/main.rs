@@ -98,7 +98,8 @@ async fn main() -> VoltageResult<()> {
     .await?;
 
     // ============ Phase 1: Create initial rtdb for cleanup ============
-    let redis_rtdb = voltage_rtdb::RedisRtdb::new(&redis_url).await?;
+    // Reuse the existing connection pool instead of creating a new one
+    let redis_rtdb = voltage_rtdb::RedisRtdb::from_client(redis_client.clone());
 
     // Perform Redis cleanup first (before loading routing)
     info!("Performing Redis cleanup based on database configuration...");

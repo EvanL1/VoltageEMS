@@ -35,8 +35,31 @@ pub enum ProtocolType {
 
 impl ProtocolType {
     /// Parse from string
+    ///
+    /// Optimization: First try exact matches and common variations (zero allocation),
+    /// then fallback to normalized comparison if needed.
     pub fn parse(s: &str) -> Option<Self> {
-        match s.to_lowercase().replace('-', "_").as_str() {
+        let s = s.trim();
+
+        // Fast path: exact match for common lowercase names (zero allocation)
+        match s {
+            "modbus_tcp" | "ModbusTcp" | "MODBUS_TCP" => return Some(Self::ModbusTcp),
+            "modbus_rtu" | "ModbusRtu" | "MODBUS_RTU" => return Some(Self::ModbusRtu),
+            "modbus_ascii" | "ModbusAscii" | "MODBUS_ASCII" => return Some(Self::ModbusAscii),
+            "iec60870_5_104" | "iec104" | "IEC104" => return Some(Self::Iec60870_5_104),
+            "iec61850" | "IEC61850" => return Some(Self::Iec61850),
+            "mqtt" | "MQTT" => return Some(Self::Mqtt),
+            "opcua" | "opc_ua" | "OPCUA" | "OPC_UA" => return Some(Self::Opcua),
+            "bacnet" | "BACnet" | "BACNET" => return Some(Self::Bacnet),
+            "dnp3" | "DNP3" => return Some(Self::Dnp3),
+            "virtual" | "Virtual" | "VIRTUAL" => return Some(Self::Virtual),
+            "grpc" | "GRPC" | "gRPC" => return Some(Self::Grpc),
+            _ => {},
+        }
+
+        // Slow path: normalize and match (allocates only for non-standard inputs)
+        let normalized = s.to_ascii_lowercase().replace('-', "_");
+        match normalized.as_str() {
             "modbus_tcp" => Some(Self::ModbusTcp),
             "modbus_rtu" => Some(Self::ModbusRtu),
             "modbus_ascii" => Some(Self::ModbusAscii),

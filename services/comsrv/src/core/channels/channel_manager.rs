@@ -757,8 +757,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 point_ids.len()
             );
 
-            // Get existing point IDs from Redis
-            let config = voltage_rtdb::KeySpaceConfig::production();
+            // Get existing point IDs from Redis (use cached config)
+            let config = voltage_rtdb::KeySpaceConfig::production_cached();
             let point_type: voltage_model::PointType = four_remote;
             let channel_key = config.channel_key(channel_id, point_type);
 

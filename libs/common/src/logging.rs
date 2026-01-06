@@ -1146,6 +1146,8 @@ pub async fn http_request_logger(
     use tracing::{debug, info, level_enabled, Level};
 
     const MAX_BODY_LENGTH: usize = 500;
+    // Limit body read to prevent OOM on large requests (only need ~500 chars for logging)
+    const MAX_BODY_READ: usize = 2048;
 
     let method = req.method().clone();
     let uri = req.uri().clone();
@@ -1164,11 +1166,15 @@ pub async fn http_request_logger(
     let (req, body_str) = if should_read_body {
         // Read body bytes
         let (parts, body) = req.into_parts();
-        let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        let bytes = match axum::body::to_bytes(body, MAX_BODY_READ).await {
             Ok(b) => b,
             Err(e) => {
-                tracing::warn!("Failed to read request body: {}", e);
-                // Reconstruct request with empty body and continue
+                // Body too large or read failed - continue with placeholder
+                tracing::debug!(
+                    "Request body exceeds {}B or read failed: {}",
+                    MAX_BODY_READ,
+                    e
+                );
                 let new_req = axum::extract::Request::from_parts(parts, Body::empty());
                 return next.run(new_req).await;
             },

@@ -338,13 +338,17 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
                     id_u16, e
                 ))
             })?;
-            v.as_object().cloned().ok_or_else(|| {
-                tracing::error!("Ch{} config must be a JSON object", id_u16);
-                AppError::internal_error(format!(
-                    "Invalid channel config for {}: expected JSON object",
-                    id_u16
-                ))
-            })?
+            // Use match to move the Map out of Value (avoid clone)
+            match v {
+                serde_json::Value::Object(map) => map,
+                _ => {
+                    tracing::error!("Ch{} config must be a JSON object", id_u16);
+                    return Err(AppError::internal_error(format!(
+                        "Invalid channel config for {}: expected JSON object",
+                        id_u16
+                    )));
+                },
+            }
         },
     };
 
@@ -379,20 +383,17 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
     };
 
     // Extract parameters (the actual protocol parameters)
+    // Use match to move the Map out of Value (avoid clone)
     let parameters = match obj.remove("parameters") {
         None => std::collections::HashMap::new(),
-        Some(p) => p
-            .as_object()
-            .cloned()
-            .ok_or_else(|| {
-                tracing::error!("Ch{} config field 'parameters' must be an object", id_u16);
-                AppError::internal_error(format!(
-                    "Invalid channel config for {}: 'parameters' must be an object",
-                    id_u16
-                ))
-            })?
-            .into_iter()
-            .collect(),
+        Some(serde_json::Value::Object(map)) => map.into_iter().collect(),
+        Some(_) => {
+            tracing::error!("Ch{} config field 'parameters' must be an object", id_u16);
+            return Err(AppError::internal_error(format!(
+                "Invalid channel config for {}: 'parameters' must be an object",
+                id_u16
+            )));
+        },
     };
 
     let manager = state.channel_manager.read().await;
@@ -585,31 +586,59 @@ pub async fn search_channels<R: Rtdb>(
     // Get runtime status for connected info
     let manager = state.channel_manager.read().await;
 
-    // Helper: fetch simplified point list (point_id + signal_name only)
-    async fn fetch_point_names(
+    // Batch query helper: fetch all points for multiple channels at once (N+1 → 1 query)
+    async fn fetch_points_batch(
         pool: &sqlx::SqlitePool,
         table: &str,
-        channel_id: i64,
-    ) -> Result<Vec<serde_json::Value>, sqlx::Error> {
-        let query = format!(
-            "SELECT point_id, signal_name FROM {} WHERE channel_id = ? ORDER BY point_id",
-            table
-        );
-        let rows: Vec<(u32, String)> = sqlx::query_as(&query)
-            .bind(channel_id)
-            .fetch_all(pool)
-            .await?;
+        channel_ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, Vec<serde_json::Value>>, sqlx::Error> {
+        use std::collections::HashMap;
 
-        Ok(rows
-            .into_iter()
-            .map(|(point_id, signal_name)| {
-                serde_json::json!({
+        if channel_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders = std::iter::repeat_n("?", channel_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            "SELECT channel_id, point_id, signal_name FROM {} WHERE channel_id IN ({}) ORDER BY channel_id, point_id",
+            table, placeholders
+        );
+
+        let mut q = sqlx::query_as::<_, (i64, u32, String)>(&query);
+        for id in channel_ids {
+            q = q.bind(*id);
+        }
+        let rows = q.fetch_all(pool).await?;
+
+        // Group by channel_id
+        let mut result: HashMap<i64, Vec<serde_json::Value>> = HashMap::new();
+        for (channel_id, point_id, signal_name) in rows {
+            result
+                .entry(channel_id)
+                .or_default()
+                .push(serde_json::json!({
                     "point_id": point_id,
                     "signal_name": signal_name
-                })
-            })
-            .collect())
+                }));
+        }
+        Ok(result)
     }
+
+    // Batch fetch all point types (4 queries instead of 4*N)
+    let channel_ids: Vec<i64> = channels.iter().map(|(id, _, _, _, _)| *id).collect();
+
+    let (telemetry_map, signal_map, control_map, adjustment_map) = tokio::try_join!(
+        fetch_points_batch(&state.sqlite_pool, "telemetry_points", &channel_ids),
+        fetch_points_batch(&state.sqlite_pool, "signal_points", &channel_ids),
+        fetch_points_batch(&state.sqlite_pool, "control_points", &channel_ids),
+        fetch_points_batch(&state.sqlite_pool, "adjustment_points", &channel_ids),
+    )
+    .map_err(|e| {
+        tracing::error!("Batch fetch points: {}", e);
+        AppError::internal_error("Database operation failed")
+    })?;
 
     // Build response (with embedded point definitions)
     let mut list: Vec<serde_json::Value> = Vec::with_capacity(channels.len());
@@ -625,30 +654,11 @@ pub async fn search_channels<R: Rtdb>(
             .map(|_| true) // Channel exists in runtime = running
             .unwrap_or(false);
 
-        let telemetry_points = fetch_point_names(&state.sqlite_pool, "telemetry_points", id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Fetch T points for channel {}: {}", channel_id, e);
-                AppError::internal_error("Database operation failed")
-            })?;
-        let signal_points = fetch_point_names(&state.sqlite_pool, "signal_points", id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Fetch S points for channel {}: {}", channel_id, e);
-                AppError::internal_error("Database operation failed")
-            })?;
-        let control_points = fetch_point_names(&state.sqlite_pool, "control_points", id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Fetch C points for channel {}: {}", channel_id, e);
-                AppError::internal_error("Database operation failed")
-            })?;
-        let adjustment_points = fetch_point_names(&state.sqlite_pool, "adjustment_points", id)
-            .await
-            .map_err(|e| {
-                tracing::error!("Fetch A points for channel {}: {}", channel_id, e);
-                AppError::internal_error("Database operation failed")
-            })?;
+        // Lookup from pre-fetched maps (O(1) instead of async query)
+        let telemetry_points = telemetry_map.get(&id).cloned().unwrap_or_default();
+        let signal_points = signal_map.get(&id).cloned().unwrap_or_default();
+        let control_points = control_map.get(&id).cloned().unwrap_or_default();
+        let adjustment_points = adjustment_map.get(&id).cloned().unwrap_or_default();
 
         list.push(serde_json::json!({
             "id": id,

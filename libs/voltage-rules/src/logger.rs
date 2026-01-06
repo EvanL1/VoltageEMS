@@ -5,6 +5,7 @@
 
 use std::{
     collections::HashMap,
+    fmt::Write as FmtWrite,
     fs::{self, File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -50,13 +51,18 @@ impl RuleLogger {
     /// Format: `timestamp [RULE] rule_id vars | matched_condition | action_result`
     pub fn log_execution(&self, result: &RuleExecutionResult, vars: &HashMap<String, f64>) {
         // Format variable values: "X1=50.3 X2=25.0"
+        // Optimization: use fmt::Write to avoid intermediate Vec allocation
         let vars_str = if vars.is_empty() {
             "-".to_string()
         } else {
-            vars.iter()
-                .map(|(k, v)| format!("{}={:.1}", k, v))
-                .collect::<Vec<_>>()
-                .join(" ")
+            let mut result = String::with_capacity(vars.len() * 10);
+            for (i, (k, v)) in vars.iter().enumerate() {
+                if i > 0 {
+                    result.push(' ');
+                }
+                let _ = write!(result, "{}={:.1}", k, v);
+            }
+            result
         };
 
         // Matched condition or "-"
@@ -113,6 +119,7 @@ impl RuleLogger {
 }
 
 /// Format action results for logging
+/// Optimization: use fmt::Write to avoid intermediate Vec allocation
 fn format_actions(actions: &[ActionResult], error: Option<&str>) -> String {
     if let Some(err) = error {
         return err.to_string();
@@ -122,18 +129,21 @@ fn format_actions(actions: &[ActionResult], error: Option<&str>) -> String {
         return "no action".to_string();
     }
 
-    actions
-        .iter()
-        .map(|a| {
-            let status = if a.success { "OK" } else { "FAIL" };
-            // Format: "instance_id:point_type:point_id=value OK"
-            format!(
-                "{}:{}:{}={} {}",
-                a.target_id, a.point_type, a.point_id, a.value, status
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+    // Pre-allocate: ~40 chars per action (instance:type:point=value status)
+    let mut result = String::with_capacity(actions.len() * 40);
+    for (i, a) in actions.iter().enumerate() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        let status = if a.success { "OK" } else { "FAIL" };
+        // Format: "instance_id:point_type:point_id=value OK"
+        let _ = write!(
+            result,
+            "{}:{}:{}={} {}",
+            a.target_id, a.point_type, a.point_id, a.value, status
+        );
+    }
+    result
 }
 
 /// Format conditions as expression string (e.g., "X1>=49" or "X1>10 && X2<50")

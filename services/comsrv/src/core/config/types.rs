@@ -43,9 +43,9 @@ pub struct ComsrvConfig {
     #[serde(default)]
     pub logging: LoggingConfig,
 
-    /// Channel configurations
+    /// Channel configurations (wrapped in Arc for cheap cloning during startup)
     #[serde(default)]
-    pub channels: Vec<ChannelConfig>,
+    pub channels: Vec<Arc<ChannelConfig>>,
 }
 
 // ============================================================================

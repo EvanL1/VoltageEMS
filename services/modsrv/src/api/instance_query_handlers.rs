@@ -246,7 +246,8 @@ pub async fn search_instances(
     };
 
     // Cache product templates by product_name to avoid repeated queries
-    let mut product_cache: HashMap<String, crate::product_loader::Product> = HashMap::new();
+    // Use Arc<Product> to avoid deep cloning Product structs
+    let mut product_cache: HashMap<String, Arc<crate::product_loader::Product>> = HashMap::new();
 
     let mut list: Vec<serde_json::Value> = Vec::with_capacity(instances.len());
     for inst in instances {
@@ -254,19 +255,21 @@ pub async fn search_instances(
 
         // Load product template (cached) - includes properties, measurements, actions
         let product = if let Some(cached) = product_cache.get(&product_name) {
-            cached.clone()
+            Arc::clone(cached) // O(1) ref count increment
         } else {
-            let p = state
-                .product_loader
-                .get_product(&product_name)
-                .await
-                .map_err(|e| {
-                    ModSrvError::InternalError(format!(
-                        "Failed to load product {}: {}",
-                        product_name, e
-                    ))
-                })?;
-            product_cache.insert(product_name.clone(), p.clone());
+            let p = Arc::new(
+                state
+                    .product_loader
+                    .get_product(&product_name)
+                    .await
+                    .map_err(|e| {
+                        ModSrvError::InternalError(format!(
+                            "Failed to load product {}: {}",
+                            product_name, e
+                        ))
+                    })?,
+            );
+            product_cache.insert(product_name.clone(), Arc::clone(&p));
             p
         };
 

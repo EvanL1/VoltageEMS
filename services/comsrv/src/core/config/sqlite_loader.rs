@@ -18,6 +18,7 @@ use common::DEFAULT_API_HOST;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tracing::info;
 
 /// Comsrv-specific SQLite configuration loader
@@ -123,7 +124,7 @@ impl ComsrvSqliteLoader {
     }
 
     /// Load all channel configurations from database
-    async fn load_channels(&self) -> Result<Vec<ChannelConfig>> {
+    async fn load_channels(&self) -> Result<Vec<Arc<ChannelConfig>>> {
         let rows = sqlx::query(
             "SELECT channel_id, name, protocol, enabled, config FROM channels ORDER BY channel_id",
         )
@@ -210,7 +211,8 @@ impl ComsrvSqliteLoader {
             };
 
             // Note: Points will be loaded at runtime when creating RuntimeChannelConfig
-            channels.push(channel);
+            // Wrap in Arc for cheap cloning during startup
+            channels.push(Arc::new(channel));
 
             info!(
                 "Loaded channel {} ({}) - points will be loaded at runtime",
@@ -679,7 +681,7 @@ mod tests {
 
         // Create runtime config for first channel (Modbus)
         let channel = config.channels.into_iter().next().unwrap();
-        let mut runtime_config = RuntimeChannelConfig::from_base(channel);
+        let mut runtime_config = RuntimeChannelConfig::from_base((*channel).clone());
 
         // Load points
         let result = loader
@@ -709,7 +711,7 @@ mod tests {
 
         // Get second channel (Virtual)
         let channel = config.channels.into_iter().nth(1).unwrap();
-        let mut runtime_config = RuntimeChannelConfig::from_base(channel);
+        let mut runtime_config = RuntimeChannelConfig::from_base((*channel).clone());
 
         // Load points
         let result = loader
@@ -757,7 +759,7 @@ mod tests {
         let config = loader.load_config().await.unwrap();
 
         let channel = config.channels.into_iter().next().unwrap();
-        let mut runtime_config = RuntimeChannelConfig::from_base(channel);
+        let mut runtime_config = RuntimeChannelConfig::from_base((*channel).clone());
 
         loader
             .load_runtime_channel_points(&mut runtime_config)

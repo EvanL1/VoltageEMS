@@ -194,8 +194,8 @@ pub async fn write_channel_point<R: Rtdb>(
     // Normalize point type: support both short (T/S/C/A) and full names (Telemetry/Signal/Control/Adjustment)
     let point_type = normalize_point_type(&request.r#type)?;
 
-    // Handle single vs batch based on request data
-    let config = KeySpaceConfig::production();
+    // Handle single vs batch based on request data (use cached config to avoid allocation)
+    let config = KeySpaceConfig::production_cached();
 
     match &request.data {
         WritePointData::Single { id, value } => {
@@ -206,7 +206,7 @@ pub async fn write_channel_point<R: Rtdb>(
 
             let timestamp_ms = voltage_rtdb::helpers::write_point_auto_trigger(
                 rtdb.as_ref(),
-                &config,
+                config,
                 channel_id,
                 point_type,
                 point_id,
@@ -260,7 +260,7 @@ pub async fn write_channel_point<R: Rtdb>(
                 // Write point using voltage-rtdb helper
                 match voltage_rtdb::helpers::write_point_auto_trigger(
                     rtdb.as_ref(),
-                    &config,
+                    config,
                     channel_id,
                     point_type,
                     point_id,

@@ -555,16 +555,17 @@ where
 pub async fn sync_measurement<R>(
     redis: &R,
     instance_id: u32,
-    measurement: &HashMap<String, Value>,
+    measurement: HashMap<String, Value>,
 ) -> Result<()>
 where
     R: Rtdb,
 {
     let key = InstanceRedisKeys::measurement_hash(instance_id);
     let now_ms = SystemTimeProvider.now_millis();
+    // Use into_iter() to consume ownership and avoid cloning keys
     let mut fields: Vec<(String, Bytes)> = measurement
-        .iter()
-        .map(|(k, v)| (k.clone(), Bytes::from(value_to_string(v))))
+        .into_iter()
+        .map(|(k, v)| (k, Bytes::from(value_to_string(&v))))
         .collect();
     fields.push(("_updated_at".to_string(), Bytes::from(now_ms.to_string())));
 
@@ -586,14 +587,14 @@ where
             // Return measurement data only
             let key = InstanceRedisKeys::measurement_hash(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
-            let data: HashMap<String, String> = data_bytes
-                .into_iter()
-                .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                .collect();
+            // Build Map directly, skipping intermediate HashMap
             let mut map = Map::new();
-            for (field, value) in data {
+            for (field, value) in data_bytes {
                 if !field.starts_with('_') {
-                    map.insert(field, Value::String(value));
+                    map.insert(
+                        field,
+                        Value::String(String::from_utf8_lossy(&value).into_owned()),
+                    );
                 }
             }
             Ok(Value::Object(map))
@@ -602,14 +603,14 @@ where
             // Return control data only
             let key = InstanceRedisKeys::action_hash(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
-            let data: HashMap<String, String> = data_bytes
-                .into_iter()
-                .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                .collect();
+            // Build Map directly, skipping intermediate HashMap
             let mut map = Map::new();
-            for (field, value) in data {
+            for (field, value) in data_bytes {
                 if !field.starts_with('_') {
-                    map.insert(field, Value::String(value));
+                    map.insert(
+                        field,
+                        Value::String(String::from_utf8_lossy(&value).into_owned()),
+                    );
                 }
             }
             Ok(Value::Object(map))
@@ -620,28 +621,26 @@ where
             let a_key = InstanceRedisKeys::action_hash(instance_id);
 
             let m_data_bytes = redis.hash_get_all(&m_key).await?;
-            let m_data: HashMap<String, String> = m_data_bytes
-                .into_iter()
-                .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                .collect();
-
             let a_data_bytes = redis.hash_get_all(&a_key).await?;
-            let a_data: HashMap<String, String> = a_data_bytes
-                .into_iter()
-                .map(|(k, v)| (k, String::from_utf8_lossy(&v).to_string()))
-                .collect();
 
+            // Build Maps directly, skipping intermediate HashMaps
             let mut measurements = Map::new();
-            for (field, value) in m_data {
+            for (field, value) in m_data_bytes {
                 if !field.starts_with('_') {
-                    measurements.insert(field, Value::String(value));
+                    measurements.insert(
+                        field,
+                        Value::String(String::from_utf8_lossy(&value).into_owned()),
+                    );
                 }
             }
 
             let mut actions = Map::new();
-            for (field, value) in a_data {
+            for (field, value) in a_data_bytes {
                 if !field.starts_with('_') {
-                    actions.insert(field, Value::String(value));
+                    actions.insert(
+                        field,
+                        Value::String(String::from_utf8_lossy(&value).into_owned()),
+                    );
                 }
             }
 

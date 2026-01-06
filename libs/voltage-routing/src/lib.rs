@@ -90,9 +90,21 @@ where
 {
     let config = voltage_rtdb::KeySpaceConfig::production_cached();
 
-    // Build M2C routing key and lookup target
-    let route_key = format!("{}:A:{}", instance_id, point_id);
-    let routed = if let Some(target) = routing_cache.lookup_m2c(&route_key) {
+    // Lookup M2C routing target (zero-allocation path when point_id is numeric)
+    let target_opt = if let Ok(point_id_u32) = point_id.parse::<u32>() {
+        // Fast path: use structured key lookup (no string allocation)
+        routing_cache.lookup_m2c_by_parts(
+            instance_id,
+            voltage_model::PointType::Adjustment,
+            point_id_u32,
+        )
+    } else {
+        // Fallback: build string key for non-numeric point_id (rare)
+        let route_key = format!("{}:A:{}", instance_id, point_id);
+        routing_cache.lookup_m2c(&route_key)
+    };
+
+    let routed = if let Some(target) = target_opt {
         // M2CTarget is now a structured type - no parsing needed
         let channel_id = target.channel_id;
         let point_type_enum = target.point_type;

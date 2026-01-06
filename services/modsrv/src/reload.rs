@@ -58,13 +58,15 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
         // 4. Remove instances that are no longer in SQLite
         for id in &to_remove {
             // Find instance name in Redis for logging
+            // Optimization: use std::str::from_utf8 to borrow-validate, then to_string()
+            // Avoids intermediate to_vec() copy
             let instance_name = self
                 .rtdb
                 .get(&format!("inst:{}:name", id))
                 .await
                 .ok()
                 .flatten()
-                .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
+                .and_then(|bytes| std::str::from_utf8(&bytes).ok().map(|s| s.to_string()))
                 .unwrap_or_else(|| format!("instance_{}", id));
 
             match redis_state::unregister_instance(self.rtdb.as_ref(), *id, &instance_name).await {

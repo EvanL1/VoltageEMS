@@ -601,8 +601,12 @@ pub async fn update_channel_handler<R: Rtdb>(
         .map_err(|e| AppError::internal_error(format!("Database operation failed: {}", e)))?;
 
     // 4. Apply configuration updates to database
-    let name = req.name.clone().unwrap_or(current_name.clone());
-    let protocol = req.protocol.clone().unwrap_or(current_protocol.clone());
+    // Use unwrap_or_else for lazy evaluation - avoids clone when req.* is Some
+    let name = req.name.clone().unwrap_or_else(|| current_name.clone());
+    let protocol = req
+        .protocol
+        .clone()
+        .unwrap_or_else(|| current_protocol.clone());
 
     // Check if new name conflicts with existing channels (excluding current channel)
     if req.name.is_some() {
@@ -640,9 +644,11 @@ pub async fn update_channel_handler<R: Rtdb>(
     }
 
     // Extract current configuration for restoration and apply requested updates
+    // Move current_config_str since it's only used here
     let (previous_description, previous_parameters, _previous_logging) =
-        parse_channel_config(id, current_config_str.clone())?;
+        parse_channel_config(id, current_config_str)?;
 
+    // Clone previous values since they're needed later for change detection
     let mut description = previous_description.clone();
     let mut parameters = previous_parameters.clone();
 

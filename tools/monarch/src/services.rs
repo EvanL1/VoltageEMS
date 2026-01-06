@@ -156,10 +156,10 @@ pub async fn handle_command(
             println!("Services restarted");
         },
         ServiceCommands::Status { services } => {
-            // Filter out "all" keyword
+            // Filter out "all" keyword (zero-allocation comparison)
             let filtered_services: Vec<&String> = services
                 .iter()
-                .filter(|s| s.to_lowercase() != "all")
+                .filter(|s| !s.eq_ignore_ascii_case("all"))
                 .collect();
 
             let args = if filtered_services.is_empty() {
@@ -264,7 +264,7 @@ pub async fn handle_command(
 
                 let target_services: Vec<String> = services
                     .iter()
-                    .filter(|s| s.to_lowercase() != "all")
+                    .filter(|s| !s.eq_ignore_ascii_case("all"))
                     .cloned()
                     .collect();
 
@@ -410,7 +410,7 @@ pub async fn handle_command(
 
                 let target_services: Vec<String> = services
                     .iter()
-                    .filter(|s| s.to_lowercase() != "all")
+                    .filter(|s| !s.eq_ignore_ascii_case("all"))
                     .cloned()
                     .collect();
                 let full_refresh = target_services.is_empty();
@@ -668,9 +668,10 @@ fn build_docker_compose_args(command: &str, flag: &str, services: Vec<String>) -
 
     // Filter out "all" keyword - when services list is empty or contains "all",
     // docker-compose will operate on all services by default
+    // Optimization: eq_ignore_ascii_case avoids to_lowercase() allocation per item
     let filtered_services: Vec<String> = services
         .into_iter()
-        .filter(|s| s.to_lowercase() != "all")
+        .filter(|s| !s.eq_ignore_ascii_case("all"))
         .collect();
 
     args.extend(filtered_services);

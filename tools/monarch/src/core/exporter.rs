@@ -8,6 +8,7 @@ use serde_yaml;
 use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{debug, info};
 
 // Import types from service libs (lib-mode)
@@ -74,8 +75,9 @@ impl ConfigExporter {
 
         // Export channels
         let channels = self.export_channels().await?;
-        service_config.channels = channels.clone();
         result.records_exported += channels.len();
+        // Wrap in Arc to match ComsrvConfig.channels type, use iter + cloned to keep channels for later iteration
+        service_config.channels = channels.iter().map(|c| Arc::new(c.clone())).collect();
 
         let yaml_content = serde_yaml::to_string(&service_config)?;
         std::fs::write(&yaml_path, yaml_content)?;
@@ -199,12 +201,13 @@ impl ConfigExporter {
         // Export rules list
         let rules_list = self.export_rules_list().await?;
         if !rules_list.is_empty() {
+            let rules_count = rules_list.len(); // Get length before move
             let rules_yaml = output_dir.join("rules_list.yaml");
             let rules_map: BTreeMap<String, Vec<RuleConfig>> =
-                BTreeMap::from_iter([("rules".to_string(), rules_list.clone())]);
+                BTreeMap::from_iter([("rules".to_string(), rules_list)]); // Move, not clone
             std::fs::write(&rules_yaml, serde_yaml::to_string(&rules_map)?)?;
             result.files_exported.push("rules_list.yaml".to_string());
-            result.records_exported += rules_list.len();
+            result.records_exported += rules_count;
         }
 
         Ok(result)

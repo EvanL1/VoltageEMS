@@ -206,8 +206,8 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                 break;
             }
 
-            // Use BLPOP to block and wait for commands.
-            let queues = vec![control_queue.as_str(), adjustment_queue.as_str()];
+            // Use BLPOP to block and wait for commands (fixed array: no heap allocation)
+            let queues = [control_queue.as_str(), adjustment_queue.as_str()];
 
             let inner_loop_result: Result<()> = async {
                 loop {
@@ -222,17 +222,12 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                         result = rtdb.list_blpop(&queues, timeout) => {
                             match result {
                                 Ok(Some((queue, data_bytes))) => {
-                                    let data = std::str::from_utf8(&data_bytes).map_err(|e| {
-                                        crate::error::ComSrvError::data(
-                                            format!("Failed to parse UTF-8: {}", e)
-                                        )
-                                    })?.to_owned();
                                     // Determine the command type.
                                     let is_control = queue.contains(":C:");
                                     let point_type_str = if is_control { "C" } else { "A" };
 
-                                    // ★ Try parsing as compact trigger (new format: point_id, value, timestamp)
-                                    let compact_trigger = serde_json::from_str::<CompactTrigger>(&data);
+                                    // ★ Try parsing as compact trigger using from_slice (zero allocation)
+                                    let compact_trigger = serde_json::from_slice::<CompactTrigger>(&data_bytes);
 
                                     let (point_id, value, current_ts) = match compact_trigger {
                                         Ok(trigger) => {
@@ -243,7 +238,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                             // Fallback: try parsing legacy format (only point_id)
                                             debug!("Compact parse fail, trying legacy: {}", compact_err);
 
-                                            let legacy_trigger: serde_json::Value = match serde_json::from_str(&data) {
+                                            let legacy_trigger: serde_json::Value = match serde_json::from_slice(&data_bytes) {
                                                 Ok(v) => v,
                                                 Err(e) => {
                                                     error!("Parse err q={}: {}", queue, e);
@@ -278,7 +273,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                                         crate::error::ComSrvError::data(
                                                             format!("Failed to parse UTF-8 timestamp: {}", e)
                                                         )
-                                                    })?.to_owned();
+                                                    })?;
                                                     match ts_str.parse() {
                                                         Ok(ts) => ts,
                                                         Err(e) => {
@@ -303,7 +298,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                                         crate::error::ComSrvError::data(
                                                             format!("Failed to parse UTF-8 value: {}", e)
                                                         )
-                                                    })?.to_owned();
+                                                    })?;
                                                     match value_str.parse() {
                                                         Ok(v) => v,
                                                         Err(e) => {

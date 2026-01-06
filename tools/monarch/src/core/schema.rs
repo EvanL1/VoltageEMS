@@ -59,7 +59,8 @@ async fn migrate_rules_table_if_needed(pool: &SqlitePool) -> Result<()> {
 
     if let Some(row) = row {
         let col_type: String = row.try_get("type")?;
-        if col_type.to_uppercase() == "TEXT" {
+        // Optimization: eq_ignore_ascii_case avoids to_uppercase() allocation
+        if col_type.eq_ignore_ascii_case("TEXT") {
             warn!("Detected legacy rules table (id TEXT), rebuilding with INTEGER schema...");
 
             // Drop old tables (will be recreated with correct schema)

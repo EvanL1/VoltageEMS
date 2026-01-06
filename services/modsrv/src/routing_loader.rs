@@ -157,8 +157,9 @@ impl RoutingLoader {
         for result in rdr.deserialize::<ChannelMappingRow>() {
             let row = result.context("Failed to parse CSV row")?;
 
-            let inst_type = row.instance_type.trim().to_uppercase();
-            if inst_type == "M" || inst_type == "MEASUREMENT" {
+            let inst_type = row.instance_type.trim();
+            if inst_type.eq_ignore_ascii_case("M") || inst_type.eq_ignore_ascii_case("MEASUREMENT")
+            {
                 // Validate channel_type
                 if !row.channel_type.is_input() {
                     warn!("Invalid M channel_type: {}", row.channel_type);
@@ -188,7 +189,9 @@ impl RoutingLoader {
                 .execute(&mut *tx)
                 .await?;
                 m_count += 1;
-            } else if inst_type == "A" || inst_type == "ACTION" {
+            } else if inst_type.eq_ignore_ascii_case("A")
+                || inst_type.eq_ignore_ascii_case("ACTION")
+            {
                 // Validate channel_type
                 if !row.channel_type.is_output() {
                     warn!("Invalid A channel_type: {}", row.channel_type);

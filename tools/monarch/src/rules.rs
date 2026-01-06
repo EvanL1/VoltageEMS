@@ -149,20 +149,17 @@ pub async fn handle_command(
             RuleCommands::List { enabled } => {
                 let rules = client.list_rules().await?;
 
-                // Filter if needed
+                // Filter if needed - use into_iter to avoid cloning
                 let rules = if enabled {
-                    rules
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter(|r| {
-                                    r.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false)
-                                })
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        })
-                        .map(serde_json::Value::from)
-                        .unwrap_or(rules)
+                    if let serde_json::Value::Array(arr) = rules {
+                        let filtered = arr
+                            .into_iter()
+                            .filter(|r| r.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false))
+                            .collect::<Vec<_>>();
+                        serde_json::Value::from(filtered)
+                    } else {
+                        rules
+                    }
                 } else {
                     rules
                 };

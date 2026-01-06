@@ -311,20 +311,18 @@ impl<R: Rtdb> ChannelManager<R> {
 
             config_str
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-                .map(|config_value| {
-                    // Extract description
+                .map(|mut config_value| {
+                    // Extract description (still need to clone string, but that's minimal)
                     let desc = config_value
                         .get("description")
                         .and_then(|d| d.as_str())
                         .map(|s| s.to_string());
 
-                    // Extract from "parameters" field (consistent with sqlite_loader)
-                    let mut params = std::collections::HashMap::new();
-                    if let Some(serde_json::Value::Object(obj)) = config_value.get("parameters") {
-                        for (key, value) in obj {
-                            params.insert(key.clone(), value.clone());
-                        }
-                    }
+                    // Extract from "parameters" field - use remove to move ownership (avoid clone)
+                    let params = match config_value.get_mut("parameters").map(std::mem::take) {
+                        Some(serde_json::Value::Object(map)) => map.into_iter().collect(),
+                        _ => std::collections::HashMap::new(),
+                    };
 
                     (desc, params)
                 })

@@ -27,8 +27,8 @@ where
         None => Ok(None),
         Some(s) if s.is_empty() => Ok(None),
         Some(s) => {
-            // Try parsing as FourRemote - serde will handle the enum variants
-            serde_json::from_value::<FourRemote>(serde_json::Value::String(s.clone()))
+            // Parse directly using FromStr - avoids clone and intermediate Value
+            s.parse::<FourRemote>()
                 .map(Some)
                 .map_err(serde::de::Error::custom)
         },

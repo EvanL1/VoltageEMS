@@ -623,10 +623,9 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                     .unwrap_or(json!({}));
                 if let serde_json::Value::Object(ref mut base_map) = base {
-                    if let serde_json::Value::Object(new_map) = &item.protocol_data {
-                        for (k, v) in new_map {
-                            base_map.insert(k.clone(), v.clone());
-                        }
+                    // Clone once and extend (avoids per-field clone in the loop)
+                    if let serde_json::Value::Object(new_map) = item.protocol_data.clone() {
+                        base_map.extend(new_map);
                     }
                 }
                 Some(base)
@@ -912,11 +911,13 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
                         }
 
                         // 2. GPIO only supports Signal (input) and Control (output)
-                        let four_remote = mapping.four_remote.to_uppercase();
-                        if four_remote != "S" && four_remote != "C" {
+                        // Use eq_ignore_ascii_case to avoid String allocation from to_uppercase()
+                        if !mapping.four_remote.eq_ignore_ascii_case("S")
+                            && !mapping.four_remote.eq_ignore_ascii_case("C")
+                        {
                             errors.push(format!(
                                 "Point {}: GPIO only supports Signal (S) and Control (C) types, got: {}",
-                                mapping.point_id, four_remote
+                                mapping.point_id, mapping.four_remote
                             ));
                         }
                     },
@@ -976,7 +977,10 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
         return value.clone();
     };
 
-    let mut normalized = obj.clone();
+    // Helper: check if string value needs conversion to number
+    let needs_conversion = |v: &Value| -> bool {
+        matches!(v, Value::String(s) if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok())
+    };
 
     // Helper: convert string to number if possible
     let to_number = |v: &Value| -> Option<Value> {
@@ -995,40 +999,39 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
         }
     };
 
-    match protocol {
-        "modbus_tcp" | "modbus_rtu" => {
-            // Normalize Modbus numeric fields
-            let numeric_fields = [
-                "slave_id",
-                "function_code",
-                "register_address",
-                "bit_position",
-            ];
-            for field in numeric_fields {
-                if let Some(v) = obj.get(field) {
-                    if let Some(normalized_v) = to_number(v) {
-                        normalized.insert(field.to_string(), normalized_v);
-                    }
-                }
-            }
-        },
-        "virt" => {
-            // Virtual protocol: no numeric normalization needed
-        },
-        "di_do" | "gpio" | "dido" => {
-            // Normalize GPIO numeric fields
-            let numeric_fields = ["gpio_number"];
-            for field in numeric_fields {
-                if let Some(v) = obj.get(field) {
-                    if let Some(normalized_v) = to_number(v) {
-                        normalized.insert(field.to_string(), normalized_v);
-                    }
-                }
-            }
-        },
+    // Determine which fields need normalization based on protocol
+    let numeric_fields: &[&str] = match protocol {
+        "modbus_tcp" | "modbus_rtu" => &[
+            "slave_id",
+            "function_code",
+            "register_address",
+            "bit_position",
+        ],
+        "di_do" | "gpio" | "dido" => &["gpio_number"],
         _ => {
-            // Unknown protocol: return as-is
+            // Virtual or unknown protocol: no normalization needed
+            return value.clone();
         },
+    };
+
+    // Check if any field actually needs conversion (lazy clone optimization)
+    let needs_normalization = numeric_fields
+        .iter()
+        .any(|field| obj.get(*field).is_some_and(needs_conversion));
+
+    if !needs_normalization {
+        // No changes needed, return original to avoid clone
+        return value.clone();
+    }
+
+    // Only clone when we actually need to modify
+    let mut normalized = obj.clone();
+    for field in numeric_fields {
+        if let Some(v) = obj.get(*field) {
+            if let Some(normalized_v) = to_number(v) {
+                normalized.insert((*field).to_string(), normalized_v);
+            }
+        }
     }
 
     Value::Object(normalized)

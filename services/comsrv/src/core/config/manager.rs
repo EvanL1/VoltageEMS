@@ -19,6 +19,7 @@ use super::{AppConfig, ChannelConfig, ServiceConfig};
 use crate::core::config::{CHANNELS_TABLE, SERVICE_CONFIG_TABLE};
 use crate::error::{ComSrvError, Result};
 use std::path::Path;
+use std::sync::Arc;
 use tracing::{debug, error, info};
 
 // ============================================================================
@@ -109,14 +110,18 @@ impl ConfigManager {
         &self.config.service
     }
 
-    /// Get all channel configurations
-    pub fn channels(&self) -> &[ChannelConfig] {
+    /// Get all channel configurations (wrapped in Arc for cheap cloning)
+    pub fn channels(&self) -> &[Arc<ChannelConfig>] {
         &self.config.channels
     }
 
     /// Get channel configuration by ID
     pub fn get_channel(&self, channel_id: u32) -> Option<&ChannelConfig> {
-        self.config.channels.iter().find(|c| c.id() == channel_id)
+        self.config
+            .channels
+            .iter()
+            .find(|c| c.id() == channel_id)
+            .map(|arc| arc.as_ref())
     }
 
     /// Get channel count

@@ -235,7 +235,8 @@ pub struct PaginatedResponse<T> {
     pub has_previous: bool,
 }
 
-impl<T: Clone> PaginatedResponse<T> {
+// Note: Removed T: Clone constraint - these methods don't require cloning
+impl<T> PaginatedResponse<T> {
     /// Create a new paginated response
     pub fn new(items: Vec<T>, total: usize, page: usize, page_size: usize) -> Self {
         let total_pages = total.div_ceil(page_size);
@@ -257,16 +258,22 @@ impl<T: Clone> PaginatedResponse<T> {
     /// - Clamps page_size between 1 and 100
     /// - Calculates correct slice boundaries
     /// - Returns empty list if page is out of bounds
+    ///
+    /// Optimization: Uses into_iter().skip().take() to consume ownership without cloning
     pub fn from_slice(all_items: Vec<T>, page: usize, page_size: usize) -> Self {
         let total = all_items.len();
         let page = page.max(1);
         let page_size = page_size.clamp(1, 100);
 
         let start_index = (page - 1) * page_size;
-        let end_index = start_index + page_size;
 
-        let items = if start_index < all_items.len() {
-            all_items[start_index..end_index.min(all_items.len())].to_vec()
+        // Optimization: consume ownership instead of cloning (removes T: Clone requirement)
+        let items: Vec<T> = if start_index < total {
+            all_items
+                .into_iter()
+                .skip(start_index)
+                .take(page_size)
+                .collect()
         } else {
             Vec::new()
         };

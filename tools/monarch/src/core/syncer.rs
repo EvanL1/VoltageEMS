@@ -57,10 +57,8 @@ fn normalize_protocol_mapping(
             ];
             for (key, value) in mapping {
                 if numeric_fields.contains(&key.as_str()) {
-                    normalized.insert(
-                        key.clone(),
-                        to_number(&value).unwrap_or(JsonValue::String(value)),
-                    );
+                    // key.as_str() borrow ends after contains(), so we can move key directly
+                    normalized.insert(key, to_number(&value).unwrap_or(JsonValue::String(value)));
                 } else {
                     normalized.insert(key, JsonValue::String(value));
                 }
@@ -85,10 +83,8 @@ fn normalize_protocol_mapping(
             let numeric_fields = ["can_id", "start_bit", "bit_length", "scale", "offset"];
             for (key, value) in mapping {
                 if numeric_fields.contains(&key.as_str()) {
-                    normalized.insert(
-                        key.clone(),
-                        to_number(&value).unwrap_or(JsonValue::String(value)),
-                    );
+                    // key.as_str() borrow ends after contains(), so we can move key directly
+                    normalized.insert(key, to_number(&value).unwrap_or(JsonValue::String(value)));
                 } else {
                     normalized.insert(key, JsonValue::String(value));
                 }
@@ -108,10 +104,8 @@ fn normalize_protocol_mapping(
             let numeric_fields = ["gpio_number"];
             for (key, value) in mapping {
                 if numeric_fields.contains(&key.as_str()) {
-                    normalized.insert(
-                        key.clone(),
-                        to_number(&value).unwrap_or(JsonValue::String(value)),
-                    );
+                    // key.as_str() borrow ends after contains(), so we can move key directly
+                    normalized.insert(key, to_number(&value).unwrap_or(JsonValue::String(value)));
                 } else {
                     normalized.insert(key, JsonValue::String(value));
                 }

@@ -287,21 +287,22 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             },
             None => {
                 // Return all three: measurements, actions, properties
-                let measurements: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
+                // Query measurements and actions in parallel using tokio::try_join!
+                let measurements_query = sqlx::query_as::<_, (String, String, f64, f64, String)>(
                     "SELECT signal_name, data_type, scale, offset, unit
                      FROM measurement_points WHERE product_name = ?",
                 )
                 .bind(&product_name)
-                .fetch_all(&self.pool)
-                .await?;
+                .fetch_all(&self.pool);
 
-                let actions: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
+                let actions_query = sqlx::query_as::<_, (String, String, f64, f64, String)>(
                     "SELECT signal_name, data_type, scale, offset, unit
                      FROM action_points WHERE product_name = ?",
                 )
                 .bind(&product_name)
-                .fetch_all(&self.pool)
-                .await?;
+                .fetch_all(&self.pool);
+
+                let (measurements, actions) = tokio::try_join!(measurements_query, actions_query)?;
 
                 let mut m_map = serde_json::Map::new();
                 for (signal_name, data_type, scale, offset, unit) in measurements {
@@ -355,7 +356,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         instance_id: u32,
         data: HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        redis_state::sync_measurement(self.rtdb.as_ref(), instance_id, &data).await?;
+        redis_state::sync_measurement(self.rtdb.as_ref(), instance_id, data).await?;
 
         debug!("Synced measurement data for instance {}", instance_id);
         Ok(())

@@ -140,6 +140,8 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
         .filter(|c| c.is_enabled()) // Only create enabled channels.
         .map(|channel_config| {
             let channel_manager = Arc::clone(&channel_manager);
+            // Clone the Arc (cheap reference count increment), not the inner ChannelConfig
+            let channel_config = Arc::clone(channel_config);
             async move {
                 let channel_id = channel_config.id();
                 let channel_name = channel_config.name().to_string();
@@ -154,7 +156,7 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
 
                 // Acquire the lock briefly to insert the channel.
                 let manager_guard = channel_manager.write().await;
-                let result = manager_guard.create_channel(Arc::new(channel_config.clone())).await;
+                let result = manager_guard.create_channel(channel_config).await;
                 drop(manager_guard); // Release the lock immediately.
                 match result {
                     Ok(_) => {

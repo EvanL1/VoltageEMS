@@ -92,15 +92,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub async fn create_instance(&self, req: CreateInstanceRequest) -> Result<Instance> {
         // Use user-provided instance ID and name
         let instance_id = req.instance_id;
-        let instance_name = req.instance_name.clone();
 
         info!(
             "Creating instance: {} (id: {}) for product: {}",
-            instance_name, instance_id, req.product_name
+            req.instance_name, instance_id, req.product_name
         );
 
         // 1. Validate instance name format
-        if let Err(e) = validate_instance_name(&instance_name) {
+        if let Err(e) = validate_instance_name(&req.instance_name) {
             return Err(anyhow!("Invalid instance name: {}", e));
         }
 
@@ -115,7 +114,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             Err(e) => {
                 error!(
                     "Failed to begin transaction for instance {}: {}",
-                    instance_name, e
+                    req.instance_name, e
                 );
                 return Err(anyhow!("Database transaction failed: {}", e));
             },
@@ -131,13 +130,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             "#,
         )
         .bind(instance_id as i32)
-        .bind(&instance_name)
+        .bind(&req.instance_name)
         .bind(&req.product_name)
         .bind(&properties_json)
         .execute(&mut *tx)
         .await
         {
-            error!("Failed to insert instance {}: {}", instance_name, e);
+            error!("Failed to insert instance {}: {}", req.instance_name, e);
             let _ = tx.rollback().await;
             return Err(anyhow!("Failed to create instance: {}", e));
         }
@@ -164,17 +163,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         if let Err(e) = tx.commit().await {
             error!(
                 "Failed to commit transaction for instance {}: {}",
-                instance_name, e
+                req.instance_name, e
             );
             return Err(anyhow!("Database transaction commit failed: {}", e));
         }
 
         // 7. Best effort register instance in Redis (after commit, allow failure)
-        info!("Registering instance {} in Redis", instance_name);
+        info!("Registering instance {} in Redis", req.instance_name);
         if let Err(e) = self
             .register_instance_in_redis(
                 req.instance_id,
-                &instance_name,
+                &req.instance_name,
                 &req.product_name,
                 &req.properties,
                 &product.measurements,
@@ -186,22 +185,22 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         {
             warn!(
                 "Instance {} created in SQLite but Redis registration failed: {}. Will register on next reload.",
-                instance_name, e
+                req.instance_name, e
             );
         } else {
             info!(
                 "Successfully registered instance {} in Redis after creation",
-                instance_name
+                req.instance_name
             );
         }
 
-        info!("Successfully created instance {}", instance_name);
+        info!("Successfully created instance {}", req.instance_name);
 
-        // 8. Return created instance
+        // 8. Return created instance - move req fields into result (avoid clone)
         Ok(Instance {
             core: crate::config::InstanceCore {
                 instance_id,
-                instance_name,
+                instance_name: req.instance_name,
                 product_name: req.product_name,
                 properties: req.properties,
             },
@@ -523,6 +522,56 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             action_mappings: Some(action_point_routings),
             created_at: None,
         })
+    }
+
+    /// Load all routing mappings for multiple instances in batch (O(1) queries instead of O(N))
+    ///
+    /// Returns a tuple of:
+    /// - HashMap<instance_id, HashMap<point_id, redis_key>> for measurements
+    /// - HashMap<instance_id, HashMap<point_id, redis_key>> for actions
+    pub(crate) async fn load_all_routings_batch(
+        &self,
+    ) -> Result<(
+        HashMap<u32, HashMap<u32, String>>,
+        HashMap<u32, HashMap<u32, String>>,
+    )> {
+        // Query all measurement routings in one batch
+        let all_measurements: Vec<(i32, i32)> =
+            sqlx::query_as("SELECT instance_id, measurement_id FROM measurement_routing")
+                .fetch_all(&self.pool)
+                .await?;
+
+        // Query all action routings in one batch
+        let all_actions: Vec<(i32, i32)> =
+            sqlx::query_as("SELECT instance_id, action_id FROM action_routing")
+                .fetch_all(&self.pool)
+                .await?;
+
+        // Group measurements by instance_id
+        let mut measurement_routings: HashMap<u32, HashMap<u32, String>> = HashMap::new();
+        for (instance_id, point_id) in all_measurements {
+            let instance_id = instance_id as u32;
+            let point_id = point_id as u32;
+            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            measurement_routings
+                .entry(instance_id)
+                .or_default()
+                .insert(point_id, redis_key);
+        }
+
+        // Group actions by instance_id
+        let mut action_routings: HashMap<u32, HashMap<u32, String>> = HashMap::new();
+        for (instance_id, point_id) in all_actions {
+            let instance_id = instance_id as u32;
+            let point_id = point_id as u32;
+            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            action_routings
+                .entry(instance_id)
+                .or_default()
+                .insert(point_id, redis_key);
+        }
+
+        Ok((measurement_routings, action_routings))
     }
 
     /// Delete an instance by ID

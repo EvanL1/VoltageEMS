@@ -15,7 +15,12 @@ use voltage_rtdb::Rtdb;
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Sync all instances from SQLite to Redis (called on startup)
+    ///
+    /// Optimized to use batch queries: 3 queries total instead of 1 + 3N
+    /// (1 list_instances + 1 all_measurements + 1 all_actions)
     pub async fn sync_instances_to_redis(&self) -> Result<()> {
+        use std::sync::Arc;
+
         info!("Syncing instances from SQLite to Redis...");
 
         let instances = self.list_instances(None).await?;
@@ -26,7 +31,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             return Ok(());
         }
 
+        // Batch load all routings in 2 queries (instead of 2N queries)
+        let (all_measurement_routings, all_action_routings) =
+            self.load_all_routings_batch().await?;
+        debug!(
+            "Loaded {} measurement routings, {} action routings in batch",
+            all_measurement_routings.len(),
+            all_action_routings.len()
+        );
+
         // Collect all instance data for batch sync
+        // Use Arc<Product> to share product data across instances with same product type
         struct InstanceRedisPayload {
             instance_id: u32,
             instance_name: String,
@@ -35,60 +50,67 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             // Point routing mappings - Maps point IDs to Redis keys
             measurement_point_routings: HashMap<u32, String>,
             action_point_routings: HashMap<u32, String>,
-            measurement_points: Vec<crate::product_loader::MeasurementPoint>,
-            action_points: Vec<crate::product_loader::ActionPoint>,
+            // Arc-wrapped product to avoid cloning for instances with same product
+            product: Arc<crate::product_loader::Product>,
         }
 
         let mut batch_data: Vec<InstanceRedisPayload> = Vec::new();
         let mut failed_count = 0;
 
+        // Cache products by name to avoid repeated loads and clones
+        let mut product_cache: HashMap<String, Arc<crate::product_loader::Product>> =
+            HashMap::new();
+
         for instance in instances {
-            // Get product details
-            let product = match self
-                .product_loader
-                .get_product(instance.product_name())
-                .await
-            {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!(
-                        "Product {} not found for instance {}: {}",
-                        instance.product_name(),
-                        instance.instance_id(),
-                        e
-                    );
-                    failed_count += 1;
-                    continue;
+            // Get product details (cached)
+            let product = match product_cache.get(instance.product_name()) {
+                Some(cached) => Arc::clone(cached),
+                None => {
+                    match self
+                        .product_loader
+                        .get_product(instance.product_name())
+                        .await
+                    {
+                        Ok(p) => {
+                            let arc_product = Arc::new(p);
+                            product_cache.insert(
+                                instance.product_name().to_string(),
+                                Arc::clone(&arc_product),
+                            );
+                            arc_product
+                        },
+                        Err(e) => {
+                            warn!(
+                                "Product {} not found for instance {}: {}",
+                                instance.product_name(),
+                                instance.instance_id(),
+                                e
+                            );
+                            failed_count += 1;
+                            continue;
+                        },
+                    }
                 },
             };
 
-            // Get point routings for this instance
-            let full_instance = match self.get_instance(instance.instance_id()).await {
-                Ok(inst) => inst,
-                Err(e) => {
-                    warn!(
-                        "Failed to get point routings for instance {} ({}): {}",
-                        instance.instance_id(),
-                        instance.instance_name(),
-                        e
-                    );
-                    failed_count += 1;
-                    continue;
-                },
-            };
-
-            let measurement_point_routings = full_instance.measurement_mappings.unwrap_or_default();
-            let action_point_routings = full_instance.action_mappings.unwrap_or_default();
+            // Get point routings from batch-loaded data (O(1) lookup, no DB query)
+            let measurement_point_routings = all_measurement_routings
+                .get(&instance.instance_id())
+                .cloned()
+                .unwrap_or_default();
+            let action_point_routings = all_action_routings
+                .get(&instance.instance_id())
+                .cloned()
+                .unwrap_or_default();
 
             batch_data.push(InstanceRedisPayload {
                 instance_id: instance.instance_id(),
                 instance_name: instance.instance_name().to_string(),
                 product_name: instance.product_name().to_string(),
                 properties: instance.core.properties.clone(),
-                measurement_point_routings, // move, not clone
-                action_point_routings,      // move, not clone
-                measurement_points: product.measurements.clone(),
-                action_points: product.actions.clone(),
+                measurement_point_routings, // from batch lookup
+                action_point_routings,      // from batch lookup
+                product,                    // Arc::clone, not deep clone
             });
         }
 
@@ -108,8 +130,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                         &payload.properties,
                         &payload.measurement_point_routings,
                         &payload.action_point_routings,
-                        &payload.measurement_points,
-                        &payload.action_points,
+                        &payload.product.measurements,
+                        &payload.product.actions,
                         None,
                     )
                     .await

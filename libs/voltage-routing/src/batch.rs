@@ -70,22 +70,6 @@ impl BatchRoutingResult {
     }
 }
 
-/// Batch write channel points with C2M/C2C routing (direct Redis writes)
-///
-/// This function implements the complete batch write flow:
-/// 1. Groups updates by (channel_id, point_type)
-/// 2. Writes 3-layer data (value/ts/raw) to channel hashes
-/// 3. Executes C2M routing (writes to instance measurement hashes)
-/// 4. Executes C2C routing (recursive forwards to other channels)
-///
-/// # Arguments
-/// * `rtdb` - RTDB trait object
-/// * `routing_cache` - C2M/C2C routing cache
-/// * `updates` - Vector of channel point updates
-///
-/// # Returns
-/// * `Ok(BatchRoutingResult)` - Statistics about writes performed
-/// * `Err(anyhow::Error)` - Write error
 pub async fn write_channel_batch<R>(
     rtdb: &R,
     routing_cache: &RoutingCache,
@@ -116,6 +100,9 @@ where
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
+    // Cache point_id -> String to avoid repeated allocations
+    let mut point_id_str_cache: HashMap<u32, String> = HashMap::new();
+
     for ((channel_id, point_type), updates) in grouped {
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
@@ -130,13 +117,16 @@ where
             if let Some(target) =
                 routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
             {
+                // Reuse cached point_id string to avoid repeated allocations
+                let point_id_str = point_id_str_cache
+                    .entry(target.point_id)
+                    .or_insert_with(|| target.point_id.to_string())
+                    .clone();
+
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
-                    .push((
-                        target.point_id.to_string(),
-                        bytes::Bytes::from(update.value.to_string()),
-                    ));
+                    .push((point_id_str, bytes::Bytes::from(update.value.to_string())));
             }
 
             // C2C routing lookup - zero-allocation using structured key
@@ -194,19 +184,6 @@ where
     Ok(result)
 }
 
-/// Batch write channel points with C2M/C2C routing (buffered writes)
-///
-/// Similar to `write_channel_batch` but uses WriteBuffer for aggregation
-/// instead of direct Redis writes. This reduces network round-trips for
-/// high-frequency updates.
-///
-/// # Arguments
-/// * `write_buffer` - WriteBuffer for aggregating writes
-/// * `routing_cache` - C2M/C2C routing cache
-/// * `updates` - Vector of channel point updates
-///
-/// # Returns
-/// Statistics about writes buffered
 pub fn write_channel_batch_buffered(
     write_buffer: &WriteBuffer,
     routing_cache: &RoutingCache,
@@ -234,6 +211,9 @@ pub fn write_channel_batch_buffered(
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
+    // Cache point_id -> Arc<str> to avoid repeated allocations
+    let mut point_id_str_cache: HashMap<u32, Arc<str>> = HashMap::new();
+
     for ((channel_id, point_type), updates) in grouped {
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
@@ -249,13 +229,16 @@ pub fn write_channel_batch_buffered(
             if let Some(target) =
                 routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
             {
+                // Reuse cached point_id Arc<str> to avoid repeated allocations
+                let point_id_str = point_id_str_cache
+                    .entry(target.point_id)
+                    .or_insert_with(|| Arc::from(target.point_id.to_string()))
+                    .clone();
+
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
-                    .push((
-                        Arc::from(target.point_id.to_string()),
-                        bytes::Bytes::from(update.value.to_string()),
-                    ));
+                    .push((point_id_str, bytes::Bytes::from(update.value.to_string())));
             }
 
             // C2C routing lookup - zero-allocation using structured key

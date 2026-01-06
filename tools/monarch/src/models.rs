@@ -475,10 +475,13 @@ async fn handle_instance_command(
                     let keyspace = KeySpaceConfig::production();
                     let rtdb = &modsrv.rtdb;
 
-                    // Determine which data to fetch based on point_type
-                    let point_type_upper = point_type.as_deref().map(|s| s.to_uppercase());
-                    let fetch_measurements = point_type_upper.as_deref() != Some("A");
-                    let fetch_actions = point_type_upper.as_deref() != Some("M");
+                    // Determine which data to fetch based on point_type (zero-allocation comparison)
+                    let fetch_measurements = point_type
+                        .as_deref()
+                        .is_none_or(|s| !s.eq_ignore_ascii_case("A"));
+                    let fetch_actions = point_type
+                        .as_deref()
+                        .is_none_or(|s| !s.eq_ignore_ascii_case("M"));
 
                     println!("=== Instance Runtime Data ===\n");
                     println!("Instance: {} (ID: {})", instance_name, instance_id);
@@ -490,12 +493,15 @@ async fn handle_instance_command(
                         let m_data = rtdb.hash_get_all(m_key.as_ref()).await?;
 
                         // Filter out timestamp fields (ts:*)
+                        // Optimization: use std::str::from_utf8 to borrow-validate, avoiding to_vec() copy
                         let m_points: std::collections::HashMap<u32, String> = m_data
                             .into_iter()
                             .filter(|(field, _)| !field.starts_with("ts:"))
                             .filter_map(|(field, value_bytes)| {
                                 let point_id = field.parse::<u32>().ok()?;
-                                let value_str = String::from_utf8(value_bytes.to_vec()).ok()?;
+                                let value_str = std::str::from_utf8(&value_bytes)
+                                    .ok()
+                                    .map(|s| s.to_string())?;
                                 Some((point_id, value_str))
                             })
                             .collect();
@@ -521,12 +527,15 @@ async fn handle_instance_command(
                         let a_data = rtdb.hash_get_all(a_key.as_ref()).await?;
 
                         // Filter out timestamp fields (ts:*)
+                        // Optimization: use std::str::from_utf8 to borrow-validate, avoiding to_vec() copy
                         let a_points: std::collections::HashMap<u32, String> = a_data
                             .into_iter()
                             .filter(|(field, _)| !field.starts_with("ts:"))
                             .filter_map(|(field, value_bytes)| {
                                 let point_id = field.parse::<u32>().ok()?;
-                                let value_str = String::from_utf8(value_bytes.to_vec()).ok()?;
+                                let value_str = std::str::from_utf8(&value_bytes)
+                                    .ok()
+                                    .map(|s| s.to_string())?;
                                 Some((point_id, value_str))
                             })
                             .collect();

@@ -193,13 +193,14 @@ impl fmt::Display for PointType {
 impl std::str::FromStr for PointType {
     type Err = String;
 
+    /// Parse PointType from string (case-insensitive, zero allocation for valid inputs)
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let u = s.to_uppercase();
-        match u.as_str() {
-            "T" | "YC" => Ok(PointType::Telemetry),
-            "S" | "YX" => Ok(PointType::Signal),
-            "C" | "YK" => Ok(PointType::Control),
-            "A" | "YT" => Ok(PointType::Adjustment),
+        // Direct pattern matching for common cases (zero allocation)
+        match s {
+            "T" | "t" | "YC" | "yc" | "Yc" | "yC" => Ok(PointType::Telemetry),
+            "S" | "s" | "YX" | "yx" | "Yx" | "yX" => Ok(PointType::Signal),
+            "C" | "c" | "YK" | "yk" | "Yk" | "yK" => Ok(PointType::Control),
+            "A" | "a" | "YT" | "yt" | "Yt" | "yT" => Ok(PointType::Adjustment),
             _ => Err(format!(
                 "Invalid PointType: '{}'. Valid values: T/YC, S/YX, C/YK, A/YT",
                 s

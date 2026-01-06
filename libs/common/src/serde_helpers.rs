@@ -72,13 +72,23 @@ where
                 i
             ))),
         },
-        BoolOrStringOrInt::String(s) => match s.to_lowercase().trim() {
-            "1" | "true" | "yes" => Ok(true),
-            "0" | "false" | "no" | "" => Ok(false),
-            other => Err(D::Error::custom(format!(
-                "Invalid boolean value '{}', expected: 1/0, true/false, yes/no, or boolean",
-                other
-            ))),
+        // Optimization: trim first, then use eq_ignore_ascii_case (zero allocation)
+        BoolOrStringOrInt::String(s) => {
+            let t = s.trim();
+            if t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes") {
+                Ok(true)
+            } else if t.is_empty()
+                || t == "0"
+                || t.eq_ignore_ascii_case("false")
+                || t.eq_ignore_ascii_case("no")
+            {
+                Ok(false)
+            } else {
+                Err(D::Error::custom(format!(
+                    "Invalid boolean value '{}', expected: 1/0, true/false, yes/no, or boolean",
+                    s
+                )))
+            }
         },
     }
 }

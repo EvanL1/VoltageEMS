@@ -2461,7 +2461,7 @@ async fn process_create_operation<R: Rtdb>(
     // Deserialize and insert based on point type
     match point_type_upper.as_str() {
         "T" => {
-            let point: TelemetryPoint = serde_json::from_value(data_with_id.clone())
+            let point: TelemetryPoint = serde_json::from_value(data_with_id)
                 .map_err(|e| format!("Invalid telemetry point data: {}", e))?;
 
             let sql = if item.force {
@@ -2489,7 +2489,7 @@ async fn process_create_operation<R: Rtdb>(
                 .map_err(|e| format!("Failed to insert: {}", e))?;
         },
         "S" => {
-            let point: SignalPoint = serde_json::from_value(data_with_id.clone())
+            let point: SignalPoint = serde_json::from_value(data_with_id)
                 .map_err(|e| format!("Invalid signal point data: {}", e))?;
 
             let sql = if item.force {
@@ -2514,7 +2514,7 @@ async fn process_create_operation<R: Rtdb>(
                 .map_err(|e| format!("Failed to insert: {}", e))?;
         },
         "C" => {
-            let point: ControlPoint = serde_json::from_value(data_with_id.clone())
+            let point: ControlPoint = serde_json::from_value(data_with_id)
                 .map_err(|e| format!("Invalid control point data: {}", e))?;
 
             // Note: control_points table has same schema as telemetry_points
@@ -2544,14 +2544,14 @@ async fn process_create_operation<R: Rtdb>(
                 .map_err(|e| format!("Failed to insert: {}", e))?;
         },
         "A" => {
-            let point: AdjustmentPoint = serde_json::from_value(data_with_id.clone())
-                .map_err(|e| format!("Invalid adjustment point data: {}", e))?;
-
-            // Extract reverse from JSON (not in AdjustmentPoint struct)
+            // Extract reverse from JSON before consuming data_with_id (not in AdjustmentPoint struct)
             let reverse = data_with_id
                 .get("reverse")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+
+            let point: AdjustmentPoint = serde_json::from_value(data_with_id)
+                .map_err(|e| format!("Invalid adjustment point data: {}", e))?;
 
             let sql = if item.force {
                 "INSERT OR REPLACE INTO adjustment_points

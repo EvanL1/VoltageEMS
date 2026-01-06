@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::{broadcast, Notify, RwLock};
+use tokio::sync::{Notify, RwLock};
 use tracing::{debug, warn};
 
 use igw::core::data::{DataBatch, DataPoint};
@@ -58,8 +58,8 @@ pub struct RedisDataStore<R: Rtdb> {
     write_buffer: Arc<WriteBuffer>,
     /// Point configurations cache (channel_id -> configs)
     point_configs: DashMap<u32, Vec<PointConfig>>,
-    /// Event subscribers
-    subscribers: Arc<RwLock<Vec<DataEventSender>>>,
+    /// Single broadcast sender for all subscribers (avoids clone * N)
+    event_sender: DataEventSender,
     /// KeySpace configuration
     key_config: KeySpaceConfig,
     /// Flush task handle for cleanup (uses RwLock for interior mutability)
@@ -76,12 +76,14 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// * `rtdb` - Redis connection
     /// * `routing_cache` - C2M/M2C routing cache
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
+        // Create single broadcast channel - all subscribers share this sender
+        let (event_sender, _) = tokio::sync::broadcast::channel(1024);
         Self {
             rtdb,
             routing_cache,
             write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
             point_configs: DashMap::new(),
-            subscribers: Arc::new(RwLock::new(Vec::new())),
+            event_sender,
             key_config: KeySpaceConfig::production(),
             flush_handle: RwLock::new(None),
             shutdown_notify: Arc::new(Notify::new()),
@@ -167,16 +169,12 @@ impl<R: Rtdb> RedisDataStore<R> {
 
     /// Notify all subscribers of a data event.
     ///
-    /// Uses broadcast channel - all subscribers receive the event.
-    async fn notify_subscribers(&self, event: DataEvent) {
-        let subscribers = self.subscribers.read().await;
-        if subscribers.is_empty() {
-            return;
-        }
-        // Broadcast sends to all subscribers at once
-        for sender in subscribers.iter() {
-            let _ = sender.send(event.clone());
-        }
+    /// Uses single broadcast channel - send once, all receivers get the event.
+    /// No clone needed - broadcast internally uses Arc for zero-copy sharing.
+    fn notify_subscribers(&self, event: DataEvent) {
+        // Single send - broadcast channel handles distribution to all receivers
+        // Ignore SendError (no active receivers) - this is expected when no subscribers
+        let _ = self.event_sender.send(event);
     }
 }
 
@@ -202,7 +200,7 @@ impl<R: Rtdb> RedisDataStore<R> {
         );
 
         // Notify subscribers - move batch into event, no clone needed
-        self.notify_subscribers(DataEvent::DataUpdate(batch)).await;
+        self.notify_subscribers(DataEvent::DataUpdate(batch));
 
         Ok(())
     }
@@ -260,18 +258,11 @@ impl<R: Rtdb> RedisDataStore<R> {
 
     /// Subscribe to data events.
     ///
-    /// Creates a new broadcast channel and registers the sender with the store.
-    /// Returns the receiver for receiving events.
+    /// Returns a new receiver from the shared broadcast channel.
+    /// Multiple subscribers share the same sender - no clone * N overhead.
+    /// Receivers are automatically cleaned up when dropped.
     pub fn subscribe(&self) -> DataEventReceiver {
-        let (tx, rx) = broadcast::channel(1024);
-
-        let subscribers = self.subscribers.clone();
-        tokio::spawn(async move {
-            let mut subs = subscribers.write().await;
-            subs.push(tx);
-        });
-
-        rx
+        self.event_sender.subscribe()
     }
 
     /// Get a specific point configuration.

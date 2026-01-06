@@ -113,7 +113,8 @@ impl ServiceConfigLoader {
                         serde_json::Value::String(value)
                     }
                 },
-                "boolean" => serde_json::Value::Bool(value.to_lowercase() == "true"),
+                // Optimization: eq_ignore_ascii_case avoids to_lowercase() allocation
+                "boolean" => serde_json::Value::Bool(value.trim().eq_ignore_ascii_case("true")),
                 "json" => serde_json::from_str(&value).unwrap_or(serde_json::Value::String(value)),
                 _ => serde_json::Value::String(value),
             };

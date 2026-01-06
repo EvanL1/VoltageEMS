@@ -155,12 +155,21 @@ impl WriteBuffer {
     /// * `field` - Field name as `Arc<str>` for O(1) cloning in 3-layer writes
     /// * `value` - Field value
     pub fn buffer_hash_set(&self, key: &str, field: Arc<str>, value: Bytes) {
-        let entry = self.pending.entry(key.to_string()).or_default();
-        entry.insert(field, value);
+        // Two-phase check: get_mut first to avoid allocation on hot path
+        let len = if let Some(entry) = self.pending.get_mut(key) {
+            entry.insert(field, value);
+            entry.len()
+        } else {
+            // Slow path: key doesn't exist, need to allocate
+            let entry = self.pending.entry(key.to_string()).or_default();
+            entry.insert(field, value);
+            entry.len()
+        };
+
         self.stats.buffered_writes.fetch_add(1, Ordering::Relaxed);
 
         // Check if we need to force a flush
-        if entry.len() >= self.config.max_fields_per_key {
+        if len >= self.config.max_fields_per_key {
             self.stats.forced_flushes.fetch_add(1, Ordering::Relaxed);
             self.flush_notify.notify_one();
         }
@@ -179,18 +188,28 @@ impl WriteBuffer {
         }
 
         let count = fields.len() as u64;
-        let entry = self.pending.entry(key.to_string()).or_default();
 
-        for (field, value) in fields {
-            entry.insert(field, value);
-        }
+        // Two-phase check: get_mut first to avoid allocation on hot path
+        let len = if let Some(entry) = self.pending.get_mut(key) {
+            for (field, value) in fields {
+                entry.insert(field, value);
+            }
+            entry.len()
+        } else {
+            // Slow path: key doesn't exist, need to allocate
+            let entry = self.pending.entry(key.to_string()).or_default();
+            for (field, value) in fields {
+                entry.insert(field, value);
+            }
+            entry.len()
+        };
 
         self.stats
             .buffered_writes
             .fetch_add(count, Ordering::Relaxed);
 
         // Check if we need to force a flush
-        if entry.len() >= self.config.max_fields_per_key {
+        if len >= self.config.max_fields_per_key {
             self.stats.forced_flushes.fetch_add(1, Ordering::Relaxed);
             self.flush_notify.notify_one();
         }
