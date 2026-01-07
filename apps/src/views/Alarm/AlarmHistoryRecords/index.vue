@@ -52,14 +52,14 @@
             :icon="reloadIcon"
             text="Reload"
             custom-class="alarm-records__export-btn"
-            @click="refreshData"
+            @click="reloadFilters"
           />
           <IconButton
             type="primary"
             :icon="searchIcon"
-            text="search"
+            text="Search"
             custom-class="alarm-records__export-btn"
-            @click="fetchTableData"
+            @click="fetchTableData(true)"
           />
           <IconButton
             type="primary"
@@ -134,6 +134,7 @@ const {
   fetchTableData,
   filters,
   exportData,
+  reloadFilters,
 } = useTableData<HistoryAlarmData>({
   listUrl: '/alarmApi/alert-events',
   exportUrl: '/alarmApi/alert-events/export',
@@ -229,14 +230,7 @@ const disableEndTime = (date: Date, type: string) => {
   }
   return {}
 }
-const refreshData = () => {
-  filters.warning_level = null
-  filters.start_time = null
-  filters.end_time = null
-  filters.startTime = null
-  filters.endTime = null
-  fetchTableData(true)
-}
+
 // 处理导出
 </script>
 

@@ -30,7 +30,7 @@ pinia.use(piniaPluginPersistedstate)
 
 app.use(pinia)
 app.use(router)
-app.use(ElementPlus)
+// app.use(ElementPlus)
 // app.use(vFitColumns)
 // 注册自定义指令 v-permission
 app.directive('permission', permissionDirective)

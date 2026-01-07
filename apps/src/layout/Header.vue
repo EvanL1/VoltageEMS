@@ -37,7 +37,7 @@
               <el-dropdown-item command="logout">
                 <div class="header__user-Item">
                   <img :src="logoutIcon" class="header__user-logoutIcon" />
-                  退出登录
+                  Logout
                 </div>
               </el-dropdown-item>
             </el-dropdown-menu>

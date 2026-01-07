@@ -4,23 +4,40 @@
     <div class="curves__content">
       <!-- 表格工具栏 -->
       <div class="curves__toolbar">
-        <div class="curves__toolbar-left" ref="toolbarLeftRef">
-          <!-- 选择框 -->
-          <el-select
-            v-model="selectedFilter"
-            placeholder="Select filter condition"
-            @change="handleFilterChange"
-            :append-to="toolbarLeftRef"
-          >
-            <el-option label="All" value="all" />
-            <el-option label="High Priority" value="high" />
-            <el-option label="Medium Priority" value="medium" />
-            <el-option label="Low Priority" value="low" />
-          </el-select>
-        </div>
-
         <div class="curves__toolbar-right">
           <div class="curves__toolbar-time-btns" @click="handleTimeBtnClick">
+            <div
+              v-show="selectedTimeBtn === 'custom'"
+              class="curves__toolbar-time-interval"
+              ref="toolbarRightRef"
+            >
+              <el-select
+                v-model="timeInterval"
+                @change="handleTimeIntervalChange"
+                :append-to="toolbarRightRef"
+                placeholder="Select Time Interval"
+              >
+                <el-option
+                  v-for="btn in intervalList"
+                  :key="btn.value"
+                  :label="btn.label"
+                  :value="btn.value"
+                />
+              </el-select>
+            </div>
+            <el-date-picker
+              v-if="selectedTimeBtn === 'custom'"
+              v-model="rangeArray"
+              type="datetimerange"
+              value-format="YYYY-MM-DD HH:mm:ss"
+              format="YYYY-MM-DD HH:mm:ss"
+              range-separator="To"
+              :default-time="defaultTime"
+              start-placeholder="Select Start Date"
+              end-placeholder="Select End Date"
+              :teleported="false"
+              @change="handleDateRangeChange"
+            />
             <div
               v-for="btn in timeBtnList"
               :key="btn.value"
@@ -128,16 +145,32 @@ interface LineSeries {
   color: string
 }
 
-const toolbarLeftRef = ref<HTMLElement | null>(null)
-const selectedFilter = ref('all')
+const toolbarRightRef = ref<HTMLElement | null>(null)
 
 // 时间按钮列表
-const timeBtnList = [
+const timeBtnList: { label: string; value: '6h' | '1d' | '1w' | '1m' | 'custom' }[] = [
+  { label: 'Custom', value: 'custom' },
   { label: '6 Hour', value: '6h' },
   { label: '1 Day', value: '1d' },
   { label: '1 Week', value: '1w' },
   { label: '1 Month', value: '1m' },
 ]
+
+const defaultTime: [Date, Date] = [new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]
+const timeInterval = ref('15m')
+const rangeArray = ref<string[]>([])
+const intervalList = ref([
+  { label: '30 Seconds', value: '30s' },
+  { label: '1 Minute', value: '1m' },
+  { label: '15 Minutes', value: '15m' },
+  { label: '1 Hour', value: '1h' },
+  { label: '6 Hours', value: '6h' },
+  { label: '1 Day', value: '1d' },
+  { label: '1 Week', value: '1w' },
+  { label: '1 Month', value: '1M' },
+  { label: '1 Year', value: '1y' },
+])
+
 const stationInfoList = reactive([
   {
     title: 'PV',
@@ -159,7 +192,7 @@ const stationInfoList = reactive([
   },
 ])
 // 当前选中的时间按钮
-const selectedTimeBtn = ref('6h')
+const selectedTimeBtn = ref<'6h' | '1d' | '1w' | '1m' | 'custom'>('6h')
 
 // 事件代理处理时间按钮点击
 const handleTimeBtnClick = (event: MouseEvent) => {
@@ -167,13 +200,26 @@ const handleTimeBtnClick = (event: MouseEvent) => {
   // 查找最近的按钮元素
   const btn = target.closest('.curves__toolbar-time-btn') as HTMLElement | null
   if (btn && btn.dataset.value) {
-    selectedTimeBtn.value = btn.dataset.value
+    selectedTimeBtn.value = btn.dataset.value as '6h' | '1d' | '1w' | '1m' | 'custom'
+    rangeArray.value = []
+    if (selectedTimeBtn.value !== 'custom') {
+      fetchPowerTrendData()
+    }
+  }
+}
+
+// 处理时间间隔变化
+const handleTimeIntervalChange = () => {
+  if (selectedTimeBtn.value === 'custom' && rangeArray.value.length === 2) {
     fetchPowerTrendData()
   }
 }
 
-const handleFilterChange = () => {
-  console.log('handleFilterChange')
+// 处理日期范围变化
+const handleDateRangeChange = () => {
+  if (selectedTimeBtn.value === 'custom' && rangeArray.value.length === 2) {
+    fetchPowerTrendData()
+  }
 }
 
 // 能源分布数据 - 用于饼图
@@ -226,34 +272,48 @@ const fetchPowerTrendData = async () => {
       point_id: '',
     }
 
-    switch (selectedTimeBtn.value) {
-      case '6h': {
-        const range = getRecentHoursRange(6)
+    if (selectedTimeBtn.value === 'custom') {
+      // 自定义时间范围
+      if (rangeArray.value.length === 2) {
+        requestPayload.start_time = rangeArray.value[0]
+        requestPayload.end_time = rangeArray.value[1]
+        // 根据时间间隔设置 interval（这里需要根据实际需求调整）
+        // 暂时使用固定值，后续可以根据时间范围和间隔动态计算
         requestPayload.interval = 720
-        requestPayload.start_time = range.start
-        requestPayload.end_time = range.end
-        break
+      } else {
+        return // 如果没有选择完整的时间范围，不执行请求
       }
-      case '1d': {
-        requestPayload.interval = 2880
-        break
+    } else {
+      // 预设时间范围
+      switch (selectedTimeBtn.value) {
+        case '6h': {
+          const range = getRecentHoursRange(6)
+          requestPayload.interval = 720
+          requestPayload.start_time = range.start
+          requestPayload.end_time = range.end
+          break
+        }
+        case '1d': {
+          requestPayload.interval = 2880
+          break
+        }
+        case '1w': {
+          const range = getRecentWeekRange()
+          requestPayload.interval = 21600
+          requestPayload.start_time = range.start
+          requestPayload.end_time = range.end
+          break
+        }
+        case '1m': {
+          const range = getRecentDaysRange(7) // 按需求：最近一周
+          requestPayload.interval = 86400
+          requestPayload.start_time = range.start
+          requestPayload.end_time = range.end
+          break
+        }
+        default:
+          break
       }
-      case '1w': {
-        const range = getRecentWeekRange()
-        requestPayload.interval = 21600
-        requestPayload.start_time = range.start
-        requestPayload.end_time = range.end
-        break
-      }
-      case '1m': {
-        const range = getRecentDaysRange(7) // 按需求：最近一周
-        requestPayload.interval = 86400
-        requestPayload.start_time = range.start
-        requestPayload.end_time = range.end
-        break
-      }
-      default:
-        break
     }
     const [point1Res, point2Res] = await Promise.all([
       queryPowerTrend({ ...requestPayload, point_id: '1' }),
@@ -353,36 +413,40 @@ onMounted(() => {
     padding-bottom: 0.2rem;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
 
-    .curves__toolbar-left {
-      position: relative;
+    .curves__toolbar-right {
       display: flex;
       align-items: center;
-      gap: 0.16rem;
-    }
+      gap: 0.2rem;
 
-    .curves__toolbar-time-btns {
-      height: 0.32rem;
-      display: flex;
-      align-items: center;
-      background-color: rgba(255, 255, 255, 0.04);
+      .curves__toolbar-time-btns {
+        position: relative;
+        height: 0.32rem;
+        display: flex;
+        align-items: center;
 
-      .curves__toolbar-time-btn {
-        height: 0.28rem;
-        line-height: 0.22rem;
-        padding: 0.03rem 0.1rem;
-        font-size: 0.14rem;
-        background: transparent;
-        border-right: 0.01rem solid rgba(255, 255, 255, 0.2);
-        cursor: pointer;
-
-        &:last-child {
-          border-right: none;
+        .curves__toolbar-time-interval {
+          position: relative;
+          margin-right: 0.2rem;
         }
 
-        &.is-active {
-          background: rgba(255, 255, 255, 0.2);
+        .curves__toolbar-time-btn {
+          height: 0.32rem;
+          line-height: 0.32rem;
+          padding: 0 0.1rem;
+          font-size: 0.14rem;
+          background: transparent;
+          border-right: 0.01rem solid rgba(255, 255, 255, 0.2);
+          cursor: pointer;
+
+          &:last-child {
+            border-right: none;
+          }
+
+          &.is-active {
+            background: rgba(255, 255, 255, 0.2);
+          }
         }
       }
     }

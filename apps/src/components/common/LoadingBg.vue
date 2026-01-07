@@ -24,7 +24,7 @@ const openLoading = () => {
       target: rootRef.value,
       lock: true,
       background: 'rgba(0,0,0,0.3)',
-      text: 'loading...',
+      text: '',
       spinner: svg,
     })
   }

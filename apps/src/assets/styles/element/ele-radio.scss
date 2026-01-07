@@ -3,6 +3,52 @@
 @use './theme-vars.scss' as *;
 
 .voltage-class {
+  // View Mode 简洁样式（更显眼但不过度修饰）
+  .view-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: $spacing-sm;
+  }
+  .view-mode-switch .switch-label {
+    font-size: 0.18rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    margin-right: 0.02rem;
+  }
+  .view-mode-switch .el-radio-group.el-radio-group--button {
+    gap: 0;
+    .el-radio {
+      border: 0.01rem solid rgba($primary-color, 0.55);
+      background: transparent;
+      // padding: 0.04rem 0.14rem;
+      // border-radius: 0.06rem;
+      transition:
+        color $transition-fast,
+        background $transition-fast,
+        border-color $transition-fast;
+      &:not(:first-child) {
+        margin-left: -0.01rem;
+      }
+      .el-radio__label {
+        padding-left: 0;
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 0.16rem;
+        font-weight: 600;
+      }
+      // &:hover:not(.is-disabled) {
+      //   background: rgba($primary-color, 0.08);
+      //   border-color: rgba($primary-color, 0.85);
+      // }
+      &.is-checked {
+        background: rgba($primary-color, 0.14);
+        border-color: $primary-color;
+        .el-radio__label {
+          color: $primary-color;
+        }
+      }
+    }
+  }
+
   // Radio 基础样式
   .el-radio {
     color: rgba(255, 255, 255, 0.6);
@@ -215,9 +261,10 @@
 
         // 悬停状�?
         &:hover:not(.is-disabled) {
-          background-color: rgba(255, 105, 0, 0.1);
+          // background-color: rgba(255, 105, 0, 0.1);
           border-color: $primary-color;
           z-index: 1;
+          color: #ffffff;
         }
 
         // 选中状�?

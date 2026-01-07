@@ -85,9 +85,19 @@ export const useUserStore = defineStore(
     // 刷新用户Token
     const refreshUserToken = async () => {
       try {
-        // 这里应该调用刷新Token的API
-        // 暂时返回成功，实际项目中需要实现真实的刷新逻辑
-        return { success: true, message: 'Token refreshed successfully' }
+        if (!refreshToken.value) {
+          return { success: false, message: 'No refresh token available' }
+        }
+
+        const response = await userApi.refreshToken(refreshToken.value)
+
+        if (response.success && response.data) {
+          token.value = response.data.access_token || ''
+          refreshToken.value = response.data.refresh_token || ''
+          return { success: true, message: response.message || 'Token refreshed successfully' }
+        } else {
+          return { success: false, message: response.message || 'Token refresh failed' }
+        }
       } catch (error: any) {
         return { success: false, message: error.message || 'Token refresh failed' }
       }
@@ -125,11 +135,11 @@ export const useUserStore = defineStore(
     }
   },
   {
-    // 只持久化 token、refreshToken 和 userInfo，routesInjected 不持久化
+    // 只持久化 refreshToken，token 和 userInfo 不持久化（存储在内存中）
     persist: {
       key: 'user',
       storage: localStorage,
-      pick: ['token', 'refreshToken', 'userInfo'],
+      pick: ['refreshToken'],
     },
   },
 )

@@ -18,7 +18,8 @@
     <div
       class="custom-node__content"
       :style="{
-        marginRight: data.type === 'function-switch' && data.config.rule.length > 0 ? '26px' : '0',
+        marginRight:
+          data.type === 'function-switch' && data.config.rule.length > 0 ? '0.26rem' : '0',
       }"
     >
       <div class="custom-node__icon" :class="`icon--${data.type}`">
@@ -48,7 +49,7 @@
         :position="Position.Right"
         :id="item.name"
         class="custom-node__handle custom-node__handle--right"
-        :style="{ top: `calc(${((idx + 1) / (data.config.rule.length + 1)) * 100}% - 6px)` }"
+        :style="{ top: `calc(${((idx + 1) / (data.config.rule.length + 1)) * 100}% - 0.06rem)` }"
       >
         <div class="custom-node__handle__text">{{ item.name }}</div>
       </Handle>
@@ -64,6 +65,7 @@ import fenzhiIcon from '@/assets/icons/button-fenzhi.svg'
 import chongzhiIcon from '@/assets/icons/button-change.svg'
 const props = defineProps<{
   data: any
+  isMonitorMode?: boolean
 }>()
 
 const nodeRef = ref<HTMLElement | null>(null)
@@ -76,9 +78,9 @@ const handlesCount = computed(() => {
 
 const nodeStyle = computed(() => {
   if (!baseHeight.value) return {}
-  // 最小相邻 Handle 间距固定为 8px
-  const minGapPx = 20
-  const requiredMinHeight = Math.max(baseHeight.value, (handlesCount.value + 1) * minGapPx)
+  // 最小相邻 Handle 间距固定为 0.2rem
+  const minGapRem = 0.2
+  const requiredMinHeight = Math.max(baseHeight.value, (handlesCount.value + 1) * minGapRem * 100)
   return { minHeight: requiredMinHeight + 'px' }
 })
 
@@ -87,7 +89,7 @@ function measureBaseHeight() {
     const el = nodeRef.value
     // const h = nodeRef.value?.offsetHeight || nodeRef.value?.clientHeight  || 0
     const h = nodeRef.value?.offsetHeight || nodeRef.value?.clientHeight || 0
-    // 取一次基准高度；若首次测量不到，则使用一个保守默认值
+    // 取一次基准高度；若首次测量不到，则使用一个保守默认值（0.8rem = 80px）
     if (!baseHeight.value) baseHeight.value = h || 80
   })
 }
@@ -105,17 +107,18 @@ watch(
   .custom-node {
     display: flex;
     align-items: center;
-    padding: 12px;
+    padding: 0.12rem; // 增加底部padding，为右下角按钮留出空间
     // background-color: white;
-    border-radius: 8px;
+    border-radius: 0.08rem;
     cursor: grab;
     transition: all 0.2s ease;
-    min-width: 250px;
-    border-left: 4px solid rgba(255, 138, 0, 0.4);
-    border-top: 2px solid rgba(255, 138, 0, 0.4);
+    width: 2.5rem;
+    border-left: 0.04rem solid rgba(255, 138, 0, 0.4);
+    border-top: 0.02rem solid rgba(255, 138, 0, 0.4);
+    box-shadow: 0.02rem 0.02rem 0.08rem rgba(0, 0, 0, 0.15);
     &:hover {
       border-color: #ff8a00;
-      box-shadow: 4px 4px 12px rgba(255, 138, 0, 0.25);
+      box-shadow: 0.04rem 0.04rem 0.12rem rgba(255, 138, 0, 0.25);
     }
 
     &:active {
@@ -144,10 +147,10 @@ watch(
     }
 
     &__handle {
-      width: 12px;
-      height: 12px;
+      width: 0.12rem;
+      height: 0.12rem;
       background-color: #ff8a00;
-      border: 2px solid white;
+      border: 0.02rem solid white;
       border-radius: 50%;
       position: absolute;
       top: 50%;
@@ -156,18 +159,18 @@ watch(
       cursor: crosshair;
 
       &--left {
-        left: -6px;
+        left: -0.06rem;
       }
 
       &--right {
-        right: -6px;
+        right: -0.06rem;
 
         .custom-node__handle__text {
-          font-size: 10px;
+          font-size: 0.1rem;
           color: rgba(255, 105, 0, 1);
           position: absolute;
           top: 50%;
-          right: 16px;
+          right: 0.16rem;
           text-align: right;
           transform: translateY(-50%);
         }
@@ -183,20 +186,20 @@ watch(
       display: flex;
       align-items: center;
       width: 100%;
-      padding: 0 8px;
+      padding: 0 0.08rem;
     }
 
     &__icon {
-      width: 36px;
-      height: 36px;
+      width: 0.36rem;
+      height: 0.36rem;
       display: flex;
       align-items: center;
       justify-content: center;
       background-color: #fff2e6;
-      border-radius: 6px;
-      margin-right: 12px;
+      border-radius: 0.06rem;
+      margin-right: 0.12rem;
       .el-icon {
-        font-size: 20px;
+        font-size: 0.2rem;
         color: #ffffff !important;
       }
       img {
@@ -212,19 +215,49 @@ watch(
     &__name {
       font-weight: 600;
       color: #2c3e50;
-      margin-bottom: 4px;
-      font-size: 14px;
+      margin-bottom: 0.04rem;
+      font-size: 0.14rem;
+      word-break: break-word; // 使用 break-word 而不是 break-all，更优雅
+      word-wrap: break-word;
+      max-width: 100%;
+      overflow-wrap: break-word;
     }
 
     &__description {
-      font-size: 12px;
+      font-size: 0.12rem;
       color: #909399;
       line-height: 1.4;
-      // white-space: nowrap;
-      // overflow: hidden;
-      // text-overflow: ellipsis;
-      word-break: break-all;
-      width: 100%;
+      word-break: break-word; // 使用 break-word 而不是 break-all，更优雅
+      word-wrap: break-word;
+      max-width: 100%;
+      overflow-wrap: break-word;
+    }
+
+    &__vars-btn {
+      position: absolute;
+      bottom: 0; // 改为底部定位
+      right: 0.05rem;
+      width: 0.2rem;
+      height: 0.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: rgba(255, 105, 0, 0.2);
+      border-radius: 50%;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      z-index: 10;
+
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.3);
+        transform: scale(1.1);
+      }
+
+      .el-icon {
+        font-size: 0.14rem;
+        font-weight: 700;
+        color: #ffffff;
+      }
     }
   }
 }

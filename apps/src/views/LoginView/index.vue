@@ -2,7 +2,7 @@
   <div class="voltage-class loginPage">
     <header class="loginPage__header">
       <div class="loginPage__head-title">
-        <div class="loginPage__head-text">Log in page</div>
+        <div class="loginPage__head-text">Login page</div>
       </div>
     </header>
     <div ref="loginFormContainer" class="loginPage__form">
@@ -13,10 +13,14 @@
               <el-input v-model="form.username" />
             </el-form-item>
             <el-form-item label="Password" prop="password">
-              <el-input v-model="form.password" type="password" />
+              <el-input
+                v-model="form.password"
+                type="password"
+                @keyup.enter="handleLogin(formRef)"
+              />
             </el-form-item>
-            <el-button type="primary" @click="handleLogin(formRef)" :loading="isLoading"
-              >Log in</el-button
+            <el-button type="primary" @click="handleLogin(formRef)" :loading="globalStore.loading"
+              >Login</el-button
             >
           </el-form>
         </div>
@@ -28,18 +32,18 @@
 <script setup lang="ts">
 import type { FormInstance, FormRules } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import { useGlobalStore } from '@/stores/global'
 import type { LoginParams } from '@/types/user'
 import { useRouter } from 'vue-router'
 // import wsManager from '@/utils/websocket'
 
 const router = useRouter()
 const formRef = ref<FormInstance>()
-const loginFormContainer = ref()
+const globalStore = useGlobalStore()
 const form = reactive<LoginParams>({
   username: '',
   password: '',
 })
-const isLoading = ref(false)
 const formRules = reactive<FormRules<LoginParams>>({
   username: [{ required: true, message: 'Please enter your username', trigger: 'blur' }],
   password: [
@@ -58,7 +62,6 @@ const handleLogin = async (formEl: FormInstance | undefined) => {
   formEl.validate(async (valid: boolean) => {
     try {
       if (valid) {
-        isLoading.value = true
         const res = await userStore.login(form)
         if (res.success) {
           const userInfo = await userStore.getUserInfo()
@@ -78,8 +81,6 @@ const handleLogin = async (formEl: FormInstance | undefined) => {
       }
     } catch (error) {
       console.error('登录失败:', error)
-    } finally {
-      isLoading.value = false
     }
   })
 }

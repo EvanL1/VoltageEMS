@@ -2,6 +2,25 @@
   <div class="voltage-class point-table">
     <!-- 按钮控制区域 -->
     <div v-if="props.viewMode === 'points'" class="table-action-controls">
+      <div
+        class="table-action-controls__filters"
+        style="flex: 1; display: flex; gap: 0.08rem; align-items: center"
+      >
+        <span class="filter-label">Point Name:</span>
+        <el-select
+          v-model="signalNameFilterRaw"
+          filterable
+          allow-create
+          clearable
+          placeholder="Search Point Name"
+          :teleported="false"
+          popper-class="signal-name-popper"
+          style="width: 2.8rem"
+          :fit-input-width="true"
+        >
+          <el-option v-for="name in signalNameOptions" :key="name" :label="name" :value="name" />
+        </el-select>
+      </div>
       <!-- 非编辑模式：显示Batch Publish和Export -->
       <template v-if="!props.isEditing">
         <el-button :type="props.publishMode ? 'warning' : 'primary'" @click="handleTogglePublish">
@@ -15,7 +34,7 @@
       <!-- 编辑模式：显示文件名和Import -->
       <template v-else>
         <span v-if="importedFileName" class="imported-file-name">{{ importedFileName }}</span>
-        <el-button type="primary" @click="handleImportClick">Import</el-button>
+        <el-button type="primary" @mousedown="handleImportClick">Import</el-button>
       </template>
     </div>
 
@@ -31,45 +50,24 @@
     <div class="vtable" style="height: 5rem">
       <!-- Points 表头 -->
       <div class="vtable__header">
-        <div class="vtable__cell vtable__cell--point-id" style="margin-left: 0.03rem">Point ID</div>
+        <div class="vtable__cell vtable__cell--point-id">Point ID</div>
         <div
           class="vtable__cell vtable__cell--signal-name"
-          :class="props.pointType === 'C' || props.pointType === 'S' ? 'CorS' : ''"
+          :class="{
+            CorS: props.pointType === 'C' || props.pointType === 'S',
+            isEditing: props.isEditing,
+          }"
         >
-          <span>Signal Name</span>
-          <el-icon
-            class="filter-icon"
-            @click="showSignalNameFilter = !showSignalNameFilter"
-            style="margin-left: 0.05rem; cursor: pointer"
+          <span>Point Name</span>
+        </div>
+        <template v-if="!props.isEditing">
+          <div
+            class="vtable__cell vtable__cell--value"
+            :class="props.pointType === 'C' || props.pointType === 'S' ? 'CorS' : ''"
           >
-            <Filter />
-          </el-icon>
-          <div v-if="showSignalNameFilter" class="signal-name-filter" @click.stop>
-            <el-select
-              v-model="signalNameFilter"
-              filterable
-              allow-create
-              clearable
-              placeholder="Keyword Search"
-              :teleported="false"
-              style="width: 100%"
-              :fit-input-width="true"
-            >
-              <el-option
-                v-for="name in signalNameOptions"
-                :key="name"
-                :label="name"
-                :value="name"
-              />
-            </el-select>
+            Value
           </div>
-        </div>
-        <div
-          class="vtable__cell vtable__cell--value"
-          :class="props.pointType === 'C' || props.pointType === 'S' ? 'CorS' : ''"
-        >
-          Value
-        </div>
+        </template>
         <template v-if="isTA">
           <div class="vtable__cell vtable__cell--scale">Scale</div>
           <div class="vtable__cell vtable__cell--offset">Offset</div>
@@ -108,6 +106,7 @@
         <template #default="{ item, index }">
           <DynamicScrollerItem :item="item" :index="index" :active="true">
             <div class="vtable__row" :class="getRowClass(item)">
+              <div class="row-status-float"></div>
               <div class="vtable__cell vtable__cell--point-id">
                 <template
                   v-if="
@@ -128,17 +127,25 @@
                   </div>
                 </template>
                 <template v-else>
-                  <span :class="getFieldClass(item, 'point_id')">{{
-                    item.point_id > 0 ? item.point_id : '-'
-                  }}</span>
+                  <span :class="getFieldClass(item, 'point_id')">{{ item.point_id }}</span>
                 </template>
-                <div v-if="props.isEditing && getFieldError(item, 'point_id')" class="field-error">
+                <div
+                  v-if="
+                    props.isEditing &&
+                    getFieldError(item, 'point_id') &&
+                    item.rowStatus !== 'deleted'
+                  "
+                  class="field-error"
+                >
                   {{ getFieldError(item, 'point_id') }}
                 </div>
               </div>
               <div
                 class="vtable__cell vtable__cell--signal-name"
-                :class="props.pointType === 'C' || props.pointType === 'S' ? 'CorS' : ''"
+                :class="{
+                  CorS: props.pointType === 'C' || props.pointType === 'S',
+                  isEditing: props.isEditing,
+                }"
               >
                 <template v-if="item.isEditing">
                   <div class="inline-edit-container">
@@ -154,18 +161,24 @@
                   <span :class="getFieldClass(item, 'signal_name')">{{ item.signal_name }}</span>
                 </template>
                 <div
-                  v-if="props.isEditing && getFieldError(item, 'signal_name')"
+                  v-if="
+                    props.isEditing &&
+                    getFieldError(item, 'signal_name') &&
+                    item.rowStatus !== 'deleted'
+                  "
                   class="field-error"
                 >
                   {{ getFieldError(item, 'signal_name') }}
                 </div>
               </div>
-              <div
-                class="vtable__cell vtable__cell--value"
-                :class="props.pointType === 'C' || props.pointType === 'S' ? 'CorS' : ''"
-              >
-                <span class="value-field">{{ item.value ?? '-' }}</span>
-              </div>
+              <template v-if="!props.isEditing">
+                <div
+                  class="vtable__cell vtable__cell--value"
+                  :class="props.pointType === 'C' || props.pointType === 'S' ? 'CorS' : ''"
+                >
+                  <span class="value-field">{{ item.value ?? '-' }}</span>
+                </div>
+              </template>
               <template v-if="props.pointType == 'T' || props.pointType == 'A'">
                 <div class="vtable__cell vtable__cell--scale">
                   <template v-if="item.isEditing">
@@ -183,7 +196,14 @@
                   <template v-else>
                     <span :class="getFieldClass(item, 'scale')">{{ item.scale }}</span>
                   </template>
-                  <div v-if="props.isEditing && getFieldError(item, 'scale')" class="field-error">
+                  <div
+                    v-if="
+                      props.isEditing &&
+                      getFieldError(item, 'scale') &&
+                      item.rowStatus !== 'deleted'
+                    "
+                    class="field-error"
+                  >
                     {{ getFieldError(item, 'scale') }}
                   </div>
                 </div>
@@ -202,7 +222,14 @@
                   <template v-else>
                     <span :class="getFieldClass(item, 'offset')">{{ item.offset }}</span>
                   </template>
-                  <div v-if="props.isEditing && getFieldError(item, 'offset')" class="field-error">
+                  <div
+                    v-if="
+                      props.isEditing &&
+                      getFieldError(item, 'offset') &&
+                      item.rowStatus !== 'deleted'
+                    "
+                    class="field-error"
+                  >
                     {{ getFieldError(item, 'offset') }}
                   </div>
                 </div>
@@ -220,7 +247,12 @@
                   <template v-else>
                     <span :class="getFieldClass(item, 'unit')">{{ item.unit }}</span>
                   </template>
-                  <div v-if="props.isEditing && getFieldError(item, 'unit')" class="field-error">
+                  <div
+                    v-if="
+                      props.isEditing && getFieldError(item, 'unit') && item.rowStatus !== 'deleted'
+                    "
+                    class="field-error"
+                  >
                     {{ getFieldError(item, 'unit') }}
                   </div>
                 </div>
@@ -235,7 +267,7 @@
                       v-model="item.reverse"
                       popper-class="inline-reverse-popper"
                       :fit-input-width="true"
-                      :teleported="false"
+                      filterable
                     >
                       <el-option label="true" :value="true" />
                       <el-option label="false" :value="false" />
@@ -283,12 +315,13 @@
               <div v-else class="vtable__cell vtable__cell--publish-value">
                 <template v-if="props.pointType === 'C' || props.pointType === 'S'">
                   <el-select
+                    filterable
                     v-model="publishValues[item.point_id]"
                     placeholder="Select"
-                    :teleported="false"
                     popper-class="inline-publish-popper"
                     :fit-input-width="true"
                     @change="notifyPublishChange"
+                    clearable
                   >
                     <el-option label="1" :value="1" />
                     <el-option label="0" :value="0" />
@@ -331,7 +364,8 @@ import {
 } from '@element-plus/icons-vue'
 import type { PointInfo } from '@/types/channelConfiguration'
 import ValuePublishDialog from './ValuePublishDialog.vue'
-import { uniq, isArray, isInteger, toNumber, toLower, countBy, throttle } from 'lodash-es'
+// lodash-es 替换
+const toLower = (v: any) => String(v ?? '').toLowerCase()
 
 // Props 说明
 // - pointType: 当前表所属的大类（T/S/C/A），影响列与校验
@@ -346,16 +380,19 @@ interface Props {
   editFilters: string[]
   isEditing: boolean
   publishMode?: boolean
+  channelProtocol?: 'modbus_tcp' | 'modbus_rtu' | 'virt' | 'can' | 'di_do'
 }
 const props = withDefaults(defineProps<Props>(), {
   viewMode: 'points',
   editFilters: () => [],
   publishMode: false,
+  channelProtocol: 'modbus_tcp',
 })
 const emit = defineEmits<{
   'publish-change': [dirty: boolean]
   'toggle-publish': []
   'enter-edit-mode': [payload?: { fromImport?: boolean }]
+  'change-edit-filter': [value: string]
 }>()
 
 const injectedOriginalPoints = inject(OriginalPointsKey, ref<PointInfo[]>([]))
@@ -369,7 +406,9 @@ const originalPointsList = computed<PointInfo[]>(() => {
 })
 
 const editPoints = ref<PointInfo[]>([])
+const signalNameFilterRaw = ref('')
 const signalNameFilter = ref('')
+// Status 筛选逻辑已移至父组件 PointsTablesDialog.vue
 const showSignalNameFilter = ref(false)
 const scrollerRef = ref()
 const pendingNewRow = ref<PointInfo | null>(null)
@@ -390,40 +429,71 @@ const isTA = computed(() => props.pointType === 'T' || props.pointType === 'A')
 const rowHeight = ref(pxToResponsive(36))
 const signalNameOptions = computed(() => {
   const names = (editPoints.value || []).map((p) => p.signal_name).filter((n) => n)
-  return uniq(names)
+  return Array.from(new Set(names))
 })
 
-// 列表筛选：支持 signal name 关键字与编辑态的标签筛选（modified/added/deleted/invalid）
+// 列表筛选：支持 signal name 关键字与"Status（modified/added/deleted/invalid）"
+// Status 筛选由父组件通过 editFilters prop 传递
+// 导入后，页面只显示导入的点位信息（不显示被删除的点位，除非用户主动筛选 deleted）
 const filteredPoints = computed(() => {
-  const list = isArray(editPoints.value) ? editPoints.value : []
+  const list = Array.isArray(editPoints.value) ? editPoints.value : []
   let result = [...list]
+
+  // 如果当前有导入的文件名，且没有主动筛选 deleted 状态，则过滤掉 deleted 状态的点位
+  // 这样页面只显示导入的点位信息
+  if (
+    importedFileName.value &&
+    (!props.editFilters || props.editFilters.length === 0 || props.editFilters[0] !== 'deleted')
+  ) {
+    result = result.filter((p) => (p as any).rowStatus !== 'deleted')
+  }
+
   if (signalNameFilter.value) {
     const kw = toLower(String(signalNameFilter.value || ''))
-    result = result.filter((p) => toLower(String(p.signal_name || '')).includes(kw))
+    result = result.filter((p) =>
+      String(p.signal_name || '')
+        .toLowerCase()
+        .includes(kw),
+    )
   }
-  if ((props.editFilters || []).length > 0) {
-    result = result.filter((p) => {
-      const status = p.rowStatus || 'normal'
-      if (props.editFilters.includes('invalid')) {
-        return (p as any).isInvalid === true
-      }
-      return props.editFilters.includes(status)
-    })
+  // 使用父组件传递的 editFilters 进行筛选
+  if (props.editFilters && props.editFilters.length > 0) {
+    const filterValue = props.editFilters[0]
+    if (filterValue === 'invalid') {
+      result = result.filter((p) => (p as any).isInvalid === true)
+    } else {
+      result = result.filter((p) => (p as any).rowStatus === filterValue)
+    }
   }
   return result
 })
 
 onMounted(() => {
-  const onResize = throttle(() => (rowHeight.value = pxToResponsive(36)), 500)
+  const onResize = () => (rowHeight.value = pxToResponsive(36))
   window.addEventListener('resize', onResize as any)
   ;(onResize as any)()
 })
+
+// 简易防抖：筛选 300ms
+let _snfTimer: any = null
+watch(
+  () => signalNameFilterRaw.value,
+  (v) => {
+    if (_snfTimer) clearTimeout(_snfTimer)
+    _snfTimer = setTimeout(() => {
+      signalNameFilter.value = String(v || '')
+    }, 300)
+  },
+  { immediate: true },
+)
 onUnmounted(() => {})
 
 watch(
   () => ({ points: props.points, isEditing: props.isEditing }),
   (val) => {
-    if (!val.isEditing && isArray(val.points)) {
+    if (!val.isEditing && Array.isArray(val.points)) {
+      // 非编辑状态：清理未确认的新增行引用
+      pendingNewRow.value = null
       editPoints.value = val.points.map((item: PointInfo) => {
         const clone: any = {
           ...item,
@@ -436,7 +506,7 @@ watch(
         return clone
       })
       // 首次载入或刷新后执行一次有效性检测
-      if (isArray(editPoints.value)) {
+      if (Array.isArray(editPoints.value)) {
         editPoints.value.forEach((p) => validateRowValidity(p))
         refreshFieldErrorsForList()
       }
@@ -449,11 +519,18 @@ watch(
 watch(
   () => props.isEditing,
   (editing) => {
-    if (editing && isArray(editPoints.value)) {
+    if (editing && Array.isArray(editPoints.value)) {
+      // 进入编辑状态：清理未确认的新增行，重置 pendingNewRow
+      const unconfirmedIndex = editPoints.value.findIndex((p: any) => p.isNewUnconfirmed)
+      if (unconfirmedIndex !== -1) {
+        editPoints.value.splice(unconfirmedIndex, 1)
+      }
+      pendingNewRow.value = null
+      // 执行有效性检测
       editPoints.value.forEach((p) => validateRowValidity(p))
       refreshFieldErrorsForList()
     } else if (!editing) {
-      // 退出编辑：恢复为原始对比基线（originalPointsList）
+      // 退出编辑：恢复为原始对比基线（originalPointsList），清理所有未确认的新增行
       const baseline = (originalPointsList.value as PointInfo[]).map((item: PointInfo) => {
         const clone: any = {
           ...item,
@@ -464,6 +541,8 @@ watch(
         return clone
       })
       editPoints.value = baseline
+      // 清理未确认的新增行引用
+      pendingNewRow.value = null
       refreshFieldErrorsForList()
     }
   },
@@ -480,7 +559,9 @@ watch(
 )
 
 const deletePoint = (item: PointInfo) => {
-  const originalIndex = editPoints.value.findIndex((p) => p.point_id === item.point_id)
+  // 使用 rowKey 来查找行，因为 rowKey 是唯一的，避免重复 point_id 时误删
+  const itemRowKey = (item as any).rowKey
+  const originalIndex = editPoints.value.findIndex((p: any) => (p as any).rowKey === itemRowKey)
   if (originalIndex === -1) return
   const target: any = editPoints.value[originalIndex]
   const isNewUnconfirmed = !!target.isNewUnconfirmed
@@ -488,9 +569,10 @@ const deletePoint = (item: PointInfo) => {
   // 新增记录（含导入/未确认新增）删除时直接移除，不能恢复
   if (isNewUnconfirmed || isAdded) {
     editPoints.value.splice(originalIndex, 1)
-    if (pendingNewRow.value && pendingNewRow.value.point_id === item.point_id) {
+    if (pendingNewRow.value && (pendingNewRow.value as any).rowKey === itemRowKey) {
       pendingNewRow.value = null
     }
+    recomputeAllValidity()
     return
   }
   // 非新增记录：标记为删除，可恢复
@@ -500,13 +582,19 @@ const deletePoint = (item: PointInfo) => {
   recomputeAllValidity()
 }
 const restorePoint = (item: PointInfo) => {
-  const originalIndex = editPoints.value.findIndex((p) => p.point_id === item.point_id)
+  // 使用 rowKey 来查找行，因为 rowKey 是唯一的，避免重复 point_id 时误操作
+  const itemRowKey = (item as any).rowKey
+  const originalIndex = editPoints.value.findIndex((p: any) => (p as any).rowKey === itemRowKey)
   if (originalIndex !== -1) {
-    editPoints.value[originalIndex].rowStatus = 'normal'
-    delete editPoints.value[originalIndex].modifiedFields
+    const restoredItem = editPoints.value[originalIndex]
+    restoredItem.rowStatus = 'normal'
+    delete restoredItem.modifiedFields
     // 恢复后立即按当前内容重新校验（如原本有问题则仍判为无效）
-    validateRowValidity(editPoints.value[originalIndex])
+    validateRowValidity(restoredItem)
+    // 恢复后重新检查所有行的重复情况（包括新增行）
     applyDuplicatePointIdInvalid()
+    // 刷新字段级别的错误提示
+    refreshFieldErrorsForRow(restoredItem)
     // ElMessage.success('Point restored')
   }
 }
@@ -520,12 +608,17 @@ const handleStartInlineEdit = (item: PointInfo) => {
     reverse: item.reverse,
   }
   item.isEditing = true
+  ;(item as any).hideErrorsOnce = true
 }
 const handleCancelInlineEdit = (item: PointInfo) => {
   if (item.isNewUnconfirmed) {
-    const idx = editPoints.value.findIndex((p) => p.point_id === item.point_id)
+    // 使用 rowKey 来查找行，避免重复 point_id 时误删
+    const itemRowKey = (item as any).rowKey
+    const idx = editPoints.value.findIndex((p: any) => (p as any).rowKey === itemRowKey)
     if (idx !== -1) editPoints.value.splice(idx, 1)
-    pendingNewRow.value = null
+    if (pendingNewRow.value && (pendingNewRow.value as any).rowKey === itemRowKey) {
+      pendingNewRow.value = null
+    }
     recomputeAllValidity()
   } else {
     if (item.originalData) {
@@ -557,6 +650,9 @@ const handleConfirmInlineEdit = (item: PointInfo) => {
     // 新增或导入确认后，执行有效性校验
     validateRowValidity(item)
     applyDuplicatePointIdInvalid()
+    // 刷新字段级别的错误提示
+    refreshFieldErrorsForRow(item)
+    ;(item as any).hideErrorsOnce = false
   } else {
     const isNew = item.rowStatus === 'added'
     const changes: string[] = []
@@ -654,8 +750,11 @@ const handleConfirmInlineEdit = (item: PointInfo) => {
     // 编辑确认后，执行有效性校验
     validateRowValidity(item)
     applyDuplicatePointIdInvalid()
+    // 刷新字段级别的错误提示
+    refreshFieldErrorsForRow(item)
     item.isEditing = false
     delete item.originalData
+    ;(item as any).hideErrorsOnce = false
     // ElMessage.success('Point updated successfully')
   }
 }
@@ -686,9 +785,8 @@ const handleAddNewPoint = () => {
   }
   ;(newPoint as any).rowKey = createRowKey()
   ;(newPoint as any).originalPointId = undefined
+  ;(newPoint as any).hideErrorsOnce = true
   editPoints.value.unshift(newPoint)
-  // 初始化该行的字段级错误
-  refreshFieldErrorsForRow(newPoint as any)
   pendingNewRow.value = newPoint
   scrollToTop()
 }
@@ -720,84 +818,80 @@ const getFieldClass = (item: PointInfo, fieldName: string) => {
 
 // 校验当前行是否有效；返回 true 表示有效，false 表示无效
 // 规则：
-// - 公共：point_id 为正整数；signal_name 非空且无空格；reverse 为布尔
-// - T/A 专属：scale/offset 必须为数；unit 允许空字符串但不允许仅空白
-// - S/C：无需校验 scale/offset/unit
+// - 公共：point_id 为正整数；signal_name 非空；reverse 为布尔
+// - modbus 协议：scale/offset 必须为数字；unit 无限制
+// - di_do 协议：无需校验 scale/offset/unit
 function validateRowValidity(point: PointInfo): boolean {
   // 删除状态不做内容校验，视为有效
   if ((point as any).rowStatus === 'deleted') {
     ;(point as any).isInvalid = false
     return true
   }
-  // 公共校验：point_id 为正整数，signal_name 无空格且非空，reverse 为布尔
+  // 公共校验：point_id 为正整数，signal_name 非空，reverse 为布尔
   const isPositiveInt = (n: unknown) => Number.isInteger(n) && (n as number) > 0
-  const hasNoWhitespace = (s: unknown) => typeof s === 'string' && s.length > 0 && /^\S+$/.test(s)
+  const isNonEmptyString = (s: unknown) => typeof s === 'string' && s.length > 0
   const isBool = (v: unknown) => typeof v === 'boolean'
 
   let valid = true
-  let reason = ''
 
   if (!isPositiveInt(point.point_id)) {
     valid = false
-    reason = 'invalid point_id'
-  } else if (!hasNoWhitespace(point.signal_name)) {
+  } else if (!isNonEmptyString(point.signal_name)) {
     valid = false
-    reason = 'invalid signal_name (no spaces)'
   } else if (!isBool(point.reverse)) {
     valid = false
-    reason = 'invalid reverse (must be true/false)'
   }
 
-  // 仅 Telemetry/Adjustment 校验 scale/offset/unit
-  if (valid && (props.pointType === 'T' || props.pointType === 'A')) {
+  // modbus 协议校验 scale/offset（unit 无限制）
+  if (valid && props.channelProtocol !== 'di_do') {
     const isNum = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
-    // unit 允许为空串，但不允许仅包含空白
-    const isUnitValid = (u: unknown) => typeof u === 'string' && (u === '' || /^\S+$/.test(u))
 
     if (!isNum(point.scale)) {
       valid = false
-      reason = 'invalid scale (must be number)'
     } else if (!isNum(point.offset)) {
       valid = false
-      reason = 'invalid offset (must be number)'
-    } else if (!isUnitValid(point.unit)) {
-      valid = false
-      reason = 'invalid unit (no spaces)'
     }
+    // unit 字段无任何限制，不进行校验
   }
 
-  // Signal/Control 无需校验 scale/offset/unit
+  // di_do 协议无需校验 scale/offset/unit
 
-  if (!valid) {
-    ;(point as any).isInvalid = true
-    point.description = reason
-  } else {
-    ;(point as any).isInvalid = false
-    if (point.description && point.description.startsWith('Error:')) {
-      point.description = ''
-    }
-  }
+  ;(point as any).isInvalid = !valid
   return valid
 }
 
 // 检查并标记重复的 point_id（正整数）
+// 注意：已删除的行（rowStatus === 'deleted'）不参与重复检查
 function applyDuplicatePointIdInvalid() {
+  // 只统计未删除的行的 point_id
   const ids = (editPoints.value || [])
-    .map((p: PointInfo) => toNumber((p as any).point_id))
-    .filter((id) => isInteger(id) && id > 0)
-  const counts = countBy(ids)
+    .filter((p: any) => (p as any).rowStatus !== 'deleted')
+    .map((p: PointInfo) => Number((p as any).point_id))
+    .filter((id) => Number.isInteger(id) && id > 0)
+  const counts: Record<number, number> = {}
+  ids.forEach((id) => {
+    counts[id] = (counts[id] || 0) + 1
+  })
+  // 只对未删除的行进行重复检查
   ;(editPoints.value || []).forEach((p: any) => {
-    const id = toNumber(p.point_id)
-    const dup = isInteger(id) && id > 0 && (counts[id] || 0) > 1
+    // 已删除的行不参与重复检查，也不清除重复错误（保持删除状态）
+    if ((p as any).rowStatus === 'deleted') {
+      return
+    }
+    const id = Number(p.point_id)
+    const dup = Number.isInteger(id) && id > 0 && (counts[id] || 0) > 1
     if (dup) {
       p.isInvalid = true
-      p.description = 'Error: duplicate point_id'
+      // 设置字段级错误
+      setFieldError(p, 'point_id', 'duplicate point_id')
     } else {
-      // 如果之前是重复导致的错误且现在不重复，恢复为基础校验状态
-      if (p.description === 'Error: duplicate point_id') {
-        // 基础校验会在外部重新跑，这里不处理
-        p.isInvalid = false
-        p.description = ''
+      // 如果之前是重复错误，清除字段级重复错误
+      if (p.fieldErrors && p.fieldErrors.point_id === 'duplicate point_id') {
+        delete p.fieldErrors.point_id
+        // 重新校验基础有效性，以确定 isInvalid 的正确状态（可能还有其他错误）
+        validateRowValidity(p as PointInfo)
+        // 刷新字段级别的错误提示，确保 point_id 字段的错误被正确清除或更新
+        refreshFieldErrorsForRow(p)
       }
     }
   })
@@ -820,6 +914,7 @@ function notifyPublishChange() {
 }
 // 字段级即时校验（仅字段本身，不改变整行校验逻辑）
 function getFieldError(item: any, field: string): string {
+  if (item && (item as any).hideErrorsOnce) return ''
   return (item.fieldErrors && item.fieldErrors[field]) || ''
 }
 function setFieldError(item: any, field: string, message: string) {
@@ -831,12 +926,27 @@ function validateFieldOnly(item: any, field: string): string {
   switch (field) {
     case 'point_id': {
       const n = Number(item.point_id)
-      if (!Number.isInteger(n) || n <= 0) return 'must be a positive integer'
+      if (!Number.isInteger(n) || n <= 0) return 'must positive integer'
+      // 检查是否与其他未删除的行重复
+      if (Number.isInteger(n) && n > 0) {
+        const duplicateCount = (editPoints.value || []).filter((p: any) => {
+          // 排除当前行和已删除的行
+          return p !== item && (p as any).rowStatus !== 'deleted' && Number(p.point_id) === n
+        }).length
+        if (duplicateCount > 0) {
+          return 'duplicate point_id'
+        }
+      }
       return ''
     }
     case 'signal_name': {
       const v = String(item.signal_name || '')
-      if (!v || !/^\S+$/.test(v)) return 'required and cannot contain spaces'
+      if (!v) return 'required'
+      return ''
+    }
+    case 'reverse': {
+      const v = item.reverse
+      if (!(v === true || v === false)) return 'required (true/false)'
       return ''
     }
     case 'scale': {
@@ -850,8 +960,7 @@ function validateFieldOnly(item: any, field: string): string {
       return ''
     }
     case 'unit': {
-      const u = String(item.unit ?? '')
-      if (!(u === '' || /^\S+$/.test(u))) return 'unit must be empty or without spaces'
+      // unit 字段无任何限制，不进行校验
       return ''
     }
     default:
@@ -859,20 +968,30 @@ function validateFieldOnly(item: any, field: string): string {
   }
 }
 function onFieldInput(item: any, field: string) {
+  if (item && (item as any).hideErrorsOnce) (item as any).hideErrorsOnce = false
   const msg = validateFieldOnly(item, field)
   setFieldError(item, field, msg)
+  // 当 point_id 变化时，需要重新检查所有行的重复情况
+  if (field === 'point_id') {
+    applyDuplicatePointIdInvalid()
+  }
 }
 function refreshFieldErrorsForRow(item: any) {
   // 始终校验的字段
   setFieldError(item, 'point_id', validateFieldOnly(item, 'point_id'))
   setFieldError(item, 'signal_name', validateFieldOnly(item, 'signal_name'))
-  // 仅在 T/A 下校验数值/单位字段
-  if (isTA.value) {
+  setFieldError(item, 'reverse', validateFieldOnly(item, 'reverse'))
+  // 根据协议类型校验数值字段
+  // modbus_tcp/modbus_rtu 协议：需要 scale/offset（unit 无限制）
+  // di_do 协议：不需要 scale/offset/unit
+  if (props.channelProtocol !== 'di_do') {
+    // modbus 协议：校验 scale/offset
     setFieldError(item, 'scale', validateFieldOnly(item, 'scale'))
     setFieldError(item, 'offset', validateFieldOnly(item, 'offset'))
-    setFieldError(item, 'unit', validateFieldOnly(item, 'unit'))
+    // unit 字段无任何限制，不进行校验，清理可能存在的错误
+    setFieldError(item, 'unit', '')
   } else {
-    // 非 T/A 清理这些字段的错误
+    // di_do 协议：清理这些字段的错误
     setFieldError(item, 'scale', '')
     setFieldError(item, 'offset', '')
     setFieldError(item, 'unit', '')
@@ -949,12 +1068,22 @@ const handleTogglePublish = () => {
   emit('toggle-publish')
 }
 
-const handleImportClick = () => {
-  fileInputRef.value?.click()
+const handleImportClick = (event: MouseEvent) => {
+  event.preventDefault()
+  event.stopPropagation()
+  // 在 Mac 浏览器中，使用 mousedown 事件可以确保文件选择对话框正常打开
+  // 使用 setTimeout 确保在事件处理完成后调用
+  setTimeout(() => {
+    if (fileInputRef.value) {
+      fileInputRef.value.click()
+    }
+  }, 0)
 }
 
 // CSV 导入（Points）：
-// - 期望表头：point_id,signal_name,scale,offset,unit,reverse
+// - 期望表头：
+//   - tab=signal/control：point_id,point_name,reverse（scale/offset/unit 不导入，使用默认值）
+//   - tab=telemetry/adjustment：point_id,point_name,scale,offset,unit,reverse（modbus）
 // - 所有导入记录标记为 isImported，并作为“新增”渲染（rowStatus=added）
 // - 无效数据不丢弃：标记 isInvalid 与描述，便于用户在界面修正
 // - 导入后立即进入编辑态并替换当前 Tab 的编辑数据
@@ -973,88 +1102,124 @@ const handleFileChange = (event: Event) => {
         return
       }
 
-      // 验证表头
+      // 解析表头，找到所需列的索引位置（允许有其他列）
       const header = lines[0].trim()
-      const expectedHeader = 'point_id,signal_name,scale,offset,unit,reverse'
-      if (header !== expectedHeader) {
-        ElMessage.error(`Invalid CSV header. Expected: ${expectedHeader}, Got: ${header}`)
-        return
+      const headerColumns = header.split(',').map((col) => col.trim().toLowerCase())
+
+      // 导入必需列只看 Tab（pointType），不看通道协议（不区分大小写）
+      // signal_name 已统一展示为 point_name；导入只接受 point_name
+      let requiredColumns: Record<string, string>
+
+      const isSignalOrControl = props.pointType === 'S' || props.pointType === 'C'
+      if (isSignalOrControl) {
+        // signal / control：硬性表头只要 point_id, point_name, reverse
+        requiredColumns = {
+          point_id: 'point_id',
+          signal_name: 'point_name',
+          reverse: 'reverse',
+        }
+      } else {
+        // telemetry/adjustment：必需列：point_id, point_name, scale, offset, unit, reverse
+        requiredColumns = {
+          point_id: 'point_id',
+          signal_name: 'point_name',
+          scale: 'scale',
+          offset: 'offset',
+          unit: 'unit',
+          reverse: 'reverse',
+        }
+      }
+
+      // 查找各列的索引位置
+      const columnIndices: Record<string, number> = {}
+
+      // 查找必需列（所有必需列都必须存在）
+      for (const [key, colName] of Object.entries(requiredColumns)) {
+        const index = headerColumns.findIndex((h) => h === colName)
+        if (index === -1) {
+          ElMessage.error(`Required column "${colName}" not found in CSV header`)
+          return
+        }
+        columnIndices[key] = index
       }
 
       // 解析数据行
       const importedPoints: PointInfo[] = []
-      const invalidRecords: number[] = []
 
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim()
         if (!line) continue
 
         const values = line.split(',').map((v) => v.trim())
-        let hasError = false
-        let errorReason = ''
 
-        // 检查字段数量
-        if (values.length !== 6) {
-          hasError = true
-          errorReason = 'incorrect number of fields'
+        // 根据列索引提取字段值
+        const getValue = (columnKey: string, defaultValue: string = ''): string => {
+          const index = columnIndices[columnKey]
+          if (index !== undefined && index >= 0 && index < values.length) {
+            return values[index] || defaultValue
+          }
+          return defaultValue
         }
 
-        const [pointIdStr, signalName, scaleStr, offsetStr, unit, reverseStr] = values
+        const pointIdStr = getValue('point_id')
+        const signalName = getValue('signal_name')
+        const reverseStr = getValue('reverse')
 
-        // 验证必填字段
-        if (!hasError && (!pointIdStr || !signalName)) {
-          hasError = true
-          errorReason = 'point_id and signal_name are required'
+        // 根据 Tab 解析字段
+        let scaleStr: string
+        let offsetStr: string
+        let unit: string
+
+        if (isSignalOrControl) {
+          // signal/control：不导入 scale/offset/unit，使用默认值
+          scaleStr = ''
+          offsetStr = ''
+          unit = ''
+        } else {
+          // telemetry/adjustment：必需列，从列索引中获取
+          scaleStr = getValue('scale')
+          offsetStr = getValue('offset')
+          unit = getValue('unit')
         }
 
-        const pointId = Number(pointIdStr)
-        if (!hasError && (!Number.isInteger(pointId) || pointId <= 0)) {
-          hasError = true
-          errorReason = 'invalid point_id'
-        }
+        // 解析数值字段（直接解析，不做验证，由后续验证方法判断）
+        const pointId = Number(pointIdStr) || 0
+        // signal/control：默认 scale=1 offset=0 unit=''
+        const scale = isSignalOrControl ? 1 : scaleStr ? Number(scaleStr) : 1
+        const offset = isSignalOrControl ? 0 : offsetStr ? Number(offsetStr) : 0
 
-        // 解析可选字段
-        const scale = scaleStr ? Number(scaleStr) : 1
-        const offset = offsetStr ? Number(offsetStr) : 0
-
-        // 解析 reverse（支持 true/false/0/1）
+        // 解析 reverse（支持 true/false/0/1，默认 false）
         let reverse = false
-        if (!hasError && reverseStr) {
+        if (reverseStr) {
           const lowerReverse = reverseStr.toLowerCase()
           if (lowerReverse === 'true' || lowerReverse === '1') {
             reverse = true
           } else if (lowerReverse === 'false' || lowerReverse === '0') {
             reverse = false
-          } else {
-            hasError = true
-            errorReason = 'invalid reverse value (must be true/false/0/1)'
           }
+          // 如果值无效，保持默认值 false，由后续验证方法判断
         }
 
-        // 创建记录，包括错误的记录
+        // 创建记录，正常导入所有数据
         const point: PointInfo = {
-          point_id: hasError ? -i : pointId,
+          point_id: pointId,
           signal_name: signalName || '',
           scale,
           offset,
           unit: unit || '',
           data_type: 'float',
           reverse,
-          description: hasError ? `Error: ${errorReason}` : '',
+          description: '',
           rowStatus: 'added',
           isEditing: false,
-        }
-
-        // 如果有错误，标记为invalid
-        if (hasError) {
-          ;(point as any).isInvalid = true
-          invalidRecords.push(i + 1)
         }
 
         // 标记为文件导入的记录
         ;(point as any).isImported = true
         ;(point as any).rowKey = createRowKey()
         ;(point as any).originalPointId = undefined
+        // 导入后立即显示错误，不隐藏
+        ;(point as any).hideErrorsOnce = false
 
         importedPoints.push(point)
       }
@@ -1070,21 +1235,58 @@ const handleFileChange = (event: Event) => {
       // 通知父组件进入编辑模式（标记来自导入，避免被父组件清空文件名）
       emit('enter-edit-mode', { fromImport: true })
 
-      // 直接更新本地数据，立即显示
+      // 计算原始点位数据和导入点位数据的 point_id 差集
+      // 将原始中有但导入中没有的点位标记为删除
+      const originalPointIds = new Set(
+        (originalPointsList.value || []).map((p) => Number(p.point_id)).filter((id) => id > 0),
+      )
+      const importedPointIds = new Set(
+        importedPoints
+          .map((p) => Number(p.point_id))
+          .filter((id) => Number.isInteger(id) && id > 0),
+      )
+
+      // 计算差集：原始中有但导入中没有的点位
+      const deletedPointIds = new Set<number>()
+      originalPointIds.forEach((id) => {
+        if (!importedPointIds.has(id)) {
+          deletedPointIds.add(id)
+        }
+      })
+
+      // 创建被删除的点位记录
+      const deletedPoints: PointInfo[] = []
+      if (deletedPointIds.size > 0) {
+        const originalPointsMap = new Map(
+          (originalPointsList.value || []).map((p) => [Number(p.point_id), p]),
+        )
+        deletedPointIds.forEach((pointId) => {
+          const originalPoint = originalPointsMap.get(pointId)
+          if (originalPoint) {
+            const deletedPoint: PointInfo = {
+              ...originalPoint,
+              rowStatus: 'deleted',
+              isEditing: false,
+            }
+            ;(deletedPoint as any).rowKey = createRowKey()
+            ;(deletedPoint as any).originalPointId = originalPoint.point_id
+            deletedPoints.push(deletedPoint)
+          }
+        })
+      }
+
+      // 直接更新本地数据：导入的点位 + 被删除的点位
+      // 页面显示时会过滤掉 deleted 状态的点位，只显示导入的点位
       nextTick(() => {
-        editPoints.value = importedPoints
-        // 导入完成后进行一次重复ID与基础校验
+        editPoints.value = [...importedPoints, ...deletedPoints]
+        // 导入完成后先进行字段级错误校验（会在单元格中显示错误）
+        refreshFieldErrorsForList()
+        // 然后进行重复ID与基础校验（会标记 isInvalid）
         recomputeAllValidity()
-        // 导入完成后为字段级错误做一次初始化校验
+        // 再次刷新字段错误，确保重复ID的错误也能显示在单元格中
         refreshFieldErrorsForList()
       })
-      if (invalidRecords.length > 0) {
-        ElMessage.warning(
-          `Imported ${importedPoints.length} records, ${invalidRecords.length} with errors (lines: ${invalidRecords.slice(0, 5).join(', ')}${invalidRecords.length > 5 ? '...' : ''})`,
-        )
-      } else {
-        ElMessage.success(`Successfully imported ${importedPoints.length} points`)
-      }
+      ElMessage.success(`Successfully imported ${importedPoints.length} points`)
     } catch (error) {
       console.error('Error parsing CSV:', error)
       ElMessage.error('Failed to parse CSV file')
@@ -1115,18 +1317,50 @@ const handleExport = () => {
     return
   }
 
-  // 生成CSV内容
-  const header = 'point_id,signal_name,scale,offset,unit,reverse'
-  const rows = editPoints.value.map((point) => {
-    return [
-      point.point_id,
-      point.signal_name,
-      point.scale,
-      point.offset,
-      point.unit,
-      point.reverse ? 'true' : 'false',
-    ].join(',')
-  })
+  // 根据通道类型生成CSV内容
+  let header: string
+  let rows: string[]
+  const isSignalOrControl = props.pointType === 'S' || props.pointType === 'C'
+
+  if (props.channelProtocol === 'di_do') {
+    // di_do 类型：point_id,point_name,value,reverse
+    header = 'point_id,point_name,value,reverse'
+    rows = editPoints.value.map((point) => {
+      return [
+        point.point_id,
+        point.signal_name,
+        point.value ?? '',
+        point.reverse ? 'true' : 'false',
+      ].join(',')
+    })
+  } else {
+    if (isSignalOrControl) {
+      // signal/control：导出不包含 scale/offset/unit
+      header = 'point_id,point_name,value,reverse'
+      rows = editPoints.value.map((point) => {
+        return [
+          point.point_id,
+          point.signal_name,
+          point.value ?? '',
+          point.reverse ? 'true' : 'false',
+        ].join(',')
+      })
+    } else {
+      // telemetry/adjustment（modbus）：point_id,point_name,value,scale,offset,unit,reverse
+      header = 'point_id,point_name,value,scale,offset,unit,reverse'
+      rows = editPoints.value.map((point) => {
+        return [
+          point.point_id,
+          point.signal_name,
+          point.value ?? '',
+          point.scale,
+          point.offset,
+          point.unit,
+          point.reverse ? 'true' : 'false',
+        ].join(',')
+      })
+    }
+  }
 
   const csvContent = [header, ...rows].join('\n')
 
@@ -1164,6 +1398,15 @@ const handleExport = () => {
   ElMessage.success(`Exported to ${filename}`)
 }
 
+// 检查是否有修改、添加或删除
+const hasChanges = () => {
+  if (!Array.isArray(editPoints.value)) return false
+  return editPoints.value.some(
+    (p: any) =>
+      p && (p.rowStatus === 'modified' || p.rowStatus === 'added' || p.rowStatus === 'deleted'),
+  )
+}
+
 // 对外暴露：供父组件进行提交/发布/清理调用
 defineExpose({
   getEditedData,
@@ -1177,6 +1420,7 @@ defineExpose({
     signalNameFilter.value = ''
     showSignalNameFilter.value = false
   },
+  scrollToTop,
   hasInvalid: () => {
     return Array.isArray(editPoints.value)
       ? editPoints.value.some(
@@ -1188,6 +1432,7 @@ defineExpose({
         )
       : false
   },
+  hasChanges,
 })
 </script>
 
@@ -1213,8 +1458,37 @@ defineExpose({
   .vtable__body {
     position: relative;
     z-index: 1;
-    :deep(.vue-recycle-scroller__item-wrapper:has()) {
-    }
+  }
+
+  // 为表头与数据行统一预留左侧状态与右侧滑块空间，确保列对齐
+  .vtable__header {
+    position: relative;
+    padding-left: 0.03rem; // 左侧状态占位
+    padding-right: 0.08rem; // 右侧滑块占位
+  }
+
+  // 浮动的左侧状态条（不参与布局）
+  .row-status-float {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0.03rem;
+    background: transparent;
+    pointer-events: none;
+  }
+  // 根据行状态着色
+  .vtable__row.row-status-added .row-status-float {
+    background: #67c23a;
+  }
+  .vtable__row.row-status-modified .row-status-float {
+    background: #409eff;
+  }
+  .vtable__row.row-status-deleted .row-status-float {
+    background: #f56c6c;
+  }
+  .vtable__row.row-invalid .row-status-float {
+    background: #f56c6c;
   }
 
   .vtable__cell {
@@ -1229,14 +1503,21 @@ defineExpose({
   }
 
   .vtable__cell--point-id {
-    width: 10%;
+    width: 1.3rem; // 10% of 13.07rem
   }
   .vtable__cell--signal-name {
-    width: 25%;
+    width: 3.26rem; // 25% of 13.07rem
     position: relative;
-    &.CorS {
-      width: 35%;
+    &.isEditing {
+      width: 4.83rem; // 37% of 13.07rem
     }
+    &.CorS {
+      width: 4.57rem; // 35% of 13.07rem
+      &.isEditing {
+        width: 6.14rem; // 47% of 13.07rem
+      }
+    }
+
     .filter-icon {
       margin-left: 0.05rem;
       font-size: 0.14rem;
@@ -1246,6 +1527,7 @@ defineExpose({
       position: absolute;
       top: 100%;
       left: 0;
+      right: 0;
       z-index: 100;
       background: #1e2f52;
       padding: 0.1rem;
@@ -1254,29 +1536,35 @@ defineExpose({
       min-width: 2.5rem;
     }
   }
+  // 顶部工具栏中的筛选下拉与输入框左侧对齐
+  :deep(.signal-name-popper) {
+    left: 0 !important;
+    transform: none !important;
+    min-width: 100% !important;
+  }
   .vtable__cell--value {
-    width: 12%;
+    width: 1.56rem; // 12% of 13.07rem
     &.CorS {
-      width: 22%;
+      width: 2.87rem; // 22% of 13.07rem
     }
   }
   .vtable__cell--scale {
-    width: 10%;
+    width: 1.3rem; // 10% of 13.07rem
   }
   .vtable__cell--offset {
-    width: 10%;
+    width: 1.3rem; // 10% of 13.07rem
   }
   .vtable__cell--unit {
-    width: 10%;
+    width: 1.3rem; // 10% of 13.07rem
   }
   .vtable__cell--reverse {
-    width: 10%;
+    width: 1.3rem; // 10% of 13.07rem
     &.CorS {
-      width: 20%;
+      width: 2.61rem; // 20% of 13.07rem
     }
   }
   .vtable__cell--operation {
-    width: 13%;
+    width: 1.69rem; // 13% of 13.07rem
 
     .point-table__operation-cell {
       display: flex;
@@ -1412,19 +1700,11 @@ defineExpose({
   .row-status-normal {
     background-color: transparent;
   }
-  .row-status-modified {
-    border-left: 0.03rem solid #409eff;
-  }
-  .row-status-added {
-    border-left: 0.03rem solid #67c23a;
-  }
   .row-status-deleted {
-    border-left: 0.03rem solid #f56c6c;
     opacity: 0.6;
   }
   .row-invalid {
     background-color: rgba(245, 108, 108, 0.1);
-    border-left: 0.03rem solid #f56c6c;
   }
 
   .field-modified {
@@ -1442,7 +1722,7 @@ defineExpose({
   }
 
   .vtable__cell--publish-value {
-    width: 14%;
+    width: 1.82rem; // 14% of 13.07rem
     position: relative;
     z-index: 10;
     :deep(.el-input-number) {

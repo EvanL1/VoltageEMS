@@ -17,6 +17,31 @@
       flex: 1;
       overflow: auto;
 
+      // 增强滚动条可见性
+      &::-webkit-scrollbar {
+        width: 0.08rem;
+        height: 0.08rem;
+      }
+
+      &::-webkit-scrollbar-track {
+        background: rgba(58, 82, 121, 0.3);
+        border-radius: 0.04rem;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.4);
+        border-radius: 0.04rem;
+        transition: background 0.3s;
+
+        &:hover {
+          background: rgba(255, 255, 255, 0.6);
+        }
+      }
+
+      // // Firefox滚动条样式
+      // scrollbar-width: thin;
+      // scrollbar-color: rgba(255, 255, 255, 0.4) rgba(58, 82, 121, 0.3);
+
       .vtable__row {
         display: flex;
         align-items: center;
@@ -58,7 +83,7 @@
       // display: flex;
       // align-items: center;
       // justify-content: center;
-      transition: all 0.3s ease-in-out;
+      // transition: all 0.3s ease-in-out;
       &:last-child {
         flex: 1 !important;
         width: unset !important;

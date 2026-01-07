@@ -7,7 +7,7 @@
             <el-form-item label="Keyword:">
               <el-input v-model="filters.keyword" placeholder="Please enter keyword" />
             </el-form-item>
-            <el-form-item label="Level:">
+            <el-form-item label="Alarm Level:">
               <el-select
                 v-model="filters.warning_level"
                 placeholder="Please select level"
@@ -37,25 +37,24 @@
               :icon="tableRefreshIcon"
               text="Reload"
               custom-class="rule-management__btn"
-              @click="handleRefresh"
+              @click="reloadFilters"
             />
             <IconButton
               type="primary"
               :icon="tableSearchIcon"
               text="Search"
               custom-class="rule-management__btn"
-              @click="handleSearch"
+              @click="fetchTableData(true)"
+            />
+            <IconButton
+              v-permission="['Admin']"
+              type="primary"
+              :icon="userAddIcon"
+              text="New rule"
+              custom-class="rule-management__btn"
+              @click="handleAddUser"
             />
           </div>
-        </div>
-        <div class="rule-management__table-operations" v-permission="['Admin']">
-          <IconButton
-            type="primary"
-            :icon="userAddIcon"
-            text="New a rule"
-            custom-class="rule-management__btn"
-            @click="handleAddUser"
-          />
         </div>
       </div>
       <div class="rule-management__table">
@@ -67,7 +66,7 @@
         >
           <el-table-column prop="id" label="Rule ID" show-overflow-tooltip />
           <el-table-column prop="rule_name" label="Rule Name" show-overflow-tooltip />
-          <el-table-column prop="warning_level" label="Warning Level">
+          <el-table-column prop="warning_level" label="Alarm Level">
             <template #default="{ row }">
               <img
                 :src="warningLevelList[row.warning_level as 1 | 2 | 3]"
@@ -129,7 +128,7 @@
     </LoadingBg>
     <RulesOperationForm
       ref="rulesOperationFormRef"
-      @submit="handleRuleSubmit"
+      @submit="fetchTableData(true)"
       @cancel="handleRuleCancel"
     />
   </div>
@@ -169,6 +168,7 @@ const {
   fetchTableData,
   filters,
   handlePageChange,
+  reloadFilters,
 } = useTableData<RuleInfo>(tableConfig)
 
 filters.keyword = ''
@@ -232,23 +232,10 @@ const handleSwitchChange = async (row: RuleInfo) => {
     }
   }
 }
-// 处理规则表单提交
-const handleRuleSubmit = async () => {
-  await fetchTableData()
-}
 
 // 处理规则表单取消
 const handleRuleCancel = () => {
   console.log('Rule form cancelled')
-}
-const handleRefresh = () => {
-  filters.keyword = ''
-  filters.warning_level = null
-  filters.enabled = null
-  fetchTableData(true)
-}
-const handleSearch = () => {
-  fetchTableData(true)
 }
 </script>
 
@@ -261,7 +248,7 @@ const handleSearch = () => {
   flex-direction: column;
 
   .rule-management__header {
-    margin-bottom: 0.2rem;
+    // margin-bottom: 0.2rem;
 
     .rule-management__search-form {
       position: relative;
@@ -275,12 +262,6 @@ const handleSearch = () => {
         align-items: flex-start;
         gap: 0.1rem;
       }
-    }
-
-    .rule-management__table-operations {
-      width: 100%;
-      padding-top: 0.2rem;
-      border-top: 0.01rem solid rgba(255, 255, 255, 0.1);
     }
 
     .rule-management__btn {
@@ -297,7 +278,7 @@ const handleSearch = () => {
   }
 
   .rule-management__table {
-    height: calc(100% - 1.25rem);
+    height: calc(100% - 0.52rem);
     // max-width: 16.6rem;
     display: flex;
     flex-direction: column;

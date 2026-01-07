@@ -50,14 +50,14 @@
               :icon="tableRefreshIcon"
               text="Reload"
               custom-class="rule-management__btn"
-              @click="handleRefresh"
+              @click="reloadFilters"
             />
             <IconButton
               type="primary"
               :icon="tableSearchIcon"
               text="Search"
               custom-class="rule-management__btn"
-              @click="handleSearch"
+              @click="fetchTableData(true)"
             />
             <IconButton
               type="primary"
@@ -186,7 +186,7 @@
     </LoadingBg>
     <ChannelDetailDialog
       ref="ChannelDetailDialogRef"
-      @submit="fetchTableData"
+      @submit="fetchTableData(true)"
       @cancel="handleChannelDetailCancel"
     />
 
@@ -226,55 +226,12 @@ const {
   filters,
   handlePageChange,
   deleteRow,
+  reloadFilters,
 } = useTableData<ChannelListItem>(tableConfig)
 
 filters.productName = ''
 filters.enabled = null
 filters.connected = null
-const tableRef = ref<TableInstance | null>(null)
-const columns = ref([
-  {
-    prop: 'id',
-    label: 'ID',
-    width: 100,
-  },
-  {
-    prop: 'name',
-    label: 'Name',
-    width: 160,
-  },
-  {
-    prop: 'description',
-    label: 'Description',
-    width: 160,
-  },
-  {
-    prop: 'protocol',
-    label: 'Protocol',
-    width: 140,
-  },
-  {
-    prop: 'enabled',
-    label: 'Enabled',
-    width: 100,
-  },
-  {
-    prop: 'connected',
-    label: 'Connected',
-    width: 140,
-  },
-  {
-    prop: 'error_count',
-    label: 'Error Count',
-    width: 100,
-  },
-  {
-    label: 'Operation',
-    fixed: 'right',
-    width: 280,
-  },
-])
-const levelSelectRef = ref<HTMLElement | null>(null)
 const ChannelDetailDialogRef = ref()
 const PointsTablesDialogRef = ref()
 const ruleManagementRef = ref<HTMLElement | null>(null)
@@ -282,10 +239,6 @@ const ruleManagementRef = ref<HTMLElement | null>(null)
 const expandedRows = ref<number[]>([])
 // 编辑状态管理 - 每个通道独立的编辑状态
 const editingChannels = ref<Set<number>>(new Set())
-const editPointsData = ref<Record<number, Record<string, PointInfo[]>>>({})
-
-// 点位数据存储
-const pointsData = ref<Record<number, Record<string, PointInfo[]>>>({})
 
 // 每个通道的 tab 状态
 const channelTabs = ref<Record<number, string>>({})
@@ -294,19 +247,6 @@ const channelControlLoadings = ref<boolean[][]>([])
 // 检查特定通道是否在编辑状态
 const isChannelEditing = (channelId: number) => {
   return editingChannels.value.has(channelId)
-}
-
-// 获取通道的活跃 tab
-const getActiveTab = (channelId: number) => {
-  if (!channelTabs.value[channelId]) {
-    channelTabs.value[channelId] = 'telemetry'
-  }
-  return channelTabs.value[channelId]
-}
-
-// 设置通道的活跃 tab
-const setActiveTab = (channelId: number, tabName: string) => {
-  channelTabs.value[channelId] = tabName
 }
 
 // Points Tables 对话框相关数据
@@ -359,27 +299,6 @@ const handleEnabledChange = async (state: boolean, row: ChannelListItem, index: 
   } finally {
     channelControlLoadings.value[index][0] = false
   }
-}
-
-const handleRefresh = () => {
-  filters.protocol = ''
-  filters.enabled = null
-  filters.connected = null
-  fetchTableData(true)
-}
-
-const handleSearch = () => {
-  fetchTableData(true)
-}
-
-// // 控制通道状态
-// const handleControl = (row: ChannelListItem, operation: 'start' | 'stop' | 'restart') => {
-//   controlChannelStatus(row.id as number, operation)
-// }
-
-// 通道详情弹窗提交
-const handleChannelDetailSubmit = (data: ChannelDetail) => {
-  console.log('Channel detail submitted:', data)
 }
 
 // 通道详情弹窗取消

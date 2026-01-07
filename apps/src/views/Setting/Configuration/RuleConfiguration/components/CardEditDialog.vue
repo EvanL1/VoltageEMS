@@ -22,7 +22,7 @@
 import { ref, watch, computed } from 'vue'
 import FunctionSwitchForm from './customCardForm/FunctionSwitchForm.vue'
 import ActionChangeValue from './customCardForm/ActionChangeValue.vue'
-import type { RuleCard } from '@/types/index.ts'
+import type { RuleCard } from '@/types/ruleConfiguration'
 
 interface Props {
   visible: boolean
@@ -102,7 +102,7 @@ function deepClone<T>(obj: T): T {
   .card-edit-dialog {
     .el-form {
       .el-form-item {
-        margin-bottom: 20px;
+        margin-bottom: 0.2rem;
 
         .el-form-item__label {
           font-weight: 600;

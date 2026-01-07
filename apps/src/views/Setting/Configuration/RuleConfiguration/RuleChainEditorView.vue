@@ -3,7 +3,7 @@
     <div class="rule-chain-editor__header">
       <div class="rule-chain-editor__header-left">
         <div class="rule-chain-editor__header-left-back" @click="goBackToList">
-          <img :src="backIcon" />
+          <img :src="backIconSrc" />
           Back
         </div>
         <div class="rule-chain-editor__header-left-fenge"></div>
@@ -12,59 +12,48 @@
         </div>
       </div>
       <div class="rule-chain-editor__header-right">
-        <el-button type="primary" @click="toggleFullscreen">
+        <el-button type="primary" @click="toggleFullscreen" class="custom-button">
           <el-icon>
             <FullScreen />
           </el-icon>
           {{ isFullscreen ? 'Exit Fullscreen' : 'Fullscreen' }}
         </el-button>
-        <el-button type="warning" @click="handleImportClick">
+
+        <el-button
+          v-if="!isMonitorMode"
+          type="primary"
+          @click="handleImportClick"
+          class="custom-button"
+        >
           <el-icon>
             <Download />
           </el-icon>
           Import
         </el-button>
-        <el-button type="warning" @click="handleExport">
+        <el-button v-if="isMonitorMode" type="primary" @click="handleExport" class="custom-button">
           <el-icon>
             <Upload />
           </el-icon>
           Export
         </el-button>
-        <el-button type="warning" :disabled="!hasUnsavedChanges" @click="handleSave">
+        <el-button v-if="isMonitorMode" type="primary" @click="enterEditMode" class="custom-button">
           <el-icon>
-            <Check />
+            <Edit />
           </el-icon>
-          Submit
+          Edit
         </el-button>
-        <el-button type="warning" :disabled="!hasUnsavedChanges" @click="handleCancel">
-          <el-icon>
-            <Close />
-          </el-icon>
-          Cancel
-        </el-button>
+        <el-button
+          v-if="!isMonitorMode"
+          type="warning"
+          @click="handleExitEdit"
+          class="custom-button"
+          >Cancel Edit</el-button
+        >
       </div>
     </div>
 
     <div class="rule-chain-editor__content">
-      <!-- 左侧规则卡片选择区域 -->
-      <div class="rule-chain-editor__left-panel" :class="{ 'is-collapsed': isLeftPanelCollapsed }">
-        <!-- 规则链选择器 -->
-        <div class="rule-chain-editor__chain-selector">
-          <el-select
-            v-model="currentChainId"
-            placeholder="Select Rule Chain"
-            style="width: 100%"
-            @change="handleChainChange"
-          >
-            <el-option
-              v-for="chain in ruleChains"
-              :key="chain.id"
-              :label="chain.name"
-              :value="chain.id"
-            />
-          </el-select>
-        </div>
-        <!-- 规则卡片分类 -->
+      <div v-if="!isMonitorMode" class="rule-chain-editor__left-panel">
         <div class="rule-chain-editor__card-categories">
           <el-collapse v-model="activeCategories">
             <el-collapse-item
@@ -77,11 +66,6 @@
               <template #title>
                 <div class="rule-chain-editor__category-title">
                   <span>{{ category.title }}</span>
-                  <!-- <el-tooltip :content="category.tooltip" placement="right">
-                    <el-icon class="rule-chain-editor__tooltip-icon">
-                      <QuestionFilled />
-                    </el-icon>
-                  </el-tooltip> -->
                 </div>
               </template>
 
@@ -111,16 +95,7 @@
         </div>
       </div>
 
-      <!-- 中间VueFlow连接图区域 -->
-      <div class="rule-chain-editor__center-panel" @drop="onDrop">
-        <!-- 收放按钮 -->
-        <div class="rule-chain-editor__collapse-btn" @click="toggleLeftPanel">
-          <el-icon>
-            <ArrowRight v-if="isLeftPanelCollapsed" />
-            <ArrowLeft v-else />
-          </el-icon>
-        </div>
-        <!-- :edge-types="edgeTypes" :default-edge-options="defaultEdgeOptions" -->
+      <div ref="centerPanelRef" class="rule-chain-editor__center-panel" @drop="handleDropGuard">
         <VueFlow
           fit-view-on-init
           :connection-mode="ConnectionMode.Strict"
@@ -135,15 +110,18 @@
           :snap-grid="[1, 1]"
           :node-types="nodeTypes"
           :connection-line-style="{ stroke: '#ff8a00', strokeWidth: 2.5 }"
-          @connect="handleConnect"
+          :nodes-draggable="true"
+          :nodes-connectable="!isMonitorMode"
+          :elements-selectable="!isMonitorMode"
+          @connect="handleConnectGuard"
           @node-double-click="handleNodeClick"
-          @dragover="onDragOver"
-          @dragleave="onDragLeave"
+          @dragover="handleDragOverGuard"
+          @dragleave="handleDragLeaveGuard"
         >
-          <!-- 自定义节点模板 -->
-
           <template #node-custom="nodeProps">
-            <CustomNode v-bind="nodeProps" />
+            <div class="rf-node-with-vars">
+              <CustomNode v-bind="nodeProps" :is-monitor-mode="isMonitorMode" />
+            </div>
           </template>
           <template #node-start="nodeProps">
             <StartNode v-bind="nodeProps" />
@@ -151,16 +129,7 @@
           <template #node-end="nodeProps">
             <EndNode v-bind="nodeProps" />
           </template>
-          <!-- <template #edge-customLine="edgeProps">
-            <CustomLine v-bind="edgeProps" @edge-click="handleEdgeClick" />
-          </template>
-          <template #connection-line="{ sourceX, sourceY, targetX, targetY }">
-            <CustomLine :source-x="sourceX" :source-y="sourceY" :target-x="targetX" :target-y="targetY" />
-          </template> -->
-          <!-- 背景网格 -->
           <Background variant="lines" :gap="20" color="rgba(255, 255, 255, 0.1)" />
-
-          <!-- 小地图 -->
           <MiniMap
             class="rf-minimap-custom"
             :node-stroke-color="'#74b9ff'"
@@ -169,13 +138,59 @@
             position="top-right"
           />
 
-          <!-- 控制按钮 -->
           <Controls position="bottom-right" />
         </VueFlow>
+        <Teleport to="body">
+          <template v-for="nodeId in Array.from(visibleVarsNodes)" :key="nodeId">
+            <div
+              v-if="isMonitorMode && nodeVarsPositions.has(nodeId) && getNodeVarsData(nodeId)"
+              class="node-vars-bubble-fixed"
+              :style="getBubbleStyle(nodeId)"
+            >
+              <div
+                class="node-vars-bubble__row"
+                v-for="v in getNodeVarsData(nodeId)"
+                :key="`${nodeId}-${v.name}-${v.instance}-${v.point}`"
+              >
+                <div class="node-vars-bubble__left">
+                  <span class="var-item">{{
+                    `${v.instance_name || v.instance || '-'}/${v.point_name || v.point || '-'}`
+                  }}</span>
+                </div>
+                <div class="node-vars-bubble__right">
+                  <span>{{ v.value !== undefined ? v.value : '-' }}</span>
+                  <span v-if="v.unit" class="node-vars-bubble__unit">{{ v.unit }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </Teleport>
       </div>
     </div>
 
-    <!-- 保留原有的对话框组件以备将来使用 -->
+    <div v-if="!isMonitorMode" class="rule-chain-editor__floating-actions">
+      <el-button
+        circle
+        type="warning"
+        class="floating-btn floating-btn--cancel"
+        @click="handleCancel"
+        :disabled="!hasUnsavedChanges"
+        title="Cancel"
+      >
+        ×
+      </el-button>
+      <el-button
+        circle
+        type="primary"
+        class="floating-btn floating-btn--submit"
+        @click="handleSave"
+        :disabled="!hasUnsavedChanges"
+        title="Submit"
+      >
+        √
+      </el-button>
+    </div>
+
     <CardEditDialog
       v-model:visible="cardEditDialogVisible"
       :card="editingCard"
@@ -189,37 +204,20 @@
       style="display: none"
       @change="handleImportChange"
     />
-
-    <!-- <EdgeEditDialog
-      v-model:visible="edgeEditDialogVisible"
-      :edge="editingEdge"
-      :rule-label-options="ruleLabelOptionsEdge"
-      @save="handleEdgeEditConfirm"
-    /> -->
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, markRaw, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted, nextTick, Teleport } from 'vue'
+import { getCurrentFontSize } from '@/utils/responsive'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listRules, getRuleDetail } from '@/api/rulesManagement'
+import { getRuleDetail } from '@/api/rulesManagement'
 import backIcon from '@/assets/icons/button-back.svg'
-// import CustomLine from '../components/CustomLine.vue'
-// import CardEditDialog from '../components/CardEditDialog.vue'
-// import EdgeEditDialog from '../components/EdgeEditDialog.vue'
+const backIconSrc = backIcon as string
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
-// import '@vue-flow/controls/dist/style.css'
-import {
-  FullScreen,
-  Check,
-  Close,
-  Download,
-  Upload,
-  ArrowRight,
-  ArrowLeft,
-} from '@element-plus/icons-vue'
+import { FullScreen, Download, Upload, Edit } from '@element-plus/icons-vue'
 import {
   VueFlow,
   ConnectionMode,
@@ -249,66 +247,57 @@ import type { RuleChainPayload } from '@/types/ruleConfiguration'
 import useDragAndDrop from '@/utils/useDnd'
 import CardEditDialog from './components/CardEditDialog.vue'
 import { updateRule } from '@/api/rulesManagement'
-// import EdgeEditDialog from './components/EdgeEditDialog.vue'
-// VueFlow
+import wsManager from '@/utils/websocket'
 const {
   updateNode,
-  updateEdge,
   toObject,
   addEdges,
   onNodesChange,
-  findEdge,
   onEdgesChange,
   onConnect,
   onEdgeUpdate,
   onNodeDragStop,
   setNodes,
   setEdges,
-  applyNodeChanges,
   applyEdgeChanges,
   removeEdges,
   fitView,
+  viewport,
+  findNode,
+  flowToScreenCoordinate,
 } = useVueFlow()
 const { onDragStart, onDragOver, onDragLeave, onDrop } = useDragAndDrop()
 // 路由
 const route = useRoute()
 const router = useRouter()
 
-// Store
 const ruleChainStore = useRuleChainStore()
 
-// 响应式数据
-// const edgeTypes = { customLine: markRaw(CustomLine) }
-// const defaultEdgeOptions = {
-//   type: 'customLine',
-//   data: {
-//     color: '#6F3381',
-//     strokeWidth: 2.5,
-//     dash: '6 6',
-//     animated: true,
-//     curved: true
-//   }
-// }
 const currentChainId = ref('')
-const isLeftPanelCollapsed = ref(false)
+const isMonitorMode = ref(true)
 const activeCategories = ref(['function', 'action'])
 const cardEditDialogVisible = ref(false)
-const edgeEditDialogVisible = ref(false)
 const editingCard = ref<RuleCard | null>(null)
-const editingEdge = ref<FlowEdge | null>(null)
-const ruleLabelOptionsEdge = ref<string[]>([])
 const importFileInput = ref<HTMLInputElement | null>(null)
+const subscriptionId = ref<string>('')
+const visibleVarsNodes = ref<Set<string>>(new Set())
+const lastActiveNodeIds = ref<Set<string>>(new Set())
+const nodeVarsPositions = ref<Map<string, { top: number; left: number }>>(new Map())
+const centerPanelRef = ref<HTMLElement | null>(null)
+const nodeVariablesData = ref<Map<string, Record<string, number>>>(new Map())
 
-// 节点类型定义
 const nodeTypes: any = {
   custom: CustomNode,
   start: StartNode,
   end: EndNode,
 }
-// 计算属性
-const ruleChains = ref<Rule[]>([])
-const nodes = computed(() => ruleChainStore.nodes)
-const edges = computed(() => ruleChainStore.edges)
+
+const nodes = computed(() => {
+  return isMonitorMode.value ? ruleChainStore.monitorNodes : ruleChainStore.nodes
+})
+const edges = computed(() => {
+  return isMonitorMode.value ? ruleChainStore.monitorEdges : ruleChainStore.edges
+})
 const isFullscreen = computed(() => ruleChainStore.isFullscreen)
 const hasUnsavedChanges = computed(() => ruleChainStore.hasUnsavedChanges)
 
@@ -319,14 +308,6 @@ const cardCategories = ref([
     title: 'Funtcion',
     icon: 'Filter',
     cards: [
-      // {
-      //   id: 'function-1',
-      //   name: 'Data Filter',
-      //   type: 'filter' as const,
-      //   description: 'Filter data based on conditions',
-      //   icon: 'Filter',
-      //   config: { condition: '', operator: 'equals' },
-      // },
       {
         id: 'function-2',
         name: 'Switch Function',
@@ -341,7 +322,6 @@ const cardCategories = ref([
       },
     ],
   },
-
   {
     type: 'action',
     title: 'Action',
@@ -358,47 +338,78 @@ const cardCategories = ref([
       },
     ],
   },
-  // {
-  //   type: 'external',
-  //   title: 'External',
-  //   icon: 'Connection',
-  //   tooltip: 'External cards are used to connect with external services',
-  //   cards: [
-  //     {
-  //       id: 'external-1',
-  //       name: 'API Call',
-  //       type: 'external' as const,
-  //       description: 'Make API call to external service',
-  //       icon: 'Connection',
-  //       config: { url: '', method: 'GET', headers: '' },
-  //     },
-  //   ],
-  // },
-  // {
-  //   type: 'flow',
-  //   title: 'Flow',
-  //   icon: 'DataLine',
-  //   tooltip: 'Flow cards are used to control data flow',
-  //   cards: [
-  //     {
-  //       id: 'flow-1',
-  //       name: 'Conditional Flow',
-  //       type: 'flow' as const,
-  //       description: 'Control flow based on conditions',
-  //       icon: 'DataLine',
-  //       config: { condition: '', truePath: '', falsePath: '' },
-  //     },
-  //   ],
-  // },
 ])
-//第一次加载时，不触发保存
+
+// 确保 start 和 end 节点不可删除
+function ensureStartEndNodesUndeletable(nodes: FlowNode[]) {
+  return nodes.map((node) => {
+    if (node.id === 'start' || node.id === 'end') {
+      return {
+        ...node,
+        deletable: false,
+      }
+    }
+    return node
+  })
+}
+
 let isInitNodes = true
-// 方法
 onNodesChange((changes: NodeChange[]) => {
   if (isInitNodes) {
     isInitNodes = false
-  } else {
-    ruleChainStore.hasUnsavedChanges = true
+    return
+  }
+
+  // 拦截删除 start 和 end 节点的操作
+  const removeChanges = changes.filter((change) => change.type === 'remove')
+  if (removeChanges.length > 0 && !isMonitorMode.value) {
+    const protectedNodeIds = new Set(['start', 'end'])
+    const attemptedDeletes = removeChanges
+      .map((change) => (change as any).id)
+      .filter((id: string) => protectedNodeIds.has(id))
+
+    if (attemptedDeletes.length > 0) {
+      ElMessage.warning('Start and End nodes cannot be deleted')
+      // 阻止删除操作：从 changes 中移除这些删除操作
+      const filteredChanges = changes.filter((change) => {
+        if (change.type === 'remove') {
+          const nodeId = (change as any).id
+          return !protectedNodeIds.has(nodeId)
+        }
+        return true
+      })
+      // 应用过滤后的 changes
+      if (filteredChanges.length !== changes.length) {
+        // 重新设置节点以确保 start 和 end 节点存在
+        const currentNodes = toObject().nodes as FlowNode[]
+        const updatedNodes = ensureStartEndNodesUndeletable(currentNodes)
+        setNodes(updatedNodes)
+        return
+      }
+    }
+  }
+
+  // 只在实际修改节点数据、位置、添加或删除时触发，过滤掉视图变化（如选中、尺寸变化等）
+  const meaningfulChanges = changes.filter((change) => {
+    // 过滤掉 select（选中）和 dimensions（尺寸变化，可能是视图变化导致的）
+    if (change.type === 'select' || change.type === 'dimensions') {
+      return false
+    }
+    // 保留 add（添加节点）、remove（删除节点）、position（位置变化，即拖拽）
+    return change.type === 'add' || change.type === 'remove' || change.type === 'position'
+  })
+  if (meaningfulChanges.length > 0) {
+    // 监视模式下：VueFlow 内部已维护状态，只需更新变量浮层位置
+    if (isMonitorMode.value) {
+      const positionChanges = meaningfulChanges.filter((c) => c.type === 'position')
+      if (positionChanges.length > 0 && visibleVarsNodes.value.size > 0) {
+        requestAnimationFrame(() => {
+          updateAllBubblePositions()
+        })
+      }
+    } else {
+      ruleChainStore.hasUnsavedChanges = true
+    }
   }
 })
 
@@ -409,12 +420,31 @@ onEdgeUpdate(() => {
   ruleChainStore.hasUnsavedChanges = true
 })
 onNodeDragStop(() => {
-  ruleChainStore.hasUnsavedChanges = true
+  if (isMonitorMode.value) {
+    if (visibleVarsNodes.value.size > 0) {
+      nextTick(() => {
+        updateAllBubblePositions()
+      })
+    }
+  } else {
+    ruleChainStore.hasUnsavedChanges = true
+  }
 })
 onEdgesChange((changes: any[]) => {
-  // 在应用变更前处理删除，便于拿到完整的 edge 信息
+  // 过滤掉选择操作，选择操作不应该触发 hasUnsavedChanges
+  const meaningfulChanges = (changes || []).filter((change) => {
+    // 过滤掉 select（选中）操作
+    return change.type !== 'select'
+  })
+
+  if (meaningfulChanges.length === 0) {
+    // 如果没有有意义的变更，直接应用 changes（用于选择状态更新）但不设置 hasUnsavedChanges
+    applyEdgeChanges && applyEdgeChanges(changes)
+    return
+  }
+
   const currentEdges = (toObject().edges as any[]) || []
-  for (const change of changes || []) {
+  for (const change of meaningfulChanges) {
     if (change.type === 'remove') {
       const sourceId = change.source
       const allNodes = (toObject().nodes as any[]) || []
@@ -461,74 +491,68 @@ const handleWindowResize = () => {
   }, 160)
 }
 
-const toggleLeftPanel = () => {
-  ruleChainStore.toggleLeftPanel()
-  isLeftPanelCollapsed.value = ruleChainStore.isLeftPanelCollapsed
-  fitFlowToViewport()
-}
-
-const clearSelection = () => {
-  editingCard.value = null
-  editingEdge.value = null
-}
-
 const toggleFullscreen = () => {
   ruleChainStore.toggleFullscreen()
   nextTick(() => fitFlowToViewport())
 }
 
-const handleChainChange = (chainId: string) => {
-  const chain = ruleChains.value.find((c: Rule) => c.id === chainId)
-  if (chain) {
-    if (hasUnsavedChanges.value) {
-      showUnsavedDialog()
-    } else {
-      RuleDetail(chainId)
-    }
+const handleExitEdit = async () => {
+  if (!hasUnsavedChanges.value) {
+    isMonitorMode.value = true
+    fitFlowToViewport()
+    return
   }
+  try {
+    await ElMessageBox.confirm('Save your changes before exiting?', 'Unsaved Changes', {
+      confirmButtonText: 'Save & Exit',
+      cancelButtonText: 'Discard',
+      type: 'warning',
+    })
+    await handleSave()
+    isMonitorMode.value = true
+  } catch {
+    handleCancel()
+    isMonitorMode.value = true
+  }
+  nextTick(() => fitFlowToViewport())
 }
 
-const showUnsavedDialog = async () => {
-  try {
-    await ElMessageBox.confirm(
-      'You have unsaved changes. Do you want to save them?',
-      'Unsaved Changes',
-      {
-        confirmButtonText: 'Submit',
-        cancelButtonText: 'Discard',
-        type: 'warning',
-      },
-    )
-    const obj = toObject()
-    ruleChainStore.saveChanges(obj.nodes as unknown as AppNode[], obj.edges as unknown as AppEdge[])
-  } catch (error) {
-    ruleChainStore.discardChanges()
-  }
+const handleConnectGuard = (connection: Connection) => {
+  if (isMonitorMode.value) return
+  handleConnect(connection)
+}
+const handleDragOverGuard = (e: DragEvent) => {
+  if (isMonitorMode.value) return
+  onDragOver(e)
+}
+const handleDragLeaveGuard = () => {
+  if (isMonitorMode.value) return
+  onDragLeave()
+}
+const handleDropGuard = (e: DragEvent) => {
+  if (isMonitorMode.value) return
+  onDrop(e)
 }
 
 const handleNodeClick = (event: any) => {
+  if (isMonitorMode.value) return
   const node = event.node || event
   if (node.id === 'start' || node.id === 'end') return
   if (node && node.data) {
     editingCard.value = { ...node.data }
-    editingEdge.value = null
     cardEditDialogVisible.value = true
-  } else {
-    console.log('No card data found in node')
   }
 }
 
 const handleCardEditConfirm = (newCard: any) => {
   if (!newCard?.id) return
-  // 使用传回的新数据更新节点
   updateNode(newCard.id, {
     data: {
       ...newCard,
     },
   })
-  // 更新后清理指向该节点的无效连线：
-  // 若某条入边其 source 的 wires 不包含该边的 sourceHandle，则移除该边
   pruneInvalidIncomingEdges(newCard.id)
+  ruleChainStore.hasUnsavedChanges = true
   cardEditDialogVisible.value = false
 }
 
@@ -564,15 +588,6 @@ const handleConnect = (connection: Connection) => {
     target: connection.target!,
     sourceHandle: connection.sourceHandle || 'right',
     targetHandle: connection.targetHandle || 'left',
-    // label: '',
-    // type: 'default',
-    // data: {
-    //   color: '#6F3381',
-    //   strokeWidth: 2.5,
-    //   dash: '6 6',
-    //   animated: true,
-    //   curved: true
-    // }
     style: {
       stroke: '#6F3381',
       strokeWidth: 3,
@@ -602,18 +617,25 @@ const handleConnect = (connection: Connection) => {
   }
   ruleChainStore.hasUnsavedChanges = true
   addEdges(newEdge)
-  // 更新起点节点的 wires 映射
 }
 
 const handleSave = async () => {
-  const newNodes = toObject().nodes as unknown as AppNode[]
-  const newEdges = toObject().edges as unknown as AppEdge[]
+  const flowObj = toObject()
+  const newNodes = flowObj.nodes as unknown as AppNode[]
+  const newEdges = flowObj.edges as unknown as AppEdge[]
 
-  ruleChainStore.saveChanges(newNodes, newEdges)
-  const payload = ruleChainStore.exportRuleChain() as RuleChainPayload
+  // 使用当前 VueFlow 中的数据构建 payload，而不是 store 中的旧数据
+  const payload = ruleChainStore.exportRuleChain(
+    flowObj.nodes as FlowNode[],
+    flowObj.edges as FlowEdge[],
+  ) as RuleChainPayload
   try {
     await updateRule(payload)
+    ruleChainStore.saveChanges(newNodes, newEdges)
     ElMessage.success('Submitted successfully')
+    nextTick(() => {
+      fitFlowToViewport()
+    })
   } catch (error) {
     ruleChainStore.hasUnsavedChanges = true
     ElMessage.error('Submit failed')
@@ -628,7 +650,12 @@ const handleCancel = () => {
 }
 
 const handleExport = () => {
-  const ruleChainData = ruleChainStore.exportRuleChain()
+  // 使用当前 VueFlow 中的数据导出，确保导出的是当前显示的数据
+  const flowObj = toObject()
+  const ruleChainData = ruleChainStore.exportRuleChain(
+    flowObj.nodes as FlowNode[],
+    flowObj.edges as FlowEdge[],
+  )
   const dataStr = JSON.stringify(ruleChainData, null, 2)
   const dataBlob = new Blob([dataStr], { type: 'application/json' })
   const url = URL.createObjectURL(dataBlob)
@@ -642,6 +669,298 @@ const handleExport = () => {
 
 const goBackToList = () => {
   router.push({ name: 'ruleConfiguration' })
+}
+
+function applyRuntimeUpdate(data: any) {
+  if (!data || typeof data !== 'object') return
+
+  if (data.rule_id && Array.isArray(data.execution_path)) {
+    const executionPath = data.execution_path
+    const activeNodeIds = executionPath
+      .map((item: any) => String(item.id))
+      .filter((id: string) => id && id !== 'undefined' && id !== 'null')
+
+    const varsNodeIds = new Set<string>()
+    const variablesMap = new Map<string, Record<string, number>>()
+    executionPath.forEach((item: any) => {
+      if (
+        item.id &&
+        item.id !== 'start' &&
+        item.id !== 'end' &&
+        item.variables &&
+        typeof item.variables === 'object'
+      ) {
+        varsNodeIds.add(item.id)
+        variablesMap.set(item.id, item.variables)
+      }
+    })
+
+    visibleVarsNodes.value = varsNodeIds
+    nodeVariablesData.value = variablesMap
+
+    const currentActiveSet = new Set<string>(activeNodeIds)
+    const lastActiveSet = lastActiveNodeIds.value
+    const hasChanged =
+      currentActiveSet.size !== lastActiveSet.size ||
+      !Array.from(currentActiveSet).every((id: string) => lastActiveSet.has(id))
+
+    if (hasChanged) {
+      lastActiveNodeIds.value = currentActiveSet
+      applyActiveRuntime(activeNodeIds)
+    }
+
+    if (visibleVarsNodes.value.size > 0) {
+      nextTick(() => {
+        updateAllBubblePositions()
+      })
+    }
+  }
+}
+
+function startMonitorSubscription() {
+  if (!isMonitorMode.value) return
+  try {
+    subscriptionId.value = wsManager.subscribe(
+      {
+        source: 'rule',
+        channels: [Number(currentChainId.value)],
+        interval: 1000,
+      },
+      {
+        onBatchDataUpdate: (payload: any) => {
+          try {
+            applyRuntimeUpdate(payload)
+          } catch (error) {
+            console.error('[RuleChainEditor] 处理规则执行数据失败:', error)
+          }
+        },
+      } as any,
+    )
+  } catch (error) {
+    console.error('[RuleChainEditor] 订阅规则失败:', error)
+  }
+}
+function stopMonitorSubscription() {
+  try {
+    wsManager.unsubscribe(subscriptionId.value)
+  } catch {}
+}
+
+function enterEditMode() {
+  isMonitorMode.value = false
+  stopMonitorSubscription()
+  clearSimulation()
+  resetRuntimeVisuals()
+  visibleVarsNodes.value.clear()
+}
+
+function getNodeVarsData(nodeId: string) {
+  const node = findNode(nodeId)
+  if (!node || node.type === 'start' || node.type === 'end') return null
+
+  const realtimeVars = nodeVariablesData.value.get(nodeId)
+  if (realtimeVars) {
+    const varDefinitions = Array.isArray(node.data?.config?.variables)
+      ? node.data.config.variables
+      : []
+
+    return varDefinitions.map((varDef: any) => {
+      const varName = varDef.name || varDef.point || ''
+      const value = realtimeVars[varName] !== undefined ? realtimeVars[varName] : undefined
+      return {
+        ...varDef,
+        value: value,
+      }
+    })
+  }
+
+  return Array.isArray(node.data?.config?.variables) ? node.data.config.variables : null
+}
+
+function updateBubblePosition(nodeId: string) {
+  const node = findNode(nodeId)
+  if (!node || !centerPanelRef.value) {
+    visibleVarsNodes.value.delete(nodeId)
+    nodeVarsPositions.value.delete(nodeId)
+    return
+  }
+
+  try {
+    let nodeElement = document.querySelector(`[data-id="${nodeId}"]`) as HTMLElement
+    if (!nodeElement) {
+      nodeElement = document.querySelector(`.vue-flow__node[data-id="${nodeId}"]`) as HTMLElement
+    }
+
+    if (!nodeElement) {
+      visibleVarsNodes.value.delete(nodeId)
+      nodeVarsPositions.value.delete(nodeId)
+      return
+    }
+
+    const nodeRect = nodeElement.getBoundingClientRect()
+    if (nodeRect.width === 0 || nodeRect.height === 0) {
+      visibleVarsNodes.value.delete(nodeId)
+      nodeVarsPositions.value.delete(nodeId)
+      return
+    }
+
+    const containerRect = centerPanelRef.value.getBoundingClientRect()
+    const isFullscreen = ruleChainStore.isFullscreen
+    const headerHeight = isFullscreen ? 0.6 * getCurrentFontSize() : 0
+
+    const maxLeft = isFullscreen ? window.innerWidth : containerRect.right
+    const maxTop = isFullscreen ? window.innerHeight - headerHeight : containerRect.bottom
+    const minLeft = isFullscreen ? 0 : containerRect.left
+    const minTop = isFullscreen ? containerRect.top : containerRect.top
+
+    if (
+      nodeRect.right < minLeft ||
+      nodeRect.left > maxLeft ||
+      nodeRect.bottom < minTop ||
+      nodeRect.top > maxTop
+    ) {
+      visibleVarsNodes.value.delete(nodeId)
+      nodeVarsPositions.value.delete(nodeId)
+      return
+    }
+
+    const left = nodeRect.left
+    const top = nodeRect.bottom
+    nodeVarsPositions.value.set(nodeId, { top, left })
+  } catch (error) {
+    console.error('Failed to update bubble position:', error)
+    visibleVarsNodes.value.delete(nodeId)
+    nodeVarsPositions.value.delete(nodeId)
+  }
+}
+
+function getBubbleStyle(nodeId: string): Record<string, string> {
+  const position = nodeVarsPositions.value.get(nodeId)
+  if (!position || !centerPanelRef.value) return { display: 'none' }
+
+  const node = findNode(nodeId)
+  if (!node) {
+    visibleVarsNodes.value.delete(nodeId)
+    nodeVarsPositions.value.delete(nodeId)
+    return { display: 'none' }
+  }
+
+  const currentZoom = viewport.value?.zoom || 1
+  const scale = currentZoom
+  const bubbleWidth = 2.5 * getCurrentFontSize() * scale
+  const bubbleHeight = 3 * getCurrentFontSize() * scale
+
+  let left = position.left
+  let top = position.top
+
+  const containerRect = centerPanelRef.value.getBoundingClientRect()
+  const isFullscreen = ruleChainStore.isFullscreen
+  const headerHeight = isFullscreen ? 0.6 * getCurrentFontSize() : 0
+  console.log(containerRect, '////')
+
+  const maxLeft = isFullscreen ? window.innerWidth : containerRect.right
+  const maxTop = isFullscreen ? window.innerHeight - headerHeight : containerRect.bottom
+  const minLeft = isFullscreen ? 0 : containerRect.left
+  const minTop = isFullscreen ? containerRect.top : containerRect.top
+  console.log(maxLeft, 'maxLeft', maxTop, 'maxTop', minLeft, 'minLeft', minTop, 'minTop')
+  console.log(bubbleWidth, 'bubbleWidth', bubbleHeight, 'bubbleHeight', scale, 'scale')
+
+  if (left + bubbleWidth > maxLeft) {
+    left = Math.max(minLeft, left)
+  }
+  if (left + bubbleWidth < minLeft) {
+    left = minLeft + bubbleWidth
+  }
+
+  if (top > maxTop + bubbleHeight) {
+    top = maxTop - bubbleHeight
+  }
+  if (top < minTop) {
+    top = minTop
+  }
+
+  if (left < minLeft || left + bubbleWidth > maxLeft || top < minTop || top > maxTop) {
+    visibleVarsNodes.value.delete(nodeId)
+    nodeVarsPositions.value.delete(nodeId)
+    return { display: 'none' }
+  }
+
+  return {
+    position: 'fixed',
+    top: `${top}px`,
+    left: `${left}px`,
+    zIndex: '99999',
+    transform: `scale(${scale})`,
+    transformOrigin: 'top left',
+  }
+}
+
+function updateAllBubblePositions() {
+  visibleVarsNodes.value.forEach((nodeId) => {
+    updateBubblePosition(nodeId)
+  })
+}
+
+let simTimer: any = null
+
+function clearSimulation() {
+  if (simTimer) {
+    clearInterval(simTimer)
+    simTimer = null
+  }
+}
+
+function resetRuntimeVisuals() {
+  setEdges((prev: any[]) =>
+    prev.map((e: any) => ({
+      ...e,
+      class: '',
+      data: { ...(e.data || {}), isAnimating: false },
+    })),
+  )
+  setNodes((prev: any[]) =>
+    prev.map((n: any) => ({
+      ...n,
+      class: '',
+      data: { ...(n.data || {}), status: '' },
+    })),
+  )
+}
+
+function applyActiveRuntime(activeNodeIds: string[]) {
+  const activeNodes = new Set(activeNodeIds)
+  const currentEdges = edges.value
+  const activeEdges = currentEdges
+    .filter((e) => activeNodes.has(String(e.source)) && activeNodes.has(String(e.target)))
+    .map((e) => String(e.id))
+  const activeEdgeSet = new Set(activeEdges)
+
+  setNodes((prev: any[]) =>
+    prev.map((n: any) => ({
+      ...n,
+      class: activeNodes.has(String(n.id)) ? 'active-node' : '',
+    })),
+  )
+  setEdges((prev: any[]) =>
+    prev.map((e: any) => ({
+      ...e,
+      class: activeEdgeSet.has(String(e.id)) ? 'active-edge' : '',
+      data: { ...(e.data || {}), isAnimating: activeEdgeSet.has(String(e.id)) },
+    })),
+  )
+
+  if (isMonitorMode.value) {
+    const updatedNodes = toObject().nodes as any[]
+    const updatedEdges = toObject().edges as any[]
+    ruleChainStore.updateMonitorNodes(updatedNodes as unknown as FlowNode[])
+    ruleChainStore.updateMonitorEdges(updatedEdges as unknown as FlowEdge[])
+  }
+}
+
+function startSimulation() {
+  if (!isMonitorMode.value) return
+  clearSimulation()
+  resetRuntimeVisuals()
 }
 
 const handleImportClick = () => {
@@ -665,7 +984,9 @@ const handleImportChange = (event: Event) => {
         ElMessage.error('Import failed: no nodes or edges found')
         return
       }
-      setNodes(nextNodes as unknown as FlowNode[])
+      // 确保 start 和 end 节点不可删除
+      const protectedNodes = ensureStartEndNodesUndeletable(nextNodes as FlowNode[])
+      setNodes(protectedNodes)
       setEdges(nextEdges as unknown as FlowEdge[])
       ruleChainStore.hasUnsavedChanges = true
       ElMessage.success('Imported successfully')
@@ -679,14 +1000,16 @@ const handleImportChange = (event: Event) => {
 }
 const RuleDetail = async (chainId: string) => {
   const res = await getRuleDetail(chainId)
-  if (res.success) {
-    const payload = res?.data || {}
-    const flow = payload?.flow_json || payload
+  if (res.success && res?.data) {
+    const payload = res.data
+    const flow = payload.flow_json
     const nextNodes = Array.isArray(flow?.nodes) ? flow.nodes : []
     const nextEdges = Array.isArray(flow?.edges) ? flow.edges : []
     if (nextNodes.length || nextEdges.length) {
+      // 确保 start 和 end 节点不可删除
+      const protectedNodes = ensureStartEndNodesUndeletable(nextNodes as FlowNode[])
       ruleChainStore.saveChanges(
-        nextNodes as unknown as AppNode[],
+        protectedNodes as unknown as AppNode[],
         nextEdges as unknown as AppEdge[],
       )
       ruleChainStore.setCurrentRuleChain({
@@ -697,11 +1020,9 @@ const RuleDetail = async (chainId: string) => {
         enabled: payload.enabled || true,
         cooldown_ms: payload.cooldown_ms || 5000,
       } as unknown as RuleChain)
-      // 更新画布
-      setNodes(nextNodes as unknown as FlowNode[])
+      setNodes(protectedNodes)
       setEdges(nextEdges as unknown as FlowEdge[])
     } else {
-      // 当规则详情中没有数据时，初始化为仅包含 START/END 节点的默认画布
       ruleChainStore.initDefaultGraph()
       setNodes(ruleChainStore.nodes as unknown as FlowNode[])
       setEdges([] as unknown as FlowEdge[])
@@ -716,31 +1037,12 @@ const RuleDetail = async (chainId: string) => {
     }
   }
 }
-// 生命周期
+
 onMounted(async () => {
-  // 初始化默认的START和END节点
-  // const startNode: Node = {
-  //   id: 'start',
-  //   type: 'start',
-  //   position: { x: 100, y: 100 },
-  //   data: { label: 'START' }
-  // }
-  // const endNode: Node = {
-  //   id: 'end',
-  //   type: 'end',
-  //   position: { x: 500, y: 100 },
-  //   data: { label: 'END' }
-  // }
-  // ruleChainStore.addNodes([startNode, endNode])
   ruleChainStore.isFullscreen = false
-  // 设置当前规则链
   const chainId = route.params.id as string
   if (chainId) {
     try {
-      const res = await listRules()
-      const payload = res?.data.list || {}
-      ruleChains.value = payload
-      // const chain = ruleChains.value.find((c: Rule) => c.id === chainId)
       currentChainId.value = chainId
       await RuleDetail(chainId)
     } catch (error) {
@@ -749,17 +1051,95 @@ onMounted(async () => {
   }
   window.addEventListener('resize', handleWindowResize)
   fitFlowToViewport()
+  if (isMonitorMode.value) {
+    startMonitorSubscription()
+  }
+  startSimulation()
 })
 onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize)
   ruleChainStore.hasUnsavedChanges = false
+  stopMonitorSubscription()
+  clearSimulation()
 })
-// 监听store状态变化
+
 watch(
-  () => ruleChainStore.isLeftPanelCollapsed,
-  (newVal: boolean) => {
-    isLeftPanelCollapsed.value = newVal
+  () => isMonitorMode.value,
+  (val) => {
+    if (val) {
+      ruleChainStore.createMonitorSnapshot()
+      nextTick(() => {
+        const monitorNodes = ensureStartEndNodesUndeletable(
+          ruleChainStore.monitorNodes as unknown as FlowNode[],
+        )
+        setNodes(monitorNodes)
+        setEdges(ruleChainStore.monitorEdges as unknown as FlowEdge[])
+        resetRuntimeVisuals()
+        startSimulation()
+        startMonitorSubscription()
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            fitFlowToViewport()
+          })
+        })
+      })
+    } else {
+      clearSimulation()
+      const currentNodes = toObject().nodes as any[]
+      const currentEdges = toObject().edges as any[]
+      ruleChainStore.updateMonitorNodes(currentNodes as unknown as FlowNode[])
+      ruleChainStore.updateMonitorEdges(currentEdges as unknown as FlowEdge[])
+      nextTick(() => {
+        const editNodes = ensureStartEndNodesUndeletable(
+          ruleChainStore.nodes as unknown as FlowNode[],
+        )
+        setNodes(editNodes)
+        setEdges(ruleChainStore.edges as unknown as FlowEdge[])
+        resetRuntimeVisuals()
+        visibleVarsNodes.value.clear()
+        nodeVarsPositions.value.clear()
+        nodeVariablesData.value.clear()
+        lastActiveNodeIds.value.clear()
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            fitFlowToViewport()
+          })
+        })
+      })
+    }
   },
+)
+
+watch(
+  () => [nodes.value, viewport.value],
+  () => {
+    if (isMonitorMode.value && visibleVarsNodes.value.size > 0) {
+      requestAnimationFrame(() => {
+        updateAllBubblePositions()
+      })
+    }
+  },
+  { deep: true },
+)
+
+watch(
+  () => viewport.value,
+  (newViewport, oldViewport) => {
+    if (!isMonitorMode.value || visibleVarsNodes.value.size === 0) return
+
+    if (
+      newViewport &&
+      oldViewport &&
+      (newViewport.zoom !== oldViewport.zoom ||
+        newViewport.x !== oldViewport.x ||
+        newViewport.y !== oldViewport.y)
+    ) {
+      requestAnimationFrame(() => {
+        updateAllBubblePositions()
+      })
+    }
+  },
+  { deep: true, immediate: false },
 )
 </script>
 
@@ -772,6 +1152,7 @@ watch(
     width: 100%;
     display: flex;
     flex-direction: column;
+    position: relative;
 
     &.is-fullscreen {
       position: fixed;
@@ -794,10 +1175,8 @@ watch(
       justify-content: space-between;
       gap: 0.12rem;
       padding: 0.12rem;
-      // background: linear-gradient(135deg, #f0f8ff 0%, #e8f4fd 100%);
       background-color: #132c54;
       border-bottom: 0.01rem solid #435678;
-      // box-shadow: var(--shadow-light);
       .rule-chain-editor__header-left,
       .rule-chain-editor__header-right {
         display: flex;
@@ -837,7 +1216,6 @@ watch(
 
       .rule-chain-editor__left-panel {
         width: 3rem;
-        // background: linear-gradient(180deg, #f8fcff 0%, #f0f8ff 100%);
         background-color: rgba(19, 44, 84, 0.2);
         border-right: 0.01rem solid #435678;
         display: flex;
@@ -845,17 +1223,9 @@ watch(
         transition: width 0.3s ease;
         box-shadow: var(--shadow-light);
 
-        &.is-collapsed {
-          width: 0;
-          overflow: hidden;
-        }
-
         .rule-chain-editor__chain-selector {
           padding: 0.16rem;
-          // border-bottom: 0.01rem solid var(--border-light);
           position: relative;
-          // background: rgba(255, 255, 255, 0.5);
-          // background-color: #132c54;
         }
 
         .rule-chain-editor__card-categories {
@@ -889,7 +1259,6 @@ watch(
             display: flex;
             align-items: center;
             padding: 0.12rem;
-            // background: linear-gradient(135deg, #ffffff 0%, #f8fcff 100%);
             border-radius: 0.08rem;
             cursor: grab;
             transition: all 0.2s ease;
@@ -904,9 +1273,6 @@ watch(
               cursor: grabbing;
             }
 
-            // 根据卡片类型添加左边框颜色
-
-            // 与自定义节点风格一致：背景色与图标相同
             &[data-type='function-switch'] {
               background-color: #81c784; // soft green
               box-shadow: 0 0.04rem 0.12rem rgba(129, 199, 132, 0.35);
@@ -931,7 +1297,6 @@ watch(
               background: linear-gradient(135deg, #e8f4fd 0%, #d1e7f5 100%);
               border-radius: 0.06rem;
               margin-right: 0.12rem;
-              // color: var(--primary-color);
               font-size: 0.2rem;
               .el-icon {
                 font-size: 0.2rem;
@@ -981,136 +1346,124 @@ watch(
         position: relative;
         z-index: 1;
 
-        .rule-chain-editor__collapse-btn {
-          position: absolute;
-          top: 50%;
-          left: 0;
-          transform: translateY(-50%);
-          z-index: 2;
-          background-color: #132c54;
-          font-size: 0.24rem;
-          cursor: pointer;
-        }
-
         .rule-chain-editor__flow {
           width: 100%;
           height: 100%;
         }
-      }
 
-      .rule-chain-editor__right-panel {
-        width: 3.5rem;
-        // background: linear-gradient(180deg, #f8fcff 0%, #f0f8ff 100%);
-        background-color: #132c54;
-        border-left: 0.01rem solid var(--border-base);
-        display: flex;
-        flex-direction: column;
-        transition: width 0.3s ease;
-        position: relative;
-        // box-shadow: var(--shadow-light);
-
-        &.is-collapsed {
-          width: 0;
-          overflow: hidden;
+        @keyframes active-edge-dash {
+          from {
+            stroke-dashoffset: 0;
+          }
+          to {
+            stroke-dashoffset: -80;
+          }
+        }
+        :deep(.active-edge .vue-flow__edge-path) {
+          stroke: #ffd166 !important;
+          stroke-width: 3 !important;
+          stroke-linecap: round;
+          vector-effect: non-scaling-stroke;
+          shape-rendering: geometricPrecision;
+          stroke-dasharray: 8 12 !important;
+          animation: active-edge-dash 2s linear infinite;
+          will-change: stroke-dashoffset;
+          filter: drop-shadow(0 0 0.03rem rgba(255, 209, 102, 0.6));
+          backface-visibility: hidden;
+          transform: translateZ(0);
+        }
+        :deep(.vue-flow__edge) {
+          backface-visibility: hidden;
+          transform: translateZ(0);
         }
 
-        .rule-chain-editor__right-collapse-btn {
-          position: absolute;
-          top: 50%;
-          right: 0;
-          transform: translateY(-50%);
-          z-index: 2;
+        :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
+          stroke-width: 4.5 !important;
+          stroke: #ff5722 !important;
+          filter: drop-shadow(0 0 0.08rem rgba(255, 87, 34, 0.9));
         }
 
-        .rule-chain-editor__edit-content {
+        :deep(.vue-flow__node.selected) {
+          box-shadow:
+            0 0 0.16rem rgba(255, 87, 34, 0.7),
+            0 0 0.24rem rgba(255, 87, 34, 0.5),
+            0.02rem 0.02rem 0.08rem rgba(0, 0, 0, 0.15) !important;
+        }
+
+        @keyframes active-node-pulse {
+          0% {
+            filter: drop-shadow(0 0 0.02rem rgba(255, 209, 102, 0.25));
+          }
+          50% {
+            filter: drop-shadow(0 0 0.1rem rgba(255, 209, 102, 0.95));
+          }
+          100% {
+            filter: drop-shadow(0 0 0.02rem rgba(255, 209, 102, 0.25));
+          }
+        }
+        :deep(.active-node) {
+          animation: active-node-pulse 1.2s ease-in-out infinite;
+        }
+
+        .rf-node-with-vars {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+        }
+        .node-vars-bubble__row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.08rem;
+          + .node-vars-bubble__row {
+            margin-top: 0.06rem;
+          }
+        }
+        .node-vars-bubble__left {
+          display: flex;
+          align-items: center;
+          gap: 0.06rem;
           flex: 1;
-          padding: 0.2rem;
-          overflow-y: auto;
-          border-left: 0.01rem solid #435678;
-          .rule-chain-editor__edit-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.2rem;
-            padding: 0.16rem;
-            // background: rgba(255, 255, 255, 0.7);
-            background-color: #132c54;
-            border-radius: 0.08rem;
-            border-left: 0.01rem solid #67c23a;
-            box-shadow: var(--shadow-light);
-
-            h3 {
-              margin: 0;
-              color: var(--text-primary);
-              font-size: 0.18rem;
-              font-weight: 600;
-            }
+          min-width: 0;
+          .var-item {
+            font-size: 0.12rem;
+            color: #cfe2ff;
+            opacity: 0.9;
+            word-break: break-word;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            white-space: normal;
           }
-
-          .rule-chain-editor__edit-form {
-            // background: rgba(255, 255, 255, 0.5);
-            background-color: #132c54;
-            padding: 0.2rem;
-            border-radius: 0.08rem;
-            border: 0.01rem solid var(--border-light);
-            box-shadow: var(--shadow-light);
-
-            .el-form-item {
-              margin-bottom: 0.2rem;
-
-              .el-form-item__label {
-                font-weight: 600;
-                color: var(--text-primary);
-              }
-            }
-          }
-
-          .rule-chain-editor__edit-actions {
-            display: flex;
-            gap: 0.1rem;
-            justify-content: flex-end;
-            margin-top: 0.2rem;
-            padding: 0.16rem;
-            // background: rgba(255, 255, 255, 0.5);
-            background-color: #132c54;
-            border-radius: 0.08rem;
-            border: 0.01rem solid var(--border-light);
-            box-shadow: var(--shadow-light);
-          }
-
-          .rule-chain-editor__empty-state {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 2rem;
-            color: var(--text-secondary);
-            text-align: center;
-            background: rgba(255, 255, 255, 0.3);
-            border-radius: 0.08rem;
-            border: 0.01rem solid var(--border-light);
-            box-shadow: var(--shadow-light);
-
-            .rule-chain-editor__empty-icon {
-              font-size: 0.48rem;
-              margin-bottom: 0.16rem;
-              opacity: 0.6;
-            }
-
-            p {
-              margin: 0;
-              font-size: 0.14rem;
-            }
-          }
+        }
+        .node-vars-bubble__right {
+          font-size: 0.12rem;
+          color: #fff;
+          opacity: 0.95;
         }
       }
     }
 
-    .rule-chain-editor__card-edit {
-      .el-form-item {
-        margin-bottom: 0.16rem;
+    .rule-chain-editor__floating-actions {
+      position: fixed;
+      right: 1rem;
+      bottom: 0.24rem;
+      display: flex;
+      gap: 0.16rem;
+      z-index: 10;
+      .floating-btn {
+        width: 0.8rem !important;
+        height: 0.8rem !important;
+        font-size: 0.28rem !important;
+        border-radius: 50% !important;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 0.04rem 0.16rem rgba(0, 0, 0, 0.35);
       }
     }
+  }
+  :deep(.custom-button .el-icon) {
+    margin-right: 0.08rem;
   }
 }
 </style>

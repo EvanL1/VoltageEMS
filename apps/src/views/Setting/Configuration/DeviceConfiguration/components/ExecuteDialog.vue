@@ -3,7 +3,7 @@
     <template #dialog-body>
       <div class="voltage-class execute-dialog">
         <el-form label-width="0.9rem" ref="formRef" :model="form" :rules="rules">
-          <el-form-item label="Value" required>
+          <el-form-item label="Value:" required>
             <el-input-number v-model="form.value" :controls="false" align="left" />
           </el-form-item>
         </el-form>

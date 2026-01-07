@@ -1,8 +1,17 @@
 import { useVueFlow } from '@vue-flow/core'
 import { ref, watch } from 'vue'
-import type { RuleCard } from '@/types/index'
+import type { RuleCard } from '@/types/ruleConfiguration'
 
 let id = 0
+
+// 运行状态常量（供监视/运行态可视化使用）
+export const ProcessStatus = {
+  ERROR: 'error',
+  SKIPPED: 'skipped',
+  CANCELLED: 'cancelled',
+  FINISHED: 'finished',
+  RUNNING: 'running',
+} as const
 
 /**
  * 生成唯一节点ID
@@ -174,4 +183,82 @@ function deepClone<T>(obj: T): T {
     if (typeof structuredClone === 'function') return structuredClone(obj)
   } catch {}
   return JSON.parse(JSON.stringify(obj))
+}
+
+// 可选：模拟运行流的工具（参考官方示例）
+export function useRunProcess({ graph: dagreGraph, cancelOnError = true }: any) {
+  const { updateNode } = useVueFlow()
+  const graphRef = () => dagreGraph
+  const isRunning = ref(false)
+  const runningTasks = new Map<string, any>()
+  const executedNodes = new Set<string>()
+  const upcomingTasks = new Set<string>()
+
+  function updateNodeStatus(nodeId: string, status: string | null) {
+    updateNode(nodeId, (node: any) => ({
+      data: { ...(node?.data || {}), status },
+    }))
+  }
+  async function until(condition: () => boolean) {
+    return new Promise((resolve) => {
+      const interval = setInterval(() => {
+        if (condition()) {
+          clearInterval(interval)
+          resolve(true)
+        }
+      }, 100)
+    })
+  }
+  async function runNode(nodeId: string, isStart = false) {
+    if (executedNodes.has(nodeId)) return
+    upcomingTasks.add(nodeId)
+    // 这里可接入边动画结束等待（略）
+    upcomingTasks.clear()
+    if (!isRunning.value) return
+    executedNodes.add(nodeId)
+    updateNodeStatus(nodeId, ProcessStatus.RUNNING)
+    const delay = Math.floor(Math.random() * 2000) + 1000
+    return new Promise((resolve) => {
+      const timeout = setTimeout(
+        async () => {
+          const children = graphRef()?.successors(nodeId) || []
+          const willThrowError = Math.random() < 0.15
+          if (!isStart && willThrowError) {
+            updateNodeStatus(nodeId, ProcessStatus.ERROR)
+            if (cancelOnError) {
+              runningTasks.delete(nodeId)
+              resolve(true)
+              return
+            }
+          }
+          updateNodeStatus(nodeId, ProcessStatus.FINISHED)
+          runningTasks.delete(nodeId)
+          if (children.length > 0) {
+            await Promise.all(children.map((child: string) => runNode(child)))
+          }
+          resolve(true)
+        },
+        isStart ? 0 : delay,
+      )
+      runningTasks.set(nodeId, timeout)
+    })
+  }
+  async function run(nodes: Array<{ id: string }>) {
+    if (isRunning.value) return
+    reset(nodes)
+    isRunning.value = true
+    const startingNodes = nodes.filter((n) => (graphRef()?.predecessors(n.id)?.length || 0) === 0)
+    await Promise.all(startingNodes.map((n) => runNode(n.id, true)))
+    clear()
+  }
+  function reset(nodes: Array<{ id: string }>) {
+    clear()
+    for (const n of nodes) updateNodeStatus(n.id, null)
+  }
+  function clear() {
+    isRunning.value = false
+    executedNodes.clear()
+    runningTasks.clear()
+  }
+  return { run, reset, isRunning }
 }

@@ -10,14 +10,14 @@
               :icon="tableRefreshIcon"
               text="Reload"
               custom-class="rule-management__btn"
-              @click="handleRefresh"
+              @click="reloadFilters"
             />
             <IconButton
               type="primary"
               :icon="tableSearchIcon"
               text="Search"
               custom-class="rule-management__btn"
-              @click="fetchTableData"
+              @click="fetchTableData(true)"
             /> -->
             <IconButton
               type="primary"
@@ -125,6 +125,7 @@ const {
   fetchTableData,
   handlePageChange,
   deleteRow,
+  reloadFilters,
 } = useTableData<Rule>(tableConfig)
 const router = useRouter()
 
@@ -133,14 +134,6 @@ const router = useRouter()
 const switchLoadings = ref<boolean[]>([])
 const levelSelectRef = ref<HTMLElement | null>(null)
 const ruleEditDialogRef = ref()
-
-function handleRefresh() {
-  fetchTableData(true)
-}
-
-// function openDetail() {
-//   console.log('openDetail')
-// }
 
 function openCreateDialog() {
   ruleEditDialogRef.value?.open()
@@ -288,7 +281,7 @@ watch(
       gap: 0.1rem;
       margin-bottom: 0.2rem;
       padding: 0.1rem 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
 
       .el-button {
         display: flex;

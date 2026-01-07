@@ -41,20 +41,22 @@
           <el-switch v-model="form.is_active" />
         </el-form-item>
 
-        <el-form-item label="Password:" prop="password" v-if="mode === 'create'">
+        <el-form-item label="Password:" prop="password">
           <el-input
             v-model="form.password"
             type="password"
-            placeholder="Enter password"
+            :placeholder="mode === 'create' ? 'Enter password' : 'Enter new password (optional)'"
             show-password
           />
         </el-form-item>
 
-        <el-form-item label="Confirm Password:" prop="confirmPassword" v-if="mode === 'create'">
+        <el-form-item label="Confirm Password:" prop="confirmPassword">
           <el-input
             v-model="form.confirmPassword"
             type="password"
-            placeholder="Confirm password"
+            :placeholder="
+              mode === 'create' ? 'Confirm password' : 'Confirm new password (optional)'
+            "
             show-password
           />
         </el-form-item>
@@ -92,14 +94,59 @@ const roleOptions = [
   { label: 'Viewer', value: 3 },
 ]
 const roleId = ref<number>(1)
+// 密码验证函数（编辑模式下可选）
+const validatePassword = (rule: any, value: string, callback: any) => {
+  if (mode.value === 'create') {
+    // 创建模式：必填
+    if (value === '') {
+      callback(new Error('Please input password'))
+      return
+    }
+  } else {
+    // 编辑模式：可选，如果为空则通过验证
+    if (value === '') {
+      callback()
+      return
+    }
+  }
+
+  // 密码长度验证：6-12个字符
+  if (value.length < 6 || value.length > 12) {
+    callback(new Error('Password must be 6-12 characters'))
+    return
+  }
+
+  // 必须包含数字和英文字母
+  const hasNumber = /\d/.test(value)
+  const hasLetter = /[a-zA-Z]/.test(value)
+  if (!hasNumber || !hasLetter) {
+    callback(new Error('Password must contain numbers and letters'))
+    return
+  }
+
+  callback()
+}
+
 // 密码确认验证函数
 const validateConfirmPassword = (rule: any, value: string, callback: any) => {
-  if (value === '') {
-    callback(new Error('Please confirm your password'))
-  } else if (value !== form.value.password) {
-    callback(new Error('Passwords do not match'))
+  if (mode.value === 'create') {
+    // 创建模式：必填，必须匹配密码
+    if (value === '') {
+      callback(new Error('Please confirm your password'))
+    } else if (value !== form.value.password) {
+      callback(new Error('Passwords do not match'))
+    } else {
+      callback()
+    }
   } else {
-    callback()
+    // 编辑模式：如果填写了密码，则确认密码必填且必须匹配
+    if (form.value.password && value === '') {
+      callback(new Error('Please confirm your password'))
+    } else if (form.value.password && value !== form.value.password) {
+      callback(new Error('Passwords do not match'))
+    } else {
+      callback()
+    }
   }
 }
 
@@ -111,18 +158,8 @@ const rules = computed(() => {
     ],
     role_id: [{ required: true, message: 'Please select role', trigger: 'change' }],
     is_active: [{ required: true, message: 'Please select status', trigger: 'change' }],
-  }
-
-  // 只在创建模式下添加密码验证规
-  if (mode.value === 'create') {
-    return {
-      ...baseRules,
-      password: [
-        { required: true, message: 'Please input password', trigger: 'blur' },
-        { min: 6, message: 'Password must be at least 6 characters', trigger: 'blur' },
-      ],
-      confirmPassword: [{ required: true, validator: validateConfirmPassword, trigger: 'blur' }],
-    }
+    password: [{ validator: validatePassword, trigger: 'blur' }],
+    confirmPassword: [{ validator: validateConfirmPassword, trigger: 'blur' }],
   }
 
   return baseRules
@@ -184,10 +221,15 @@ async function onSubmit() {
       }
       close()
     } else if (mode.value === 'edit') {
-      const res = await userApi.updateUser(roleId.value, {
+      const updateData: any = {
         role_id: form.value.role_id,
         is_active: form.value.is_active,
-      })
+      }
+      // 如果填写了新密码，则添加到更新数据中
+      if (form.value.password) {
+        updateData.password = form.value.password
+      }
+      const res = await userApi.updateUser(roleId.value, updateData)
       if (res.success) {
         ElMessage.success('User updated successfully')
         emit('submit', form.value)
@@ -219,7 +261,8 @@ defineExpose({ open, close })
   }
 
   .user-form__status-row {
-    width: 100%;
+    // width: 100%;
+    width: 3.8rem;
     display: block;
 
     :deep(.el-form-item__content) {

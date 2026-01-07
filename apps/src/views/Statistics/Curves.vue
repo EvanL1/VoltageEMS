@@ -4,24 +4,40 @@
     <div class="curves__content">
       <!-- 表格工具栏-->
       <div class="curves__toolbar">
-        <div class="curves__toolbar-left" ref="toolbarLeftRef">
-          <!-- 选择框-->
-          <el-select
-            v-model="selectedFilter"
-            placeholder="Select filter condition"
-            @change="handleFilterChange"
-            :append-to="toolbarLeftRef"
-            clearable
-          >
-            <el-option label="All" value="all" />
-            <el-option label="High Priority" value="high" />
-            <el-option label="Medium Priority" value="medium" />
-            <el-option label="Low Priority" value="low" />
-          </el-select>
-        </div>
-
         <div class="curves__toolbar-right">
           <div class="curves__toolbar-time-btns" @click="handleTimeBtnClick">
+            <div
+              v-show="selectedTimeBtn === 'custom'"
+              class="curves__toolbar-time-interval"
+              ref="toolbarRightRef"
+            >
+              <el-select
+                v-model="timeInterval"
+                @change="handleTimeIntervalChange"
+                :append-to="toolbarRightRef"
+                placeholder="Select Time Interval"
+              >
+                <el-option
+                  v-for="btn in intervalList"
+                  :key="btn.value"
+                  :label="btn.label"
+                  :value="btn.value"
+                />
+              </el-select>
+            </div>
+            <el-date-picker
+              v-if="selectedTimeBtn === 'custom'"
+              v-model="rangeArray"
+              type="datetimerange"
+              value-format="YYYY-MM-DD HH:mm:ss"
+              format="YYYY-MM-DD HH:mm:ss"
+              range-separator="To"
+              :default-time="defaultTime"
+              start-placeholder="Select Start Date"
+              end-placeholder="Select End Date"
+              :teleported="false"
+              @change="handleDateRangeChange"
+            />
             <div
               v-for="btn in timeBtnList"
               :key="btn.value"
@@ -82,20 +98,35 @@
 </template>
 
 <script setup lang="ts">
-const toolbarLeftRef = ref<HTMLElement | null>(null)
 const activeTab = ref<'current' | 'history'>('current')
-const selectedFilter = ref('all')
+const toolbarRightRef = ref<HTMLElement | null>(null)
 
 // 时间按钮列表
-const timeBtnList = [
+const timeBtnList: { label: string; value: '6h' | '1d' | '1w' | '1m' | 'custom' }[] = [
+  { label: 'Custom', value: 'custom' },
   { label: '6 Hour', value: '6h' },
   { label: '1 Day', value: '1d' },
   { label: '1 Week', value: '1w' },
   { label: '1 Month', value: '1m' },
 ]
 
+const defaultTime: [Date, Date] = [new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]
+const timeInterval = ref('15m')
+const rangeArray = ref<string[]>([])
+const intervalList = ref([
+  { label: '30 Seconds', value: '30s' },
+  { label: '1 Minute', value: '1m' },
+  { label: '15 Minutes', value: '15m' },
+  { label: '1 Hour', value: '1h' },
+  { label: '6 Hours', value: '6h' },
+  { label: '1 Day', value: '1d' },
+  { label: '1 Week', value: '1w' },
+  { label: '1 Month', value: '1M' },
+  { label: '1 Year', value: '1y' },
+])
+
 // 当前选中的时间按钮
-const selectedTimeBtn = ref('6h')
+const selectedTimeBtn = ref<'6h' | '1d' | '1w' | '1m' | 'custom'>('6h')
 
 // 事件代理处理时间按钮点击
 const handleTimeBtnClick = (event: MouseEvent) => {
@@ -103,16 +134,33 @@ const handleTimeBtnClick = (event: MouseEvent) => {
   // 查找最近的按钮元素
   const btn = target.closest('.curves__toolbar-time-btn') as HTMLElement | null
   if (btn && btn.dataset.value) {
-    selectedTimeBtn.value = btn.dataset.value
-    console.log(selectedTimeBtn.value)
+    selectedTimeBtn.value = btn.dataset.value as '6h' | '1d' | '1w' | '1m' | 'custom'
+    rangeArray.value = []
+    if (selectedTimeBtn.value !== 'custom') {
+      // 处理非自定义时间选择
+      handleTimeRangeChange()
+    }
   }
 }
 
-const handleFilterChange = () => {
-  console.log('handleFilterChange')
+// 处理时间间隔变化
+const handleTimeIntervalChange = () => {
+  if (selectedTimeBtn.value === 'custom' && rangeArray.value.length === 2) {
+    handleTimeRangeChange()
+  }
 }
-const handleExport = () => {
-  console.log('handleExport')
+
+// 处理日期范围变化
+const handleDateRangeChange = () => {
+  if (selectedTimeBtn.value === 'custom' && rangeArray.value.length === 2) {
+    handleTimeRangeChange()
+  }
+}
+
+// 处理时间范围变化（统一处理数据刷新）
+const handleTimeRangeChange = () => {
+  console.log('Time range changed:', selectedTimeBtn.value, rangeArray.value, timeInterval.value)
+  // 这里可以添加数据刷新逻辑
 }
 
 // 功率趋势数据 - 用于折线图
@@ -209,36 +257,40 @@ const exampleSeries = [
     padding-bottom: 0.2rem;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
 
-    .curves__toolbar-left {
-      position: relative;
+    .curves__toolbar-right {
       display: flex;
       align-items: center;
-      gap: 0.16rem;
-    }
+      gap: 0.2rem;
 
-    .curves__toolbar-time-btns {
-      height: 0.32rem;
-      display: flex;
-      align-items: center;
-      background-color: rgba(255, 255, 255, 0.04);
+      .curves__toolbar-time-btns {
+        position: relative;
+        height: 0.32rem;
+        display: flex;
+        align-items: center;
 
-      .curves__toolbar-time-btn {
-        height: 0.28rem;
-        line-height: 0.22rem;
-        padding: 0.03rem 0.1rem;
-        font-size: 0.14rem;
-        background: transparent;
-        border-right: 0.01rem solid rgba(255, 255, 255, 0.2);
-        cursor: pointer;
-
-        &:last-child {
-          border-right: none;
+        .curves__toolbar-time-interval {
+          position: relative;
+          margin-right: 0.2rem;
         }
 
-        &.is-active {
-          background: rgba(255, 255, 255, 0.2);
+        .curves__toolbar-time-btn {
+          height: 0.32rem;
+          line-height: 0.32rem;
+          padding: 0 0.1rem;
+          font-size: 0.14rem;
+          background: transparent;
+          border-right: 0.01rem solid rgba(255, 255, 255, 0.2);
+          cursor: pointer;
+
+          &:last-child {
+            border-right: none;
+          }
+
+          &.is-active {
+            background: rgba(255, 255, 255, 0.2);
+          }
         }
       }
     }

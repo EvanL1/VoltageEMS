@@ -27,14 +27,14 @@
               :icon="tableRefreshIcon"
               text="Reload"
               custom-class="rule-management__btn"
-              @click="handleRefresh"
+              @click="reloadFilters"
             />
             <IconButton
               type="primary"
               :icon="tableSearchIcon"
               text="Search"
               custom-class="rule-management__btn"
-              @click="handleSearch"
+              @click="fetchTableData(true)"
             />
             <IconButton
               type="primary"
@@ -98,7 +98,7 @@
     <InstanceDetailDialog
       ref="instanceDetailDialogRef"
       :product-options="productOptions"
-      @submit="handleDetailSubmit"
+      @submit="fetchTableData(true)"
     />
 
     <!-- Points Tables 对话框（DeviceConfiguration 专用） -->
@@ -139,6 +139,7 @@ const {
   fetchTableData,
   filters,
   handlePageChange,
+  reloadFilters,
 } = useTableData<DeviceInstanceBasic>(tableConfig)
 
 filters.product_name = ''
@@ -182,10 +183,10 @@ const handleDetail = (row: DeviceInstanceBasic) => {
 // 删除规则
 const handleDelete = async (row: DeviceInstanceBasic) => {
   await ElMessageBox.confirm(
-    `Are you sure you want to delete rule "${row.instance_name}"?`,
-    'Delete Rule',
+    `Are you sure you want to delete instance "${row.instance_name}"?`,
+    'Delete Instance',
     {
-      confirmButtonText: 'Delete',
+      confirmButtonText: 'Confirm',
       cancelButtonText: 'Cancel',
       type: 'warning',
     },
@@ -209,19 +210,6 @@ const openPointsDialog = (row: DeviceInstanceBasic) => {
 // const openMappingsDialog = (row: DeviceInstanceBasic) => {
 //   MappingsDialogRef.value?.open(row.instance_id)
 // }
-
-const handleRefresh = () => {
-  filters.product_name = ''
-  fetchTableData(true)
-}
-const handleSearch = () => {
-  fetchTableData(true)
-}
-
-// 详情弹窗提交
-const handleDetailSubmit = () => {
-  fetchTableData()
-}
 </script>
 
 <style scoped lang="scss">

@@ -35,18 +35,19 @@ defineProps<{
   .end-node {
     display: flex;
     align-items: center;
-    padding: 12px;
+    padding: 0.12rem;
     background-color: #f57c00; // deep orange
-    border-radius: 8px;
+    border-radius: 0.08rem;
     cursor: grab;
     transition: all 0.2s ease;
-    min-width: 200px;
-    border-left: 4px solid rgba(255, 138, 0, 0.4); // orange accent
-    border-top: 2px solid rgba(255, 138, 0, 0.4);
+    min-width: 2rem;
+    border-left: 0.04rem solid rgba(255, 138, 0, 0.4); // orange accent
+    border-top: 0.02rem solid rgba(255, 138, 0, 0.4);
+    box-shadow: 0.02rem 0.02rem 0.08rem rgba(0, 0, 0, 0.15);
 
     &:hover {
       border-color: #ff8a00;
-      box-shadow: 4px 4px 12px rgba(255, 138, 0, 0.25);
+      box-shadow: 0.04rem 0.04rem 0.12rem rgba(255, 138, 0, 0.25);
     }
 
     &:active {
@@ -54,10 +55,10 @@ defineProps<{
     }
 
     &__handle {
-      width: 12px;
-      height: 12px;
+      width: 0.12rem;
+      height: 0.12rem;
       background-color: #ff8a00;
-      border: 2px solid white;
+      border: 0.02rem solid white;
       border-radius: 50%;
       position: absolute;
       top: 50%;
@@ -66,7 +67,7 @@ defineProps<{
       cursor: crosshair;
 
       &--left {
-        left: -6px;
+        left: -0.06rem;
       }
 
       &:hover {
@@ -79,20 +80,20 @@ defineProps<{
       display: flex;
       align-items: center;
       flex: 1;
-      padding: 0 8px;
+      padding: 0 0.08rem;
     }
 
     &__icon {
-      width: 36px;
-      height: 36px;
+      width: 0.36rem;
+      height: 0.36rem;
       display: flex;
       align-items: center;
       justify-content: center;
       background-color: #ef6c00; // deeper orange tile
-      border-radius: 6px;
-      margin-right: 12px;
+      border-radius: 0.06rem;
+      margin-right: 0.12rem;
       .el-icon {
-        font-size: 20px;
+        font-size: 0.2rem;
         color: #ffffff;
       }
     }
@@ -104,12 +105,12 @@ defineProps<{
     &__name {
       font-weight: 600;
       color: #ffffff;
-      margin-bottom: 4px;
-      font-size: 14px;
+      margin-bottom: 0.04rem;
+      font-size: 0.14rem;
     }
 
     &__description {
-      font-size: 12px;
+      font-size: 0.12rem;
       color: #ffffff;
       line-height: 1.4;
     }

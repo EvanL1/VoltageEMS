@@ -6,6 +6,21 @@
     }"
   >
     <div v-if="props.viewMode === 'points'" class="table-action-controls">
+      <div style="flex: 1; display: flex; align-items: center; gap: 0.08rem">
+        <span class="filter-label">Point Name:</span>
+        <el-select
+          v-model="signalNameFilter"
+          filterable
+          allow-create
+          clearable
+          popper-class="signal-name-popper"
+          placeholder="Search Point Name"
+          style="width: 2.8rem"
+          :fit-input-width="true"
+        >
+          <el-option v-for="name in signalNameOptions" :key="name" :label="name" :value="name" />
+        </el-select>
+      </div>
       <template v-if="!props.isEditing">
         <!-- <el-button
           v-if="props.category === 'action'"
@@ -32,39 +47,13 @@
 
     <div class="vtable" style="height: 5rem">
       <div class="vtable__header">
-        <div class="vtable__cell vtable__cell--point-id">Id</div>
+        <div class="vtable__cell vtable__cell--point-id">Point ID</div>
         <div class="vtable__cell vtable__cell--name">
-          <span>Name</span>
-          <el-icon
-            class="filter-icon"
-            @click="showSignalNameFilter = !showSignalNameFilter"
-            style="margin-left: 0.05rem; cursor: pointer"
-          >
-            <Filter />
-          </el-icon>
-          <div v-if="showSignalNameFilter" class="signal-name-filter" @click.stop>
-            <el-select
-              v-model="signalNameFilter"
-              filterable
-              allow-create
-              clearable
-              :teleported="false"
-              placeholder="Keyword Search"
-              style="width: 100%"
-              :fit-input-width="true"
-            >
-              <el-option
-                v-for="name in signalNameOptions"
-                :key="name"
-                :label="name"
-                :value="name"
-              />
-            </el-select>
-          </div>
+          <span>Point Name</span>
         </div>
         <div class="vtable__cell vtable__cell--value">Value</div>
         <div class="vtable__cell vtable__cell--unit">Unit</div>
-        <div class="vtable__cell vtable__cell--desc">Descript</div>
+        <div class="vtable__cell vtable__cell--desc">Description</div>
         <div
           v-if="
             (!props.publishMode &&
@@ -103,6 +92,7 @@
         <template #default="{ item, index }">
           <DynamicScrollerItem :item="item" :index="index" :active="true">
             <div class="vtable__row" :class="getRowClass(item)">
+              <div class="row-status-float"></div>
               <div class="vtable__cell vtable__cell--point-id">
                 <span>{{ getPointId(item) }}</span>
               </div>
@@ -605,36 +595,52 @@ const handleFileChange = (event: Event) => {
         ElMessage.error('CSV file is empty')
         return
       }
-      // 简化导入：point_id,value
+      // 导入格式：point_id,point_name,value,unit,description
       const header = lines[0].trim()
-      const expectedHeader = 'point_id,value'
+      const expectedHeader = 'point_id,point_name,value,unit,description'
       if (header !== expectedHeader) {
         ElMessage.error(`Invalid CSV header. Expected: ${expectedHeader}, Got: ${header}`)
         return
       }
-      const byId: Record<number, number> = {}
+      const byId: Record<
+        number,
+        {
+          name?: string
+          value?: number
+          unit?: string
+          description?: string
+        }
+      > = {}
       for (let i = 1; i < lines.length; i++) {
         const line = lines[i].trim()
         if (!line) continue
-        const [idStr, valueStr] = line.split(',').map((v) => v.trim())
+        const [idStr, nameStr, valueStr, unitStr, descStr] = line.split(',').map((v) => v.trim())
         const pid = Number(idStr)
         if (!Number.isInteger(pid) || pid <= 0) continue
-        const v = Number(valueStr)
-        if (!Number.isFinite(v)) continue
-        byId[pid] = v
+        const v = valueStr ? Number(valueStr) : undefined
+        byId[pid] = {
+          name: nameStr || undefined,
+          value: v !== undefined && Number.isFinite(v) ? v : undefined,
+          unit: unitStr || undefined,
+          description: descStr || undefined,
+        }
       }
       importedFileName.value = file.name
       nextTick(() => {
-        // 将导入值应用到当前可见数据
+        // 将导入数据应用到所有数据（不仅仅是当前可见的）
         editPoints.value = (editPoints.value || []).map((item: any) => {
           const id = getPointId(item)
-          if (byId[id] !== undefined) {
-            item.value = byId[id]
+          const imported = byId[id]
+          if (imported) {
+            if (imported.name !== undefined) item.name = imported.name
+            if (imported.value !== undefined) item.value = imported.value
+            if (imported.unit !== undefined) item.unit = imported.unit
+            if (imported.description !== undefined) item.description = imported.description
           }
           return item
         })
       })
-      ElMessage.success('Imported values applied')
+      ElMessage.success('Imported data applied')
     } catch (error) {
       console.error('Error parsing CSV:', error)
       ElMessage.error('Failed to parse CSV file')
@@ -652,15 +658,20 @@ const clearImportedFileName = () => {
   importedFileName.value = ''
 }
 const handleExport = () => {
-  if (!editPoints.value || editPoints.value.length === 0) {
+  // 导出所有数据，不受筛选影响
+  const allPoints = Array.isArray(props.points) ? props.points : editPoints.value || []
+  if (!allPoints || allPoints.length === 0) {
     ElMessage.warning('No data to export')
     return
   }
-  const header = 'point_id,value'
-  const rows = editPoints.value.map((item: any) => {
+  const header = 'point_id,point_name,value,unit,description'
+  const rows = allPoints.map((item: any) => {
     const id = getPointId(item)
-    const v = item.value ?? ''
-    return [id, v].join(',')
+    const name = String(item.name || '')
+    const value = item.value ?? ''
+    const unit = String(item.unit || '')
+    const description = String(item.description || '')
+    return [id, name, value, unit, description].join(',')
   })
   const csvContent = [header, ...rows].join('\n')
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
@@ -737,11 +748,37 @@ defineExpose({
       align-items: flex-start;
     }
   }
+  .vtable__header {
+    position: relative;
+    padding-left: 0.03rem;
+    padding-right: 0.08rem;
+  }
+  .row-status-float {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0.03rem;
+    background: transparent;
+    pointer-events: none;
+  }
+  .vtable__row.row-status-added .row-status-float {
+    background: #67c23a;
+  }
+  .vtable__row.row-status-modified .row-status-float {
+    background: #409eff;
+  }
+  .vtable__row.row-status-deleted .row-status-float {
+    background: #f56c6c;
+  }
+  .vtable__row.row-invalid .row-status-float {
+    background: #f56c6c;
+  }
   .vtable__cell--point-id {
-    width: 10%;
+    width: 1.3rem;
   }
   .vtable__cell--name {
-    width: 25%;
+    width: 3.26rem;
     position: relative;
     .filter-icon {
       margin-left: 0.05rem;
@@ -751,6 +788,7 @@ defineExpose({
       position: absolute;
       top: 100%;
       left: 0;
+      right: 0;
       z-index: 100;
       background: #1e2f52;
       padding: 0.1rem;
@@ -758,17 +796,23 @@ defineExpose({
       min-width: 2.5rem;
     }
   }
+  // 让筛选下拉与输入框左侧对齐
+  :deep(.signal-name-popper) {
+    left: 0 !important;
+    transform: none !important;
+    min-width: 100% !important;
+  }
   .vtable__cell--value {
-    width: 12%;
+    width: 1.56rem;
   }
   .vtable__cell--unit {
-    width: 10%;
+    width: 1.3rem;
   }
   .vtable__cell--desc {
-    width: 33%;
-  }
+    width: 4.31rem;
+  } // 33% of 13.07 -> 4.31
   .vtable__cell--operation {
-    width: 13%;
+    width: 1.69rem;
 
     .point-table__operation-cell {
       display: flex;

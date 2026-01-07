@@ -16,163 +16,188 @@
 
         <div class="rule-management__config-section">
           <div class="config-section__header">
-            <el-tabs
-              v-model="activeTab"
-              type="card"
-              :before-leave="handleBeforeLeave"
-              @tab-change="handleTabChange"
-            >
-              <el-tab-pane label="telemetry" name="telemetry" v-if="channelProtocol !== 'di_do'">
-                <template v-if="viewMode === 'points'">
-                  <PointTablePoints
-                    ref="telemetryTableRef"
-                    pointType="T"
-                    :points="pointsData.telemetry"
-                    :original-points="originalPointsData.telemetry"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :publish-mode="isPublish && activeTab === 'telemetry'"
-                    @toggle-publish="togglePublishMode"
-                    @enter-edit-mode="handleEdit"
-                    @publish-change="
-                      (dirty: boolean) => {
-                        publishDirty = dirty
-                      }
-                    "
-                  />
-                </template>
-                <template v-else>
-                  <PointTableMappings
-                    ref="telemetryTableRef"
-                    pointType="T"
-                    :points="pointsData.telemetry"
-                    :original-points="originalPointsData.telemetry"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :channelProtocol="channelProtocol"
-                  />
-                </template>
-              </el-tab-pane>
-              <el-tab-pane label="signal" name="signal">
-                <template v-if="viewMode === 'points'">
-                  <PointTablePoints
-                    ref="signalTableRef"
-                    pointType="S"
-                    :points="pointsData.signal"
-                    :original-points="originalPointsData.signal"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :publish-mode="isPublish && activeTab === 'signal'"
-                    @toggle-publish="togglePublishMode"
-                    @enter-edit-mode="handleEdit"
-                    @publish-change="
-                      (dirty: boolean) => {
-                        publishDirty = dirty
-                      }
-                    "
-                  />
-                </template>
-                <template v-else>
-                  <PointTableMappings
-                    ref="signalTableRef"
-                    pointType="S"
-                    :points="pointsData.signal"
-                    :original-points="originalPointsData.signal"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :channelProtocol="channelProtocol"
-                  />
-                </template>
-              </el-tab-pane>
-              <el-tab-pane label="control" name="control">
-                <template v-if="viewMode === 'points'">
-                  <PointTablePoints
-                    ref="controlTableRef"
-                    pointType="C"
-                    :points="pointsData.control"
-                    :original-points="originalPointsData.control"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :publish-mode="isPublish && activeTab === 'control'"
-                    @toggle-publish="togglePublishMode"
-                    @enter-edit-mode="handleEdit"
-                    @publish-change="
-                      (dirty: boolean) => {
-                        publishDirty = dirty
-                      }
-                    "
-                  />
-                </template>
-                <template v-else>
-                  <PointTableMappings
-                    ref="controlTableRef"
-                    pointType="C"
-                    :points="pointsData.control"
-                    :original-points="originalPointsData.control"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :channelProtocol="channelProtocol"
-                  />
-                </template>
-              </el-tab-pane>
-              <el-tab-pane label="adjustment" name="adjustment" v-if="channelProtocol !== 'di_do'">
-                <template v-if="viewMode === 'points'">
-                  <PointTablePoints
-                    ref="adjustmentTableRef"
-                    pointType="A"
-                    :points="pointsData.adjustment"
-                    :original-points="originalPointsData.adjustment"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :publish-mode="isPublish && activeTab === 'adjustment'"
-                    @toggle-publish="togglePublishMode"
-                    @enter-edit-mode="handleEdit"
-                    @publish-change="
-                      (dirty: boolean) => {
-                        publishDirty = dirty
-                      }
-                    "
-                  />
-                </template>
-                <template v-else>
-                  <PointTableMappings
-                    ref="adjustmentTableRef"
-                    pointType="A"
-                    :points="pointsData.adjustment"
-                    :original-points="originalPointsData.adjustment"
-                    :view-mode="viewMode"
-                    :edit-filters="editFilters"
-                    :is-editing="isEditing"
-                    :channelProtocol="channelProtocol"
-                  />
-                </template>
-              </el-tab-pane>
-            </el-tabs>
-
-            <div class="config-section__controls">
-              <!-- 视图模式切换器 -->
-              <div v-if="!isEditing" class="view-mode-switch">
-                <span class="switch-label">Points</span>
-                <el-switch v-model="viewModeSwitch" />
-                <span class="switch-label">Mappings</span>
+            <!-- 视图模式切换器 - 移到tabs上方 -->
+            <div v-if="!isEditing" class="config-section__controls">
+              <div class="view-mode-switch">
+                <span class="switch-label">View Mode:</span>
+                <el-radio-group v-model="viewModeSwitch" class="el-radio-group--button">
+                  <el-radio :label="false">Points</el-radio>
+                  <el-radio :label="true">Mappings</el-radio>
+                </el-radio-group>
               </div>
+            </div>
+            <div class="config-section__tabs-wrapper">
+              <LoadingBg :loading="globalStore.loading">
+                <el-tabs
+                  v-model="activeTab"
+                  type="card"
+                  :before-leave="handleBeforeLeave"
+                  @tab-change="handleTabChange"
+                  class="config-section__tabs"
+                >
+                  <el-tab-pane
+                    label="telemetry"
+                    name="telemetry"
+                    v-if="channelProtocol !== 'di_do'"
+                  >
+                    <template v-if="viewMode === 'points'">
+                      <PointTablePoints
+                        ref="telemetryTableRef"
+                        pointType="T"
+                        :points="pointsData.telemetry"
+                        :original-points="originalPointsData.telemetry"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :publish-mode="isPublish && activeTab === 'telemetry'"
+                        :channelProtocol="channelProtocol"
+                        @toggle-publish="togglePublishMode"
+                        @enter-edit-mode="handleEdit"
+                        @publish-change="
+                          (dirty: boolean) => {
+                            publishDirty = dirty
+                          }
+                        "
+                      />
+                    </template>
+                    <template v-else>
+                      <PointTableMappings
+                        ref="telemetryTableRef"
+                        pointType="T"
+                        :points="pointsData.telemetry"
+                        :original-points="originalPointsData.telemetry"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :channelProtocol="channelProtocol"
+                      />
+                    </template>
+                  </el-tab-pane>
+                  <el-tab-pane label="signal" name="signal">
+                    <template v-if="viewMode === 'points'">
+                      <PointTablePoints
+                        ref="signalTableRef"
+                        pointType="S"
+                        :points="pointsData.signal"
+                        :original-points="originalPointsData.signal"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :publish-mode="isPublish && activeTab === 'signal'"
+                        :channelProtocol="channelProtocol"
+                        @toggle-publish="togglePublishMode"
+                        @enter-edit-mode="handleEdit"
+                        @publish-change="
+                          (dirty: boolean) => {
+                            publishDirty = dirty
+                          }
+                        "
+                      />
+                    </template>
+                    <template v-else>
+                      <PointTableMappings
+                        ref="signalTableRef"
+                        pointType="S"
+                        :points="pointsData.signal"
+                        :original-points="originalPointsData.signal"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :channelProtocol="channelProtocol"
+                      />
+                    </template>
+                  </el-tab-pane>
+                  <el-tab-pane label="control" name="control">
+                    <template v-if="viewMode === 'points'">
+                      <PointTablePoints
+                        ref="controlTableRef"
+                        pointType="C"
+                        :points="pointsData.control"
+                        :original-points="originalPointsData.control"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :publish-mode="isPublish && activeTab === 'control'"
+                        :channelProtocol="channelProtocol"
+                        @toggle-publish="togglePublishMode"
+                        @enter-edit-mode="handleEdit"
+                        @publish-change="
+                          (dirty: boolean) => {
+                            publishDirty = dirty
+                          }
+                        "
+                      />
+                    </template>
+                    <template v-else>
+                      <PointTableMappings
+                        ref="controlTableRef"
+                        pointType="C"
+                        :points="pointsData.control"
+                        :original-points="originalPointsData.control"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :channelProtocol="channelProtocol"
+                      />
+                    </template>
+                  </el-tab-pane>
+                  <el-tab-pane
+                    label="adjustment"
+                    name="adjustment"
+                    v-if="channelProtocol !== 'di_do'"
+                  >
+                    <template v-if="viewMode === 'points'">
+                      <PointTablePoints
+                        ref="adjustmentTableRef"
+                        pointType="A"
+                        :points="pointsData.adjustment"
+                        :original-points="originalPointsData.adjustment"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :publish-mode="isPublish && activeTab === 'adjustment'"
+                        :channelProtocol="channelProtocol"
+                        @toggle-publish="togglePublishMode"
+                        @enter-edit-mode="handleEdit"
+                        @publish-change="
+                          (dirty: boolean) => {
+                            publishDirty = dirty
+                          }
+                        "
+                      />
+                    </template>
+                    <template v-else>
+                      <PointTableMappings
+                        ref="adjustmentTableRef"
+                        pointType="A"
+                        :points="pointsData.adjustment"
+                        :original-points="originalPointsData.adjustment"
+                        :view-mode="viewMode"
+                        :edit-filters="editFilters"
+                        :is-editing="isEditing"
+                        :channelProtocol="channelProtocol"
+                      />
+                    </template>
+                  </el-tab-pane>
+                </el-tabs>
 
-              <!-- 编辑模式筛选器 -->
-              <div v-if="isEditing" class="edit-filters">
-                <el-checkbox-group v-model="editFilters">
-                  <el-checkbox label="modified">modified</el-checkbox>
-                  <el-checkbox v-if="viewMode === 'points'" label="added">added</el-checkbox>
-                  <el-checkbox v-if="viewMode === 'points'" label="deleted">deleted</el-checkbox>
-                  <el-checkbox label="invalid">invalid</el-checkbox>
-                </el-checkbox-group>
-              </div>
+                <!-- Status 筛选器 - 使用定位放在 tab 右侧，在 tab 下方线段的上方 -->
+                <div v-if="isEditing" class="config-section__status-filter">
+                  <el-checkbox-group
+                    v-model="statusFilterValue"
+                    @change="handleStatusFilterChange"
+                    class="status-checkbox-group"
+                  >
+                    <el-checkbox
+                      v-for="option in statusFilterOptions"
+                      :key="option.value"
+                      :label="option.value"
+                    >
+                      {{ option.label }}
+                    </el-checkbox>
+                  </el-checkbox-group>
+                </div>
+              </LoadingBg>
             </div>
           </div>
         </div>
@@ -194,7 +219,7 @@
         <IconButton
           v-if="isEditing && !isPublish"
           type="primary"
-          :icon="tableSubmitIcon"
+          :icon="submitIcon"
           text="Submit"
           @click="handleSubmit"
         />
@@ -204,7 +229,7 @@
         <IconButton
           v-if="!isEditing && isPublish"
           type="primary"
-          :icon="tableSubmitIcon"
+          :icon="submitIcon"
           text="Submit Publish"
           @click="handleSubmitPublish"
         />
@@ -219,7 +244,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import FormDialog from '@/components/dialog/FormDialog.vue'
 import PointTablePoints from './PointTablePoints.vue'
 import PointTableMappings from './PointTableMappings.vue'
+import LoadingBg from '@/components/common/LoadingBg.vue'
 import tableSubmitIcon from '@/assets/icons/btn-submit.svg'
+// @ts-ignore - SVG导入类型问题
+const submitIcon: string = tableSubmitIcon
 import type { PointInfoResponse } from '@/types/channelConfiguration'
 import {
   getPointsTables,
@@ -236,7 +264,11 @@ import type { MappingCategoryResponse } from '@/types/channelConfiguration'
 import { ChannelIdKey, ChannelNameKey, ChannelProtocolKey, OriginalPointsKey } from '@/utils/key'
 import wsManager from '@/utils/websocket'
 import type { DataType } from '@/types/websocket'
-import { cloneDeep, uniq } from 'lodash-es'
+import { useGlobalStore } from '@/stores/global'
+const globalStore = useGlobalStore()
+// lodash-es 替换
+const deepClone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
+const uniqueArray = <T,>(arr: T[]): T[] => Array.from(new Set(arr))
 // 内部状态
 const dialogRef = ref()
 const isEditing = ref(false)
@@ -247,6 +279,53 @@ const channelProtocol = ref<'modbus_tcp' | 'modbus_rtu' | 'virt' | 'can' | 'di_d
 const viewModeSwitch = ref(false) // false = points, true = mappings
 const viewMode = computed(() => (viewModeSwitch.value ? 'mappings' : 'points'))
 const editFilters = ref<string[]>([])
+const loading = computed(() => globalStore.loading)
+// Status 筛选器：使用 checkbox-group 但限制为单选
+const statusFilterValue = ref<string[]>([])
+// Status 筛选选项：根据 viewMode 显示不同选项
+const statusFilterOptions = computed(() => {
+  if (viewMode.value === 'points') {
+    return [
+      { label: 'modified', value: 'modified' },
+      { label: 'added', value: 'added' },
+      { label: 'deleted', value: 'deleted' },
+      { label: 'invalid', value: 'invalid' },
+    ]
+  } else {
+    return [
+      { label: 'modified', value: 'modified' },
+      { label: 'invalid', value: 'invalid' },
+    ]
+  }
+})
+// Status 筛选器变化处理：限制为单选
+const handleStatusFilterChange = (values: string[]) => {
+  // 限制为单选：如果选择了多个，只保留最后一个
+  if (values.length > 1) {
+    const lastValue = values[values.length - 1]
+    statusFilterValue.value = [lastValue]
+    editFilters.value = [lastValue]
+  } else {
+    editFilters.value = values
+  }
+}
+// 监听 editFilters 变化，同步到 statusFilterValue（用于外部设置时同步）
+watch(
+  () => editFilters.value,
+  (val) => {
+    if (Array.isArray(val) && val.length > 0) {
+      // 如果 editFilters 有值，同步到 statusFilterValue
+      const currentValue = statusFilterValue.value
+      if (currentValue.length === 0 || currentValue[0] !== val[0]) {
+        statusFilterValue.value = [val[0]]
+      }
+    } else {
+      // 如果 editFilters 为空，清空 statusFilterValue
+      statusFilterValue.value = []
+    }
+  },
+  { immediate: true },
+)
 const showSignalNameFilter = ref(false)
 const isPublish = ref(false) // 批量发布模式
 const publishDirty = ref(false) // 发布数据是否有修改
@@ -312,6 +391,7 @@ provide(
 const handleEdit = (payload?: { fromImport?: boolean }) => {
   isEditing.value = true
   editFilters.value = []
+  statusFilterValue.value = []
   // 用户主动进入编辑时，清除四个表中上一次的导入文件名；
   // 若由子表导入触发（fromImport），则保留当前导入文件名。
   if (!payload?.fromImport) {
@@ -324,10 +404,14 @@ const handleEdit = (payload?: { fromImport?: boolean }) => {
 
 // 统一刷新点位数据并设置对比基线
 const refreshPointsBaseline = async () => {
-  const res = await getPointsTables(channelId.value)
-  if (res.success) {
-    pointsData.value = res.data
-    originalPointsData.value = cloneDeep(res.data)
+  try {
+    const res = await getPointsTables(channelId.value)
+    if (res.success) {
+      pointsData.value = res.data
+      originalPointsData.value = deepClone(res.data)
+    }
+  } catch {
+    console.error('Failed to refresh points baseline')
   }
 }
 
@@ -336,7 +420,8 @@ const handleSubmit = async () => {
   const ensureInvalidHandled = (targetTab: 'telemetry' | 'signal' | 'control' | 'adjustment') => {
     // 勾选 invalid 筛选
     if (!editFilters.value.includes('invalid')) {
-      editFilters.value = uniq([...(editFilters.value || []), 'invalid'])
+      editFilters.value = uniqueArray([...(editFilters.value || []), 'invalid'])
+      statusFilterValue.value = ['invalid']
     }
     // 切换到有问题的 Tab
     activeTab.value = targetTab
@@ -377,6 +462,9 @@ const handleSubmit = async () => {
       isEditing.value = false
       // 刷新 points 数据，作为新的原始对比基线
       await refreshPointsBaseline()
+      // 提交完成后清空筛选并显示全部
+      clearStatusFilters()
+      statusFilterValue.value = []
     }
   } else {
     const invalidTabs: Array<'telemetry' | 'signal' | 'control' | 'adjustment'> = []
@@ -476,6 +564,9 @@ const handleSubmit = async () => {
       ElMessage.success('Points updated successfully')
       isEditing.value = false
       await refreshPointsBaseline()
+      // 提交完成后清空筛选并显示全部
+      clearStatusFilters()
+      statusFilterValue.value = []
     }
   }
 }
@@ -498,6 +589,11 @@ const handleTabChange = (name: string) => {
       publishDirty.value = !!signalTableRef.value?.hasPublishChanges?.()
     }
   }
+  // 切换 Tab 后滚动到顶
+  nextTick(() => {
+    const ref = getCurrentTableRef()
+    ref?.value?.scrollToTop?.()
+  })
 }
 
 // Tabs 切换拦截：批量发布中如有修改则提示；确认后切换并退出批量发布，取消则停留
@@ -539,8 +635,59 @@ const handleBeforeLeave = async (newName: string, oldName: string) => {
   return true
 }
 
-// Dialog 关闭前拦截：发布模式且有修改时提醒用户提交或放弃
+// Dialog 关闭前拦截：发布模式且有修改时提醒用户提交或放弃，或编辑模式有修改时提醒
 const handleDialogBeforeClose = async (done: () => void) => {
+  // 如果正在编辑，检查是否有修改
+  if (isEditing.value) {
+    const hasChanges =
+      (viewMode.value === 'points' &&
+        (telemetryTableRef.value?.hasChanges?.() ||
+          signalTableRef.value?.hasChanges?.() ||
+          controlTableRef.value?.hasChanges?.() ||
+          adjustmentTableRef.value?.hasChanges?.())) ||
+      (viewMode.value === 'mappings' &&
+        (telemetryTableRef.value?.hasChanges?.() ||
+          signalTableRef.value?.hasChanges?.() ||
+          controlTableRef.value?.hasChanges?.() ||
+          adjustmentTableRef.value?.hasChanges?.()))
+    if (hasChanges) {
+      try {
+        await ElMessageBox.confirm(
+          'You have unsaved changes. Do you want to discard them?',
+          'Unsaved Changes',
+          {
+            confirmButtonText: 'Discard',
+            cancelButtonText: 'Cancel',
+            type: 'warning',
+          },
+        )
+        isEditing.value = false
+        editFilters.value = []
+        statusFilterValue.value = []
+        telemetryTableRef.value?.clearImportedFileName?.()
+        signalTableRef.value?.clearImportedFileName?.()
+        controlTableRef.value?.clearImportedFileName?.()
+        adjustmentTableRef.value?.clearImportedFileName?.()
+        clearAllSignalFilters()
+        done()
+      } catch {
+        // 用户取消，不做任何操作
+        return
+      }
+    } else {
+      isEditing.value = false
+      editFilters.value = []
+      statusFilterValue.value = []
+      telemetryTableRef.value?.clearImportedFileName?.()
+      signalTableRef.value?.clearImportedFileName?.()
+      controlTableRef.value?.clearImportedFileName?.()
+      adjustmentTableRef.value?.clearImportedFileName?.()
+      clearAllSignalFilters()
+      done()
+    }
+    return
+  }
+
   if (isPublish.value && publishDirty.value) {
     try {
       await ElMessageBox.confirm(
@@ -715,7 +862,7 @@ const open = async (
   // 如已有订阅，先取消
   if (pageId.value) {
     try {
-      wsManager.unsubscribePage(pageId.value, [channelId.value])
+      wsManager.unsubscribe(pageId.value)
     } catch {}
     pageId.value = ''
   }
@@ -724,6 +871,7 @@ const open = async (
   publishDirty.value = false
   viewModeSwitch.value = false
   editFilters.value = []
+  statusFilterValue.value = []
   channelId.value = id
   if (name) channelName.value = name
   if (protocol) channelProtocol.value = protocol
@@ -731,6 +879,11 @@ const open = async (
   activeTab.value = protocol === 'di_do' ? 'signal' : 'telemetry'
   // 加载 points 数据
   await refreshPointsBaseline()
+  // 打开后将当前表滚动到顶部
+  nextTick(() => {
+    const ref = getCurrentTableRef()
+    ref?.value?.scrollToTop?.()
+  })
 
   // 准备 dataType -> 表引用映射
   dataTypeToRef.T = telemetryTableRef
@@ -745,8 +898,7 @@ const open = async (
   //   // 忽略连接失败（可能未登录），不阻塞UI
   // }
   pageId.value = `points-${id}-${Date.now()}`
-  wsManager.subscribePage(
-    pageId.value,
+  wsManager.subscribe(
     {
       source: 'comsrv',
       channels: [id],
@@ -754,13 +906,11 @@ const open = async (
       interval: 1000,
     },
     {
-      onBatchDataUpdate: (payload: {
-        updates: Array<{ channel_id: number; data_type: DataType; values: Record<string, number> }>
-      }) => {
+      onBatchDataUpdate: (payload: any) => {
         if (!payload?.updates?.length) return
-        payload.updates.forEach((upd) => {
+        payload.updates.forEach((upd: any) => {
           if (upd.channel_id !== channelId.value) return
-          const refMap = dataTypeToRef[upd.data_type]
+          const refMap = dataTypeToRef[upd.data_type as DataType]
           refMap?.value?.applyRealtimeValues?.(upd.values)
         })
       },
@@ -828,7 +978,7 @@ const close = () => {
   // 关闭时取消页面订阅
   if (pageId.value) {
     try {
-      wsManager.unsubscribePage(pageId.value, [channelId.value])
+      wsManager.unsubscribe(pageId.value)
     } catch {}
     pageId.value = ''
   }
@@ -842,17 +992,62 @@ const clearAllSignalFilters = () => {
   adjustmentTableRef.value?.clearSignalNameFilter?.()
 }
 
+// 统一清空状态筛选并显示全部
+const clearStatusFilters = () => {
+  editFilters.value = []
+  statusFilterValue.value = []
+  clearAllSignalFilters()
+}
+
 const handleClose = async () => {
-  // 如果正在编辑，直接退出编辑模式并清除所有导入的文件名
+  // 如果正在编辑，检查是否有修改
   if (isEditing.value) {
-    isEditing.value = false
-    // 退出编辑时，清空编辑筛选（防止仍勾选 invalid 导致只显示错误或无数据）
-    editFilters.value = []
-    // 清除所有表格的导入文件名
-    telemetryTableRef.value?.clearImportedFileName?.()
-    signalTableRef.value?.clearImportedFileName?.()
-    controlTableRef.value?.clearImportedFileName?.()
-    adjustmentTableRef.value?.clearImportedFileName?.()
+    const hasChanges =
+      (viewMode.value === 'points' &&
+        (telemetryTableRef.value?.hasChanges?.() ||
+          signalTableRef.value?.hasChanges?.() ||
+          controlTableRef.value?.hasChanges?.() ||
+          adjustmentTableRef.value?.hasChanges?.())) ||
+      (viewMode.value === 'mappings' &&
+        (telemetryTableRef.value?.hasChanges?.() ||
+          signalTableRef.value?.hasChanges?.() ||
+          controlTableRef.value?.hasChanges?.() ||
+          adjustmentTableRef.value?.hasChanges?.()))
+    if (hasChanges) {
+      try {
+        await ElMessageBox.confirm(
+          'You have unsaved changes. Do you want to discard them?',
+          'Unsaved Changes',
+          {
+            confirmButtonText: 'Discard',
+            cancelButtonText: 'Cancel',
+            type: 'warning',
+          },
+        )
+        isEditing.value = false
+        // 退出编辑时，清空编辑筛选（防止仍勾选 invalid 导致只显示错误或无数据）
+        editFilters.value = []
+        statusFilterValue.value = []
+        // 清除所有表格的导入文件名
+        telemetryTableRef.value?.clearImportedFileName?.()
+        signalTableRef.value?.clearImportedFileName?.()
+        controlTableRef.value?.clearImportedFileName?.()
+        adjustmentTableRef.value?.clearImportedFileName?.()
+      } catch {
+        // 用户取消，不做任何操作
+        return
+      }
+    } else {
+      isEditing.value = false
+      // 退出编辑时，清空编辑筛选（防止仍勾选 invalid 导致只显示错误或无数据）
+      editFilters.value = []
+      statusFilterValue.value = []
+      // 清除所有表格的导入文件名
+      telemetryTableRef.value?.clearImportedFileName?.()
+      signalTableRef.value?.clearImportedFileName?.()
+      controlTableRef.value?.clearImportedFileName?.()
+      adjustmentTableRef.value?.clearImportedFileName?.()
+    }
     return
   }
 
@@ -911,16 +1106,14 @@ defineExpose({
 
 .voltage-class .rule-management__config-section {
   .config-section__header {
-    // position: relative;
+    position: relative;
 
     .config-section__controls {
-      position: absolute;
-      top: 1rem;
-      transform: translateY(-50%);
-      right: 0.41rem;
       display: flex;
       align-items: center;
+      justify-content: flex-end;
       gap: 0.15rem;
+      margin-bottom: 0.1rem;
 
       .view-mode-switch {
         display: flex;
@@ -928,7 +1121,7 @@ defineExpose({
         gap: 0.08rem;
 
         .switch-label {
-          font-size: 0.12rem;
+          font-size: 0.18rem;
           color: #fff;
         }
       }
@@ -945,6 +1138,46 @@ defineExpose({
           .el-checkbox__label {
             font-size: 0.12rem;
           }
+        }
+      }
+    }
+
+    .config-section__tabs-wrapper {
+      position: relative;
+      min-height: 5rem;
+
+      .config-section__tabs {
+        width: 100%;
+
+        // 确保 tab header 有相对定位，以便 Status 筛选器可以相对于它定位
+        :deep(.el-tabs__header) {
+          position: relative;
+        }
+      }
+
+      .config-section__status-filter {
+        position: absolute;
+        top: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        gap: 0.08rem;
+        z-index: 10;
+        // 与 tab 标签对齐（tab 标签的高度通常是 0.4rem 左右）
+        height: 0.4rem;
+        line-height: 0.4rem;
+
+        .filter-label {
+          font-size: 0.14rem;
+          color: #fff;
+          white-space: nowrap;
+        }
+
+        .status-checkbox-group {
+          display: flex;
+          gap: 0.12rem;
+          flex-wrap: wrap;
+          align-items: center;
         }
       }
     }

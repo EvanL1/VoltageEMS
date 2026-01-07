@@ -1,165 +1,105 @@
 <template>
   <div class="voltage-class pv__content">
     <div class="devices-pv__tables">
-      <!-- 左侧表格 -->
-      <div class="devices-pv__table devices-pv__table--left">
-        <el-table :data="leftTableData" table-layout="fixed" height="100%">
-          <el-table-column prop="name" label="Name" />
-          <el-table-column prop="value" label="Value" />
-          <el-table-column prop="unit" label="Unit" />
-          <el-table-column prop="updateTime" label="Update Time" />
-        </el-table>
-      </div>
-      <!-- 右侧表格 -->
-      <div class="devices-pv__table devices-pv__table--right">
-        <el-table :data="rightTableData" table-layout="fixed" height="100%">
-          <el-table-column prop="name" label="Name" />
-          <el-table-column prop="status" label="Status" />
-          <el-table-column prop="updateTime" label="Update Time" />
-        </el-table>
-      </div>
+      <div class="update-time">Update Time: {{ updateTime }}</div>
+      <LoadingBg :loading="globalStore.loading">
+        <DeviceMonitoringTable :leftTableData="leftTableData" :rightTableData="rightTableData" />
+      </LoadingBg>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import useWebSocket from '@/composables/useWebSocket'
-import type { SubscriptionConfig } from '@/types/websocket'
-
+import { ref, onMounted } from 'vue'
+import LoadingBg from '@/components/common/LoadingBg.vue'
+import DeviceMonitoringTable from '@/components/device/DeviceMonitoringTable.vue'
+import { useGlobalStore } from '@/stores/global'
 import type { LeftTableItem, RightTableItem } from '@/types/deviceMonitoring'
+import { getPointsTables } from '@/api/channelsManagement'
+import type { PointInfoResponse } from '@/types/channelConfiguration'
+import useWebSocket from '@/composables/useWebSocket'
 
-// 左侧表格数据
-const leftTableData = ref<LeftTableItem[]>([
-  { name: 'Oil Temperature', value: 85.2, unit: '°C', updateTime: '' },
-  { name: 'Phase A Voltage', value: 220.5, unit: 'V', updateTime: '' },
-  { name: 'Phase A Current', value: 15.8, unit: 'A', updateTime: '' },
-  { name: 'Phase B Voltage', value: 219.8, unit: 'V', updateTime: '' },
-  { name: 'Phase B Current', value: 16.2, unit: 'A', updateTime: '' },
-  { name: 'Phase C Voltage', value: 221.1, unit: 'V', updateTime: '' },
-  { name: 'Phase C Current', value: 15.9, unit: 'A', updateTime: '' },
-  { name: 'Active Power', value: 10.5, unit: 'kW', updateTime: '' },
-  { name: 'Reactive Power', value: 2.3, unit: 'kVar', updateTime: '' },
-  { name: 'Power Factor', value: 0.95, unit: '', updateTime: '' },
-  { name: 'Frequency', value: 50.02, unit: 'Hz', updateTime: '' },
-  { name: 'Energy', value: 1250.8, unit: 'kWh', updateTime: '' },
-  { name: 'Pressure 1', value: 0.85, unit: 'MPa', updateTime: '' },
-  { name: 'Pressure 2', value: 0.92, unit: 'MPa', updateTime: '' },
-  { name: 'Flow Rate 1', value: 45.6, unit: 'm³/h', updateTime: '' },
-  { name: 'Flow Rate 2', value: 42.3, unit: 'm³/h', updateTime: '' },
-  { name: 'Liquid Level 1', value: 2.45, unit: 'm', updateTime: '' },
-  { name: 'Liquid Level 2', value: 1.87, unit: 'm', updateTime: '' },
-  { name: 'Speed', value: 1500.0, unit: 'rpm', updateTime: '' },
-  { name: 'Torque', value: 125.6, unit: 'Nm', updateTime: '' },
-  { name: 'Vibration X', value: 0.045, unit: 'mm/s', updateTime: '' },
-  { name: 'Vibration Y', value: 0.038, unit: 'mm/s', updateTime: '' },
-  { name: 'Vibration Z', value: 0.052, unit: 'mm/s', updateTime: '' },
-  { name: 'Noise', value: 65.3, unit: 'dB', updateTime: '' },
-  { name: 'Humidity', value: 45.2, unit: '%', updateTime: '' },
-  { name: 'Dew Point Temperature', value: 12.8, unit: '°C', updateTime: '' },
-  { name: 'CO Concentration', value: 25.0, unit: 'ppm', updateTime: '' },
-  { name: 'CO2 Concentration', value: 450.0, unit: 'ppm', updateTime: '' },
-  { name: 'O2 Concentration', value: 20.8, unit: '%', updateTime: '' },
-  { name: 'Flue Gas Temperature', value: 180.5, unit: '°C', updateTime: '' },
-])
+const globalStore = useGlobalStore()
 
-// 右侧表格数据
-const rightTableData = ref<RightTableItem[]>([
-  { name: 'Oil Temperature Switch', status: 1, updateTime: '' },
-  { name: 'Phase A Voltage Switch', status: 0, updateTime: '' },
-  { name: 'Phase A Current Switch', status: 1, updateTime: '' },
-  { name: 'Phase B Voltage Switch', status: 1, updateTime: '' },
-  { name: 'Phase B Current Switch', status: 0, updateTime: '' },
-  { name: 'Phase C Voltage Switch', status: 1, updateTime: '' },
-  { name: 'Phase C Current Switch', status: 1, updateTime: '' },
-  { name: 'Active Power Switch', status: 0, updateTime: '' },
-  { name: 'Reactive Power Switch', status: 1, updateTime: '' },
-  { name: 'Power Factor Switch', status: 1, updateTime: '' },
-  { name: 'Frequency Switch', status: 0, updateTime: '' },
-  { name: 'Energy Switch', status: 1, updateTime: '' },
-  { name: 'Pressure 1 Switch', status: 1, updateTime: '' },
-  { name: 'Pressure 2 Switch', status: 0, updateTime: '' },
-  { name: 'Flow Rate 1 Switch', status: 1, updateTime: '' },
-  { name: 'Flow Rate 2 Switch', status: 1, updateTime: '' },
-  { name: 'Liquid Level 1 Switch', status: 0, updateTime: '' },
-  { name: 'Liquid Level 2 Switch', status: 1, updateTime: '' },
-  { name: 'Speed Switch', status: 1, updateTime: '' },
-  { name: 'Torque Switch', status: 0, updateTime: '' },
-  { name: 'Vibration X Switch', status: 1, updateTime: '' },
-  { name: 'Vibration Y Switch', status: 1, updateTime: '' },
-  { name: 'Vibration Z Switch', status: 0, updateTime: '' },
-  { name: 'Noise Switch', status: 1, updateTime: '' },
-  { name: 'Humidity Switch', status: 0, updateTime: '' },
-  { name: 'Dew Point Temperature Switch', status: 1, updateTime: '' },
-  { name: 'CO Concentration Switch', status: 1, updateTime: '' },
-  { name: 'CO2 Concentration Switch', status: 0, updateTime: '' },
-  { name: 'O2 Concentration Switch', status: 1, updateTime: '' },
-  { name: 'Flue Gas Temperature Switch', status: 1, updateTime: '' },
-])
+const leftTableData = ref<LeftTableItem[]>([])
+const rightTableData = ref<RightTableItem[]>([])
+const updateTime = ref('')
 
-// 更新时间的格式化函数
-const formatUpdateTime = () => {
-  const now = new Date()
-  return now.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
-}
+// 订阅 WebSocket - ValueMonitoring 使用 comsrv 源
+useWebSocket(
+  {
+    source: 'comsrv',
+    channels: [3],
+    dataTypes: ['T', 'S'],
+    interval: 1000,
+  },
+  {
+    onBatchDataUpdate: (data: any, timestamp?: string) => {
+      if (timestamp) {
+        // 处理时间戳：可能是ISO字符串或Unix时间戳（秒级）字符串
+        const timestampNum = Number(timestamp)
+        if (!isNaN(timestampNum) && timestampNum > 0) {
+          // 如果是数字字符串，判断是秒级还是毫秒级
+          // 如果小于1e12，认为是秒级，需要乘以1000
+          updateTime.value = new Date(timestampNum < 1e12 ? timestampNum * 1000 : timestampNum).toLocaleString()
+        } else {
+          // 尝试作为ISO字符串解析
+          updateTime.value = new Date(timestamp).toLocaleString()
+        }
+      } else {
+        updateTime.value = ''
+      }
+      const channel3TData = data.updates.find(
+        (item: any) => item.channel_id === 3 && item.data_type === 'T',
+      )?.values
+      if (channel3TData) {
+        leftTableData.value.forEach((item) => {
+          const pointValue = channel3TData[item.pointId]
+          if (pointValue !== undefined && pointValue !== null) {
+            item.value = pointValue
+          }
+        })
+      }
+      const channel3SData = data.updates.find(
+        (item: any) => item.channel_id === 3 && item.data_type === 'S',
+      )?.values
+      if (channel3SData) {
+        rightTableData.value.forEach((item) => {
+          const pointValue = channel3SData[item.pointId]
+          if (pointValue !== undefined && pointValue !== null) {
+            item.status = pointValue
+            item.updateTime = updateTime.value
+          }
+        })
+      }
+    },
+  },
+)
 
-// 模拟数据更新
-let updateTimer: number | null = null
-
-const updateData = () => {
-  const currentTime = formatUpdateTime()
-
-  // 更新左侧表格数据（模拟数值变化）
-  leftTableData.value.forEach((item, index) => {
-    // 为每个数据项添加一些随机变化
-    const randomChange = (Math.random() - 0.5) * 0.1 // ±5% 的随机变化
-    const baseValue = getBaseValue(index)
-    item.value = Math.round(baseValue * (1 + randomChange) * 100) / 100
-    item.updateTime = currentTime
-  })
-
-  // 更新右侧表格数据（随机切换状态）
-  rightTableData.value.forEach((item) => {
-    // 随机切换开关状态
-    if (Math.random() < 0.1) {
-      // 10% 的概率切换状态
-      item.status = item.status === 1 ? 0 : 1
+// 初始化数据：通过 API 获取点位数据
+onMounted(async () => {
+  try {
+    // PV 暂时使用通道 3（与 DieselGenerator 相同）
+    const res = await getPointsTables(3)
+    if (res?.success && res.data) {
+      const data = res.data as PointInfoResponse
+      leftTableData.value =
+        data.telemetry?.map((p) => ({
+          pointId: p.point_id,
+          name: p.signal_name || '',
+          unit: p.unit || '',
+          value: null,
+        })) || []
+      rightTableData.value =
+        data.signal?.map((p) => ({
+          pointId: p.point_id,
+          name: p.signal_name || '',
+          status: null,
+          updateTime: '',
+        })) || []
     }
-    item.updateTime = currentTime
-  })
-}
-
-// 获取基础数值的函数
-const getBaseValue = (index: number): number => {
-  const baseValues = [
-    85.2, 220.5, 15.8, 219.8, 16.2, 221.1, 15.9, 10.5, 2.3, 0.95, 50.02, 1250.8, 0.85, 0.92, 45.6,
-    42.3, 2.45, 1.87, 1500.0, 125.6, 0.045, 0.038, 0.052, 65.3, 45.2, 12.8, 25.0, 450.0, 20.8,
-    180.5,
-  ]
-  return baseValues[index] || 0
-}
-
-// 组件挂载时启动定时器
-onMounted(() => {
-  // 立即更新一次数据
-  updateData()
-
-  // 每3秒更新一次数据
-  updateTimer = setInterval(updateData, 3000)
-})
-
-// 组件卸载时清除定时器
-onUnmounted(() => {
-  if (updateTimer) {
-    clearInterval(updateTimer)
-    updateTimer = null
+  } catch (err) {
+    console.error('加载设备点位数据失败:', err)
   }
 })
 </script>
@@ -167,54 +107,16 @@ onUnmounted(() => {
 <style scoped lang="scss">
 .voltage-class.pv__content {
   width: 100%;
-  height: calc(100% - 0.2rem);
-  margin-top: 0.2rem;
+  height: calc(100% - 0.4rem);
 
   .devices-pv__tables {
-    display: flex;
-    flex-direction: row;
-    justify-content: space-between;
     width: 100%;
     height: 100%;
     gap: 0.2rem;
-
-    .devices-pv__table {
-      width: calc((100% - 0.2rem) / 2);
-      height: 100%;
-
-      :deep(.el-table) {
-        // background: rgba(84, 98, 140, 0.2);
-        // overflow: hidden;
-
-        .el-table__header-wrapper {
-          th {
-            background: rgba(58, 82, 121, 0.8);
-            color: #fff;
-            border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
-
-            .cell {
-              color: #fff;
-              font-weight: 600;
-            }
-          }
-        }
-
-        .el-table__body-wrapper {
-          td {
-            background: transparent;
-            color: #fff;
-            border-bottom: 0.01rem solid rgba(255, 255, 255, 0.05);
-
-            .cell {
-              color: #fff;
-            }
-          }
-
-          tr:hover>td {
-            background: rgba(64, 158, 255, 0.1);
-          }
-        }
-      }
+    .update-time {
+      text-align: right;
+      margin: 0.1rem 0;
+      color: #fff;
     }
   }
 }

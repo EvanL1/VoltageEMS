@@ -16,7 +16,7 @@ import pxtorem from 'postcss-pxtorem'
 export default defineConfig({
   plugins: [
     vue(),
-    vueDevTools(),
+    // vueDevTools(), // 暂时关闭 Vue DevTools 调试工具
     AutoImport({
       imports: ['vue', 'vue-router', 'pinia'],
       resolvers: [ElementPlusResolver()],
@@ -39,12 +39,13 @@ export default defineConfig({
         return !/\.(png|jpe?g|gif|svg|webp|avif|bmp|ico)$/i.test(file)
       },
     }),
-    // 打包分析插件
+    // 打包分析插件 - 生成分析报告到 dist/stats.html
     visualizer({
-      open: false,
+      open: true, // 构建后自动打开分析报告
       gzipSize: true,
       brotliSize: true,
-      emitFile: false,
+      filename: 'dist/stats.html', // 生成分析报告文件
+      emitFile: true,
     }),
   ],
   server: {
@@ -53,43 +54,43 @@ export default defineConfig({
     open: true, // 自动打开浏览器
     proxy: {
       '/api': {
-        target: 'http://192.168.30.166:6005',
+        target: 'http://192.168.30.62:6005',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/hisApi': {
-        target: 'http://192.168.30.166:6004',
+        target: 'http://192.168.30.62:6004',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/alarmApi': {
-        target: 'http://192.168.30.166:6002',
+        target: 'http://192.168.30.62:6002',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/netApi': {
-        target: 'http://192.168.30.166:6006',
+        target: 'http://192.168.30.62:6006',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/comApi': {
-        target: 'http://192.168.40.176:6001',
+        target: 'http://192.168.30.62:6001',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/comApi/, ''),
       },
       '/ruleApi': {
-        target: 'http://192.168.40.176:6002',
+        target: 'http://192.168.30.62:6002',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/ruleApi/, ''),
       },
       '/modApi': {
-        target: 'http://192.168.40.176:6002',
+        target: 'http://192.168.30.62:6002',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/modApi/, ''),
       },
       // WebSocket 代理：将前端的 /ws 转发到本机 127.0.0.1:6005
       '/ws': {
-        target: 'ws://192.168.30.166:6005',
+        target: 'ws://192.168.30.62:6005',
         changeOrigin: true,
         ws: true,
         // 不做 path 重写，保持 /ws 直通后端 /ws
@@ -149,12 +150,70 @@ export default defineConfig({
     cssCodeSplit: true,
     // 生成sourcemap用于调试
     sourcemap: false,
+    // chunk 大小警告限制（KB）
+    chunkSizeWarningLimit: 1000,
     // 压缩配置
     minify: 'terser',
     terserOptions: {
       compress: {
         drop_console: true, // 移除console
         drop_debugger: true, // 移除debugger
+      },
+    },
+    // Rollup 配置 - 代码分割优化
+    rollupOptions: {
+      output: {
+        // 手动分割代码块
+        manualChunks: (id) => {
+          // node_modules 中的依赖单独打包
+          if (id.includes('node_modules')) {
+            // Vue 核心库单独打包
+            if (id.includes('vue') && !id.includes('vue-router') && !id.includes('pinia')) {
+              return 'vue-core'
+            }
+            // Vue Router 单独打包
+            if (id.includes('vue-router')) {
+              return 'vue-router'
+            }
+            // Pinia 单独打包
+            if (id.includes('pinia')) {
+              return 'pinia'
+            }
+            // Element Plus 单独打包（体积较大）
+            if (id.includes('element-plus')) {
+              return 'element-plus'
+            }
+            // ECharts 单独打包（体积很大，约 700KB）
+            if (id.includes('echarts')) {
+              return 'echarts'
+            }
+            // Vue Flow 相关包单独打包
+            if (id.includes('@vue-flow')) {
+              return 'vue-flow'
+            }
+            // 其他 node_modules 依赖
+            return 'vendor'
+          }
+        },
+        // 输出文件命名规则
+        chunkFileNames: 'js/[name]-[hash].js',
+        entryFileNames: 'js/[name]-[hash].js',
+        assetFileNames: (assetInfo) => {
+          // 图片资源
+          if (/\.(png|jpe?g|gif|svg|webp|avif|bmp|ico)$/i.test(assetInfo.name || '')) {
+            return 'images/[name]-[hash][extname]'
+          }
+          // 字体资源
+          if (/\.(woff2?|eot|ttf|otf)$/i.test(assetInfo.name || '')) {
+            return 'fonts/[name]-[hash][extname]'
+          }
+          // CSS 文件
+          if (/\.css$/i.test(assetInfo.name || '')) {
+            return 'css/[name]-[hash][extname]'
+          }
+          // 其他资源
+          return 'assets/[name]-[hash][extname]'
+        },
       },
     },
   },

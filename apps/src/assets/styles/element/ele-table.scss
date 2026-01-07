@@ -96,6 +96,16 @@
             align-items: center;
             // justify-content: center;
             text-align: center;
+            &.el-tooltip {
+              // width: 100% !important;
+              padding-right: 0.4rem;
+              span {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                // width: 100%;
+              }
+            }
           }
         }
         .el-table__row {
@@ -202,6 +212,15 @@
       min-width: 0.32rem;
       &.btn-prev {
         margin-left: 0.16rem;
+        &:disabled {
+          background-color: transparent;
+        }
+      }
+      &.btn-next {
+        margin-right: 0.16rem;
+        &:disabled {
+          background-color: transparent;
+        }
       }
       .el-icon {
         font-size: 0.12rem;

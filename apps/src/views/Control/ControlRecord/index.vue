@@ -1,56 +1,58 @@
 <template>
   <div class="voltage-class alarm-records">
     <LoadingBg :loading="loading">
-      <!-- 表格工具-->
+      <!-- 表格工具栏 -->
       <div class="alarm-records__toolbar">
         <div class="alarm-records__toolbar-left" ref="toolbarLeftRef">
-          <!-- 选择-->
-          <el-select
-            v-model="filters.warning_level"
-            @change="fetchTableData(true)"
-            :append-to="toolbarLeftRef"
-            placeholder="select warning level"
-            clearable
-          >
-            <el-option label="L1" :value="1" />
-            <el-option label="L2" :value="2" />
-            <el-option label="L3" :value="3" />
-          </el-select>
+          <el-form :model="filters" :inline="true" class="test-form">
+            <el-form-item label="Alarm Level:">
+              <el-select
+                v-model="filters.warning_level"
+                :append-to="toolbarLeftRef"
+                clearable
+                placeholder="Please select level"
+              >
+                <el-option label="L1" :value="1" />
+                <el-option label="L2" :value="2" />
+                <el-option label="L3" :value="3" />
+              </el-select>
+            </el-form-item>
+          </el-form>
         </div>
 
         <div class="alarm-records__toolbar-right">
-          <!-- 导出按钮 - 只在history模式下显-->
           <IconButton
-            v-if="activeTab === 'history'"
-            type="primary"
-            :icon="alarmExportIcon"
-            text="Export"
+            type="warning"
+            :icon="reloadIcon"
+            text="Reload"
             custom-class="alarm-records__export-btn"
-            @click="handleExport"
+            @click="reloadFilters"
+          />
+          <IconButton
+            type="primary"
+            :icon="searchIcon"
+            text="Search"
+            custom-class="alarm-records__export-btn"
+            @click="fetchTableData(true)"
           />
         </div>
       </div>
 
       <!-- 表格 -->
       <div class="alarm-records__table">
-        <el-table
-          :data="tableData"
-          class="alarm-records__table-content"
-          table-layout="fixed"
-          align="left"
-        >
-          <el-table-column prop="rule_name" label="Name" />
-          <el-table-column prop="channel_id" label="Channel ID" />
-          <el-table-column prop="warning_level" label="Level">
+        <el-table :data="tableData" class="alarm-records__table-content">
+          <el-table-column prop="rule_name" label="Name" min-width="1.2rem" />
+          <el-table-column prop="channel_id" label="Channel ID" min-width="1.2rem" />
+          <el-table-column prop="warning_level" label="Level" min-width="1rem">
             <template #default="scope">
               <img
-                :src="warningLevelList[scope.row.warning_level as 1 | 2 | 3]"
+                :src="levelIconList[scope.row.warning_level as 1 | 2 | 3]"
                 class="alarm-records__table-icon"
                 alt="level icon"
               />
             </template>
           </el-table-column>
-          <el-table-column prop="triggered_at" label="Start Time" />
+          <el-table-column prop="triggered_at" label="Start Time" min-width="1.6rem" />
         </el-table>
 
         <!-- 分页组件 -->
@@ -74,12 +76,17 @@
 import type { CurrentAlarmData } from '@/types/alarm'
 import { useTableData, type TableConfig } from '@/composables/useTableData'
 
-import alarmExportIcon from '@/assets/icons/alarm-export.svg'
+import reloadIcon from '@/assets/icons/table-refresh.svg'
+import searchIcon from '@/assets/icons/table-search.svg'
 import level1Icon from '@/assets/icons/home-alter-L1.svg'
 import level2Icon from '@/assets/icons/home-alter-L2.svg'
 import level3Icon from '@/assets/icons/home-alter-L3.svg'
-// 响应式数据
-const activeTab = ref<'current' | 'history'>('current')
+
+const levelIconList = {
+  1: level1Icon,
+  2: level2Icon,
+  3: level3Icon,
+}
 const toolbarLeftRef = ref<HTMLElement | null>(null)
 // 表格配置
 const tableConfig: TableConfig = {
@@ -96,21 +103,10 @@ const {
   fetchTableData,
   filters,
   handlePageChange,
+  reloadFilters,
 } = useTableData<CurrentAlarmData>(tableConfig)
 
-filters.warning_level = undefined
-const warningLevelList = {
-  1: level1Icon,
-  2: level2Icon,
-  3: level3Icon,
-}
-
-// 处理导出
-const handleExport = () => {
-  ElMessage.success('导出功能已触发')
-  // 这里可以添加实际的导出逻辑
-  console.log('导出数据:', tableData.value)
-}
+filters.warning_level = null
 </script>
 
 <style scoped lang="scss">
@@ -126,6 +122,7 @@ const handleExport = () => {
     justify-content: space-between;
 
     .alarm-records__toolbar-left {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 0.16rem;
@@ -134,7 +131,7 @@ const handleExport = () => {
     .alarm-records__toolbar-right {
       display: flex;
       align-items: center;
-      gap: 0.16rem;
+      gap: 0.1rem;
 
       .alarm-records__export-btn {
         display: flex;
@@ -147,6 +144,14 @@ const handleExport = () => {
         }
       }
     }
+  }
+
+  :deep(.test-form.el-form--inline .el-form-item) {
+    margin-bottom: 0rem !important;
+  }
+
+  :deep(.el-form--inline .el-form-item) {
+    margin-bottom: 0.4rem !important;
   }
 
   .alarm-records__table {
