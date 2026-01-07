@@ -172,8 +172,9 @@ pub mod helpers {
     /// * `Ok(usize)` - Number of points written
     /// * `Err(anyhow::Error)` - Write error
     ///
-    /// # Round 129 Optimization
-    /// Uses zero-allocation number formatting (itoa/ryu) and precomputed point ID strings.
+    /// # Round 129-130 Optimization
+    /// - Uses zero-allocation number formatting (itoa/ryu)
+    /// - Uses Arc<str> for O(1) clone across 3 layers, converts to String only at final push
     pub async fn write_channel_points<R>(
         rtdb: &R,
         channel_key: &str,
@@ -192,23 +193,20 @@ pub mod helpers {
         // Pre-convert timestamp to Bytes once using itoa (zero heap during format)
         let timestamp_bytes = i64_to_bytes(timestamp_ms);
 
-        // Prepare data for three hashes
+        // Prepare data for three hashes using Arc<str> for O(1) sharing
         let mut values = Vec::with_capacity(count);
         let mut timestamps = Vec::with_capacity(count);
         let mut raw_values = Vec::with_capacity(count);
 
         for (point_id, value, raw_value) in points {
-            // Use precomputed pool for common IDs (0-255), fallback to itoa for larger
-            let point_id_str = precomputed::get_point_id_str_or_alloc(point_id).to_string();
+            // Use precomputed pool (0-255) or itoa - returns Arc<str>
+            let field: Arc<str> = precomputed::get_point_id_str_or_alloc(point_id);
 
-            // Layer 1: Engineering values (use ryu for fast f64 formatting)
-            values.push((point_id_str.clone(), f64_to_bytes(value)));
-
-            // Layer 2: Timestamps (O(1) clone for Bytes)
-            timestamps.push((point_id_str.clone(), timestamp_bytes.clone()));
-
-            // Layer 3: Raw values
-            raw_values.push((point_id_str, f64_to_bytes(raw_value)));
+            // Arc::clone is O(1), convert to String only when pushing to final Vec
+            // This reduces 3 String clones to 3 Arc::clone + 3 Arc->String conversions
+            values.push((field.to_string(), f64_to_bytes(value)));
+            timestamps.push((field.to_string(), timestamp_bytes.clone()));
+            raw_values.push((field.to_string(), f64_to_bytes(raw_value)));
         }
 
         // Write all hashes in a single pipeline

@@ -271,23 +271,26 @@ pub fn write_channel_batch_buffered(
             }
         }
 
-        // Buffer 3-layer channel data to WriteBuffer (for Redis)
+        // Round 131: Write to VecRtdb FIRST (uses reference), then move to buffer
+        // This avoids cloning points_3layer
         let channel_key = config.channel_key(channel_id, point_type);
-        let buffered = voltage_rtdb::helpers::buffer_channel_points(
-            write_buffer,
-            &channel_key,
-            points_3layer.clone(),
-            timestamp_ms,
-        );
-        result.channel_writes += buffered;
 
-        // Write to VecRtdb local cache (if enabled)
+        // Write to VecRtdb local cache (if enabled) - uses reference
         if let Some(vec_db) = vec_rtdb {
             let pt = point_type as u8;
             for &(point_id, value, raw) in &points_3layer {
                 vec_db.set(channel_id, pt, point_id, value, raw, timestamp_ms as u64);
             }
         }
+
+        // Buffer 3-layer channel data to WriteBuffer (for Redis) - moves ownership
+        let buffered = voltage_rtdb::helpers::buffer_channel_points(
+            write_buffer,
+            &channel_key,
+            points_3layer, // No clone needed - ownership transferred
+            timestamp_ms,
+        );
+        result.channel_writes += buffered;
 
         // Buffer instance data (C2M results)
         for (instance_id, values) in instance_writes {

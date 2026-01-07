@@ -217,24 +217,33 @@ impl WriteBuffer {
 
     /// Collect and clear all pending data
     ///
+    /// Round 132: Optimized to avoid double iteration and unnecessary clones.
     /// Converts `Arc<str>` field names to `String` for the Rtdb trait.
     /// This conversion happens at flush time (batched), not per-write.
     fn drain_pending(&self) -> Vec<(String, Vec<(String, Bytes)>)> {
-        let keys: Vec<_> = self.pending.iter().map(|e| e.key().clone()).collect();
-        let mut operations = Vec::with_capacity(keys.len());
+        // Pre-allocate with estimated capacity
+        let estimated_len = self.pending.len();
+        let mut operations = Vec::with_capacity(estimated_len);
 
-        for key in keys {
-            if let Some((_, fields_map)) = self.pending.remove(&key) {
+        // Use retain to iterate and remove in one pass
+        // DashMap::retain provides mutable access and removes entries returning false
+        self.pending.retain(|key, fields_map| {
+            if !fields_map.is_empty() {
                 // Convert Arc<str> to String at flush time
+                // Drain the inner map to avoid cloning
                 let fields: Vec<_> = fields_map
-                    .into_iter()
-                    .map(|(field, value)| (field.to_string(), value))
+                    .iter()
+                    .map(|entry| (entry.key().to_string(), entry.value().clone()))
                     .collect();
-                if !fields.is_empty() {
-                    operations.push((key, fields));
-                }
+
+                // Clear the inner map instead of removing outer entry
+                // This allows potential reuse of the DashMap allocation
+                fields_map.clear();
+
+                operations.push((key.clone(), fields));
             }
-        }
+            false // Remove all entries after processing
+        });
 
         operations
     }

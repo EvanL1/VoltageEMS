@@ -3,6 +3,7 @@
 //! Uses DashMap for lock-free concurrent access with excellent performance.
 //! Perfect for testing and embedded scenarios.
 
+use crate::numfmt::{f64_to_bytes, i64_to_bytes};
 use crate::traits::*;
 use anyhow::Result;
 use bytes::Bytes;
@@ -124,8 +125,9 @@ impl Rtdb for MemoryRtdb {
             };
 
             // Calculate and store new value atomically
+            // Round 134: Use ryu for zero-allocation f64 formatting
             let new_val = current + increment;
-            *entry = Bytes::from(new_val.to_string());
+            *entry = f64_to_bytes(new_val);
             new_val
         };
 
@@ -194,9 +196,12 @@ impl Rtdb for MemoryRtdb {
         key: &str,
     ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send + '_ {
         let result = if let Some(hash) = self.hash_store.get(key) {
-            hash.iter()
-                .map(|entry| (entry.key().clone(), entry.value().clone()))
-                .collect()
+            // Round 134: Pre-allocate HashMap with exact capacity
+            let mut map = HashMap::with_capacity(hash.len());
+            for entry in hash.iter() {
+                map.insert(entry.key().clone(), entry.value().clone());
+            }
+            map
         } else {
             HashMap::new()
         };
@@ -327,11 +332,13 @@ impl Rtdb for MemoryRtdb {
             };
 
             if start_idx < stop_idx {
-                list.iter()
-                    .skip(start_idx)
-                    .take(stop_idx - start_idx)
-                    .cloned()
-                    .collect()
+                // Round 135: Pre-allocate Vec with exact capacity
+                let count = stop_idx - start_idx;
+                let mut result = Vec::with_capacity(count);
+                for item in list.iter().skip(start_idx).take(count) {
+                    result.push(item.clone());
+                }
+                result
             } else {
                 Vec::new()
             }
@@ -437,7 +444,12 @@ impl Rtdb for MemoryRtdb {
 
     fn smembers(&self, key: &str) -> impl Future<Output = Result<Vec<String>>> + Send + '_ {
         let result = if let Some(set) = self.set_store.get(key) {
-            set.iter().map(|entry| entry.key().clone()).collect()
+            // Round 134: Pre-allocate Vec with exact capacity
+            let mut members = Vec::with_capacity(set.len());
+            for entry in set.iter() {
+                members.push(entry.key().clone());
+            }
+            members
         } else {
             Vec::new()
         };
@@ -484,8 +496,9 @@ impl Rtdb for MemoryRtdb {
             };
 
             // Calculate and store new value atomically
+            // Round 134: Use itoa for zero-allocation i64 formatting
             let new_val = current + increment;
-            *entry = Bytes::from(new_val.to_string());
+            *entry = i64_to_bytes(new_val);
             new_val
         };
 

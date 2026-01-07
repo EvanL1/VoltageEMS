@@ -439,13 +439,16 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 continue;
             }
 
+            // Round 133: Clone var.name once at loop start, reuse in all branches
+            let var_name = var.name.clone();
+
             // Get instance ID (supports both "instance" and "instance_id" via serde alias)
             let instance_id = match var.instance {
                 Some(id) => id,
                 None => {
                     return Err(crate::error::RuleError::ExecutionError(format!(
                         "Variable '{}' is missing instance_id",
-                        var.name
+                        var_name
                     )));
                 },
             };
@@ -454,7 +457,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             let point = var.point.ok_or_else(|| {
                 crate::error::RuleError::ExecutionError(format!(
                     "Variable '{}' is missing point_id",
-                    var.name
+                    var_name
                 ))
             })?;
 
@@ -470,7 +473,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
 
                 if let Some(val) = cached {
                     // SharedMemory hit - fastest path
-                    values_changed |= values.insert(var.name.clone(), val) != Some(val);
+                    values_changed |= values.insert(var_name, val) != Some(val);
                     continue;
                 }
             }
@@ -485,7 +488,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
 
                 if let Some(val) = cached {
                     // VecRtdb hit - skip Redis
-                    values_changed |= values.insert(var.name.clone(), val) != Some(val);
+                    values_changed |= values.insert(var_name, val) != Some(val);
                     continue;
                 }
             }
@@ -512,25 +515,25 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                                 vec_db.set_measurement(instance_id, point, val, timestamp);
                             }
                         }
-                        values_changed |= values.insert(var.name.clone(), val) != Some(val);
+                        values_changed |= values.insert(var_name, val) != Some(val);
                     } else {
                         tracing::warn!(
                             "Var {}: '{}' not number at {}:{}",
-                            var.name,
+                            var_name,
                             val_str,
                             key,
                             field
                         );
-                        values_changed |= values.insert(var.name.clone(), 0.0) != Some(0.0);
+                        values_changed |= values.insert(var_name, 0.0) != Some(0.0);
                     }
                 },
                 Ok(None) => {
-                    tracing::warn!("Var {}: {}:{} not found", var.name, key, field);
-                    values_changed |= values.insert(var.name.clone(), 0.0) != Some(0.0);
+                    tracing::warn!("Var {}: {}:{} not found", var_name, key, field);
+                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
                 },
                 Err(e) => {
-                    tracing::error!("Var {} read err: {}", var.name, e);
-                    values_changed |= values.insert(var.name.clone(), 0.0) != Some(0.0);
+                    tracing::error!("Var {} read err: {}", var_name, e);
+                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
                 },
             }
         }
