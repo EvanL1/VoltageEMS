@@ -96,10 +96,6 @@ declare -A TARBALL_TO_IMAGE=(
     ["voltage-redis.tar.gz"]="redis:8-alpine"
     ["voltage-influxdb.tar.gz"]="influxdb:2-alpine"
     ["python-services.tar.gz"]="voltageems-ss:latest"
-    ["hissrv.tar.gz"]="voltage-hissrv:latest"
-    ["apigateway.tar.gz"]="voltage-apigateway:latest"
-    ["netsrv.tar.gz"]="voltage-netsrv:latest"
-    ["alarmsrv.tar.gz"]="voltage-alarmsrv:latest"
     ["apps.tar.gz"]="voltage-apps:latest"
 )
 
@@ -185,11 +181,15 @@ get_tarball_image_id() {
 
     # Extract manifest.json and get the Config (image ID)
     # Support both docker save and skopeo formats
+    # Use timeout to prevent hanging (30 seconds max)
     local raw_config
-    raw_config=$(zcat "$tarball" 2>/dev/null | tar -xOf - manifest.json 2>/dev/null | \
-        sed -n 's/.*"Config":"\([^"]*\)".*/\1/p' | head -1)
+    raw_config=$(timeout 30 sh -c "zcat '$tarball' 2>/dev/null | tar -xOf - manifest.json 2>/dev/null | \
+        sed -n 's/.*\"Config\":\"\([^\"]*\)\".*/\1/p' | head -1" 2>/dev/null)
+    local extract_result=$?
 
-    [[ -z "$raw_config" ]] && return
+    if [[ -z "$raw_config" ]]; then
+        return
+    fi
 
     # Clean up the path (skopeo uses blobs/sha256/HASH, docker uses HASH.json or sha256:HASH)
     local clean_hash
@@ -202,7 +202,9 @@ get_tarball_image_id() {
 # Get local image ID by image name
 get_local_image_id() {
     local image=$1
-    docker images "$image" --format '{{.ID}}' 2>/dev/null | head -1
+    local result
+    result=$(docker images "$image" --format '{{.ID}}' 2>/dev/null | head -1)
+    echo "$result"
 }
 
 # Smart load: only load if image has changed
@@ -217,7 +219,7 @@ smart_load_image() {
     # If no mapping found, load anyway
     if [[ -z "$image" ]]; then
         echo -n "  Loading $basename (unknown mapping)... "
-        if docker load < "$tarball" >/dev/null 2>&1; then
+        if timeout 300 docker load < "$tarball" >/dev/null 2>&1; then
             echo -e "${GREEN}done${NC}"
             return 0
         else
@@ -226,14 +228,15 @@ smart_load_image() {
         fi
     fi
 
-    # Get tarball image ID
+    # Get tarball image ID (with timeout protection)
     local tarball_id
     tarball_id=$(get_tarball_image_id "$tarball")
+    local extract_result=$?
 
     if [[ -z "$tarball_id" ]]; then
         # Cannot extract ID, load anyway
         echo -n "  Loading $basename (cannot extract ID)... "
-        if docker load < "$tarball" >/dev/null 2>&1; then
+        if timeout 300 docker load < "$tarball" >/dev/null 2>&1; then
             echo -e "${GREEN}done${NC}"
             return 0
         else
@@ -261,11 +264,12 @@ smart_load_image() {
         docker rmi "$image" >/dev/null 2>&1 || true
     fi
 
-    if docker load < "$tarball" >/dev/null 2>&1; then
+    # Use timeout to prevent hanging (5 minutes max for docker load)
+    if timeout 300 docker load < "$tarball" >/dev/null 2>&1; then
         echo -e "${GREEN}done${NC}"
         return 0
     else
-        echo -e "${RED}failed${NC}"
+        echo -e "${RED}failed (timeout or error)${NC}"
         return 2
     fi
 }
@@ -406,9 +410,24 @@ ensure_core_services_running() {
         if ! docker ps --filter "name=^${container}$" --filter "status=running" -q 2>/dev/null | grep -q .; then
             local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
             echo "  Starting $service..."
-            # Use --no-deps to avoid recreating already-running dependencies
-            run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service" 2>/dev/null || true
-            ((services_started++))
+            
+            # Detect docker compose command
+            local compose_cmd
+            if docker compose version &>/dev/null 2>&1; then
+                compose_cmd="docker compose"
+            elif command -v docker-compose &>/dev/null; then
+                compose_cmd="docker-compose"
+            else
+                echo -e "    ${YELLOW}Warning: docker-compose not found${NC}"
+                continue
+            fi
+            
+            # Use timeout with direct docker compose command
+            if timeout 60 $compose_cmd -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service" 2>&1; then
+                services_started=$((services_started + 1))
+            else
+                echo -e "    ${YELLOW}Warning: Failed to start $service${NC}"
+            fi
         else
             echo -e "  ${GREEN}✓${NC} $container: already running"
         fi
@@ -598,13 +617,22 @@ if command -v docker &> /dev/null; then
             SKIPPED_IMAGES=()
 
             # Smart load: only load images that have changed
-            for tarball in docker/*.tar.gz; do
+            # Process in specific order to handle dependencies
+            tarball_list=(docker/voltageems.tar.gz docker/python-services.tar.gz docker/voltage-redis.tar.gz docker/voltage-influxdb.tar.gz docker/apps.tar.gz)
+            
+            tarball_idx=0
+            for tarball in "${tarball_list[@]}"; do
+                tarball_idx=$((tarball_idx + 1))
+                
                 if [[ -f "$tarball" ]]; then
                     _basename=$(basename "$tarball")
                     _image="${TARBALL_TO_IMAGE[$_basename]:-}"
 
+                    # Temporarily disable exit-on-error to capture return codes 0, 1, 2
+                    set +e
                     smart_load_image "$tarball"
                     _result=$?
+                    set -e
 
                     case $_result in
                         0)  # Loaded
@@ -618,6 +646,11 @@ if command -v docker &> /dev/null; then
                             exit 1
                             ;;
                     esac
+                else
+                    # File not found is OK (apps.tar.gz is optional)
+                    if [[ "$tarball" != *"apps.tar.gz"* ]]; then
+                        echo -e "${YELLOW}Warning: $tarball not found${NC}"
+                    fi
                 fi
             done
 
@@ -1118,13 +1151,13 @@ if [[ -d "$LOG_DIR" ]]; then
     else
         # Fix main log directory using numeric IDs
         $SUDO chown ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR" || echo "Warning: Could not set ownership for $LOG_DIR"
-        $SUDO chmod 775 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
+        $SUDO chmod 777 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
 
         # Fix each service subdirectory explicitly
         for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
             if [[ -d "$LOG_DIR/$service" ]]; then
                 $SUDO chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR/$service" || echo "Warning: Could not set ownership for $LOG_DIR/$service"
-                $SUDO chmod 775 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
+                $SUDO chmod -R 777 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
             fi
         done
 
@@ -1143,14 +1176,14 @@ else
     $SUDO chmod 755 "$INSTALL_DIR"
 fi
 
-# Set permissions for subdirectories (775 - owner and group can write)
+# Set permissions for subdirectories (777 for logs to allow any container user to write)
 if [[ -z "$SUDO" ]]; then
     chmod -R 775 "$INSTALL_DIR/data"
-    chmod -R 775 "$LOG_DIR"
+    chmod -R 777 "$LOG_DIR"
     [[ -d "$INSTALL_DIR/config" ]] && chmod -R 775 "$INSTALL_DIR/config" || true
 else
     $SUDO chmod -R 775 "$INSTALL_DIR/data"
-    $SUDO chmod -R 775 "$LOG_DIR"
+    $SUDO chmod -R 777 "$LOG_DIR"
     [[ -d "$INSTALL_DIR/config" ]] && $SUDO chmod -R 775 "$INSTALL_DIR/config" || true
 fi
 
@@ -1162,10 +1195,6 @@ $SUDO tee /etc/profile.d/monarchedge.sh > /dev/null << EOF
 # User: $ACTUAL_USER (UID=$ACTUAL_UID, GID=$ACTUAL_GID)
 export HOST_UID=$ACTUAL_UID
 export HOST_GID=$ACTUAL_GID
-
-# Docker Compose paths (absolute paths for safety)
-export VOLTAGE_BASE_PATH=$INSTALL_DIR/data
-export VOLTAGE_LOG_PATH=$LOG_DIR
 EOF
 $SUDO chmod 644 /etc/profile.d/monarchedge.sh
 echo -e "${GREEN}✓ Environment variables exported to /etc/profile.d/monarchedge.sh${NC}"

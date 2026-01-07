@@ -227,15 +227,15 @@ done
 
 # Build voltageems Docker image using pre-compiled binaries
 echo -e "${BLUE}Building VoltageEMS Docker image...${NC}"
-docker buildx build --platform $DOCKER_PLATFORM --load \
-    --build-arg BASE_IMAGE=$BASE_IMAGE \
-    --build-arg TARGET=$TARGET \
-    -f "$ROOT_DIR/Dockerfile.multi" \
+# 使用标准的 docker build 替代 buildx，避免 vbuilder 节点的缓存和 ID 不一致问题
+docker build --platform $DOCKER_PLATFORM \
+    -f "$ROOT_DIR/Dockerfile" \
     -t voltageems:latest \
     "$ROOT_DIR"
 
 if [ $? -eq 0 ]; then
     docker save voltageems:latest | gzip > "$BUILD_DIR/docker/voltageems.tar.gz"
+    sync
     echo -e "${GREEN}✓ Saved voltageems.tar.gz${NC}"
 else
     echo -e "${RED}Error: Docker build failed${NC}"
@@ -316,6 +316,10 @@ else
 fi
 
 [[ -f "$BUILD_DIR/docker-compose.yml" ]] && cp "$BUILD_DIR/docker-compose.yml" "$TEMP_PKG_DIR/"
+
+# Ensure all files are written to disk before creating archive
+sync
+sleep 3
 
 makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \
     "VoltageEMS ${ARCH^^} Installer $VERSION" \

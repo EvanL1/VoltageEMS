@@ -130,7 +130,7 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/hissrv:/app/services/hissrv/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/config/hissrv:/app/config
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
@@ -156,7 +156,7 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/apigateway:/app/services/apigateway/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/config/apigateway:/app/config
       - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
@@ -178,7 +178,7 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/netsrv:/app/services/netsrv/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/config/netsrv:/app/config
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
       voltage-redis:
@@ -200,7 +200,7 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - ${VOLTAGE_BASE_PATH:-./data}/config/alarmsrv:/app/services/alarmsrv/config:ro
+      - ${VOLTAGE_BASE_PATH:-./data}/config/alarmsrv:/app/config
       - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
     depends_on:
