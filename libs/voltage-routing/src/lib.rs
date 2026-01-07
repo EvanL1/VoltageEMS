@@ -25,6 +25,9 @@ pub use voltage_rtdb::RoutingCache;
 use anyhow::{Context, Result};
 use voltage_rtdb::Rtdb;
 
+/// Status string for successful operations
+const STATUS_SUCCESS: &str = "success";
+
 /// Structured representation of an action routing outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActionRouteOutcome {
@@ -146,7 +149,7 @@ where
         };
 
         Ok(ActionRouteOutcome {
-            status: "success".to_string(),
+            status: STATUS_SUCCESS.to_string(),
             instance_id,
             point_id: point_id.to_string(),
             value: value.to_string(),
@@ -163,7 +166,7 @@ where
             .context("Failed to write instance action point")?;
 
         Ok(ActionRouteOutcome {
-            status: "success".to_string(),
+            status: STATUS_SUCCESS.to_string(),
             instance_id,
             point_id: point_id.to_string(),
             value: value.to_string(),
