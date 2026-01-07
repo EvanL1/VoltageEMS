@@ -390,7 +390,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.52.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -1366,9 +1366,9 @@ dependencies = [
 
 [[package]]
 name = "igw"
-version = "0.2.17"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0910197a4f37d1e624228dc3c4c0a4b64db632cd3c484b9e93c53904247353f"
+checksum = "545d580df7fdd79ac7757df83ba6c134b17b0f09f07909989a8e6071f9692047"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3842,7 +3842,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

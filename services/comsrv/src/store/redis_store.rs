@@ -263,8 +263,8 @@ impl<R: Rtdb> RedisDataStore<R> {
             )
         };
 
-        // Notify subscribers - move batch into event, no clone needed
-        self.notify_subscribers(DataEvent::DataUpdate(batch));
+        // Notify subscribers - wrap batch in Arc for 0.2.18 API
+        self.notify_subscribers(DataEvent::DataUpdate(Arc::new(batch)));
 
         Ok(())
     }
