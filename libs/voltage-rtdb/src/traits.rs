@@ -17,8 +17,9 @@ use std::future::Future;
 /// - `RedisRtdb`: Production Redis backend
 /// - `MemoryRtdb`: In-memory backend for testing
 ///
-/// Note: All async methods return `impl Future + Send` to ensure compatibility
-/// with `tokio::spawn` and other multi-threaded contexts.
+/// Note: All async methods use explicit lifetime `'a` to enable zero-copy parameter passing.
+/// The returned Future borrows both `&self` and parameters for the same lifetime,
+/// allowing implementations to use borrowed data directly without cloning.
 pub trait Rtdb: Send + Sync + 'static {
     // ========== Introspection ==========
 
@@ -31,16 +32,20 @@ pub trait Rtdb: Send + Sync + 'static {
     // ========== Basic Key-Value Operations ==========
 
     /// Get value by key
-    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send;
+    fn get<'a>(&'a self, key: &'a str) -> impl Future<Output = Result<Option<Bytes>>> + Send + 'a;
 
     /// Set value for key
-    fn set(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send;
+    fn set<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
 
     /// Delete key
-    fn del(&self, key: &str) -> impl Future<Output = Result<bool>> + Send;
+    fn del<'a>(&'a self, key: &'a str) -> impl Future<Output = Result<bool>> + Send + 'a;
 
     /// Check if key exists
-    fn exists(&self, key: &str) -> impl Future<Output = Result<bool>> + Send;
+    fn exists<'a>(&'a self, key: &'a str) -> impl Future<Output = Result<bool>> + Send + 'a;
 
     /// Increment key by float value (Redis INCRBYFLOAT)
     ///
@@ -57,50 +62,76 @@ pub trait Rtdb: Send + Sync + 'static {
     /// - **MemoryRtdb**: Silently defaults to 0.0 on parse failure (logs at trace level).
     ///
     /// For test consistency, ensure stored values are always valid numeric strings.
-    fn incrbyfloat(&self, key: &str, increment: f64) -> impl Future<Output = Result<f64>> + Send;
+    fn incrbyfloat<'a>(
+        &'a self,
+        key: &'a str,
+        increment: f64,
+    ) -> impl Future<Output = Result<f64>> + Send + 'a;
 
     // ========== Hash Operations ==========
 
     /// Set hash field
-    fn hash_set(
-        &self,
-        key: &str,
-        field: &str,
+    fn hash_set<'a>(
+        &'a self,
+        key: &'a str,
+        field: &'a str,
         value: Bytes,
-    ) -> impl Future<Output = Result<()>> + Send;
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
 
     /// Get hash field
-    fn hash_get(
-        &self,
-        key: &str,
-        field: &str,
-    ) -> impl Future<Output = Result<Option<Bytes>>> + Send;
+    fn hash_get<'a>(
+        &'a self,
+        key: &'a str,
+        field: &'a str,
+    ) -> impl Future<Output = Result<Option<Bytes>>> + Send + 'a;
 
     /// Get multiple hash fields (Redis HMGET)
     ///
     /// Returns a vector of values corresponding to the requested fields.
     /// Non-existent fields are returned as None.
-    fn hash_mget(
-        &self,
-        key: &str,
-        fields: &[&str],
-    ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send;
+    fn hash_mget<'a>(
+        &'a self,
+        key: &'a str,
+        fields: &'a [&'a str],
+    ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send + 'a;
 
     /// Set multiple hash fields
-    fn hash_mset(
-        &self,
-        key: &str,
+    fn hash_mset<'a>(
+        &'a self,
+        key: &'a str,
         fields: Vec<(String, Bytes)>,
-    ) -> impl Future<Output = Result<()>> + Send;
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
 
     /// Get all hash fields
-    fn hash_get_all(
-        &self,
-        key: &str,
-    ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send;
+    fn hash_get_all<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send + 'a;
+
+    /// Set hash field with f64 value directly
+    ///
+    /// This is an optimized version of `hash_set` for numeric values.
+    /// The default implementation converts f64 to string and calls `hash_set`.
+    /// Concrete implementations may override this for better performance
+    /// (e.g., using `ryu` for faster float-to-string conversion).
+    fn hash_set_f64<'a>(
+        &'a self,
+        key: &'a str,
+        field: &'a str,
+        value: f64,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        async move {
+            self.hash_set(key, field, Bytes::from(value.to_string()))
+                .await
+        }
+    }
 
     /// Delete hash field
-    fn hash_del(&self, key: &str, field: &str) -> impl Future<Output = Result<bool>> + Send;
+    fn hash_del<'a>(
+        &'a self,
+        key: &'a str,
+        field: &'a str,
+    ) -> impl Future<Output = Result<bool>> + Send + 'a;
 
     /// Delete multiple hash fields at once (Redis HDEL with multiple fields)
     ///
@@ -108,11 +139,11 @@ pub trait Rtdb: Send + Sync + 'static {
     /// a single Redis command to delete all specified fields.
     ///
     /// Returns the number of fields that were removed.
-    fn hash_del_many(
-        &self,
-        key: &str,
-        fields: &[String],
-    ) -> impl Future<Output = Result<usize>> + Send;
+    fn hash_del_many<'a>(
+        &'a self,
+        key: &'a str,
+        fields: &'a [String],
+    ) -> impl Future<Output = Result<usize>> + Send + 'a;
 
     /// Delete multiple hash fields using string slices (convenience wrapper)
     ///
@@ -123,11 +154,11 @@ pub trait Rtdb: Send + Sync + 'static {
     /// ```ignore
     /// rtdb.hash_del_many_str("my_hash", &["field1", "field2", "field3"]).await?;
     /// ```
-    fn hash_del_many_str(
-        &self,
-        key: &str,
-        fields: &[&str],
-    ) -> impl Future<Output = Result<usize>> + Send {
+    fn hash_del_many_str<'a>(
+        &'a self,
+        key: &'a str,
+        fields: &'a [&'a str],
+    ) -> impl Future<Output = Result<usize>> + Send + 'a {
         let key = key.to_string();
         let fields: Vec<String> = fields.iter().copied().map(String::from).collect();
         async move { self.hash_del_many(&key, &fields).await }
@@ -148,28 +179,42 @@ pub trait Rtdb: Send + Sync + 'static {
     /// - **MemoryRtdb**: Silently defaults to 0 on parse failure (logs at trace level).
     ///
     /// For test consistency, ensure stored values are always valid numeric strings.
-    fn hincrby(
-        &self,
-        key: &str,
-        field: &str,
+    fn hincrby<'a>(
+        &'a self,
+        key: &'a str,
+        field: &'a str,
         increment: i64,
-    ) -> impl Future<Output = Result<i64>> + Send;
+    ) -> impl Future<Output = Result<i64>> + Send + 'a;
 
     // ========== List Operations ==========
 
     /// Push value to left of list
-    fn list_lpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send;
+    fn list_lpush<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
 
     /// Push value to right of list
-    fn list_rpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send;
+    fn list_rpush<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
 
     /// Pop value from left of list
-    fn list_lpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send;
+    fn list_lpop<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Future<Output = Result<Option<Bytes>>> + Send + 'a;
 
     /// Pop value from right of list (Redis RPOP)
     ///
     /// Returns the popped value if the list is not empty, None otherwise.
-    fn list_rpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send;
+    fn list_rpop<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Future<Output = Result<Option<Bytes>>> + Send + 'a;
 
     /// Block and pop value from multiple lists (Redis BLPOP)
     ///
@@ -183,44 +228,55 @@ pub trait Rtdb: Send + Sync + 'static {
     /// # Returns
     /// * `Some((key, value))` - The key that had data and the popped value
     /// * `None` - Timeout expired without data
-    fn list_blpop(
-        &self,
-        keys: &[&str],
+    fn list_blpop<'a>(
+        &'a self,
+        keys: &'a [&'a str],
         timeout_seconds: u64,
-    ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send;
+    ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send + 'a;
 
     /// Get list range
-    fn list_range(
-        &self,
-        key: &str,
+    fn list_range<'a>(
+        &'a self,
+        key: &'a str,
         start: isize,
         stop: isize,
-    ) -> impl Future<Output = Result<Vec<Bytes>>> + Send;
+    ) -> impl Future<Output = Result<Vec<Bytes>>> + Send + 'a;
 
     /// Trim list to range
-    fn list_trim(
-        &self,
-        key: &str,
+    fn list_trim<'a>(
+        &'a self,
+        key: &'a str,
         start: isize,
         stop: isize,
-    ) -> impl Future<Output = Result<()>> + Send;
+    ) -> impl Future<Output = Result<()>> + Send + 'a;
 
     // ========== Set Operations ==========
 
     /// Add member to set (Redis SADD)
     ///
     /// Returns true if the member was added, false if it already existed.
-    fn sadd(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send;
+    fn sadd<'a>(
+        &'a self,
+        key: &'a str,
+        member: &'a str,
+    ) -> impl Future<Output = Result<bool>> + Send + 'a;
 
     /// Remove member from set (Redis SREM)
     ///
     /// Returns true if the member was removed, false if it didn't exist.
-    fn srem(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send;
+    fn srem<'a>(
+        &'a self,
+        key: &'a str,
+        member: &'a str,
+    ) -> impl Future<Output = Result<bool>> + Send + 'a;
 
     /// Get all members of a set (Redis SMEMBERS)
     ///
     /// Returns a vector of all members in the set.
-    fn smembers(&self, key: &str) -> impl Future<Output = Result<Vec<String>>> + Send;
+    fn smembers<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Future<Output = Result<Vec<String>>> + Send + 'a;
 
     // ========== Key Scanning Operations ==========
 
@@ -228,7 +284,10 @@ pub trait Rtdb: Send + Sync + 'static {
     ///
     /// Returns a list of keys matching the glob pattern.
     /// In test implementations (MemoryRtdb), this searches in-memory keys.
-    fn scan_match(&self, pattern: &str) -> impl Future<Output = Result<Vec<String>>> + Send;
+    fn scan_match<'a>(
+        &'a self,
+        pattern: &'a str,
+    ) -> impl Future<Output = Result<Vec<String>>> + Send + 'a;
 
     // ========== Time Operations ==========
 
@@ -244,7 +303,7 @@ pub trait Rtdb: Send + Sync + 'static {
         since = "0.2.0",
         note = "Use voltage_rtdb::TimeProvider trait instead for better separation of concerns"
     )]
-    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send;
+    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send + '_;
 
     // ========== Pipeline Operations ==========
 
@@ -262,7 +321,7 @@ pub trait Rtdb: Send + Sync + 'static {
     fn pipeline_hash_mset(
         &self,
         operations: Vec<(String, Vec<(String, Bytes)>)>,
-    ) -> impl Future<Output = Result<()>> + Send;
+    ) -> impl Future<Output = Result<()>> + Send + '_;
 
     // ========== Convenience Operations (with default implementations) ==========
 
@@ -288,14 +347,12 @@ pub trait Rtdb: Send + Sync + 'static {
     /// // Initialize channel telemetry point
     /// rtdb.write_point_init("comsrv:1001:T", 5, 230.5).await?;
     /// ```
-    fn write_point_init(
-        &self,
-        key: &str,
+    fn write_point_init<'a>(
+        &'a self,
+        key: &'a str,
         point_id: u32,
         value: f64,
-    ) -> impl Future<Output = Result<()>> + Send {
-        // Capture parameters for the async block
-        let key = key.to_string();
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
         async move {
             // Default implementation: write value + ts=0, no routing
             let field = point_id.to_string();
@@ -303,31 +360,37 @@ pub trait Rtdb: Send + Sync + 'static {
             let value_bytes = Bytes::from(value.to_string());
             let ts_bytes = Bytes::from("0");
 
-            self.hash_set(&key, &field, value_bytes).await?;
-            self.hash_set(&key, &ts_field, ts_bytes).await?;
+            self.hash_set(key, &field, value_bytes).await?;
+            self.hash_set(key, &ts_field, ts_bytes).await?;
             Ok(())
         }
     }
 
     /// Enqueue control command to per-channel TODO queue: comsrv:{channel}:C:TODO
-    fn enqueue_control(
-        &self,
+    fn enqueue_control<'a>(
+        &'a self,
         channel_id: u32,
-        payload_json: &str,
-    ) -> impl Future<Output = Result<()>> + Send {
-        let key = format!("comsrv:{}:C:TODO", channel_id);
+        payload_json: &'a str,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        // Move format! into async block to avoid borrowing temporary across await
         let payload = payload_json.to_string();
-        async move { self.list_rpush(&key, Bytes::from(payload)).await }
+        async move {
+            let key = format!("comsrv:{}:C:TODO", channel_id);
+            self.list_rpush(&key, Bytes::from(payload)).await
+        }
     }
 
     /// Enqueue adjustment command to per-channel TODO queue: comsrv:{channel}:A:TODO
-    fn enqueue_adjustment(
-        &self,
+    fn enqueue_adjustment<'a>(
+        &'a self,
         channel_id: u32,
-        payload_json: &str,
-    ) -> impl Future<Output = Result<()>> + Send {
-        let key = format!("comsrv:{}:A:TODO", channel_id);
+        payload_json: &'a str,
+    ) -> impl Future<Output = Result<()>> + Send + 'a {
+        // Move format! into async block to avoid borrowing temporary across await
         let payload = payload_json.to_string();
-        async move { self.list_rpush(&key, Bytes::from(payload)).await }
+        async move {
+            let key = format!("comsrv:{}:A:TODO", channel_id);
+            self.list_rpush(&key, Bytes::from(payload)).await
+        }
     }
 }

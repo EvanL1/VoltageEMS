@@ -231,10 +231,10 @@ pub struct InstanceResult {
     pub message: Option<String>,
 }
 
-impl From<(&Instance, String, Option<String>)> for InstanceResult {
-    fn from((instance, runtime_status, message): (&Instance, String, Option<String>)) -> Self {
+impl From<(Instance, String, Option<String>)> for InstanceResult {
+    fn from((instance, runtime_status, message): (Instance, String, Option<String>)) -> Self {
         Self {
-            core: instance.core.clone(),
+            core: instance.core, // Move instead of clone
             runtime_status,
             message,
         }

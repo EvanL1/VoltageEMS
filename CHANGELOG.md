@@ -55,7 +55,7 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
   - `monarch status` - Check synchronization status
   - `monarch validate` - Validate configuration files
 - **Service Management**
-  - `monarch services start` - Start all services (--no-recreate)
+  - `monarch services start` - Start all services
   - `monarch services stop` - Stop services
   - `monarch services restart` - Restart services
   - `monarch services refresh --smart` - Smart refresh (detect image changes)

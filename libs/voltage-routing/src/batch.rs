@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::debug;
 use voltage_model::PointType;
-use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, WriteBuffer};
+use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, VecRtdb, WriteBuffer};
 
 use crate::MAX_C2C_CASCADE_DEPTH;
 
@@ -184,8 +184,16 @@ where
     Ok(result)
 }
 
+/// Write channel points to buffer with optional VecRtdb local cache
+///
+/// # Arguments
+/// * `write_buffer` - WriteBuffer for deferred Redis writes
+/// * `vec_rtdb` - Optional VecRtdb for local memory cache (enables fast reads)
+/// * `routing_cache` - Routing cache for C2M/C2C lookups
+/// * `updates` - Point updates to process
 pub fn write_channel_batch_buffered(
     write_buffer: &WriteBuffer,
+    vec_rtdb: Option<&VecRtdb>,
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
 ) -> BatchRoutingResult {
@@ -258,15 +266,23 @@ pub fn write_channel_batch_buffered(
             }
         }
 
-        // Buffer 3-layer channel data
+        // Buffer 3-layer channel data to WriteBuffer (for Redis)
         let channel_key = config.channel_key(channel_id, point_type);
         let buffered = voltage_rtdb::helpers::buffer_channel_points(
             write_buffer,
             &channel_key,
-            points_3layer,
+            points_3layer.clone(),
             timestamp_ms,
         );
         result.channel_writes += buffered;
+
+        // Write to VecRtdb local cache (if enabled)
+        if let Some(vec_db) = vec_rtdb {
+            let pt = point_type as u8;
+            for &(point_id, value, raw) in &points_3layer {
+                vec_db.set(channel_id, pt, point_id, value, raw, timestamp_ms as u64);
+            }
+        }
 
         // Buffer instance data (C2M results)
         for (instance_id, values) in instance_writes {
@@ -283,10 +299,156 @@ pub fn write_channel_batch_buffered(
                 forward_count, channel_id
             );
             let sub_result =
-                write_channel_batch_buffered(write_buffer, routing_cache, c2c_forwards);
+                write_channel_batch_buffered(write_buffer, vec_rtdb, routing_cache, c2c_forwards);
             result.c2c_forwards += forward_count;
             result.merge(sub_result);
         }
+    }
+
+    result
+}
+
+/// High-performance batch write using direct channel-to-slot mapping
+///
+/// Round 124: Uses ChannelToSlotIndex to bypass C2M routing lookup during writes.
+/// This is the fastest path for channel data writes to shared memory.
+///
+/// # Architecture
+/// ```text
+/// Before (write_channel_batch_buffered):
+///   Channel Update → C2M Lookup (~25ns) → Instance Key → WriteBuffer
+///
+/// After (write_channel_batch_direct):
+///   Channel Update → ChannelToSlotIndex (~50ns) → SharedMemory Direct Write (~10ns)
+///   Channel Update → WriteBuffer (Redis backup)
+/// ```
+///
+/// # Arguments
+/// * `shared_writer` - SharedVecRtdbWriter for direct memory writes
+/// * `channel_index` - Pre-computed channel-to-slot mapping
+/// * `write_buffer` - WriteBuffer for deferred Redis writes (backup path)
+/// * `routing_cache` - Routing cache for C2C lookups
+/// * `updates` - Point updates to process
+///
+/// # Returns
+/// BatchRoutingResult with write counts. `shared_writes` field indicates direct writes.
+pub fn write_channel_batch_direct(
+    shared_writer: &voltage_rtdb::SharedVecRtdbWriter,
+    channel_index: &voltage_rtdb::ChannelToSlotIndex,
+    write_buffer: &WriteBuffer,
+    routing_cache: &RoutingCache,
+    updates: Vec<ChannelPointUpdate>,
+) -> BatchRoutingResult {
+    use std::sync::Arc;
+
+    if updates.is_empty() {
+        return BatchRoutingResult::default();
+    }
+
+    // Get current timestamp
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("System time should be after UNIX epoch")
+        .as_millis() as u64;
+
+    let config = KeySpaceConfig::production_cached();
+    let mut result = BatchRoutingResult::default();
+
+    // Group updates by (channel_id, point_type) for efficient buffer writes
+    let mut grouped: HashMap<(u32, PointType), Vec<ChannelPointUpdate>> = HashMap::new();
+    for update in updates {
+        grouped
+            .entry((update.channel_id, update.point_type))
+            .or_default()
+            .push(update);
+    }
+
+    // Cache point_id -> Arc<str> to avoid repeated allocations
+    let mut point_id_str_cache: HashMap<u32, Arc<str>> = HashMap::new();
+    let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
+
+    for ((channel_id, point_type), updates) in grouped {
+        // Prepare 3-layer data for Redis backup
+        let mut points_3layer = Vec::with_capacity(updates.len());
+        // Instance writes for C2M routing (Redis backup)
+        let mut instance_writes: HashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = HashMap::new();
+
+        for update in &updates {
+            let raw_value = update.raw_value.unwrap_or(update.value);
+            points_3layer.push((update.point_id, update.value, raw_value));
+
+            // ★ Direct shared memory write (fastest path)
+            if let Some(slot_offset) = channel_index.lookup(channel_id, point_type, update.point_id)
+            {
+                shared_writer.set_direct(slot_offset, update.value, timestamp_ms);
+                result.channel_writes += 1; // Count shared memory writes
+            }
+
+            // C2M routing for Redis backup
+            if let Some(target) =
+                routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
+            {
+                let point_id_str = point_id_str_cache
+                    .entry(target.point_id)
+                    .or_insert_with(|| Arc::from(target.point_id.to_string()))
+                    .clone();
+
+                instance_writes
+                    .entry(target.instance_id)
+                    .or_default()
+                    .push((point_id_str, bytes::Bytes::from(update.value.to_string())));
+            }
+
+            // C2C routing lookup
+            if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
+                if let Some(target) =
+                    routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
+                {
+                    c2c_forwards.push(ChannelPointUpdate {
+                        channel_id: target.channel_id,
+                        point_type: target.point_type,
+                        point_id: target.point_id,
+                        value: update.value,
+                        raw_value: update.raw_value,
+                        cascade_depth: update.cascade_depth + 1,
+                    });
+                }
+            }
+        }
+
+        // Buffer 3-layer channel data to WriteBuffer (Redis backup)
+        let channel_key = config.channel_key(channel_id, point_type);
+        voltage_rtdb::helpers::buffer_channel_points(
+            write_buffer,
+            &channel_key,
+            points_3layer,
+            timestamp_ms as i64,
+        );
+
+        // Buffer instance data (C2M results for Redis)
+        for (instance_id, values) in instance_writes {
+            let instance_key = config.instance_measurement_key(instance_id);
+            write_buffer.buffer_hash_mset(&instance_key, values);
+            result.c2m_writes += 1;
+        }
+    }
+
+    // Process C2C forwards recursively
+    if !c2c_forwards.is_empty() {
+        let forward_count = c2c_forwards.len();
+        debug!(
+            "Processing {} C2C forwards with direct write",
+            forward_count
+        );
+        let sub_result = write_channel_batch_direct(
+            shared_writer,
+            channel_index,
+            write_buffer,
+            routing_cache,
+            c2c_forwards,
+        );
+        result.c2c_forwards += forward_count;
+        result.merge(sub_result);
     }
 
     result

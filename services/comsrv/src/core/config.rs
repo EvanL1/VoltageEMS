@@ -20,6 +20,7 @@
 //! ```
 
 #![allow(ambiguous_glob_reexports)]
+#![allow(deprecated)] // ChannelRedisKeys is deprecated, will be removed in next iteration
 
 pub mod manager;
 pub mod sqlite_loader;

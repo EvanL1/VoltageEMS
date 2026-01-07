@@ -8,12 +8,12 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use crate::api::routes::AppState;
-use crate::core::config::ChannelRedisKeys;
 use crate::dto::{AppError, SuccessResponse};
 use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
+use voltage_model::{KeySpaceConfig, PointType};
 use voltage_rtdb::Rtdb;
 
 /// Get point information including value, timestamp and raw value
@@ -54,18 +54,39 @@ pub async fn get_point_info_handler<R: Rtdb>(
     State(state): State<AppState<R>>,
     Path((channel_id, telemetry_type, point_id)): Path<(u32, String, u32)>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
-    let telemetry_type_upper = telemetry_type.to_ascii_uppercase();
-    if !matches!(telemetry_type_upper.as_str(), "T" | "S" | "C" | "A") {
-        return Err(AppError::bad_request(format!(
+    // Parse and validate telemetry type (also serves as validation)
+    let point_type = PointType::from_str(&telemetry_type).ok_or_else(|| {
+        AppError::bad_request(format!(
             "Invalid telemetry type '{}'. Must be T, S, C, or A",
             telemetry_type
-        )));
+        ))
+    })?;
+
+    // ★ Round 128: VecRtdb priority read (~10μs vs ~3ms Redis)
+    // Try VecRtdb local cache first for O(1) lookup
+    if let Some(vec_rtdb) = &state.vec_rtdb {
+        if let Some((value, raw, timestamp)) =
+            vec_rtdb.get(channel_id, point_type.to_u8(), point_id)
+        {
+            return Ok(Json(SuccessResponse::new(serde_json::json!({
+                "channel_id": channel_id,
+                "telemetry_type": point_type.as_str(),
+                "point_id": point_id,
+                "value": value,
+                "timestamp": timestamp,
+                "raw": raw,
+                "source": "cache"  // Indicate data source for debugging
+            }))));
+        }
     }
 
+    // Fallback to Redis (3 hash_get calls)
+    // Use cached &'static config for zero allocation on key generation
+    let keyspace = KeySpaceConfig::production_cached();
     let field = point_id.to_string();
-    let data_key = ChannelRedisKeys::channel_data(channel_id, &telemetry_type_upper);
-    let ts_key = format!("{}:ts", data_key);
-    let raw_key = format!("{}:raw", data_key);
+    let data_key = keyspace.channel_key(channel_id, point_type);
+    let ts_key = keyspace.channel_ts_key(channel_id, point_type);
+    let raw_key = keyspace.channel_raw_key(channel_id, point_type);
 
     let value = match state.rtdb.hash_get(&data_key, &field).await {
         Ok(opt) => opt.map(|bytes| String::from_utf8_lossy(&bytes).to_string()),
@@ -99,11 +120,12 @@ pub async fn get_point_info_handler<R: Rtdb>(
 
     Ok(Json(SuccessResponse::new(serde_json::json!({
         "channel_id": channel_id,
-        "telemetry_type": telemetry_type_upper,
+        "telemetry_type": point_type.as_str(),
         "point_id": point_id,
         "value": value,
         "timestamp": timestamp,
         "raw": raw_value,
+        "source": "redis"  // Indicate data source for debugging
     }))))
 }
 

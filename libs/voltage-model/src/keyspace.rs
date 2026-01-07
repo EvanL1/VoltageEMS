@@ -5,7 +5,6 @@
 
 use crate::PointType;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::sync::OnceLock;
 
 /// Cached production configuration (singleton, zero-allocation after first call)
@@ -167,46 +166,41 @@ impl KeySpaceConfig {
     /// use voltage_model::{KeySpaceConfig, PointType};
     ///
     /// let config = KeySpaceConfig::production();
-    /// assert_eq!(config.channel_key(1001, PointType::Telemetry).as_ref(), "comsrv:1001:T");
+    /// assert_eq!(config.channel_key(1001, PointType::Telemetry), "comsrv:1001:T");
     /// ```
-    pub fn channel_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
-        Cow::Owned(format!(
+    pub fn channel_key(&self, channel_id: u32, point_type: PointType) -> String {
+        format!(
             "{}:{}:{}",
             self.data_prefix,
             channel_id,
             point_type.as_str()
-        ))
+        )
     }
 
     /// Build channel timestamp key: comsrv:{channel_id}:{type}:ts
-    pub fn channel_ts_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
-        Cow::Owned(format!(
+    pub fn channel_ts_key(&self, channel_id: u32, point_type: PointType) -> String {
+        format!(
             "{}:{}:{}:ts",
             self.data_prefix,
             channel_id,
             point_type.as_str()
-        ))
+        )
     }
 
     /// Build channel raw value key: comsrv:{channel_id}:{type}:raw
-    pub fn channel_raw_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
-        Cow::Owned(format!(
+    pub fn channel_raw_key(&self, channel_id: u32, point_type: PointType) -> String {
+        format!(
             "{}:{}:{}:raw",
             self.data_prefix,
             channel_id,
             point_type.as_str()
-        ))
+        )
     }
 
     /// Build TODO queue key: comsrv:{channel_id}:{type}:TODO
-    pub fn todo_queue_key(&self, channel_id: u32, point_type: PointType) -> Cow<'static, str> {
+    pub fn todo_queue_key(&self, channel_id: u32, point_type: PointType) -> String {
         let target = self.target_prefix.as_ref().unwrap_or(&self.data_prefix);
-        Cow::Owned(format!(
-            "{}:{}:{}:TODO",
-            target,
-            channel_id,
-            point_type.as_str()
-        ))
+        format!("{}:{}:{}:TODO", target, channel_id, point_type.as_str())
     }
 
     /// Build instance measurement key: inst:{instance_id}:M
@@ -216,46 +210,40 @@ impl KeySpaceConfig {
     /// use voltage_model::KeySpaceConfig;
     ///
     /// let config = KeySpaceConfig::production();
-    /// assert_eq!(config.instance_measurement_key(1).as_ref(), "inst:1:M");
+    /// assert_eq!(config.instance_measurement_key(1), "inst:1:M");
     /// ```
-    pub fn instance_measurement_key(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!("{}:{}:M", self.inst_prefix, instance_id))
+    pub fn instance_measurement_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:M", self.inst_prefix, instance_id)
     }
 
     /// Build instance action key: inst:{instance_id}:A
-    pub fn instance_action_key(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!("{}:{}:A", self.inst_prefix, instance_id))
+    pub fn instance_action_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:A", self.inst_prefix, instance_id)
     }
 
     /// Build instance name key: inst:{instance_id}:name
-    pub fn instance_name_key(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!("{}:{}:name", self.inst_prefix, instance_id))
+    pub fn instance_name_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:name", self.inst_prefix, instance_id)
     }
 
     /// Build instance status key: inst:{instance_id}:status
-    pub fn instance_status_key(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!("{}:{}:status", self.inst_prefix, instance_id))
+    pub fn instance_status_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:status", self.inst_prefix, instance_id)
     }
 
     /// Build instance config key: inst:{instance_id}:config
-    pub fn instance_config_key(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!("{}:{}:config", self.inst_prefix, instance_id))
+    pub fn instance_config_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:config", self.inst_prefix, instance_id)
     }
 
     /// Build instance measurement points key: inst:{instance_id}:measurement_points
-    pub fn instance_measurement_points_key(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!(
-            "{}:{}:measurement_points",
-            self.inst_prefix, instance_id
-        ))
+    pub fn instance_measurement_points_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:measurement_points", self.inst_prefix, instance_id)
     }
 
     /// Build instance action points key: inst:{instance_id}:action_points
-    pub fn instance_action_points_key(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!(
-            "{}:{}:action_points",
-            self.inst_prefix, instance_id
-        ))
+    pub fn instance_action_points_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:action_points", self.inst_prefix, instance_id)
     }
 
     /// Build instance measurement point key: inst:{instance_id}:M:{point_id}
@@ -264,17 +252,10 @@ impl KeySpaceConfig {
     /// ```
     /// use voltage_model::KeySpaceConfig;
     /// let config = KeySpaceConfig::production();
-    /// assert_eq!(config.instance_measurement_point_key(1, "101").as_ref(), "inst:1:M:101");
+    /// assert_eq!(config.instance_measurement_point_key(1, "101"), "inst:1:M:101");
     /// ```
-    pub fn instance_measurement_point_key(
-        &self,
-        instance_id: u32,
-        point_id: &str,
-    ) -> Cow<'static, str> {
-        Cow::Owned(format!(
-            "{}:{}:M:{}",
-            self.inst_prefix, instance_id, point_id
-        ))
+    pub fn instance_measurement_point_key(&self, instance_id: u32, point_id: &str) -> String {
+        format!("{}:{}:M:{}", self.inst_prefix, instance_id, point_id)
     }
 
     /// Build instance action point key: inst:{instance_id}:A:{point_id}
@@ -283,52 +264,29 @@ impl KeySpaceConfig {
     /// ```
     /// use voltage_model::KeySpaceConfig;
     /// let config = KeySpaceConfig::production();
-    /// assert_eq!(config.instance_action_point_key(1, "1").as_ref(), "inst:1:A:1");
+    /// assert_eq!(config.instance_action_point_key(1, "1"), "inst:1:A:1");
     /// ```
-    pub fn instance_action_point_key(&self, instance_id: u32, point_id: &str) -> Cow<'static, str> {
-        Cow::Owned(format!(
-            "{}:{}:A:{}",
-            self.inst_prefix, instance_id, point_id
-        ))
+    pub fn instance_action_point_key(&self, instance_id: u32, point_id: &str) -> String {
+        format!("{}:{}:A:{}", self.inst_prefix, instance_id, point_id)
     }
 
     /// Build instance pattern for SCAN/KEYS: inst:{instance_id}:*
-    pub fn instance_pattern(&self, instance_id: u32) -> Cow<'static, str> {
-        Cow::Owned(format!("{}:{}:*", self.inst_prefix, instance_id))
+    pub fn instance_pattern(&self, instance_id: u32) -> String {
+        format!("{}:{}:*", self.inst_prefix, instance_id)
     }
 
     /// Build C2M route key: {channel_id}:{type}:{point_id}
     ///
     /// Used as hash field in route:c2m routing table
-    pub fn c2m_route_key(
-        &self,
-        channel_id: u32,
-        point_type: PointType,
-        point_id: &str,
-    ) -> Cow<'static, str> {
-        Cow::Owned(format!(
-            "{}:{}:{}",
-            channel_id,
-            point_type.as_str(),
-            point_id
-        ))
+    pub fn c2m_route_key(&self, channel_id: u32, point_type: PointType, point_id: &str) -> String {
+        format!("{}:{}:{}", channel_id, point_type.as_str(), point_id)
     }
 
     /// Build M2C route key: {instance_id}:{type}:{point_id}
     ///
     /// Used as hash field in route:m2c routing table
-    pub fn m2c_route_key(
-        &self,
-        instance_id: u32,
-        point_type: PointType,
-        point_id: &str,
-    ) -> Cow<'static, str> {
-        Cow::Owned(format!(
-            "{}:{}:{}",
-            instance_id,
-            point_type.as_str(),
-            point_id
-        ))
+    pub fn m2c_route_key(&self, instance_id: u32, point_type: PointType, point_id: &str) -> String {
+        format!("{}:{}:{}", instance_id, point_type.as_str(), point_id)
     }
 }
 
@@ -402,19 +360,16 @@ mod tests {
         let config = KeySpaceConfig::production();
 
         assert_eq!(
-            config.channel_key(1001, PointType::Telemetry).as_ref(),
+            config.channel_key(1001, PointType::Telemetry),
             "comsrv:1001:T"
         );
+        assert_eq!(config.channel_key(1001, PointType::Signal), "comsrv:1001:S");
         assert_eq!(
-            config.channel_key(1001, PointType::Signal).as_ref(),
-            "comsrv:1001:S"
-        );
-        assert_eq!(
-            config.channel_key(1001, PointType::Control).as_ref(),
+            config.channel_key(1001, PointType::Control),
             "comsrv:1001:C"
         );
         assert_eq!(
-            config.channel_key(1001, PointType::Adjustment).as_ref(),
+            config.channel_key(1001, PointType::Adjustment),
             "comsrv:1001:A"
         );
     }
@@ -424,11 +379,11 @@ mod tests {
         let config = KeySpaceConfig::production();
 
         assert_eq!(
-            config.channel_ts_key(1001, PointType::Telemetry).as_ref(),
+            config.channel_ts_key(1001, PointType::Telemetry),
             "comsrv:1001:T:ts"
         );
         assert_eq!(
-            config.channel_raw_key(1001, PointType::Telemetry).as_ref(),
+            config.channel_raw_key(1001, PointType::Telemetry),
             "comsrv:1001:T:raw"
         );
     }
@@ -437,14 +392,14 @@ mod tests {
     fn test_todo_queue_key() {
         let config = KeySpaceConfig::production();
         assert_eq!(
-            config.todo_queue_key(1001, PointType::Control).as_ref(),
+            config.todo_queue_key(1001, PointType::Control),
             "comsrv:1001:C:TODO"
         );
 
         // M2C mode should use target_prefix
         let m2c_config = config.for_m2c();
         assert_eq!(
-            m2c_config.todo_queue_key(1001, PointType::Control).as_ref(),
+            m2c_config.todo_queue_key(1001, PointType::Control),
             "comsrv:1001:C:TODO"
         );
     }
@@ -453,20 +408,17 @@ mod tests {
     fn test_instance_keys() {
         let config = KeySpaceConfig::production();
 
-        assert_eq!(config.instance_measurement_key(1).as_ref(), "inst:1:M");
-        assert_eq!(config.instance_action_key(1).as_ref(), "inst:1:A");
-        assert_eq!(config.instance_name_key(1).as_ref(), "inst:1:name");
-        assert_eq!(config.instance_status_key(1).as_ref(), "inst:1:status");
-        assert_eq!(config.instance_config_key(1).as_ref(), "inst:1:config");
+        assert_eq!(config.instance_measurement_key(1), "inst:1:M");
+        assert_eq!(config.instance_action_key(1), "inst:1:A");
+        assert_eq!(config.instance_name_key(1), "inst:1:name");
+        assert_eq!(config.instance_status_key(1), "inst:1:status");
+        assert_eq!(config.instance_config_key(1), "inst:1:config");
         assert_eq!(
-            config.instance_measurement_points_key(1).as_ref(),
+            config.instance_measurement_points_key(1),
             "inst:1:measurement_points"
         );
-        assert_eq!(
-            config.instance_action_points_key(1).as_ref(),
-            "inst:1:action_points"
-        );
-        assert_eq!(config.instance_pattern(1).as_ref(), "inst:1:*");
+        assert_eq!(config.instance_action_points_key(1), "inst:1:action_points");
+        assert_eq!(config.instance_pattern(1), "inst:1:*");
     }
 
     #[test]
@@ -474,24 +426,19 @@ mod tests {
         let config = KeySpaceConfig::production();
 
         assert_eq!(
-            config.instance_measurement_point_key(1, "101").as_ref(),
+            config.instance_measurement_point_key(1, "101"),
             "inst:1:M:101"
         );
-        assert_eq!(
-            config.instance_action_point_key(1, "1").as_ref(),
-            "inst:1:A:1"
-        );
+        assert_eq!(config.instance_action_point_key(1, "1"), "inst:1:A:1");
 
         // Test environment
         let test_config = KeySpaceConfig::test();
         assert_eq!(
-            test_config
-                .instance_measurement_point_key(1, "101")
-                .as_ref(),
+            test_config.instance_measurement_point_key(1, "101"),
             "test:inst:1:M:101"
         );
         assert_eq!(
-            test_config.instance_action_point_key(1, "1").as_ref(),
+            test_config.instance_action_point_key(1, "1"),
             "test:inst:1:A:1"
         );
     }
@@ -502,17 +449,13 @@ mod tests {
 
         // C2M route key
         assert_eq!(
-            config
-                .c2m_route_key(1001, PointType::Telemetry, "T1")
-                .as_ref(),
+            config.c2m_route_key(1001, PointType::Telemetry, "T1"),
             "1001:T:T1"
         );
 
         // M2C route key
         assert_eq!(
-            config
-                .m2c_route_key(1, PointType::Adjustment, "A1")
-                .as_ref(),
+            config.m2c_route_key(1, PointType::Adjustment, "A1"),
             "1:A:A1"
         );
     }
@@ -523,24 +466,22 @@ mod tests {
 
         // All keys should have test: prefix
         assert_eq!(
-            config.channel_key(1001, PointType::Telemetry).as_ref(),
+            config.channel_key(1001, PointType::Telemetry),
             "test:comsrv:1001:T"
         );
-        assert_eq!(config.instance_measurement_key(1).as_ref(), "test:inst:1:M");
+        assert_eq!(config.instance_measurement_key(1), "test:inst:1:M");
         assert_eq!(
-            config.todo_queue_key(1001, PointType::Control).as_ref(),
+            config.todo_queue_key(1001, PointType::Control),
             "test:comsrv:1001:C:TODO"
         );
     }
 
     #[test]
-    fn test_key_generation_cow_type() {
-        use std::borrow::Cow;
-
+    fn test_key_generation_returns_string() {
         let config = KeySpaceConfig::production();
-        let key: Cow<'static, str> = config.channel_key(1001, PointType::Telemetry);
+        let key: String = config.channel_key(1001, PointType::Telemetry);
 
-        // Verify it's Owned variant (dynamic allocation)
-        assert!(matches!(key, Cow::Owned(_)));
+        // Verify direct String return (no Cow overhead)
+        assert_eq!(key, "comsrv:1001:T");
     }
 }

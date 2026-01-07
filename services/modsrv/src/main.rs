@@ -20,6 +20,7 @@ use modsrv::{
     rule_routes::{create_rule_routes, RuleEngineState},
     Result, RuleScheduler, DEFAULT_TICK_MS,
 };
+use voltage_rtdb::{is_shm_available, SharedConfig, SharedVecRtdbReader, VecRtdb};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -69,14 +70,46 @@ async fn main() -> Result<()> {
 
     debug!("Rule scheduler tick_ms: {}", tick_ms);
 
-    // Create rule scheduler with independent rule log directory
+    // Create VecRtdb for read-through cache (Round 113)
+    // The cache will be populated lazily as rule variables are read
+    let vec_rtdb = Arc::new(VecRtdb::new());
+    info!("VecRtdb initialized (read-through cache for rule engine)");
+
+    // Initialize SharedVecRtdbReader for cross-process zero-copy reads (Round 127)
+    // This enables direct mmap access to comsrv's shared memory via Docker tmpfs volume
+    let shared_reader = {
+        let config = SharedConfig::default();
+        if is_shm_available(&config) {
+            match SharedVecRtdbReader::open(&config) {
+                Ok(reader) => {
+                    let stats = reader.stats();
+                    info!(
+                        "SharedVecRtdbReader opened: {} instances, {} points",
+                        stats.instance_count, stats.total_points
+                    );
+                    Some(Arc::new(reader))
+                },
+                Err(e) => {
+                    warn!("SharedVecRtdbReader unavailable: {}", e);
+                    None
+                },
+            }
+        } else {
+            info!("SharedMemory path not found, skipping (non-Docker environment)");
+            None
+        }
+    };
+
+    // Create rule scheduler with three-tier priority (SharedMemory > VecRtdb > Redis)
     let rule_log_root = PathBuf::from("logs/modsrv");
-    let scheduler = Arc::new(RuleScheduler::new(
+    let scheduler = Arc::new(RuleScheduler::with_shared_reader(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
         tick_ms,
         rule_log_root,
+        vec_rtdb,
+        shared_reader,
     ));
 
     // Load rules into scheduler

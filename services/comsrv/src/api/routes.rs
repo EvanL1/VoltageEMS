@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use utoipa::OpenApi;
 
 use crate::core::channels::ChannelManager;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{Rtdb, VecRtdb};
 
 // Import handler modules
 use crate::api::{
@@ -43,6 +43,8 @@ pub struct AppState<R: voltage_rtdb::Rtdb> {
     pub channel_manager: Arc<RwLock<ChannelManager<R>>>,
     pub rtdb: Arc<R>,
     pub sqlite_pool: sqlx::SqlitePool,
+    /// VecRtdb local cache for O(1) API reads (Round 128)
+    pub vec_rtdb: Option<Arc<VecRtdb>>,
 }
 
 // Manual Clone implementation to avoid requiring R: Clone
@@ -53,6 +55,7 @@ impl<R: voltage_rtdb::Rtdb> Clone for AppState<R> {
             channel_manager: self.channel_manager.clone(),
             rtdb: self.rtdb.clone(),
             sqlite_pool: self.sqlite_pool.clone(),
+            vec_rtdb: self.vec_rtdb.clone(),
         }
     }
 }
@@ -63,11 +66,13 @@ impl<R: voltage_rtdb::Rtdb> AppState<R> {
         channel_manager: Arc<RwLock<ChannelManager<R>>>,
         rtdb: Arc<R>,
         sqlite_pool: sqlx::SqlitePool,
+        vec_rtdb: Option<Arc<VecRtdb>>,
     ) -> Self {
         Self {
             channel_manager,
             rtdb,
             sqlite_pool,
+            vec_rtdb,
         }
     }
 }
@@ -78,12 +83,14 @@ impl AppState<voltage_rtdb::RedisRtdb> {
         channel_manager: Arc<RwLock<ChannelManager<voltage_rtdb::RedisRtdb>>>,
         redis_client: Arc<common::redis::RedisClient>,
         sqlite_pool: sqlx::SqlitePool,
+        vec_rtdb: Option<Arc<VecRtdb>>,
     ) -> Self {
         let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client));
         Self {
             channel_manager,
             rtdb,
             sqlite_pool,
+            vec_rtdb,
         }
     }
 }
@@ -203,9 +210,10 @@ pub fn create_api_routes(
     channel_manager: Arc<RwLock<ChannelManager<voltage_rtdb::RedisRtdb>>>,
     redis_client: Arc<common::redis::RedisClient>,
     sqlite_pool: sqlx::SqlitePool,
+    vec_rtdb: Option<Arc<VecRtdb>>,
 ) -> Router {
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client));
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool)
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, vec_rtdb)
 }
 
 /// Generic version of create_api_routes that accepts any Rtdb implementation.
@@ -214,8 +222,9 @@ pub fn create_api_routes_generic<R: Rtdb>(
     channel_manager: Arc<RwLock<ChannelManager<R>>>,
     rtdb: Arc<R>,
     sqlite_pool: sqlx::SqlitePool,
+    vec_rtdb: Option<Arc<VecRtdb>>,
 ) -> Router {
-    let state = AppState::new(channel_manager, rtdb, sqlite_pool);
+    let state = AppState::new(channel_manager, rtdb, sqlite_pool, vec_rtdb);
 
     Router::new()
         // Health check (top-level for monitoring systems)

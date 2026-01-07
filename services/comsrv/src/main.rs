@@ -35,6 +35,9 @@ use comsrv::{
     shutdown_services, wait_for_shutdown,
 };
 use voltage_routing::load_routing_maps;
+use voltage_rtdb::{
+    is_shm_available, ChannelToSlotIndex, SharedConfig, SharedVecRtdbWriter, VecRtdb,
+};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -135,17 +138,65 @@ async fn main() -> VoltageResult<()> {
     // RTDB is a pure storage abstraction
     // Routing is handled by ChannelManager using routing_cache
 
+    // ============ Phase 2.5: Initialize shared memory (optional) ============
+    // SharedVecRtdbWriter provides zero-copy cross-process data sharing via tmpfs
+    let (shared_writer, channel_index) = {
+        let config = SharedConfig::default();
+        if is_shm_available(&config) {
+            match SharedVecRtdbWriter::open(&config) {
+                Ok(mut writer) => {
+                    // Register all instances from C2M routing
+                    let mut instances: std::collections::HashMap<u32, Vec<u32>> =
+                        std::collections::HashMap::new();
+                    for ((_, _, _), target) in routing_cache.c2m_iter() {
+                        instances
+                            .entry(target.instance_id)
+                            .or_default()
+                            .push(target.point_id);
+                    }
+                    for (instance_id, point_ids) in instances {
+                        if let Err(e) = writer.register_instance(instance_id, &point_ids, &[]) {
+                            tracing::warn!("Failed to register instance {}: {}", instance_id, e);
+                        }
+                    }
+
+                    // Build pre-computed channel → slot direct mapping
+                    let index = ChannelToSlotIndex::build(&routing_cache, &writer);
+                    info!("SharedMemory initialized: {} channel mappings", index.len());
+                    (Some(Arc::new(writer)), Some(Arc::new(index)))
+                },
+                Err(e) => {
+                    tracing::warn!("SharedMemory not available: {}", e);
+                    (None, None)
+                },
+            }
+        } else {
+            info!("SharedMemory path not found, skipping (non-Docker environment)");
+            (None, None)
+        }
+    };
+
+    // ★ Round 128: Create VecRtdb for O(1) API reads
+    // VecRtdb is a process-local cache that stores point values in contiguous memory
+    // Write path: IGW → WriteBuffer → Redis + VecRtdb (dual write)
+    // Read path: API → VecRtdb (~10μs) → Redis fallback (~3ms)
+    let vec_rtdb = Arc::new(VecRtdb::new());
+    info!("VecRtdb initialized (local cache for API reads)");
+
     // Initialize services
     let shutdown_token = CancellationToken::new();
 
     // Use concrete type (native AFIT requires static dispatch)
     let rtdb: Arc<voltage_rtdb::RedisRtdb> = Arc::new(redis_rtdb);
 
-    // Create channel manager (mutable state, needs lock)
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::with_sqlite_pool(
+    // Create channel manager with optional shared memory and VecRtdb support
+    let channel_manager = Arc::new(RwLock::new(ChannelManager::with_shared_memory(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
+        shared_writer,
+        channel_index,
+        Some(Arc::clone(&vec_rtdb)),
     )));
 
     // Determine bind address and start server
@@ -179,7 +230,12 @@ async fn main() -> VoltageResult<()> {
 
     // Start API server
     set_service_start_time(chrono::Utc::now());
-    let app = create_api_routes(Arc::clone(&channel_manager), redis_client, sqlite_pool);
+    let app = create_api_routes(
+        Arc::clone(&channel_manager),
+        redis_client,
+        sqlite_pool,
+        Some(Arc::clone(&vec_rtdb)),
+    );
 
     #[cfg(feature = "swagger-ui")]
     let app = {

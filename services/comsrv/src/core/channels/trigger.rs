@@ -2,7 +2,6 @@
 //!
 //! Responsible for subscribing to control commands from Redis and distributing them to corresponding channels for processing
 
-use crate::core::config::ChannelRedisKeys;
 use common::timeouts;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -11,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
+use voltage_model::{KeySpaceConfig, PointType};
 use voltage_rtdb::Rtdb;
 
 use super::traits::ChannelCommand;
@@ -35,6 +35,17 @@ struct CompactTrigger {
     value: f64,
     /// Timestamp in milliseconds
     timestamp: i64,
+}
+
+/// Trigger message parsed from TODO queue
+/// Uses `#[serde(untagged)]` to try formats in order with single parse
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum TriggerMessage {
+    /// Full format with all fields (preferred, avoids Redis lookups)
+    Compact(CompactTrigger),
+    /// Legacy format with only point_id (value/timestamp fetched from Redis)
+    Legacy { point_id: u32 },
 }
 
 /// Control command message
@@ -188,9 +199,10 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
         let channel_id = config.channel_id;
         let timeout = config.timeout_seconds;
 
-        // Define the queues to listen to.
-        let control_queue = ChannelRedisKeys::control_todo(channel_id);
-        let adjustment_queue = ChannelRedisKeys::adjustment_todo(channel_id);
+        // Define the queues to listen to (using cached &'static config for zero allocation)
+        let keyspace = KeySpaceConfig::production_cached();
+        let control_queue = keyspace.todo_queue_key(channel_id, PointType::Control);
+        let adjustment_queue = keyspace.todo_queue_key(channel_id, PointType::Adjustment);
 
         info!("Ch{} queues: C/A todo ({}s)", channel_id, timeout);
 
@@ -226,48 +238,32 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                     let is_control = queue.contains(":C:");
                                     let point_type_str = if is_control { "C" } else { "A" };
 
-                                    // ★ Try parsing as compact trigger using from_slice (zero allocation)
-                                    let compact_trigger = serde_json::from_slice::<CompactTrigger>(&data_bytes);
+                                    // ★ Parse with untagged enum (single JSON parse for both formats)
+                                    let trigger_msg: TriggerMessage = match serde_json::from_slice(&data_bytes) {
+                                        Ok(msg) => msg,
+                                        Err(e) => {
+                                            error!("Parse err q={}: {}", queue, e);
+                                            continue;
+                                        }
+                                    };
 
-                                    let (point_id, value, current_ts) = match compact_trigger {
-                                        Ok(trigger) => {
-                                            // New compact format parsed successfully
+                                    let (point_id, value, current_ts) = match trigger_msg {
+                                        TriggerMessage::Compact(trigger) => {
+                                            // Full format - all data in JSON
                                             (trigger.point_id, trigger.value, trigger.timestamp)
                                         }
-                                        Err(compact_err) => {
-                                            // Fallback: try parsing legacy format (only point_id)
-                                            debug!("Compact parse fail, trying legacy: {}", compact_err);
+                                        TriggerMessage::Legacy { point_id } => {
+                                            // Legacy format - read value/timestamp from Redis hashes
+                                            debug!("Legacy trigger Ch{} pt{}", channel_id, point_id);
 
-                                            let legacy_trigger: serde_json::Value = match serde_json::from_slice(&data_bytes) {
-                                                Ok(v) => v,
-                                                Err(e) => {
-                                                    error!("Parse err q={}: {}", queue, e);
-                                                    continue;
-                                                }
-                                            };
-
-                                            let point_id: u32 = match legacy_trigger.get("point_id").and_then(|v| v.as_u64()) {
-                                                Some(id) => match u32::try_from(id) {
-                                                    Ok(id) => id,
-                                                    Err(_) => {
-                                                        error!("point_id overflow q={} id={}", queue, id);
-                                                        continue;
-                                                    }
-                                                },
-                                                None => {
-                                                    error!("No point_id q={}", queue);
-                                                    continue;
-                                                }
-                                            };
-
-                                            // For legacy format, read value and timestamp from separate hashes
                                             // Structure B: comsrv:{channel_id}:{type} for values
                                             //              comsrv:{channel_id}:{type}:ts for timestamps
                                             let channel_key = format!("comsrv:{}:{}", channel_id, point_type_str);
                                             let ts_key = format!("{}:ts", channel_key);
+                                            let point_id_str = point_id.to_string(); // Pre-allocate for reuse
 
-                                            // Read timestamp from :ts hash (Structure B)
-                                            let current_ts: i64 = match rtdb.hash_get(&ts_key, &point_id.to_string()).await {
+                                            // Read timestamp from :ts hash
+                                            let current_ts: i64 = match rtdb.hash_get(&ts_key, &point_id_str).await {
                                                 Ok(Some(ts_bytes)) => {
                                                     let ts_str = std::str::from_utf8(&ts_bytes).map_err(|e| {
                                                         crate::error::ComSrvError::data(
@@ -282,17 +278,15 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                                         }
                                                     }
                                                 }
-                                                Ok(None) => {
-                                                    0  // Treat as new command if timestamp missing
-                                                }
+                                                Ok(None) => 0, // Treat as new command if timestamp missing
                                                 Err(e) => {
                                                     error!("Ch{} pt{} ts read err: {}", channel_id, point_id, e);
                                                     continue;
                                                 }
                                             };
 
-                                            // Read value from Hash (legacy format compatibility)
-                                            let value: f64 = match rtdb.hash_get(&channel_key, &point_id.to_string()).await {
+                                            // Read value from Hash
+                                            let value: f64 = match rtdb.hash_get(&channel_key, &point_id_str).await {
                                                 Ok(Some(value_bytes)) => {
                                                     let value_str = std::str::from_utf8(&value_bytes).map_err(|e| {
                                                         crate::error::ComSrvError::data(
@@ -316,8 +310,6 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                                     continue;
                                                 }
                                             };
-
-                                            debug!("Legacy trigger Ch{} pt{}", channel_id, point_id);
 
                                             (point_id, value, current_ts)
                                         }

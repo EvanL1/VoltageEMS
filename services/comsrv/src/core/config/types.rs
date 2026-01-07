@@ -970,8 +970,17 @@ pub type ComsrvValidator = common::GenericValidator<ComsrvConfig>;
 // ============================================================================
 
 /// Redis key patterns for comsrv data storage and command queues
+///
+/// **DEPRECATED**: Use `voltage_model::KeySpaceConfig::production_cached()` instead.
+/// KeySpaceConfig provides zero-allocation key generation through `&'static` caching,
+/// while ChannelRedisKeys allocates a new String on every method call.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use voltage_model::KeySpaceConfig::production_cached() for zero-allocation key generation"
+)]
 pub struct ChannelRedisKeys;
 
+#[allow(deprecated)]
 impl ChannelRedisKeys {
     /// Channel data storage key pattern: "comsrv:{channel_id}:{point_type}"
     /// point_type: T (telemetry), S (signal), C (control), A (adjustment)

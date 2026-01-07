@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::RoutingCache;
+use voltage_rtdb::{RoutingCache, SharedVecRtdbReader, VecRtdb};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
@@ -89,6 +89,68 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         Self {
             rtdb: Arc::clone(&rtdb),
             executor: Arc::new(RuleExecutor::new(rtdb, routing_cache)),
+            pool,
+            rules: Arc::new(RwLock::new(Vec::new())),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tick_ms,
+            logger_manager: RuleLoggerManager::new(log_root),
+        }
+    }
+
+    /// Create with VecRtdb read-through cache for O(1) variable reads (Round 113)
+    ///
+    /// Enables VecRtdb caching in the executor, which:
+    /// 1. First checks VecRtdb for cached values (O(1))
+    /// 2. Falls back to Redis on cache miss
+    /// 3. Updates cache after Redis read
+    ///
+    /// This significantly reduces Redis round trips for rule variable reads.
+    pub fn with_vec_rtdb(
+        rtdb: Arc<R>,
+        routing_cache: Arc<RoutingCache>,
+        pool: SqlitePool,
+        tick_ms: u64,
+        log_root: PathBuf,
+        vec_rtdb: Arc<VecRtdb>,
+    ) -> Self {
+        Self {
+            rtdb: Arc::clone(&rtdb),
+            executor: Arc::new(RuleExecutor::new(rtdb, routing_cache).with_vec_rtdb(vec_rtdb)),
+            pool,
+            rules: Arc::new(RwLock::new(Vec::new())),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            tick_ms,
+            logger_manager: RuleLoggerManager::new(log_root),
+        }
+    }
+
+    /// Create with VecRtdb + SharedVecRtdbReader for three-tier priority reads (Round 127)
+    ///
+    /// Enables both caching layers in the executor:
+    /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
+    /// 2. VecRtdb (~20μs) - process-local read-through cache
+    /// 3. Redis (~1ms) - remote fallback
+    ///
+    /// SharedMemory is populated by comsrv via Docker tmpfs volume.
+    pub fn with_shared_reader(
+        rtdb: Arc<R>,
+        routing_cache: Arc<RoutingCache>,
+        pool: SqlitePool,
+        tick_ms: u64,
+        log_root: PathBuf,
+        vec_rtdb: Arc<VecRtdb>,
+        shared_reader: Option<Arc<SharedVecRtdbReader>>,
+    ) -> Self {
+        let mut executor =
+            RuleExecutor::new(Arc::clone(&rtdb), routing_cache).with_vec_rtdb(vec_rtdb);
+        if let Some(reader) = shared_reader {
+            executor = executor.with_shared_reader(reader);
+        }
+        Self {
+            rtdb,
+            executor: Arc::new(executor),
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
             shutdown: Arc::new(tokio::sync::Notify::new()),

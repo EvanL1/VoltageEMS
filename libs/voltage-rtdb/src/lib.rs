@@ -16,6 +16,10 @@ pub mod redis_impl;
 
 pub mod memory_impl;
 
+pub mod vec_impl;
+
+pub mod shared_impl;
+
 pub mod error;
 
 pub mod cleanup;
@@ -38,6 +42,15 @@ pub use voltage_model::KeySpaceConfig;
 pub use redis_impl::RedisRtdb;
 
 pub use memory_impl::{MemoryRtdb, MemoryStats};
+
+pub use vec_impl::{instance_point_type, ChannelVecStore, PointSlot, VecRtdb, VecRtdbStats};
+
+// Shared memory exports (Round 115-117, 123)
+pub use shared_impl::{
+    is_shm_available, try_open_reader, ChannelToSlotIndex, SharedConfig, SharedHeader,
+    SharedReaderStats, SharedVecRtdbReader, SharedVecRtdbWriter, SharedWriterStats, SHARED_MAGIC,
+    SHARED_VERSION,
+};
 
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
 
@@ -124,15 +137,13 @@ pub mod helpers {
         // Step 2: Auto-trigger TODO queue (Write-Triggers-Routing pattern)
         let todo_key = config.todo_queue_key(channel_id, point_type);
 
-        // Compact trigger message format (point_id, value, timestamp)
-        #[allow(clippy::disallowed_methods)]
-        let trigger = serde_json::json!({
-            "point_id": point_id,
-            "value": value,
-            "timestamp": timestamp_ms
-        });
+        // Compact trigger message format - direct string construction (avoids json! double serialization)
+        let trigger = format!(
+            r#"{{"point_id":{},"value":{},"timestamp":{}}}"#,
+            point_id, value, timestamp_ms
+        );
 
-        rtdb.list_rpush(&todo_key, Bytes::from(trigger.to_string()))
+        rtdb.list_rpush(&todo_key, Bytes::from(trigger))
             .await
             .context("Failed to trigger TODO queue")?;
 

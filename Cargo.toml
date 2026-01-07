@@ -102,6 +102,7 @@ regex = "1.10"
 # Data structures and algorithms
 dashmap = { version = "5.5", features = ["serde"] }
 ahash = "0.8"
+rustc-hash = "2.1"
 parking_lot = "0.12"
 
 # Tower middleware

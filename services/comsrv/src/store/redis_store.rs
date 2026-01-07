@@ -32,7 +32,10 @@ use igw::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
 use voltage_model::{KeySpaceConfig, PointType};
 use voltage_routing::ChannelPointUpdate;
-use voltage_rtdb::{RoutingCache, Rtdb, WriteBuffer, WriteBufferConfig};
+use voltage_rtdb::{
+    ChannelToSlotIndex, RoutingCache, Rtdb, SharedVecRtdbWriter, VecRtdb, WriteBuffer,
+    WriteBufferConfig,
+};
 
 /// Redis-backed data store for VoltageEMS.
 ///
@@ -56,8 +59,14 @@ pub struct RedisDataStore<R: Rtdb> {
     routing_cache: Arc<RoutingCache>,
     /// Write buffer for aggregating Redis writes
     write_buffer: Arc<WriteBuffer>,
-    /// Point configurations cache (channel_id -> configs)
-    point_configs: DashMap<u32, Vec<PointConfig>>,
+    /// VecRtdb local cache for O(1) reads (optional)
+    vec_rtdb: Option<Arc<VecRtdb>>,
+    /// Shared memory writer for zero-copy cross-process data sharing (optional)
+    shared_writer: Option<Arc<SharedVecRtdbWriter>>,
+    /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
+    channel_index: Option<Arc<ChannelToSlotIndex>>,
+    /// Point configurations cache (channel_id -> Arc<configs> for O(1) clone)
+    point_configs: DashMap<u32, Arc<Vec<PointConfig>>>,
     /// Single broadcast sender for all subscribers (avoids clone * N)
     event_sender: DataEventSender,
     /// KeySpace configuration
@@ -82,12 +91,46 @@ impl<R: Rtdb> RedisDataStore<R> {
             rtdb,
             routing_cache,
             write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
+            vec_rtdb: None,
+            shared_writer: None,
+            channel_index: None,
             point_configs: DashMap::new(),
             event_sender,
             key_config: KeySpaceConfig::production(),
             flush_handle: RwLock::new(None),
             shutdown_notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// Set the VecRtdb local cache for O(1) reads.
+    ///
+    /// When enabled, writes will go to both WriteBuffer (Redis) and VecRtdb (memory).
+    /// Reads can then use VecRtdb for fast local access.
+    pub fn with_vec_rtdb(mut self, vec_rtdb: Arc<VecRtdb>) -> Self {
+        self.vec_rtdb = Some(vec_rtdb);
+        self
+    }
+
+    /// Get reference to VecRtdb if configured
+    pub fn vec_rtdb(&self) -> Option<&Arc<VecRtdb>> {
+        self.vec_rtdb.as_ref()
+    }
+
+    /// Set shared memory writer and channel index for high-performance writes.
+    ///
+    /// When enabled, writes go directly to shared memory using pre-computed
+    /// channel → slot mappings, bypassing the C2M routing lookup at runtime.
+    /// This provides ~89% latency reduction for batch writes.
+    ///
+    /// Falls back to WriteBuffer path if shared memory is not available.
+    pub fn with_shared_memory(
+        mut self,
+        writer: Arc<SharedVecRtdbWriter>,
+        index: Arc<ChannelToSlotIndex>,
+    ) -> Self {
+        self.shared_writer = Some(writer);
+        self.channel_index = Some(index);
+        self
     }
 
     /// Start the background flush task for the write buffer.
@@ -184,6 +227,13 @@ impl<R: Rtdb> RedisDataStore<R> {
     ///
     /// Takes ownership of `batch` to avoid cloning when notifying subscribers.
     /// Note: Data is already transformed by IGW in poll_once().
+    ///
+    /// # Write Path Selection
+    ///
+    /// 1. **Shared Memory Path** (fastest): If `shared_writer` and `channel_index` are configured,
+    ///    uses `write_channel_batch_direct()` for O(1) direct slot writes (~10ns per point).
+    /// 2. **Buffered Path** (fallback): Uses `write_channel_batch_buffered()` with optional
+    ///    VecRtdb local cache (~90ns per point).
     pub async fn write_batch(&self, channel_id: u32, batch: DataBatch) -> IgwResult<()> {
         if batch.is_empty() {
             return Ok(());
@@ -192,12 +242,26 @@ impl<R: Rtdb> RedisDataStore<R> {
         // Convert to ChannelPointUpdates (values already transformed by IGW)
         let updates = self.batch_to_updates(channel_id, &batch);
 
-        // Write via voltage-routing (handles Redis + C2M routing)
-        let _stats = voltage_routing::write_channel_batch_buffered(
-            &self.write_buffer,
-            &self.routing_cache,
-            updates,
-        );
+        // Select write path: prefer shared memory direct write for best performance
+        let _stats = if let (Some(writer), Some(index)) = (&self.shared_writer, &self.channel_index)
+        {
+            // Fast path: direct shared memory write with pre-computed channel → slot mapping
+            voltage_routing::write_channel_batch_direct(
+                writer,
+                index,
+                &self.write_buffer,
+                &self.routing_cache,
+                updates,
+            )
+        } else {
+            // Fallback path: buffered write with optional VecRtdb
+            voltage_routing::write_channel_batch_buffered(
+                &self.write_buffer,
+                self.vec_rtdb.as_deref(),
+                &self.routing_cache,
+                updates,
+            )
+        };
 
         // Notify subscribers - move batch into event, no clone needed
         self.notify_subscribers(DataEvent::DataUpdate(batch));
@@ -209,6 +273,9 @@ impl<R: Rtdb> RedisDataStore<R> {
     ///
     /// Tries all point types until a value is found.
     pub async fn read_point(&self, channel_id: u32, point_id: u32) -> IgwResult<Option<DataPoint>> {
+        // Convert point_id to string once outside the loop (avoids 4 allocations)
+        let point_id_str = point_id.to_string();
+
         // Try to read from each point type
         for point_type in [
             PointType::Telemetry,
@@ -218,7 +285,7 @@ impl<R: Rtdb> RedisDataStore<R> {
         ] {
             let key = self.key_config.channel_key(channel_id, point_type);
 
-            if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, &point_id.to_string()).await {
+            if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, &point_id_str).await {
                 let value_str = String::from_utf8_lossy(&value_bytes);
                 if let Ok(value) = value_str.parse::<f64>() {
                     return Ok(Some(DataPoint::new(point_id, value)));
@@ -274,14 +341,14 @@ impl<R: Rtdb> RedisDataStore<R> {
 
     /// Set point configurations for a channel.
     pub fn set_point_configs(&self, channel_id: u32, configs: Vec<PointConfig>) {
-        self.point_configs.insert(channel_id, configs);
+        self.point_configs.insert(channel_id, Arc::new(configs));
     }
 
-    /// Get all point configurations for a channel.
-    pub fn get_all_point_configs(&self, channel_id: u32) -> Vec<PointConfig> {
+    /// Get all point configurations for a channel (O(1) Arc clone instead of Vec clone).
+    pub fn get_all_point_configs(&self, channel_id: u32) -> Arc<Vec<PointConfig>> {
         self.point_configs
             .get(&channel_id)
-            .map(|c| c.value().clone())
+            .map(|c| Arc::clone(c.value()))
             .unwrap_or_default()
     }
 

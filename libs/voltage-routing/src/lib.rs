@@ -14,7 +14,8 @@ pub mod batch;
 pub mod loader;
 
 pub use batch::{
-    write_channel_batch, write_channel_batch_buffered, BatchRoutingResult, ChannelPointUpdate,
+    write_channel_batch, write_channel_batch_buffered, write_channel_batch_direct,
+    BatchRoutingResult, ChannelPointUpdate,
 };
 pub use loader::{load_routing_maps, RoutingMaps};
 
@@ -22,7 +23,6 @@ pub use loader::{load_routing_maps, RoutingMaps};
 pub use voltage_rtdb::RoutingCache;
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use voltage_rtdb::Rtdb;
 
 /// Structured representation of an action routing outcome.
@@ -113,11 +113,7 @@ where
         // Step 3: Write to instance Action Hash (state storage)
         let instance_action_key = config.instance_action_key(instance_id);
         redis
-            .hash_set(
-                &instance_action_key,
-                point_id,
-                Bytes::from(value.to_string()),
-            )
+            .hash_set_f64(&instance_action_key, point_id, value)
             .await
             .context("Failed to write instance action point")?;
 
@@ -162,11 +158,7 @@ where
         // No routing found - write to instance Hash only (no TODO queue)
         let instance_action_key = config.instance_action_key(instance_id);
         redis
-            .hash_set(
-                &instance_action_key,
-                point_id,
-                Bytes::from(value.to_string()),
-            )
+            .hash_set_f64(&instance_action_key, point_id, value)
             .await
             .context("Failed to write instance action point")?;
 

@@ -585,11 +585,14 @@ async fn rebuild_instance_name_index<R: voltage_rtdb::Rtdb>(
         return Ok(0);
     }
 
-    // Build index fields for batch write
+    // Build index fields for batch write (into_iter() moves ownership, avoiding clone)
     let fields: Vec<(String, Bytes)> = instances
-        .iter()
-        .map(|(id, name)| (name.clone(), Bytes::from(id.to_string())))
+        .into_iter()
+        .map(|(id, name)| (name, Bytes::from(id.to_string())))
         .collect();
+
+    // Save count before moving fields
+    let count = fields.len();
 
     // Write all mappings in one batch operation
     rtdb.hash_mset("inst:name:index", fields)
@@ -598,7 +601,6 @@ async fn rebuild_instance_name_index<R: voltage_rtdb::Rtdb>(
             ModSrvError::InternalError(format!("Failed to rebuild instance name index: {}", e))
         })?;
 
-    let count = instances.len();
     info!("Name index: {} instances", count);
 
     Ok(count)

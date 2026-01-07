@@ -243,11 +243,8 @@ async fn load_routing_maps_from_sqlite(
     std::collections::HashMap<String, String>,
     std::collections::HashMap<String, String>,
 )> {
-    use voltage_rtdb::KeySpaceConfig;
-
     tracing::info!("Loading routing maps from SQLite for monarch");
 
-    let keyspace = KeySpaceConfig::production();
     let mut c2m_map = std::collections::HashMap::new();
     let mut m2c_map = std::collections::HashMap::new();
 
@@ -271,14 +268,18 @@ async fn load_routing_maps_from_sqlite(
         let point_type = PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
-        // Build routing keys (no prefix for hash fields)
+        // Build routing keys directly (avoids triple allocation from to_string + c2m_route_key + to_string)
         // From: channel_id:type:point_id → To: instance_id:M:point_id
-        let from_key =
-            keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
+        let from_key = format!(
+            "{}:{}:{}",
+            channel_id,
+            point_type.as_str(),
+            channel_point_id
+        );
         // Note: Target uses "M" (Measurement role), not a PointType enum
         let to_key = format!("{}:M:{}", instance_id, measurement_id);
 
-        c2m_map.insert(from_key.to_string(), to_key);
+        c2m_map.insert(from_key, to_key);
     }
 
     // Fetch all enabled action routing (M2C - downlink)
@@ -301,12 +302,17 @@ async fn load_routing_maps_from_sqlite(
         let point_type = PointType::from_str(&channel_type)
             .ok_or_else(|| anyhow::anyhow!("Invalid channel type: {}", channel_type))?;
 
-        // Build routing keys
+        // Build routing keys directly (avoids triple allocation)
         // From: instance_id:A:point_id → To: channel_id:type:point_id
         let from_key = format!("{}:A:{}", instance_id, action_id);
-        let to_key = keyspace.m2c_route_key(channel_id, point_type, &channel_point_id.to_string());
+        let to_key = format!(
+            "{}:{}:{}",
+            channel_id,
+            point_type.as_str(),
+            channel_point_id
+        );
 
-        m2c_map.insert(from_key, to_key.to_string());
+        m2c_map.insert(from_key, to_key);
     }
 
     tracing::info!(

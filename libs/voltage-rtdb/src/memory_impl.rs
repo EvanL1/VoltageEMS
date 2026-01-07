@@ -70,27 +70,31 @@ pub struct MemoryStats {
 }
 
 impl Rtdb for MemoryRtdb {
-    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send + '_ {
         let result = self.kv_store.get(key).map(|v| v.clone());
         async move { Ok(result) }
     }
 
-    fn set(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
+    fn set(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send + '_ {
         self.kv_store.insert(key.to_string(), value);
         async move { Ok(()) }
     }
 
-    fn del(&self, key: &str) -> impl Future<Output = Result<bool>> + Send {
+    fn del(&self, key: &str) -> impl Future<Output = Result<bool>> + Send + '_ {
         let result = self.kv_store.remove(key).is_some();
         async move { Ok(result) }
     }
 
-    fn exists(&self, key: &str) -> impl Future<Output = Result<bool>> + Send {
+    fn exists(&self, key: &str) -> impl Future<Output = Result<bool>> + Send + '_ {
         let result = self.kv_store.contains_key(key);
         async move { Ok(result) }
     }
 
-    fn incrbyfloat(&self, key: &str, increment: f64) -> impl Future<Output = Result<f64>> + Send {
+    fn incrbyfloat(
+        &self,
+        key: &str,
+        increment: f64,
+    ) -> impl Future<Output = Result<f64>> + Send + '_ {
         // Use entry API for atomic read-modify-write
         // The RefMut holds the shard lock, preventing concurrent access to this key
         let key_owned = key.to_string();
@@ -137,7 +141,7 @@ impl Rtdb for MemoryRtdb {
         key: &str,
         field: &str,
         value: Bytes,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<()>> + Send + '_ {
         self.hash_store
             .entry(key.to_string())
             .or_default()
@@ -149,7 +153,7 @@ impl Rtdb for MemoryRtdb {
         &self,
         key: &str,
         field: &str,
-    ) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+    ) -> impl Future<Output = Result<Option<Bytes>>> + Send + '_ {
         let result = self
             .hash_store
             .get(key)
@@ -161,7 +165,7 @@ impl Rtdb for MemoryRtdb {
         &self,
         key: &str,
         fields: &[&str],
-    ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send {
+    ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send + '_ {
         let result = if let Some(hash) = self.hash_store.get(key) {
             fields
                 .iter()
@@ -177,7 +181,7 @@ impl Rtdb for MemoryRtdb {
         &self,
         key: &str,
         fields: Vec<(String, Bytes)>,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<()>> + Send + '_ {
         let hash = self.hash_store.entry(key.to_string()).or_default();
         for (field, value) in fields {
             hash.insert(field, value);
@@ -188,7 +192,7 @@ impl Rtdb for MemoryRtdb {
     fn hash_get_all(
         &self,
         key: &str,
-    ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send {
+    ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send + '_ {
         let result = if let Some(hash) = self.hash_store.get(key) {
             hash.iter()
                 .map(|entry| (entry.key().clone(), entry.value().clone()))
@@ -199,7 +203,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(result) }
     }
 
-    fn hash_del(&self, key: &str, field: &str) -> impl Future<Output = Result<bool>> + Send {
+    fn hash_del(&self, key: &str, field: &str) -> impl Future<Output = Result<bool>> + Send + '_ {
         let result = if let Some(hash) = self.hash_store.get(key) {
             hash.remove(field).is_some()
         } else {
@@ -212,7 +216,7 @@ impl Rtdb for MemoryRtdb {
         &self,
         key: &str,
         fields: &[String],
-    ) -> impl Future<Output = Result<usize>> + Send {
+    ) -> impl Future<Output = Result<usize>> + Send + '_ {
         let result = if let Some(hash) = self.hash_store.get(key) {
             let mut removed = 0;
             for field in fields {
@@ -227,7 +231,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(result) }
     }
 
-    fn list_lpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
+    fn list_lpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send + '_ {
         self.list_store
             .entry(key.to_string())
             .or_insert_with(|| RwLock::new(VecDeque::new()))
@@ -236,7 +240,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(()) }
     }
 
-    fn list_rpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send {
+    fn list_rpush(&self, key: &str, value: Bytes) -> impl Future<Output = Result<()>> + Send + '_ {
         self.list_store
             .entry(key.to_string())
             .or_insert_with(|| RwLock::new(VecDeque::new()))
@@ -245,7 +249,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(()) }
     }
 
-    fn list_lpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+    fn list_lpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send + '_ {
         let result = self.list_store.get(key).and_then(|list| {
             let mut list = list.write();
             list.pop_front()
@@ -253,7 +257,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(result) }
     }
 
-    fn list_rpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send {
+    fn list_rpop(&self, key: &str) -> impl Future<Output = Result<Option<Bytes>>> + Send + '_ {
         let result = self.list_store.get(key).and_then(|list| {
             let mut list = list.write();
             list.pop_back()
@@ -265,7 +269,7 @@ impl Rtdb for MemoryRtdb {
         &self,
         keys: &[&str],
         timeout_seconds: u64,
-    ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send {
+    ) -> impl Future<Output = Result<Option<(String, Bytes)>>> + Send + '_ {
         // For blocking pop, we need to clone the list_store reference
         let list_store = self.list_store.clone();
         let keys: Vec<String> = keys.iter().copied().map(String::from).collect();
@@ -304,7 +308,7 @@ impl Rtdb for MemoryRtdb {
         key: &str,
         start: isize,
         stop: isize,
-    ) -> impl Future<Output = Result<Vec<Bytes>>> + Send {
+    ) -> impl Future<Output = Result<Vec<Bytes>>> + Send + '_ {
         let result = if let Some(list) = self.list_store.get(key) {
             let list = list.read();
             let len = list.len() as isize;
@@ -342,7 +346,7 @@ impl Rtdb for MemoryRtdb {
         key: &str,
         start: isize,
         stop: isize,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<()>> + Send + '_ {
         if let Some(list) = self.list_store.get(key) {
             let mut list = list.write();
             let len = list.len() as isize;
@@ -373,7 +377,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(()) }
     }
 
-    fn scan_match(&self, pattern: &str) -> impl Future<Output = Result<Vec<String>>> + Send {
+    fn scan_match(&self, pattern: &str) -> impl Future<Output = Result<Vec<String>>> + Send + '_ {
         // Test stub: simple pattern matching on in-memory keys
         tracing::trace!("MemoryRtdb: SCAN MATCH pattern '{}'", pattern);
 
@@ -416,13 +420,13 @@ impl Rtdb for MemoryRtdb {
         }
     }
 
-    fn sadd(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send {
+    fn sadd(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send + '_ {
         let set = self.set_store.entry(key.to_string()).or_default();
         let result = set.insert(member.to_string());
         async move { Ok(result) }
     }
 
-    fn srem(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send {
+    fn srem(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send + '_ {
         let result = if let Some(set) = self.set_store.get(key) {
             set.remove(member).is_some()
         } else {
@@ -431,7 +435,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(result) }
     }
 
-    fn smembers(&self, key: &str) -> impl Future<Output = Result<Vec<String>>> + Send {
+    fn smembers(&self, key: &str) -> impl Future<Output = Result<Vec<String>>> + Send + '_ {
         let result = if let Some(set) = self.set_store.get(key) {
             set.iter().map(|entry| entry.key().clone()).collect()
         } else {
@@ -445,7 +449,7 @@ impl Rtdb for MemoryRtdb {
         key: &str,
         field: &str,
         increment: i64,
-    ) -> impl Future<Output = Result<i64>> + Send {
+    ) -> impl Future<Output = Result<i64>> + Send + '_ {
         // Use nested entry API for atomic read-modify-write
         // Outer lock: ensures hash exists, inner lock: atomic field update
         let key_owned = key.to_string();
@@ -488,7 +492,7 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(new_value) }
     }
 
-    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send {
+    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send + '_ {
         let result = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -499,7 +503,7 @@ impl Rtdb for MemoryRtdb {
     fn pipeline_hash_mset(
         &self,
         operations: Vec<(String, Vec<(String, Bytes)>)>,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<()>> + Send + '_ {
         // For in-memory implementation, just execute each HSET sequentially
         // This is efficient since it's all in-memory with no network overhead
         for (key, fields) in operations {

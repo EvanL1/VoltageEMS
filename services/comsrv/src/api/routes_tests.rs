@@ -55,7 +55,7 @@ async fn create_test_api_routes(
 ) -> Router {
     let rtdb = Arc::new(MemoryRtdb::new());
     let sqlite_pool = create_test_sqlite_pool().await;
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool)
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, None)
 }
 
 /// Helper: Build a Router using a provided in-memory SQLite pool
@@ -64,7 +64,7 @@ async fn create_test_api_with_pool(
     sqlite_pool: SqlitePool,
 ) -> Router {
     let rtdb = Arc::new(MemoryRtdb::new());
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool)
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, None)
 }
 
 async fn create_test_api_with_pool_rtdb_and_instance(
@@ -72,7 +72,7 @@ async fn create_test_api_with_pool_rtdb_and_instance(
     sqlite_pool: SqlitePool,
     rtdb: Arc<MemoryRtdb>,
 ) -> (Router, Arc<MemoryRtdb>) {
-    let router = create_api_routes_generic(channel_manager, rtdb.clone(), sqlite_pool);
+    let router = create_api_routes_generic(channel_manager, rtdb.clone(), sqlite_pool, None);
     (router, rtdb)
 }
 
@@ -1174,12 +1174,13 @@ fn test_api_routes_compile() {
     // This unit test ensures the API structure is valid
     // by verifying the create_api_routes function exists and has the correct type signature
     use super::*;
-    use voltage_rtdb::RedisRtdb;
+    use voltage_rtdb::{RedisRtdb, VecRtdb};
     let _ = create_api_routes
         as fn(
             Arc<RwLock<ChannelManager<RedisRtdb>>>,
             Arc<common::redis::RedisClient>,
             sqlx::SqlitePool,
+            Option<Arc<VecRtdb>>,
         ) -> Router;
 }
 

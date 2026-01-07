@@ -564,10 +564,15 @@ pub async fn search_channels<R: Rtdb>(
            WHERE name LIKE ?"#,
     );
     if !ids.is_empty() {
-        let placeholders = std::iter::repeat_n("?", ids.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        sql.push_str(&format!(" AND channel_id IN ({})", placeholders));
+        // Build IN clause directly without intermediate Vec allocation
+        sql.push_str(" AND channel_id IN (");
+        for i in 0..ids.len() {
+            if i > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+        }
+        sql.push(')');
     }
     sql.push_str(" ORDER BY channel_id ASC");
 
@@ -598,13 +603,18 @@ pub async fn search_channels<R: Rtdb>(
             return Ok(HashMap::new());
         }
 
-        let placeholders = std::iter::repeat_n("?", channel_ids.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let query = format!(
-            "SELECT channel_id, point_id, signal_name FROM {} WHERE channel_id IN ({}) ORDER BY channel_id, point_id",
-            table, placeholders
+        // Build query directly without intermediate Vec allocation
+        let mut query = format!(
+            "SELECT channel_id, point_id, signal_name FROM {} WHERE channel_id IN (",
+            table
         );
+        for i in 0..channel_ids.len() {
+            if i > 0 {
+                query.push_str(", ");
+            }
+            query.push('?');
+        }
+        query.push_str(") ORDER BY channel_id, point_id");
 
         let mut q = sqlx::query_as::<_, (i64, u32, String)>(&query);
         for id in channel_ids {

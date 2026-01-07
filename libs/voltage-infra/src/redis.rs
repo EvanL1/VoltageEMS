@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use bb8::{Pool, PooledConnection};
 use bb8_redis::RedisConnectionManager;
+use bytes::Bytes;
 use redis::AsyncCommands;
 use std::sync::Arc;
 use std::time::Duration;
@@ -180,6 +181,16 @@ impl RedisClient {
             .with_context(|| format!("Failed to GET key: {}", key))
     }
 
+    /// GET operation returning raw Bytes (skips UTF-8 validation)
+    pub async fn get_bytes(&self, key: &str) -> Result<Option<Bytes>> {
+        let mut conn = self.get_connection().await?;
+        let result: Option<Vec<u8>> = conn
+            .get(key)
+            .await
+            .with_context(|| format!("Failed to GET key: {}", key))?;
+        Ok(result.map(Bytes::from))
+    }
+
     /// SET operation
     pub async fn set<T: redis::ToRedisArgs + Send + Sync>(
         &self,
@@ -188,6 +199,14 @@ impl RedisClient {
     ) -> Result<()> {
         let mut conn = self.get_connection().await?;
         conn.set(key, value)
+            .await
+            .with_context(|| format!("Failed to SET key: {}", key))
+    }
+
+    /// SET operation accepting Bytes value directly
+    pub async fn set_bytes(&self, key: &str, value: Bytes) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        conn.set(key, value.as_ref())
             .await
             .with_context(|| format!("Failed to SET key: {}", key))
     }
@@ -219,6 +238,25 @@ impl RedisClient {
             .query_async(&mut *conn)
             .await
             .with_context(|| format!("Failed to BLPOP from keys: {:?}", keys))
+    }
+
+    /// BLPOP operation returning raw Bytes (skips UTF-8 validation)
+    ///
+    /// Use this variant when the value may contain non-UTF8 data or
+    /// when you want to avoid the overhead of UTF-8 validation.
+    pub async fn blpop_bytes(
+        &self,
+        keys: &[&str],
+        timeout: usize,
+    ) -> Result<Option<(String, Bytes)>> {
+        let mut conn = self.get_connection().await?;
+        let result: Option<(String, Vec<u8>)> = redis::cmd("BLPOP")
+            .arg(keys)
+            .arg(timeout)
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to BLPOP from keys: {:?}", keys))?;
+        Ok(result.map(|(k, v)| (k, Bytes::from(v))))
     }
 
     /// RPUSH operation - add element to list tail
@@ -293,6 +331,18 @@ impl RedisClient {
             .with_context(|| format!("Failed to HSET field {} in key: {}", field, key))
     }
 
+    /// HSET operation accepting Bytes value directly
+    pub async fn hset_bytes(&self, key: &str, field: &str, value: Bytes) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        redis::cmd("HSET")
+            .arg(key)
+            .arg(field)
+            .arg(value.as_ref())
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to HSET field {} in key: {}", field, key))
+    }
+
     /// Hash operation - increment field by integer value
     pub async fn hincrby(&self, key: &str, field: &str, increment: i64) -> Result<i64> {
         let mut conn = self.get_connection().await?;
@@ -318,6 +368,18 @@ impl RedisClient {
             .query_async(&mut *conn)
             .await
             .with_context(|| format!("Failed to HGET field {} from key: {}", field, key))
+    }
+
+    /// HGET operation returning raw Bytes (skips UTF-8 validation)
+    pub async fn hget_bytes(&self, key: &str, field: &str) -> Result<Option<Bytes>> {
+        let mut conn = self.get_connection().await?;
+        let result: Option<Vec<u8>> = redis::cmd("HGET")
+            .arg(key)
+            .arg(field)
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to HGET field {} from key: {}", field, key))?;
+        Ok(result.map(Bytes::from))
     }
 
     /// Set operation - add member to set
@@ -492,6 +554,17 @@ impl RedisClient {
             .with_context(|| format!("Failed to LPOP key: {}", key))
     }
 
+    /// LPOP operation returning raw Bytes (skips UTF-8 validation)
+    pub async fn lpop_bytes(&self, key: &str) -> Result<Option<Bytes>> {
+        let mut conn = self.get_connection().await?;
+        let result: Option<Vec<u8>> = redis::cmd("LPOP")
+            .arg(key)
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to LPOP key: {}", key))?;
+        Ok(result.map(Bytes::from))
+    }
+
     /// Pop value from right of list
     pub async fn rpop<T: redis::FromRedisValue>(&self, key: &str) -> Result<Option<T>> {
         let mut conn = self.get_connection().await?;
@@ -500,6 +573,17 @@ impl RedisClient {
             .query_async(&mut *conn)
             .await
             .with_context(|| format!("Failed to RPOP key: {}", key))
+    }
+
+    /// RPOP operation returning raw Bytes (skips UTF-8 validation)
+    pub async fn rpop_bytes(&self, key: &str) -> Result<Option<Bytes>> {
+        let mut conn = self.get_connection().await?;
+        let result: Option<Vec<u8>> = redis::cmd("RPOP")
+            .arg(key)
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to RPOP key: {}", key))?;
+        Ok(result.map(Bytes::from))
     }
 
     /// Delete hash field

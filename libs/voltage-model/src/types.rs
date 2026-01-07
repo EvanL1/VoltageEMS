@@ -60,6 +60,19 @@ impl PointType {
         }
     }
 
+    /// Convert to u8 for VecRtdb indexing (Round 128)
+    ///
+    /// Returns: T=0, S=1, C=2, A=3
+    #[inline]
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            PointType::Telemetry => 0,
+            PointType::Signal => 1,
+            PointType::Control => 2,
+            PointType::Adjustment => 3,
+        }
+    }
+
     /// Parse from string (convenience method, returns Option)
     ///
     /// This is a convenience wrapper around `str::parse()` that returns `Option`

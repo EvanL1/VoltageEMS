@@ -25,7 +25,7 @@ use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
 use crate::store::RedisDataStore;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{ChannelToSlotIndex, Rtdb, SharedVecRtdbWriter, VecRtdb};
 
 // ============================================================================
 // Channel Types (merged from channel.rs)
@@ -127,6 +127,12 @@ pub struct ChannelManager<R: Rtdb> {
     pub routing_cache: Arc<voltage_rtdb::RoutingCache>,
     /// SQLite connection pool for configuration loading
     sqlite_pool: Option<sqlx::SqlitePool>,
+    /// Shared memory writer for zero-copy cross-process data sharing (optional)
+    shared_writer: Option<Arc<SharedVecRtdbWriter>>,
+    /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
+    channel_index: Option<Arc<ChannelToSlotIndex>>,
+    /// VecRtdb local cache for O(1) API reads (Round 128)
+    vec_rtdb: Option<Arc<VecRtdb>>,
 }
 
 impl<R: Rtdb> std::fmt::Debug for ChannelManager<R> {
@@ -145,6 +151,9 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             rtdb,
             routing_cache,
             sqlite_pool: None,
+            shared_writer: None,
+            channel_index: None,
+            vec_rtdb: None,
         }
     }
 
@@ -159,6 +168,37 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             rtdb,
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
+            shared_writer: None,
+            channel_index: None,
+            vec_rtdb: None,
+        }
+    }
+
+    /// Create channel manager with shared memory support
+    ///
+    /// # Arguments
+    /// * `rtdb` - Shared RTDB (Redis or Memory)
+    /// * `routing_cache` - C2M/M2C routing cache
+    /// * `sqlite_pool` - SQLite connection pool for configuration
+    /// * `shared_writer` - Optional shared memory writer for zero-copy writes
+    /// * `channel_index` - Optional pre-computed channel → slot mapping
+    /// * `vec_rtdb` - Optional VecRtdb for O(1) API reads (Round 128)
+    pub fn with_shared_memory(
+        rtdb: Arc<R>,
+        routing_cache: Arc<voltage_rtdb::RoutingCache>,
+        sqlite_pool: sqlx::SqlitePool,
+        shared_writer: Option<Arc<SharedVecRtdbWriter>>,
+        channel_index: Option<Arc<ChannelToSlotIndex>>,
+        vec_rtdb: Option<Arc<VecRtdb>>,
+    ) -> Self {
+        Self {
+            channels: DashMap::new(),
+            rtdb,
+            routing_cache,
+            sqlite_pool: Some(sqlite_pool),
+            shared_writer,
+            channel_index,
+            vec_rtdb,
         }
     }
 
@@ -270,11 +310,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW path", channel_id);
 
-        // 1. Create RedisDataStore for this channel
-        let store = Arc::new(RedisDataStore::new(
-            Arc::clone(&self.rtdb),
-            Arc::clone(&self.routing_cache),
-        ));
+        // 1. Create RedisDataStore for this channel (with optional shared memory)
+        let store = self.create_data_store();
 
         // 2. Convert point configs to IGW format and register with store
         let point_configs = convert_to_igw_point_configs(runtime_config);
@@ -317,11 +354,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW Modbus path", channel_id);
 
-        // 1. Create RedisDataStore for this channel
-        let store = Arc::new(RedisDataStore::new(
-            Arc::clone(&self.rtdb),
-            Arc::clone(&self.routing_cache),
-        ));
+        // 1. Create RedisDataStore for this channel (with optional shared memory)
+        let store = self.create_data_store();
 
         // 2. Convert Modbus point configs to IGW format
         let point_configs = convert_to_modbus_point_configs(runtime_config);
@@ -374,11 +408,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW Modbus RTU path", channel_id);
 
-        // 1. Create RedisDataStore for this channel
-        let store = Arc::new(RedisDataStore::new(
-            Arc::clone(&self.rtdb),
-            Arc::clone(&self.routing_cache),
-        ));
+        // 1. Create RedisDataStore for this channel (with optional shared memory)
+        let store = self.create_data_store();
 
         // 2. Convert Modbus point configs to IGW format
         let point_configs = convert_to_modbus_point_configs(runtime_config);
@@ -433,11 +464,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW GPIO path", channel_id);
 
-        // 1. Create RedisDataStore for this channel
-        let store = Arc::new(RedisDataStore::new(
-            Arc::clone(&self.rtdb),
-            Arc::clone(&self.routing_cache),
-        ));
+        // 1. Create RedisDataStore for this channel (with optional shared memory)
+        let store = self.create_data_store();
 
         // 2. Convert point configs to IGW format (for signal/control points)
         let point_configs = convert_to_igw_point_configs(runtime_config);
@@ -481,11 +509,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ) -> Result<(ChannelImpl<R>, Option<Arc<RwLock<CommandTrigger<R>>>>)> {
         debug!("Ch{} creating via IGW CAN path", channel_id);
 
-        // 1. Create RedisDataStore for this channel
-        let store = Arc::new(RedisDataStore::new(
-            Arc::clone(&self.rtdb),
-            Arc::clone(&self.routing_cache),
-        ));
+        // 1. Create RedisDataStore for this channel (with optional shared memory)
+        let store = self.create_data_store();
 
         // 2. Convert CAN mappings to IGW formats
         let can_point_configs = convert_to_can_point_configs(runtime_config);
@@ -526,6 +551,38 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
         info!("Ch{} created via IGW (can)", channel_id);
         Ok((channel_impl, command_trigger))
+    }
+
+    /// Create RedisDataStore with optional shared memory and VecRtdb support
+    ///
+    /// This is a helper method that creates a RedisDataStore and optionally
+    /// configures it with shared memory support and VecRtdb if available.
+    fn create_data_store(&self) -> Arc<RedisDataStore<R>> {
+        let store = RedisDataStore::new(Arc::clone(&self.rtdb), Arc::clone(&self.routing_cache));
+
+        // Add shared memory support if available
+        let store = if let (Some(writer), Some(index)) = (&self.shared_writer, &self.channel_index)
+        {
+            store.with_shared_memory(Arc::clone(writer), Arc::clone(index))
+        } else {
+            store
+        };
+
+        // Add VecRtdb support for O(1) reads (Round 128)
+        let store = if let Some(vec_db) = &self.vec_rtdb {
+            store.with_vec_rtdb(Arc::clone(vec_db))
+        } else {
+            store
+        };
+
+        Arc::new(store)
+    }
+
+    /// Get reference to VecRtdb if configured (Round 128)
+    ///
+    /// Returns the shared VecRtdb instance for use in API handlers.
+    pub fn vec_rtdb(&self) -> Option<Arc<VecRtdb>> {
+        self.vec_rtdb.clone()
     }
 
     /// Load channel configuration from SQLite

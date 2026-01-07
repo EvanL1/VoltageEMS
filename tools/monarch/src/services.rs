@@ -127,13 +127,10 @@ pub async fn handle_command(
 ) -> Result<()> {
     match cmd {
         ServiceCommands::Start { services } => {
-            // Use --no-recreate to avoid rebuilding containers that already exist
-            // This prevents unnecessary Redis restarts when images haven't changed
-            let mut args = vec![
-                "up".to_string(),
-                "-d".to_string(),
-                "--no-recreate".to_string(),
-            ];
+            // Default docker-compose up behavior: recreate containers if config changed
+            // NOTE: This does NOT auto-recreate when only the image ID changes.
+            // Use `monarch services refresh --smart` to detect and apply image updates.
+            let mut args = vec!["up".to_string(), "-d".to_string()];
 
             // Filter out "all" keyword and add specific service names
             let filtered_services: Vec<String> = services
@@ -143,7 +140,7 @@ pub async fn handle_command(
 
             args.extend(filtered_services);
             execute_docker_compose_str(&args)?;
-            println!("Services started (using --no-recreate to preserve existing containers)");
+            println!("Services started");
         },
         ServiceCommands::Stop { services } => {
             let args = build_docker_compose_args("stop", "", services);
@@ -536,61 +533,52 @@ pub async fn handle_command(
             // Determine prefix filter (empty string means no filter)
             let filter_prefix = prefix.as_deref().unwrap_or("");
 
-            // Collect routes based on type
+            // Collect routes based on type (eq_ignore_ascii_case avoids to_lowercase allocation)
             // Note: Arc<str> converted to String for display (CLI is not a hot path)
-            let route_type_lower = route_type.to_lowercase();
-            let mut all_routes: Vec<(String, String, &str)> = Vec::new();
-
-            match route_type_lower.as_str() {
-                "c2m" => {
-                    let routes = routing_cache.get_c2m_by_prefix(filter_prefix);
-                    // Arc<str> → String for CLI display (not a hot path)
-                    all_routes.extend(
-                        routes
-                            .into_iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2M")),
-                    );
-                },
-                "m2c" => {
-                    let routes = routing_cache.get_m2c_by_prefix(filter_prefix);
-                    all_routes.extend(
-                        routes
+            let all_routes: Vec<(String, String, &str)> = if route_type.eq_ignore_ascii_case("c2m")
+            {
+                routing_cache
+                    .get_c2m_by_prefix(filter_prefix)
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string(), "C2M"))
+                    .collect()
+            } else if route_type.eq_ignore_ascii_case("m2c") {
+                routing_cache
+                    .get_m2c_by_prefix(filter_prefix)
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string(), "M2C"))
+                    .collect()
+            } else if route_type.eq_ignore_ascii_case("c2c") {
+                routing_cache
+                    .get_c2c_by_prefix(filter_prefix)
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string(), "C2C"))
+                    .collect()
+            } else if route_type.eq_ignore_ascii_case("all") {
+                // Chain iterators to avoid multiple extend() calls
+                routing_cache
+                    .get_c2m_by_prefix(filter_prefix)
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string(), "C2M"))
+                    .chain(
+                        routing_cache
+                            .get_m2c_by_prefix(filter_prefix)
                             .into_iter()
                             .map(|(k, v)| (k.to_string(), v.to_string(), "M2C")),
-                    );
-                },
-                "c2c" => {
-                    let routes = routing_cache.get_c2c_by_prefix(filter_prefix);
-                    all_routes.extend(
-                        routes
+                    )
+                    .chain(
+                        routing_cache
+                            .get_c2c_by_prefix(filter_prefix)
                             .into_iter()
                             .map(|(k, v)| (k.to_string(), v.to_string(), "C2C")),
-                    );
-                },
-                "all" => {
-                    let c2m = routing_cache.get_c2m_by_prefix(filter_prefix);
-                    let m2c = routing_cache.get_m2c_by_prefix(filter_prefix);
-                    let c2c = routing_cache.get_c2c_by_prefix(filter_prefix);
-                    all_routes.extend(
-                        c2m.into_iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2M")),
-                    );
-                    all_routes.extend(
-                        m2c.into_iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string(), "M2C")),
-                    );
-                    all_routes.extend(
-                        c2c.into_iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2C")),
-                    );
-                },
-                _ => {
-                    return Err(anyhow::anyhow!(
-                        "Invalid route type '{}'. Must be one of: c2m, m2c, c2c, all",
-                        route_type
-                    ));
-                },
-            }
+                    )
+                    .collect()
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Invalid route type '{}'. Must be one of: c2m, m2c, c2c, all",
+                    route_type
+                ));
+            };
 
             // Apply limit
             let total_count = all_routes.len();

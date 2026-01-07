@@ -104,7 +104,7 @@ async fn load_c2m_routes(
             keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
         let to_key = format!("{}:M:{}", instance_id, measurement_id);
 
-        c2m_map.insert(from_key.into_owned(), to_key);
+        c2m_map.insert(from_key, to_key);
     }
 
     Ok(())
@@ -145,7 +145,7 @@ async fn load_m2c_routes(
         let from_key = format!("{}:A:{}", instance_id, action_id);
         let to_key = keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
 
-        m2c_map.insert(from_key, to_key.into_owned());
+        m2c_map.insert(from_key, to_key);
     }
 
     Ok(())
@@ -210,7 +210,7 @@ async fn load_c2c_routes(
             &target_point_id.to_string(),
         );
 
-        c2c_map.insert(from_key.into_owned(), to_key.into_owned());
+        c2c_map.insert(from_key, to_key);
     }
 }
 

@@ -419,6 +419,53 @@ ensure_core_services_running() {
     fi
 }
 
+# Verify that containers are using the expected images
+# This catches the case where containers exist but use old images
+verify_containers_using_correct_images() {
+    local images_to_check=("$@")
+    local all_ok=true
+
+    echo ""
+    echo -e "${BLUE}Verifying containers are using correct images...${NC}"
+
+    for image in "${images_to_check[@]}"; do
+        local containers="${IMAGE_TO_CONTAINERS[$image]:-}"
+        [[ -z "$containers" ]] && continue
+
+        # Get expected image ID (first 12 chars)
+        local expected_id
+        expected_id=$(docker images "$image" --format '{{.ID}}' 2>/dev/null | head -1)
+        [[ -z "$expected_id" ]] && continue
+
+        for container in $containers; do
+            # Get running container's image ID
+            local running_id
+            running_id=$(docker inspect "$container" --format '{{.Image}}' 2>/dev/null | sed 's/sha256://; s/^\(.\{12\}\).*/\1/')
+
+            if [[ -z "$running_id" ]]; then
+                echo -e "  ${YELLOW}○${NC} $container: not running"
+            elif [[ "$expected_id" == "$running_id" ]]; then
+                echo -e "  ${GREEN}✓${NC} $container: using correct image ($expected_id)"
+            else
+                echo -e "  ${RED}✗${NC} $container: image mismatch!"
+                echo -e "      Expected: $expected_id, Running: $running_id"
+                echo -e "      ${YELLOW}Forcing recreation...${NC}"
+                local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
+                docker stop "$container" 2>/dev/null || true
+                docker rm "$container" 2>/dev/null || true
+                run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service" 2>/dev/null || true
+                all_ok=false
+            fi
+        done
+    done
+
+    if [[ "$all_ok" == true ]]; then
+        echo -e "${GREEN}✓ All containers verified${NC}"
+    else
+        echo -e "${YELLOW}⚠ Some containers were recreated to fix image mismatch${NC}"
+    fi
+}
+
 # =============================================================================
 # End of Smart Update Helper Functions
 # =============================================================================
@@ -718,6 +765,11 @@ if command -v docker &> /dev/null; then
 
             # Ensure core services are running (even if images unchanged)
             ensure_core_services_running
+
+            # Verify updated containers are using correct images
+            if [[ ${#UPDATE_SUCCESS[@]} -gt 0 ]]; then
+                verify_containers_using_correct_images "${UPDATE_SUCCESS[@]}"
+            fi
         else
             echo -e "${YELLOW}Skipping image update.${NC}"
             echo -e "${GREEN}[SKIPPED] Docker images${NC}"

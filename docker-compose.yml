@@ -36,6 +36,7 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro
+      - voltage-shm:/shm/rtdb:rw  # Shared memory (writer - Round 118)
     environment:
       - SERVICE_NAME=comsrv
       - SERVICE_PORT=6001
@@ -45,6 +46,7 @@ services:
       - CSV_BASE_PATH=/app/config/comsrv
       - CONFIG_BASE_PATH=/app/config/comsrv
       - VOLTAGE_LOG_DIR=/app/logs
+      - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}  # Round 118: zero-copy data sharing
       - NO_PROXY="*"
       - no_proxy="*"
     depends_on:
@@ -65,6 +67,7 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - VOLTAGE_LOG_DIR=/app/logs
+      - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}  # Round 118: zero-copy data sharing
       - NO_PROXY="*"
       - no_proxy="*"
     depends_on:
@@ -75,6 +78,7 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro # Read-only access to Unix socket
+      - voltage-shm:/shm/rtdb:ro  # Shared memory (reader - Round 118)
     restart: unless-stopped
 
   # ============================================
@@ -225,3 +229,10 @@ volumes:
   redis-socket: # Shared Unix socket volume for better performance
   influxdb-data:
   influxdb-config:
+  # Shared memory volume for zero-copy data sharing between comsrv and modsrv (Round 118)
+  voltage-shm:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=16m,mode=1777
