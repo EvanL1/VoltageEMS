@@ -3593,9 +3593,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
- "itoa",
  "rustc-hash",
- "ryu",
  "serde",
  "serde_json",
  "sqlx",
@@ -3638,8 +3636,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
- "dashmap 5.5.3",
- "rustc-hash",
  "serde",
  "serde_json",
  "sqlx",
