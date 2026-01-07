@@ -21,6 +21,8 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 memmap2 = "0.9"  # Shared memory mmap support (Round 115)
 arc-swap = "1.7"  # Lock-free atomic pointer swap for RoutingCache (Round 121)
+itoa = { workspace = true }  # High-performance u32 to string (Round 129)
+ryu = { workspace = true }   # High-performance f64 to string (Round 129)
 # Removed: async-trait (replaced by native impl Trait), chrono (unused), uuid (test-only)
 
 # Core dependencies for keyspace

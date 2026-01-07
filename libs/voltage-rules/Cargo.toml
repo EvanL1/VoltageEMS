@@ -33,6 +33,7 @@ chrono = { workspace = true }
 
 # Utilities
 dashmap = { workspace = true }
+rustc-hash = { workspace = true }  # FxHashMap for faster hashing (Round 129)
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

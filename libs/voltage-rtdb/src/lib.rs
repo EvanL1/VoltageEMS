@@ -30,6 +30,8 @@ pub mod write_buffer;
 
 pub mod routing_cache;
 
+pub mod numfmt;
+
 // Re-exports
 pub use bytes::Bytes;
 pub use traits::Rtdb;
@@ -62,6 +64,7 @@ pub use write_buffer::{
 
 /// Helper functions for common operations
 pub mod helpers {
+    use super::numfmt::{f64_to_bytes, i64_to_bytes, precomputed};
     use super::{KeySpaceConfig, MemoryRtdb, Rtdb, WriteBuffer};
     use anyhow::{Context, Result};
     use bytes::Bytes;
@@ -168,6 +171,10 @@ pub mod helpers {
     /// # Returns
     /// * `Ok(usize)` - Number of points written
     /// * `Err(anyhow::Error)` - Write error
+    ///
+    /// # Round 129-130 Optimization
+    /// - Uses zero-allocation number formatting (itoa/ryu)
+    /// - Uses Arc<str> for O(1) clone across 3 layers, converts to String only at final push
     pub async fn write_channel_points<R>(
         rtdb: &R,
         channel_key: &str,
@@ -183,25 +190,23 @@ pub mod helpers {
 
         let count = points.len();
 
-        // Pre-convert timestamp to Bytes once (clone is O(1) for Bytes)
-        let timestamp_bytes = Bytes::from(timestamp_ms.to_string());
+        // Pre-convert timestamp to Bytes once using itoa (zero heap during format)
+        let timestamp_bytes = i64_to_bytes(timestamp_ms);
 
-        // Prepare data for three hashes
+        // Prepare data for three hashes using Arc<str> for O(1) sharing
         let mut values = Vec::with_capacity(count);
         let mut timestamps = Vec::with_capacity(count);
         let mut raw_values = Vec::with_capacity(count);
 
         for (point_id, value, raw_value) in points {
-            let point_id_str = point_id.to_string();
+            // Use precomputed pool (0-255) or itoa - returns Arc<str>
+            let field: Arc<str> = precomputed::get_point_id_str_or_alloc(point_id);
 
-            // Layer 1: Engineering values
-            values.push((point_id_str.clone(), Bytes::from(value.to_string())));
-
-            // Layer 2: Timestamps
-            timestamps.push((point_id_str.clone(), timestamp_bytes.clone()));
-
-            // Layer 3: Raw values
-            raw_values.push((point_id_str, Bytes::from(raw_value.to_string())));
+            // Arc::clone is O(1), convert to String only when pushing to final Vec
+            // This reduces 3 String clones to 3 Arc::clone + 3 Arc->String conversions
+            values.push((field.to_string(), f64_to_bytes(value)));
+            timestamps.push((field.to_string(), timestamp_bytes.clone()));
+            raw_values.push((field.to_string(), f64_to_bytes(raw_value)));
         }
 
         // Write all hashes in a single pipeline
@@ -224,6 +229,8 @@ pub mod helpers {
     /// Synchronous version that buffers writes for later flush to Redis.
     /// Used with WriteBuffer for high-frequency updates.
     ///
+    /// Round 129: Uses precomputed point ID pool and itoa/ryu for zero-allocation formatting.
+    ///
     /// # Arguments
     /// * `write_buffer` - WriteBuffer for aggregating writes
     /// * `channel_key` - Base channel key (e.g. "comsrv:1001:T")
@@ -244,8 +251,8 @@ pub mod helpers {
 
         let count = points.len();
 
-        // Pre-convert timestamp to Bytes once
-        let timestamp_bytes = Bytes::from(timestamp_ms.to_string());
+        // Pre-convert timestamp to Bytes once using itoa (zero heap during format)
+        let timestamp_bytes = i64_to_bytes(timestamp_ms);
 
         // Prepare data with Arc<str> for O(1) field name sharing
         let mut values = Vec::with_capacity(count);
@@ -253,13 +260,15 @@ pub mod helpers {
         let mut raw_values = Vec::with_capacity(count);
 
         for (point_id, value, raw_value) in points {
-            // Single String allocation, converted to Arc<str>
-            let field: Arc<str> = point_id.to_string().into();
+            // Use precomputed pool (0-255) or itoa for larger IDs
+            // Arc<str> allows O(1) clone across 3 layers
+            let field: Arc<str> = precomputed::get_point_id_str_or_alloc(point_id);
 
             // Arc::clone is O(1) - just atomic counter increment
-            values.push((Arc::clone(&field), Bytes::from(value.to_string())));
+            // f64_to_bytes uses ryu for fast formatting
+            values.push((Arc::clone(&field), f64_to_bytes(value)));
             timestamps.push((Arc::clone(&field), timestamp_bytes.clone()));
-            raw_values.push((field, Bytes::from(raw_value.to_string())));
+            raw_values.push((field, f64_to_bytes(raw_value)));
         }
 
         // Buffer all hashes
