@@ -1,0 +1,96 @@
+# Rust build artifacts - 最重要：避免传输21GB的target目录！
+target/
+**/*.rs.bk
+*.pdb
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Test files
+tests/
+benches/
+
+# Build outputs
+build/
+dist/
+release/
+offline-bundle/
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Node.js (for apps/)
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+apps/node_modules/
+apps/dist/
+apps/.next/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+.pytest_cache/
+
+# Python service packages (Docker镜像文件)
+services/*/packages/
+*.tar.gz
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+docker/
+
+# Scripts (not needed in image)
+scripts/
+
+# Development tools
+.env
+.env.local
+.env.*.local
+
+# Rust services (Python镜像不需要)
+services/comsrv/
+services/modsrv/
+Cargo.toml
+Cargo.lock
+libs/
+tools/

@@ -26,26 +26,26 @@ device_identity:
 mqtt_connection:
   # MQTT代理配置
   broker:
-    host: "192.168.40.39"  # 替换为您的AWS IoT端点
-    port: 1883  # AWS IoT默认端口
+    host: "a239kcpgshsa5d-ats.iot.us-east-2.amazonaws.com"  # 替换为您的AWS IoT端点
+    port: 8883  # AWS IoT默认端口
     username: ""  # AWS IoT通常不需要用户名
     password: ""  # AWS IoT通常不需要密码
-    client_id: "auto"  # auto表示使用设备序列号，或设置固定值
+    client_id: "auto"  # 建议使用唯一标识
     keepalive: 120  # AWS IoT建议使用较长的keepalive
     
     # SSL配置
     ssl:
-      enabled: false  # AWS IoT必须启用SSL
-      ca_cert: "aws_cert/AmazonRootCA1.pem"           # AWS根证书
-      client_cert: "aws_cert/certificate.pem.crt"     # 设备证书
-      client_key: "aws_cert/private.pem.key"          # 私钥文件
+      enabled: true  # AWS IoT必须启用SSL
+      ca_cert: "cert/AmazonRootCA1.pem"  # AWS根证书
+      client_cert: "cert/certificate.pem.crt"  # 设备证书
+      client_key: "cert/private.pem.key"  # 私钥文件
     
     # 连接重试设置
     reconnect:
       enabled: true
       max_attempts: 50
       delay: 10  # 秒
-      
+            
     # 在线离线消息设置
     status:
       # 遗嘱消息设置（网络意外断开时自动发送）
@@ -98,17 +98,13 @@ mqtt_topics:
 redis_source:
   # 数据订阅模式，支持通配符
   subscribe_patterns:
-    - "comsrv:*"      # 通信服务数据
-    - "modsrv:*"      # 物模型服务数据
     - "inst:*:M"      
-    - "inst:*:A"  
+    - "inst:*:A"      
   
   # 数据过滤规则
   filters:
     enabled: true
     exclude_patterns:
-      - "comsrv:debug:*"      # 排除调试数据
-      - "modsrv:debug:*"      # 排除调试数据
       - "*:products:*"
       - "*:product:*"
 
@@ -119,7 +115,8 @@ data_report:
   
   # 批量上报数量
   batch_size: 50
-
+  
+  
 # 系统监控配置
 system_monitor:
   # 是否启用系统监控数据收集
@@ -141,6 +138,7 @@ system_monitor:
   format:
     source: "gateway"           # 固定值
     data_type: "T"             # 固定值
+  
   
   # MQTT报文格式说明
   # 新格式使用 source 和 device 字段替代原来的 point 字段
@@ -199,5 +197,5 @@ logging:
   module_levels:
     mqtt: "DEBUG"
     redis: "INFO"
-    forwarder: "DEBUG"  # 改为DEBUG，屏蔽数据上传的详细日志
+    forwarder: "DEBUG"
     device_identity: "DEBUG"
