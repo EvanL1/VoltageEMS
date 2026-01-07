@@ -105,6 +105,10 @@ ahash = "0.8"
 rustc-hash = "2.1"
 parking_lot = "0.12"
 
+# High-performance number formatting (Round 129: zero-allocation u32/f64 to string)
+itoa = "1.0"
+ryu = "1.0"
+
 # Tower middleware
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace"] }

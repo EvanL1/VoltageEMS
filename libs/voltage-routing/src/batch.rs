@@ -5,10 +5,11 @@
 //! for reuse across services.
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tracing::debug;
 use voltage_model::PointType;
+use voltage_rtdb::numfmt::{f64_to_bytes, precomputed};
 use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, VecRtdb, WriteBuffer};
 
 use crate::MAX_C2C_CASCADE_DEPTH;
@@ -70,6 +71,9 @@ impl BatchRoutingResult {
     }
 }
 
+/// Write channel batch with C2M/C2C routing (optimized with itoa/ryu)
+///
+/// Round 129: Uses precomputed point ID pool and ryu for zero-allocation formatting.
 pub async fn write_channel_batch<R>(
     rtdb: &R,
     routing_cache: &RoutingCache,
@@ -82,8 +86,8 @@ where
         return Ok(BatchRoutingResult::default());
     }
 
-    // Group updates by (channel_id, point_type)
-    let mut grouped: HashMap<(u32, PointType), Vec<ChannelPointUpdate>> = HashMap::new();
+    // Group updates by (channel_id, point_type) - FxHashMap for faster hashing (Round 129)
+    let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
         grouped
             .entry((update.channel_id, update.point_type))
@@ -100,13 +104,13 @@ where
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
-    // Cache point_id -> String to avoid repeated allocations
-    let mut point_id_str_cache: HashMap<u32, String> = HashMap::new();
+    // Cache point_id -> Arc<str> for O(1) clone - FxHashMap for faster hashing (Round 129)
+    let mut point_id_str_cache: FxHashMap<u32, Arc<str>> = FxHashMap::default();
 
     for ((channel_id, point_type), updates) in grouped {
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
-        let mut instance_writes: HashMap<u32, Vec<(String, bytes::Bytes)>> = HashMap::new();
+        let mut instance_writes: FxHashMap<u32, Vec<(String, bytes::Bytes)>> = FxHashMap::default();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
         for update in &updates {
@@ -117,16 +121,15 @@ where
             if let Some(target) =
                 routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
             {
-                // Reuse cached point_id string to avoid repeated allocations
-                let point_id_str = point_id_str_cache
+                // Use precomputed pool or itoa, cache Arc<str> for O(1) clone
+                let point_id_arc = point_id_str_cache
                     .entry(target.point_id)
-                    .or_insert_with(|| target.point_id.to_string())
-                    .clone();
+                    .or_insert_with(|| precomputed::get_point_id_str_or_alloc(target.point_id));
 
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
-                    .push((point_id_str, bytes::Bytes::from(update.value.to_string())));
+                    .push((point_id_arc.to_string(), f64_to_bytes(update.value)));
             }
 
             // C2C routing lookup - zero-allocation using structured key
@@ -186,6 +189,8 @@ where
 
 /// Write channel points to buffer with optional VecRtdb local cache
 ///
+/// Round 129: Uses precomputed point ID pool and ryu for zero-allocation formatting.
+///
 /// # Arguments
 /// * `write_buffer` - WriteBuffer for deferred Redis writes
 /// * `vec_rtdb` - Optional VecRtdb for local memory cache (enables fast reads)
@@ -201,8 +206,8 @@ pub fn write_channel_batch_buffered(
         return BatchRoutingResult::default();
     }
 
-    // Group updates by (channel_id, point_type)
-    let mut grouped: HashMap<(u32, PointType), Vec<ChannelPointUpdate>> = HashMap::new();
+    // Group updates by (channel_id, point_type) - FxHashMap for faster hashing (Round 129)
+    let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
         grouped
             .entry((update.channel_id, update.point_type))
@@ -219,14 +224,14 @@ pub fn write_channel_batch_buffered(
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
-    // Cache point_id -> Arc<str> to avoid repeated allocations
-    let mut point_id_str_cache: HashMap<u32, Arc<str>> = HashMap::new();
+    // Cache point_id -> Arc<str> using precomputed pool - FxHashMap (Round 129)
+    let mut point_id_str_cache: FxHashMap<u32, Arc<str>> = FxHashMap::default();
 
     for ((channel_id, point_type), updates) in grouped {
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
-        // Use Arc<str> for field names to match WriteBuffer signature
-        let mut instance_writes: HashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = HashMap::new();
+        // Use Arc<str> for field names to match WriteBuffer signature - FxHashMap (Round 129)
+        let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = FxHashMap::default();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
         for update in &updates {
@@ -237,16 +242,16 @@ pub fn write_channel_batch_buffered(
             if let Some(target) =
                 routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
             {
-                // Reuse cached point_id Arc<str> to avoid repeated allocations
+                // Use precomputed pool (0-255) or itoa, O(1) Arc clone
                 let point_id_str = point_id_str_cache
                     .entry(target.point_id)
-                    .or_insert_with(|| Arc::from(target.point_id.to_string()))
+                    .or_insert_with(|| precomputed::get_point_id_str_or_alloc(target.point_id))
                     .clone();
 
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
-                    .push((point_id_str, bytes::Bytes::from(update.value.to_string())));
+                    .push((point_id_str, f64_to_bytes(update.value)));
             }
 
             // C2C routing lookup - zero-allocation using structured key
@@ -311,7 +316,7 @@ pub fn write_channel_batch_buffered(
 /// High-performance batch write using direct channel-to-slot mapping
 ///
 /// Round 124: Uses ChannelToSlotIndex to bypass C2M routing lookup during writes.
-/// This is the fastest path for channel data writes to shared memory.
+/// Round 129: Uses precomputed point ID pool and ryu for zero-allocation formatting.
 ///
 /// # Architecture
 /// ```text
@@ -339,8 +344,6 @@ pub fn write_channel_batch_direct(
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
 ) -> BatchRoutingResult {
-    use std::sync::Arc;
-
     if updates.is_empty() {
         return BatchRoutingResult::default();
     }
@@ -354,8 +357,8 @@ pub fn write_channel_batch_direct(
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
-    // Group updates by (channel_id, point_type) for efficient buffer writes
-    let mut grouped: HashMap<(u32, PointType), Vec<ChannelPointUpdate>> = HashMap::new();
+    // Group updates by (channel_id, point_type) for efficient buffer writes - FxHashMap (Round 129)
+    let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
         grouped
             .entry((update.channel_id, update.point_type))
@@ -363,15 +366,15 @@ pub fn write_channel_batch_direct(
             .push(update);
     }
 
-    // Cache point_id -> Arc<str> to avoid repeated allocations
-    let mut point_id_str_cache: HashMap<u32, Arc<str>> = HashMap::new();
+    // Cache point_id -> Arc<str> using precomputed pool - FxHashMap (Round 129)
+    let mut point_id_str_cache: FxHashMap<u32, Arc<str>> = FxHashMap::default();
     let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
     for ((channel_id, point_type), updates) in grouped {
         // Prepare 3-layer data for Redis backup
         let mut points_3layer = Vec::with_capacity(updates.len());
-        // Instance writes for C2M routing (Redis backup)
-        let mut instance_writes: HashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = HashMap::new();
+        // Instance writes for C2M routing (Redis backup) - FxHashMap (Round 129)
+        let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = FxHashMap::default();
 
         for update in &updates {
             let raw_value = update.raw_value.unwrap_or(update.value);
@@ -388,15 +391,16 @@ pub fn write_channel_batch_direct(
             if let Some(target) =
                 routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
             {
+                // Use precomputed pool (0-255) or itoa, O(1) Arc clone
                 let point_id_str = point_id_str_cache
                     .entry(target.point_id)
-                    .or_insert_with(|| Arc::from(target.point_id.to_string()))
+                    .or_insert_with(|| precomputed::get_point_id_str_or_alloc(target.point_id))
                     .clone();
 
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
-                    .push((point_id_str, bytes::Bytes::from(update.value.to_string())));
+                    .push((point_id_str, f64_to_bytes(update.value)));
             }
 
             // C2C routing lookup

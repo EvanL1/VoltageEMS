@@ -10,6 +10,9 @@ bytes = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 sqlx = { workspace = true }
+itoa = { workspace = true }       # High-performance u32 to string (Round 129)
+ryu = { workspace = true }        # High-performance f64 to string (Round 129)
+rustc-hash = { workspace = true } # Fast FxHashMap for small integer keys (Round 129)
 voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 

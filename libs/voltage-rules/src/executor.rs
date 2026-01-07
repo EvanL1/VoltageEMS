@@ -11,12 +11,12 @@ use crate::types::{
     CalculationRule, FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment,
     RuleVariable,
 };
-use bytes::Bytes;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
 use voltage_routing::set_action_point;
+use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, RoutingCache, SharedVecRtdbReader, VecRtdb};
 
@@ -497,7 +497,8 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 format!("inst:{}:M", instance_id)
             };
 
-            let field = point.to_string();
+            // Use precomputed pool for common point IDs (0-255) to avoid allocation
+            let field = precomputed::get_point_id_str_or_alloc(point);
 
             match self.rtdb.hash_get(&key, &field).await {
                 Ok(Some(val_bytes)) => {
@@ -734,11 +735,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         };
 
         // Use voltage_routing to set the action point
+        // Use precomputed pool for common point IDs (0-255)
+        let point_str = precomputed::get_point_id_str_or_alloc(point);
         let routed = match set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_id,
-            &point.to_string(),
+            &point_str,
             resolved_value,
         )
         .await
@@ -819,11 +822,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             },
             "A" | "action" => {
                 // Use M2C routing for action points
+                // Use precomputed pool for common point IDs (0-255)
+                let point_str = precomputed::get_point_id_str_or_alloc(point);
                 match set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
                     instance_id,
-                    &point.to_string(),
+                    &point_str,
                     value,
                 )
                 .await
@@ -864,6 +869,8 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     ///
     /// Used by calculation nodes to write computed values back to measurement points.
     /// This enables use cases like energy accumulation (kWh from power readings).
+    ///
+    /// Round 129: Uses precomputed point ID pool and ryu for zero-allocation formatting.
     async fn write_measurement_point(
         &self,
         instance_id: u32,
@@ -873,9 +880,12 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         let config = KeySpaceConfig::production();
 
         // Write to inst:{id}:M Hash
+        // Use precomputed pool for common point IDs (0-255)
         let key = config.instance_measurement_key(instance_id);
+        let point_str = precomputed::get_point_id_str_or_alloc(point);
+        let value_bytes = voltage_rtdb::numfmt::f64_to_bytes(value);
         self.rtdb
-            .hash_set(&key, &point.to_string(), Bytes::from(value.to_string()))
+            .hash_set(&key, &point_str, value_bytes)
             .await
             .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?;
 
