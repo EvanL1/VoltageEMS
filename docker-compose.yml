@@ -214,6 +214,9 @@ services:
 
   # Vue.js Frontend - Web 管理界面 (端口 8080)
   apps:
+    build:
+      context: ./apps
+      dockerfile: Dockerfile
     image: voltage-apps:latest
     container_name: voltage-apps
     network_mode: host
@@ -223,6 +226,12 @@ services:
     depends_on:
       - apigateway
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   redis-data:
