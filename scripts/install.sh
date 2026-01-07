@@ -708,10 +708,10 @@ if command -v docker &> /dev/null; then
                                 redis:*|influxdb:*)
                                     INFRA_CHANGED+=("$image")
                                     ;;
-                                voltageems:*)
+                                voltageems:latest)
                                     RUST_CHANGED+=("$image")
                                     ;;
-                                voltage-*)
+                                voltageems-ss:*|voltage-*)
                                     PYTHON_CHANGED+=("$image")
                                     ;;
                             esac
@@ -723,10 +723,10 @@ if command -v docker &> /dev/null; then
                                 redis:*|influxdb:*)
                                     INFRA_CHANGED+=("$image")
                                     ;;
-                                voltageems:*)
+                                voltageems:latest)
                                     RUST_CHANGED+=("$image")
                                     ;;
-                                voltage-*)
+                                voltageems-ss:*|voltage-*)
                                     PYTHON_CHANGED+=("$image")
                                     ;;
                             esac

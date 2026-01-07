@@ -2456,7 +2456,7 @@ async fn test_write_single_control_point() {
     // Note: MemoryRtdb hardcodes key format: comsrv:channel_id:type
     let channel_key = "comsrv:1005:C";
     let value = rtdb.hash_get(channel_key, "10").await.unwrap().unwrap();
-    assert_eq!(value, bytes::Bytes::from("1"));
+    assert_eq!(value, bytes::Bytes::from("1.0")); // ryu preserves decimal point
 
     // Verify timestamp in separate :ts hash
     let ts_key = format!("{}:ts", channel_key);
@@ -2491,7 +2491,7 @@ async fn test_write_single_adjustment_point() {
     // Verify Redis (MemoryRtdb hardcodes key format: comsrv:channel_id:type)
     let channel_key = "comsrv:1005:A";
     let value = rtdb.hash_get(channel_key, "200").await.unwrap().unwrap();
-    assert_eq!(value, bytes::Bytes::from("4500"));
+    assert_eq!(value, bytes::Bytes::from("4500.0")); // ryu preserves decimal point
 
     // Verify TODO queue
     let todo_key = format!("{}:TODO", channel_key);
@@ -2526,10 +2526,10 @@ async fn test_write_batch_control_points() {
     let channel_key = "comsrv:1005:C";
 
     let val1 = rtdb.hash_get(channel_key, "10").await.unwrap().unwrap();
-    assert_eq!(val1, bytes::Bytes::from("1"));
+    assert_eq!(val1, bytes::Bytes::from("1.0")); // ryu preserves decimal point
 
     let val2 = rtdb.hash_get(channel_key, "11").await.unwrap().unwrap();
-    assert_eq!(val2, bytes::Bytes::from("0"));
+    assert_eq!(val2, bytes::Bytes::from("0.0")); // ryu preserves decimal point
 
     // Verify TODO queue has 2 items
     let todo_key = format!("{}:TODO", channel_key);
@@ -2560,10 +2560,10 @@ async fn test_write_batch_adjustment_points() {
     let channel_key = "comsrv:1005:A";
 
     let val1 = rtdb.hash_get(channel_key, "200").await.unwrap().unwrap();
-    assert_eq!(val1, bytes::Bytes::from("4500"));
+    assert_eq!(val1, bytes::Bytes::from("4500.0")); // ryu preserves decimal point
 
     let val2 = rtdb.hash_get(channel_key, "201").await.unwrap().unwrap();
-    assert_eq!(val2, bytes::Bytes::from("380"));
+    assert_eq!(val2, bytes::Bytes::from("380.0")); // ryu preserves decimal point
 
     // Verify TODO queue has 2 items
     let todo_key = format!("{}:TODO", channel_key);
@@ -2592,7 +2592,7 @@ async fn test_write_control_persists_to_rtdb() {
 
     // Verify Hash value
     let value = rtdb.hash_get(channel_key, "12").await.unwrap().unwrap();
-    assert_eq!(value, bytes::Bytes::from("1"));
+    assert_eq!(value, bytes::Bytes::from("1.0")); // ryu preserves decimal point
 
     // Verify timestamp in separate :ts hash
     let ts_key = format!("{}:ts", channel_key);
@@ -2632,7 +2632,7 @@ async fn test_write_adjustment_persists_to_rtdb() {
 
     // Verify Hash value
     let value = rtdb.hash_get(channel_key, "202").await.unwrap().unwrap();
-    assert_eq!(value, bytes::Bytes::from("380"));
+    assert_eq!(value, bytes::Bytes::from("380.0")); // ryu preserves decimal point
 
     // Verify timestamp in separate :ts hash
     let ts_key = format!("{}:ts", channel_key);
