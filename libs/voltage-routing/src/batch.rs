@@ -231,7 +231,8 @@ pub fn write_channel_batch_buffered(
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
         // Use Arc<str> for field names to match WriteBuffer signature - FxHashMap (Round 129)
-        let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = FxHashMap::default();
+        let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> =
+            FxHashMap::default();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
         for update in &updates {
@@ -377,7 +378,8 @@ pub fn write_channel_batch_direct(
         // Prepare 3-layer data for Redis backup
         let mut points_3layer = Vec::with_capacity(updates.len());
         // Instance writes for C2M routing (Redis backup) - FxHashMap (Round 129)
-        let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> = FxHashMap::default();
+        let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> =
+            FxHashMap::default();
 
         for update in &updates {
             let raw_value = update.raw_value.unwrap_or(update.value);

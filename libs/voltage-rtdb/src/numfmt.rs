@@ -257,6 +257,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // unwrap() is acceptable in tests
     fn test_precomputed_pool() {
         // Within pool
         let s1 = precomputed::get_point_id_str(42).unwrap();
