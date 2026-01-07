@@ -1547,4 +1547,159 @@ mod tests {
         // Action cache should have the cached value
         assert_eq!(vec_rtdb.get_action(5, 10), Some(1.0));
     }
+
+    // ========================================================================
+    // P1: Three-tier priority read tests (Round 127-128)
+    // ========================================================================
+
+    /// Test: VecRtdb has priority over Redis
+    #[tokio::test]
+    async fn test_read_variables_vecrtdb_priority_over_redis() {
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let routing_cache = Arc::new(RoutingCache::default());
+        let vec_rtdb = Arc::new(VecRtdb::new());
+
+        // Setup Redis with value 100.0
+        rtdb.hash_set("inst:5:M", "3", Bytes::from("100.0"))
+            .await
+            .unwrap();
+
+        // Setup VecRtdb with different value 200.0
+        vec_rtdb.register_instance(5, &[3], &[]);
+        vec_rtdb.set_measurement(5, 3, 200.0, 1729000000);
+
+        let executor = RuleExecutor::new(rtdb, routing_cache).with_vec_rtdb(vec_rtdb);
+
+        let variables = vec![RuleVariable {
+            name: "X".to_string(),
+            instance: Some(5),
+            point_type: Some("measurement".to_string()),
+            point: Some(3),
+            formula: vec![],
+        }];
+
+        let mut values = HashMap::new();
+        executor
+            .read_rule_variables(&variables, &mut values)
+            .await
+            .unwrap();
+
+        // Should use VecRtdb value (200.0), not Redis (100.0)
+        assert_eq!(
+            values.get("X"),
+            Some(&200.0),
+            "VecRtdb should have priority"
+        );
+    }
+
+    /// Test: Registered point with default 0.0 is a cache hit (no Redis fallback)
+    ///
+    /// VecRtdb design: registered points have default 0.0, which counts as cache hit.
+    /// Read-through only happens for unregistered points (returns None).
+    #[tokio::test]
+    async fn test_read_variables_registered_default_is_cache_hit() {
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let routing_cache = Arc::new(RoutingCache::default());
+        let vec_rtdb = Arc::new(VecRtdb::new());
+
+        // Redis has value 42.0
+        rtdb.hash_set("inst:7:M", "5", Bytes::from("42.0"))
+            .await
+            .unwrap();
+
+        // Register instance with point (starts with default 0.0)
+        vec_rtdb.register_instance(7, &[5], &[]);
+
+        // Default 0.0 counts as cache hit
+        assert_eq!(vec_rtdb.get_measurement(7, 5), Some(0.0));
+
+        let executor = RuleExecutor::new(rtdb, routing_cache).with_vec_rtdb(vec_rtdb.clone());
+
+        let variables = vec![RuleVariable {
+            name: "VAL".to_string(),
+            instance: Some(7),
+            point_type: Some("measurement".to_string()),
+            point: Some(5),
+            formula: vec![],
+        }];
+
+        let mut values = HashMap::new();
+        executor
+            .read_rule_variables(&variables, &mut values)
+            .await
+            .unwrap();
+
+        // VecRtdb hit with default 0.0 - does NOT fall through to Redis
+        assert_eq!(
+            values.get("VAL"),
+            Some(&0.0),
+            "Registered point returns default 0.0 (cache hit)"
+        );
+    }
+
+    /// Test: All cache miss returns default 0.0
+    #[tokio::test]
+    async fn test_read_variables_all_miss_returns_default() {
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let routing_cache = Arc::new(RoutingCache::default());
+        let vec_rtdb = Arc::new(VecRtdb::new());
+
+        // Neither VecRtdb nor Redis has data
+        vec_rtdb.register_instance(99, &[1], &[]);
+
+        let executor = RuleExecutor::new(rtdb, routing_cache).with_vec_rtdb(vec_rtdb);
+
+        let variables = vec![RuleVariable {
+            name: "MISSING".to_string(),
+            instance: Some(99),
+            point_type: Some("measurement".to_string()),
+            point: Some(1),
+            formula: vec![],
+        }];
+
+        let mut values = HashMap::new();
+        executor
+            .read_rule_variables(&variables, &mut values)
+            .await
+            .unwrap();
+
+        // All miss → default to 0.0
+        assert_eq!(
+            values.get("MISSING"),
+            Some(&0.0),
+            "Missing data should default to 0.0"
+        );
+    }
+
+    /// Test: No VecRtdb configured falls through to Redis
+    #[tokio::test]
+    async fn test_read_variables_no_cache_uses_redis() {
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let routing_cache = Arc::new(RoutingCache::default());
+
+        // Setup Redis data
+        rtdb.hash_set("inst:10:M", "1", Bytes::from("55.5"))
+            .await
+            .unwrap();
+
+        // No VecRtdb configured
+        let executor = RuleExecutor::new(rtdb, routing_cache);
+
+        let variables = vec![RuleVariable {
+            name: "DIRECT".to_string(),
+            instance: Some(10),
+            point_type: Some("measurement".to_string()),
+            point: Some(1),
+            formula: vec![],
+        }];
+
+        let mut values = HashMap::new();
+        executor
+            .read_rule_variables(&variables, &mut values)
+            .await
+            .unwrap();
+
+        // Should read directly from Redis
+        assert_eq!(values.get("DIRECT"), Some(&55.5));
+    }
 }

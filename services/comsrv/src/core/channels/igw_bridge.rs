@@ -37,7 +37,7 @@ use igw::gateway::ChannelRuntime;
 #[cfg(all(feature = "can", target_os = "linux"))]
 use igw::gateway::wrappers::CanRuntime;
 #[cfg(all(feature = "can", target_os = "linux"))]
-use igw::protocols::can::{CanClient, CanConfig, CanPoint};
+use igw::protocols::can::{CanClient, CanConfig, CanDataType, CanPoint};
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 use igw::gateway::wrappers::GpioRuntime;
@@ -915,17 +915,12 @@ struct CanProtocolMapping {
     can_id: u32,
     start_bit: u32,
     bit_length: u32,
-    #[serde(default = "default_can_data_type")]
-    data_type: String,
+    #[serde(default)]
+    data_type: CanDataType,
     #[serde(default = "default_scale")]
     scale: f64,
     #[serde(default)]
     offset: f64,
-}
-
-#[cfg(all(feature = "can", target_os = "linux"))]
-fn default_can_data_type() -> String {
-    "uint16".to_string()
 }
 
 #[cfg(all(feature = "can", target_os = "linux"))]

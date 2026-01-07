@@ -2859,3 +2859,181 @@ pub async fn delete_adjustment_point_handler<R: Rtdb>(
 ) -> Result<Json<SuccessResponse<PointCrudResult>>, AppError> {
     delete_point_handler_inner(channel_id, "A", point_id, state, reload_query).await
 }
+
+// ============================================================================
+// Tests for cache priority read (Round 128)
+// ============================================================================
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use axum::extract::{Path, State};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use voltage_rtdb::{Bytes, MemoryRtdb, VecRtdb};
+
+    use crate::api::routes::AppState;
+    use crate::core::channels::ChannelManager;
+    use voltage_rtdb::RoutingCache;
+
+    /// Helper: Create in-memory SQLite pool for testing
+    async fn create_test_sqlite_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        common::test_utils::schema::init_comsrv_schema(&pool)
+            .await
+            .unwrap();
+
+        pool
+    }
+
+    /// Helper: Create test AppState with VecRtdb
+    async fn create_test_state_with_cache(
+        rtdb: Arc<MemoryRtdb>,
+        vec_rtdb: Option<Arc<VecRtdb>>,
+    ) -> AppState<MemoryRtdb> {
+        let sqlite_pool = create_test_sqlite_pool().await;
+        let routing_cache = Arc::new(RoutingCache::default());
+        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+            rtdb.clone(),
+            routing_cache,
+        )));
+
+        AppState {
+            channel_manager,
+            rtdb,
+            sqlite_pool,
+            vec_rtdb,
+        }
+    }
+
+    /// Test: VecRtdb cache hit returns source: "cache"
+    #[tokio::test]
+    async fn test_get_point_info_cache_hit() {
+        // Setup: Create VecRtdb with pre-populated data
+        let vec_rtdb = Arc::new(VecRtdb::new());
+        let channel_id: u32 = 1;
+        let point_id: u32 = 101;
+        let point_type: u8 = 0; // Telemetry
+
+        // Register channel and set value
+        vec_rtdb.register_channel(channel_id, point_type, &[point_id]);
+        vec_rtdb.set(channel_id, point_type, point_id, 650.5, 6505.0, 1729000815);
+
+        // Create state with VecRtdb
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let state = create_test_state_with_cache(rtdb, Some(vec_rtdb)).await;
+
+        // Call handler
+        let result =
+            get_point_info_handler(State(state), Path((channel_id, "T".to_string(), point_id)))
+                .await;
+
+        // Verify: source should be "cache"
+        let response = result.expect("Handler should succeed");
+        let data = &response.0.data;
+        assert_eq!(data["source"], "cache", "Should return from VecRtdb cache");
+        assert_eq!(data["value"], 650.5);
+        assert_eq!(data["raw"], 6505.0); // raw is stored as f64
+        assert_eq!(data["timestamp"], 1729000815);
+    }
+
+    /// Test: VecRtdb cache miss falls back to Redis, returns source: "redis"
+    #[tokio::test]
+    async fn test_get_point_info_cache_miss_redis_fallback() {
+        // Setup: Create empty VecRtdb, populate MemoryRtdb
+        let vec_rtdb = Arc::new(VecRtdb::new());
+        let rtdb = Arc::new(MemoryRtdb::new());
+
+        let channel_id: u32 = 1;
+        let point_id: u32 = 102;
+
+        // Populate Redis (MemoryRtdb) with data
+        let keyspace = KeySpaceConfig::production_cached();
+        let data_key = keyspace.channel_key(channel_id, PointType::Telemetry);
+        let ts_key = keyspace.channel_ts_key(channel_id, PointType::Telemetry);
+        let raw_key = keyspace.channel_raw_key(channel_id, PointType::Telemetry);
+        let field = point_id.to_string();
+
+        rtdb.hash_set(&data_key, &field, Bytes::from("750.0"))
+            .await
+            .unwrap();
+        rtdb.hash_set(&ts_key, &field, Bytes::from("1729001000"))
+            .await
+            .unwrap();
+        rtdb.hash_set(&raw_key, &field, Bytes::from("7500"))
+            .await
+            .unwrap();
+
+        // Create state with empty VecRtdb
+        let state = create_test_state_with_cache(rtdb, Some(vec_rtdb)).await;
+
+        // Call handler
+        let result =
+            get_point_info_handler(State(state), Path((channel_id, "T".to_string(), point_id)))
+                .await;
+
+        // Verify: source should be "redis" (cache miss)
+        let response = result.expect("Handler should succeed");
+        let data = &response.0.data;
+        assert_eq!(data["source"], "redis", "Should fallback to Redis");
+        assert_eq!(data["value"], "750.0");
+    }
+
+    /// Test: No VecRtdb (None) goes directly to Redis
+    #[tokio::test]
+    async fn test_get_point_info_no_cache() {
+        // Setup: No VecRtdb, only MemoryRtdb
+        let rtdb = Arc::new(MemoryRtdb::new());
+
+        let channel_id: u32 = 1;
+        let point_id: u32 = 103;
+
+        // Populate Redis
+        let keyspace = KeySpaceConfig::production_cached();
+        let data_key = keyspace.channel_key(channel_id, PointType::Signal);
+        let field = point_id.to_string();
+
+        rtdb.hash_set(&data_key, &field, Bytes::from("1.0"))
+            .await
+            .unwrap();
+
+        // Create state without VecRtdb
+        let state = create_test_state_with_cache(rtdb, None).await;
+
+        // Call handler
+        let result =
+            get_point_info_handler(State(state), Path((channel_id, "S".to_string(), point_id)))
+                .await;
+
+        // Verify: source should be "redis"
+        let response = result.expect("Handler should succeed");
+        let data = &response.0.data;
+        assert_eq!(data["source"], "redis");
+    }
+
+    /// Test: Invalid telemetry type returns 400
+    #[tokio::test]
+    async fn test_get_point_info_invalid_type() {
+        let rtdb = Arc::new(MemoryRtdb::new());
+        let state = create_test_state_with_cache(rtdb, None).await;
+
+        // Call handler with invalid type
+        let result = get_point_info_handler(
+            State(state),
+            Path((1, "X".to_string(), 100)), // "X" is invalid
+        )
+        .await;
+
+        // Verify: should return error
+        let err = result.expect_err("Should return error for invalid type");
+        assert!(
+            format!("{:?}", err).contains("Invalid telemetry type"),
+            "Error should mention invalid type"
+        );
+    }
+}
