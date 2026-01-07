@@ -4,7 +4,7 @@
       <IconButton
         type="primary"
         :icon="userAddIcon"
-        text="New a user"
+        text="New user"
         custom-class="user-management__add-btn"
         @click="handleAddUser"
       />
@@ -39,9 +39,11 @@
               {{ row.role.name_en }}
             </template>
           </el-table-column>
-          <el-table-column prop="status" label="Status">
+          <el-table-column prop="status" label="Enabled">
             <template #default="{ row }">
-              <el-switch :model-value="row.is_active" disabled />
+              <span :class="row.is_active ? 'status-enabled' : 'status-disabled'">
+                {{ row.is_active ? 'Enable' : 'Disabled' }}
+              </span>
             </template>
           </el-table-column>
           <el-table-column prop="last_login" label="Last Login">
@@ -190,6 +192,7 @@ const getAvatarName = (name: string): string => {
   .user-management__header {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     margin-bottom: 0.2rem;
 
     .user-management__add-btn {
@@ -276,5 +279,15 @@ const getAvatarName = (name: string): string => {
 }
 .user-management__operation-column {
   width: 1.2rem !important;
+}
+
+.status-enabled {
+  color: #67c23a;
+  font-weight: 500;
+}
+
+.status-disabled {
+  color: #909399;
+  font-weight: 500;
 }
 </style>

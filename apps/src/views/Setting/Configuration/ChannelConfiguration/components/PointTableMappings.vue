@@ -2,6 +2,25 @@
   <div class="voltage-class point-table">
     <!-- 按钮控制区域 -->
     <div v-if="props.viewMode === 'mappings'" class="table-action-controls">
+      <div
+        class="table-action-controls__filters"
+        style="flex: 1; display: flex; gap: 0.08rem; align-items: center"
+      >
+        <span class="filter-label">Point Name:</span>
+        <el-select
+          v-model="signalNameFilterRaw"
+          filterable
+          allow-create
+          clearable
+          placeholder="Search Point Name"
+          :teleported="false"
+          popper-class="signal-name-popper"
+          style="width: 2.8rem"
+          :fit-input-width="true"
+        >
+          <el-option v-for="name in signalNameOptions" :key="name" :label="name" :value="name" />
+        </el-select>
+      </div>
       <!-- 非编辑模式：显示Export -->
       <template v-if="!props.isEditing">
         <el-button type="primary" @click="handleExport">Export</el-button>
@@ -10,7 +29,7 @@
       <!-- 编辑模式：显示文件名和Import -->
       <template v-else>
         <span v-if="importedFileName" class="imported-file-name">{{ importedFileName }}</span>
-        <el-button type="primary" @click="handleImportClick">Import</el-button>
+        <el-button type="primary" @mousedown="handleImportClick">Import</el-button>
       </template>
     </div>
 
@@ -31,33 +50,7 @@
           class="vtable__cell vtable__cell--signal-name"
           :class="props.isEditing ? '' : 'notEdit'"
         >
-          <span>Signal Name</span>
-          <el-icon
-            class="filter-icon"
-            @click="showSignalNameFilter = !showSignalNameFilter"
-            style="margin-left: 0.05rem; cursor: pointer"
-          >
-            <Filter />
-          </el-icon>
-          <div v-if="showSignalNameFilter" class="signal-name-filter" @click.stop>
-            <el-select
-              v-model="signalNameFilter"
-              filterable
-              allow-create
-              clearable
-              :teleported="false"
-              placeholder="Search Signal Name"
-              style="width: 100%"
-              :fit-input-width="true"
-            >
-              <el-option
-                v-for="name in signalNameOptions"
-                :key="name"
-                :label="name"
-                :value="name"
-              />
-            </el-select>
-          </div>
+          <span>Point Name</span>
         </div>
         <div v-if="props.channelProtocol !== 'di_do'" class="vtable__cell vtable__cell--slave-id">
           Slave ID
@@ -111,6 +104,7 @@
         <template #default="{ item, index }">
           <DynamicScrollerItem :item="item" :index="index" :active="true">
             <div class="vtable__row" :class="getRowClass(item)">
+              <div class="row-status-float"></div>
               <div class="vtable__cell vtable__cell--point-id">
                 <span>{{ item.point_id }}</span>
               </div>
@@ -139,7 +133,7 @@
                 </template>
                 <template v-else>
                   <span :class="getFieldClass(item, 'mapping_gpio_number')">{{
-                    (item.protocol_mapping as any)?.gpio_number ?? '-'
+                    (item.protocol_mapping as any)?.gpio_number ?? ''
                   }}</span>
                 </template>
                 <div
@@ -157,8 +151,8 @@
                   <div class="inline-edit-container">
                     <el-input-number
                       v-model="item.protocol_mapping.slave_id"
-                      :min="1"
-                      :max="247"
+                      :min="0"
+                      :max="999"
                       :controls="false"
                       align="left"
                       @change="() => onMappingFieldChange(item, 'slave_id')"
@@ -168,7 +162,7 @@
                 </template>
                 <template v-else>
                   <span :class="getFieldClass(item, 'mapping_slave_id')">{{
-                    item.protocol_mapping?.slave_id || '-'
+                    item.protocol_mapping?.slave_id
                   }}</span>
                 </template>
                 <div
@@ -186,10 +180,11 @@
                   <div class="inline-edit-container">
                     <el-select
                       v-model="item.protocol_mapping.function_code"
-                      :teleported="false"
                       popper-class="inline-mapping-popper"
                       :fit-input-width="true"
+                      filterable
                       @change="() => onFunctionCodeChange(item)"
+                      clearable
                     >
                       <el-option
                         v-for="option in FC_BY_POINT[props.pointType]"
@@ -228,7 +223,7 @@
                 </template>
                 <template v-else>
                   <span :class="getFieldClass(item, 'mapping_register_address')">{{
-                    item.protocol_mapping?.register_address ?? '-'
+                    item.protocol_mapping?.register_address ?? ''
                   }}</span>
                 </template>
                 <div
@@ -246,10 +241,11 @@
                   <div class="inline-edit-container">
                     <el-select
                       v-model="item.protocol_mapping.data_type"
-                      :teleported="false"
                       popper-class="inline-mapping-popper"
                       :fit-input-width="true"
+                      filterable
                       @change="onMappingDataTypeChange(item)"
+                      clearable
                     >
                       <el-option
                         v-for="option in getMappingDataTypeOptions()"
@@ -262,7 +258,7 @@
                 </template>
                 <template v-else>
                   <span :class="getFieldClass(item, 'mapping_data_type')">{{
-                    item.protocol_mapping?.data_type || '-'
+                    item.protocol_mapping?.data_type
                   }}</span>
                 </template>
                 <div
@@ -280,10 +276,11 @@
                   <div class="inline-edit-container">
                     <el-select
                       v-model="item.protocol_mapping.byte_order"
-                      :teleported="false"
                       popper-class="inline-mapping-popper"
                       :fit-input-width="true"
+                      filterable
                       @change="() => onMappingFieldChange(item, 'byte_order')"
+                      clearable
                     >
                       <el-option
                         v-for="option in getMappingByteOrderOptions(item)"
@@ -296,7 +293,7 @@
                 </template>
                 <template v-else>
                   <span :class="getFieldClass(item, 'mapping_byte_order')">{{
-                    item.protocol_mapping?.byte_order || '-'
+                    item.protocol_mapping?.byte_order
                   }}</span>
                 </template>
                 <div
@@ -326,7 +323,7 @@
                 </template>
                 <template v-else>
                   <span :class="getFieldClass(item, 'mapping_bit_position')">{{
-                    item.protocol_mapping?.bit_position || '-'
+                    item.protocol_mapping?.bit_position
                   }}</span>
                 </template>
                 <div
@@ -365,7 +362,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, computed, inject } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed, inject, nextTick } from 'vue'
 import { pxToResponsive } from '@/utils/responsive'
 import { ElMessage } from 'element-plus'
 import { OriginalPointsKey, ChannelNameKey } from '@/utils/key'
@@ -377,7 +374,10 @@ import {
   BYTE_ORDER_64_OPTIONS,
   FUNCTION_CODE_OPTIONS,
 } from '@/types/channelConfiguration'
-import { uniq, isArray, isInteger, toNumber, toLower, toUpper, throttle } from 'lodash-es'
+// lodash-es 替换
+const toNumber = (v: any) => Number(v as any)
+const toLower = (v: any) => String(v ?? '').toLowerCase()
+const toUpper = (v: any) => String(v ?? '').toUpperCase()
 
 // Props 说明
 // - pointType: 当前表所属的大类（T/S/C/A），决定映射可选范围与校验
@@ -400,6 +400,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const emit = defineEmits<{
   'enter-edit-mode': []
+  'change-edit-filter': [value: string]
 }>()
 
 // 从 provide/inject 获取回退用的原始点位数据与通道名称
@@ -414,8 +415,9 @@ const originalPointsList = computed<PointInfo[]>(() => {
 })
 
 const editPoints = ref<PointInfo[]>([])
+const signalNameFilterRaw = ref('')
 const signalNameFilter = ref('')
-const showSignalNameFilter = ref(false)
+// Status 筛选逻辑已移至父组件 PointsTablesDialog.vue
 const scrollerRef = ref()
 const rowHeight = ref(pxToResponsive(22))
 const fileInputRef = ref<HTMLInputElement>()
@@ -423,37 +425,15 @@ const importedFileName = ref('')
 
 const signalNameOptions = computed(() => {
   const names = (editPoints.value || []).map((p) => p.signal_name).filter((n) => n)
-  return uniq(names)
+  return Array.from(new Set(names))
 })
 
 // 放在前面，避免“before initialization”错误（用于校验与选项生成）
 const DATA_TYPE_BY_POINT: Record<string, string[]> = {
-  T: ['int16', 'float16', 'uint16', 'int32', 'float32', 'uint32', 'int64', 'uint64', 'float64'],
-  S: [
-    'int16',
-    'float16',
-    'uint16',
-    'int32',
-    'float32',
-    'uint32',
-    'int64',
-    'uint64',
-    'float64',
-    'bool',
-  ],
-  C: [
-    'int16',
-    'float16',
-    'uint16',
-    'int32',
-    'float32',
-    'uint32',
-    'int64',
-    'uint64',
-    'float64',
-    'bool',
-  ],
-  A: ['int16', 'float16', 'uint16', 'int32', 'float32', 'uint32', 'int64', 'uint64', 'float64'],
+  T: ['int16', 'uint16', 'int32', 'float32', 'uint32', 'int64', 'uint64', 'float64'],
+  S: ['int16', 'uint16', 'int32', 'float32', 'uint32', 'int64', 'uint64', 'float64', 'bool'],
+  C: ['int16', 'uint16', 'int32', 'float32', 'uint32', 'int64', 'uint64', 'float64', 'bool'],
+  A: ['int16', 'uint16', 'int32', 'float32', 'uint32', 'int64', 'uint64', 'float64'],
 }
 const FC_BY_POINT: Record<string, number[]> = {
   T: [3, 4],
@@ -462,44 +442,73 @@ const FC_BY_POINT: Record<string, number[]> = {
   A: [6, 16],
 }
 
-// 列表筛选：支持 signal name 关键字与编辑态的标签筛选（modified / invalid）
+// 列表筛选：支持 signal name 关键字与“Status（modified/invalid）”
+// Status 筛选由父组件通过 editFilters prop 传递
 const filteredPoints = computed(() => {
-  const list = isArray(editPoints.value) ? editPoints.value : []
+  const list = Array.isArray(editPoints.value) ? editPoints.value : []
   let result = [...list]
   if (signalNameFilter.value) {
-    const kw = toLower(String(signalNameFilter.value || ''))
-    result = result.filter((p) => toLower(String(p.signal_name || '')).includes(kw))
+    const kw = String(signalNameFilter.value || '').toLowerCase()
+    result = result.filter((p) =>
+      String(p.signal_name || '')
+        .toLowerCase()
+        .includes(kw),
+    )
   }
-  if ((props.editFilters || []).length > 0) {
-    result = result.filter((p) => {
-      const status = p.rowStatus || 'normal'
-      // 不符合规范筛选：检查isInvalid标记
-      if (props.editFilters.includes('invalid')) {
-        return (p as any).isInvalid === true
-      }
-      return props.editFilters.includes(status)
-    })
+  // 使用父组件传递的 editFilters 进行筛选
+  if (props.editFilters && props.editFilters.length > 0) {
+    const filterValue = props.editFilters[0]
+    if (filterValue === 'invalid') {
+      result = result.filter((p) => (p as any).isInvalid === true)
+    } else {
+      result = result.filter((p) => (p as any).rowStatus === filterValue)
+    }
   }
   return result
 })
 
 onMounted(() => {
-  const onResize = throttle(() => (rowHeight.value = pxToResponsive(22)), 500)
+  const onResize = () => (rowHeight.value = pxToResponsive(22))
   window.addEventListener('resize', onResize as any)
   ;(onResize as any)()
 })
 onUnmounted(() => {})
 
+// 简易防抖：筛选 300ms
+let _snfTimer: any = null
+watch(
+  () => signalNameFilterRaw.value,
+  (v) => {
+    if (_snfTimer) clearTimeout(_snfTimer)
+    _snfTimer = setTimeout(() => {
+      signalNameFilter.value = String(v || '')
+    }, 300)
+  },
+  { immediate: true },
+)
+// 深拷贝 point（包含 protocol_mapping），避免与原始基线共享引用导致二次编辑无法识别变更
+function clonePointForEdit(item: PointInfo): PointInfo {
+  const cp: any = {
+    ...item,
+    rowStatus: item.rowStatus || 'normal',
+  }
+  if (item.protocol_mapping && typeof item.protocol_mapping === 'object') {
+    cp.protocol_mapping = JSON.parse(JSON.stringify(item.protocol_mapping))
+  }
+  // 新会话基线下不带上一次会话的 modifiedFields / isEditing / fieldErrors
+  delete cp.modifiedFields
+  delete cp.isEditing
+  delete cp.fieldErrors
+  delete cp.originalData
+  return cp as PointInfo
+}
 watch(
   () => ({ points: props.points, isEditing: props.isEditing }),
   (val) => {
-    if (!val.isEditing && isArray(val.points)) {
-      editPoints.value = val.points.map((item: PointInfo) => ({
-        ...item,
-        rowStatus: item.rowStatus || 'normal',
-      }))
+    if (!val.isEditing && Array.isArray(val.points)) {
+      editPoints.value = val.points.map((item: PointInfo) => clonePointForEdit(item))
       // 首次载入或刷新后执行一次有效性检测
-      if (isArray(editPoints.value)) {
+      if (Array.isArray(editPoints.value)) {
         editPoints.value.forEach((p) => validateMappingValidity(p))
         refreshMappingFieldErrorsForList()
       }
@@ -512,15 +521,14 @@ watch(
 watch(
   () => props.isEditing,
   (editing) => {
-    if (editing && isArray(editPoints.value)) {
+    if (editing && Array.isArray(editPoints.value)) {
       editPoints.value.forEach((p) => validateMappingValidity(p))
       refreshMappingFieldErrorsForList()
     } else if (!editing) {
       // 退出编辑：恢复为最初基线（originalPointsList）的 protocol_mapping
-      const baseline = (originalPointsList.value as PointInfo[]).map((item: PointInfo) => ({
-        ...item,
-        rowStatus: item.rowStatus || 'normal',
-      }))
+      const baseline = (originalPointsList.value as PointInfo[]).map((item: PointInfo) =>
+        clonePointForEdit(item),
+      )
       editPoints.value = baseline
       refreshMappingFieldErrorsForList()
     }
@@ -540,7 +548,7 @@ const getMappingFunctionCodeOptions = (item: PointInfo) => {
   else validCodes = [3, 4, 6, 16].filter((c) => allowed.includes(c))
   return validCodes.map((code) => ({ label: String(code), value: code }))
 }
-const getMappingFunctionCodeLabel = (fc: number | undefined) => (fc == null ? '-' : String(fc))
+const getMappingFunctionCodeLabel = (fc: number | undefined) => (fc == null ? '' : String(fc))
 const getMappingDataTypeOptions = () => {
   const allow = DATA_TYPE_BY_POINT[props.pointType] || []
   return DATA_TYPE_OPTIONS.filter((opt) => allow.includes(String(opt.value)))
@@ -577,48 +585,89 @@ function setMappingFieldError(item: any, field: string, message: string) {
 function validateMappingFieldOnly(item: any, field: string): string {
   if (props.channelProtocol === 'di_do' && field !== 'gpio_number') return ''
   const m = item.protocol_mapping || {}
+
+  // 检查部分字段有值但部分字段没有的情况（除了 bit_position）
+  const hasSlaveId = !(m.slave_id === undefined || m.slave_id === null || m.slave_id === '')
+  const hasFunctionCode = !(
+    m.function_code === undefined ||
+    m.function_code === null ||
+    m.function_code === ''
+  )
+  const hasRegisterAddress = !(m.register_address === undefined || m.register_address === null)
+  const hasDataType = !(m.data_type === undefined || m.data_type === null || m.data_type === '')
+  const hasByteOrder = !(m.byte_order === undefined || m.byte_order === null || m.byte_order === '')
+
+  const filledFieldsCount = [
+    hasSlaveId,
+    hasFunctionCode,
+    hasRegisterAddress,
+    hasDataType,
+    hasByteOrder,
+  ].filter(Boolean).length
+
+  // 如果部分字段有值但部分字段没有，则显示 require 错误
+  const isPartialFill = filledFieldsCount > 0 && filledFieldsCount < 5
+
   switch (field) {
     case 'gpio_number': {
-      if (m.gpio_number === undefined || m.gpio_number === null || m.gpio_number === '')
-        return 'required'
-      const gpio = toNumber(m.gpio_number)
-      if (!isInteger(gpio) || gpio <= 0) return 'must be a positive integer'
+      // 允许为空，仅在有值时校验
+      if (m.gpio_number === undefined || m.gpio_number === null || m.gpio_number === '') return ''
+      const gpio = Number(m.gpio_number)
+      // 检查是否为 NaN（无法解析为数字）或无效的正整数
+      if (isNaN(gpio) || !Number.isInteger(gpio) || gpio <= 0) return 'must positive integer'
       return ''
     }
     case 'slave_id': {
-      const sid = toNumber(m.slave_id)
-      if (!isInteger(sid) || sid < 1 || sid > 247) return 'must be 1-247'
+      if (isPartialFill && !hasSlaveId) return 'required'
+      if (m.slave_id === undefined || m.slave_id === null || m.slave_id === '') return ''
+      const sid = Number(m.slave_id)
+      if (!Number.isInteger(sid) || sid < 1 || sid > 247) return 'must be 1-247'
       return ''
     }
     case 'function_code': {
+      if (isPartialFill && !hasFunctionCode) return 'required'
+      if (m.function_code === undefined || m.function_code === null || m.function_code === '')
+        return ''
       const allowedFC = FC_BY_POINT[props.pointType] || []
-      const fc = toNumber(m.function_code)
+      const fc = Number(m.function_code)
       if (!allowedFC.includes(fc)) return 'not allowed'
       return ''
     }
     case 'register_address': {
+      if (isPartialFill && !hasRegisterAddress) return 'required'
       if (m.register_address == null || m.register_address === '') return ''
-      const ra = toNumber(m.register_address)
-      if (!isInteger(ra) || ra < 0 || ra > 65535) return ' must be 0-65535'
+      const ra = Number(m.register_address)
+      if (!Number.isInteger(ra) || ra < 0 || ra > 65535) return ' must be 0-65535'
       return ''
     }
     case 'data_type': {
+      if (isPartialFill && !hasDataType) return 'required'
+      if (m.data_type === undefined || m.data_type === null || m.data_type === '') return ''
       const dt = normalizeType(m.data_type || '')
       const allowDT = DATA_TYPE_BY_POINT[props.pointType] || []
       if (!allowDT.includes(dt)) return 'not allowed '
       return ''
     }
     case 'byte_order': {
-      const allowed = getMappingByteOrderOptions(item).map((o: any) => toUpper(String(o.value)))
-      const cur = toUpper(String(m.byte_order || ''))
+      if (isPartialFill && !hasByteOrder) return 'required'
+      if (m.byte_order === undefined || m.byte_order === null || m.byte_order === '') return ''
+      // 当 Data Type 为 bool 时，不对 Byte Order 做限制
+      {
+        const dt = normalizeType(m.data_type || '')
+        if (dt === 'bool' || dt === 'boolean') return ''
+      }
+      const allowed = getMappingByteOrderOptions(item).map((o: any) =>
+        String(o.value).toUpperCase(),
+      )
+      const cur = String(m.byte_order || '').toUpperCase()
       if (!allowed.includes(cur)) return 'not allowed'
       return ''
     }
     case 'bit_position': {
       const rawBp = m.bit_position
       if (rawBp === undefined || rawBp === null || rawBp === '') return ''
-      const n = toNumber(rawBp)
-      if (!isInteger(n) || n < 0 || n > 15) return 'must be 0-15 when provided'
+      const n = Number(rawBp)
+      if (!Number.isInteger(n) || n < 0 || n > 15) return 'must be 0-15 when provided'
       return ''
     }
     default:
@@ -660,11 +709,20 @@ function canEditMappingBitPosition(item: PointInfo) {
   const is16 = dt.includes('16')
   return isBoolFC || is16
 }
-// 当不满足位编辑能力时，重置 bit_position 为 0，并同步变更状态
+// 当不满足位编辑能力时，重置 bit_position
+// 注意：如果原来的值是 0，应该保留，而不是清空
 const resetBitPositionIfNeeded = (item: PointInfo) => {
   if (!item.protocol_mapping) return
-  // 不可编辑时，默认置为空而非 0
-  if (!canEditMappingBitPosition(item)) (item.protocol_mapping as any).bit_position = undefined
+  // 不可编辑时，只有在原来值不是 0 的情况下才清空
+  // 如果原来是 0，保留这个值
+  if (!canEditMappingBitPosition(item)) {
+    const currentBp = item.protocol_mapping.bit_position
+    // 如果当前值不是 0（包括 undefined、null、非 0 数字），才清空
+    if (currentBp !== 0 && currentBp !== undefined && currentBp !== null) {
+      ;(item.protocol_mapping as any).bit_position = undefined
+    }
+    // 如果当前值是 0，保持不变
+  }
   updateMappingChangeStatus(item)
 }
 const getMappingRegisterAddressStr = (item: PointInfo) => {
@@ -674,9 +732,19 @@ const getMappingRegisterAddressStr = (item: PointInfo) => {
 // 寄存器地址输入限制：仅数字、最大 65535，并触发变更检测
 const onMappingRegisterAddressInput = (item: PointInfo, str: string) => {
   if (!item.protocol_mapping) return
-  const digits = (str || '').replace(/\D+/g, '').slice(0, 5)
-  const num = digits === '' ? 0 : toNumber(digits)
-  item.protocol_mapping.register_address = Math.min(65535, Math.max(0, num))
+  const trimmed = (str || '').trim()
+  // 允许完全清空（设置为 undefined）
+  if (trimmed === '') {
+    item.protocol_mapping.register_address = undefined
+  } else {
+    const digits = trimmed.replace(/\D+/g, '').slice(0, 5)
+    if (digits === '') {
+      item.protocol_mapping.register_address = undefined
+    } else {
+      const num = Number(digits)
+      item.protocol_mapping.register_address = Math.min(65535, Math.max(0, num))
+    }
+  }
   updateMappingChangeStatus(item)
   const msg = validateMappingFieldOnly(item, 'register_address')
   setMappingFieldError(item, 'register_address', msg)
@@ -693,13 +761,16 @@ function validateMappingValidity(point: PointInfo): boolean {
   if (props.channelProtocol === 'di_do') {
     const gpio = m?.gpio_number
     const hasValue = !(gpio === undefined || gpio === null || gpio === '')
-    if (!hasValue || !isInteger(toNumber(gpio)) || toNumber(gpio) <= 0) {
-      ;(point as any).isInvalid = true
-      point.description = 'Error: gpio_number must be a positive integer'
-      return false
+    // 允许为空；仅当有值时校验数值与范围
+    // 检查是否为 NaN（无法解析为数字）或无效的正整数
+    if (hasValue) {
+      const gpioNum = Number(gpio)
+      if (isNaN(gpioNum) || !Number.isInteger(gpioNum) || gpioNum <= 0) {
+        ;(point as any).isInvalid = true
+        return false
+      }
     }
     ;(point as any).isInvalid = false
-    if (point.description && point.description.startsWith('Error:')) point.description = ''
     return true
   }
   // 无映射视为有效
@@ -707,62 +778,99 @@ function validateMappingValidity(point: PointInfo): boolean {
     ;(point as any).isInvalid = false
     return true
   }
-  // 数据类型允许性
-  const dt = normalizeType(m.data_type || '')
-  const allowDT = DATA_TYPE_BY_POINT[props.pointType] || []
-  if (!allowDT.includes(dt)) {
+
+  // 检查部分字段有值但部分字段没有的情况（除了 bit_position）
+  // 如果一行都没有数据，那这是不会被判错的
+  // 但是假如只有部分数据有部分数据没有（除了 bit_position），那么这一行要报错
+  const hasSlaveId = !(m.slave_id === undefined || m.slave_id === null || m.slave_id === '')
+  const hasFunctionCode = !(
+    m.function_code === undefined ||
+    m.function_code === null ||
+    m.function_code === ''
+  )
+  const hasRegisterAddress = !(m.register_address === undefined || m.register_address === null)
+  const hasDataType = !(m.data_type === undefined || m.data_type === null || m.data_type === '')
+  const hasByteOrder = !(m.byte_order === undefined || m.byte_order === null || m.byte_order === '')
+
+  // 统计必填字段（除了 bit_position）中有值的数量
+  const filledFieldsCount = [
+    hasSlaveId,
+    hasFunctionCode,
+    hasRegisterAddress,
+    hasDataType,
+    hasByteOrder,
+  ].filter(Boolean).length
+
+  // 如果部分字段有值但部分字段没有，则报错
+  if (filledFieldsCount > 0 && filledFieldsCount < 5) {
     ;(point as any).isInvalid = true
-    point.description = 'Error: invalid data_type for point type'
+    // 设置各个字段的 require 错误
+    if (!hasSlaveId) setMappingFieldError(point as any, 'slave_id', 'required')
+    if (!hasFunctionCode) setMappingFieldError(point as any, 'function_code', 'required')
+    if (!hasRegisterAddress) setMappingFieldError(point as any, 'register_address', 'required')
+    if (!hasDataType) setMappingFieldError(point as any, 'data_type', 'required')
+    if (!hasByteOrder) setMappingFieldError(point as any, 'byte_order', 'required')
     return false
+  }
+
+  // 允许为空：仅对已填写字段执行原有校验
+  // 数据类型允许性
+  if (!(m.data_type === undefined || m.data_type === null || m.data_type === '')) {
+    const dt = normalizeType(m.data_type || '')
+    const allowDT = DATA_TYPE_BY_POINT[props.pointType] || []
+    if (!allowDT.includes(dt)) {
+      ;(point as any).isInvalid = true
+      return false
+    }
   }
   // 功能码匹配
-  const allowedFC = FC_BY_POINT[props.pointType] || []
-  if (!allowedFC.includes(Number(m.function_code))) {
-    ;(point as any).isInvalid = true
-    point.description = 'Error: invalid function_code for point_type'
-    return false
+  if (!(m.function_code === undefined || m.function_code === null || m.function_code === '')) {
+    const allowedFC = FC_BY_POINT[props.pointType] || []
+    if (!allowedFC.includes(Number(m.function_code))) {
+      ;(point as any).isInvalid = true
+      return false
+    }
   }
-  // 从可选项校验字节序
-  const allowedOrders = getMappingByteOrderOptions(point).map((o: any) => toUpper(String(o.value)))
-  const order = toUpper(String(m.byte_order || ''))
-  if (!allowedOrders.includes(order)) {
-    ;(point as any).isInvalid = true
-    point.description = 'Error: invalid byte_order for data_type'
-    return false
+  // 从可选项校验字节序（Data Type 为 bool 时跳过）
+  if (!(m.byte_order === undefined || m.byte_order === null || m.byte_order === '')) {
+    const dtForBO = normalizeType(m.data_type || '')
+    if (!(dtForBO === 'bool' || dtForBO === 'boolean')) {
+      const allowedOrders = getMappingByteOrderOptions(point).map((o: any) =>
+        String(o.value).toUpperCase(),
+      )
+      const order = String(m.byte_order || '').toUpperCase()
+      if (!allowedOrders.includes(order)) {
+        ;(point as any).isInvalid = true
+        return false
+      }
+    }
   }
-  // slave_id 必须存在且范围有效
-  if (m.slave_id == null) {
-    ;(point as any).isInvalid = true
-    point.description = 'Error: slave_id is required (1-247)'
-    return false
-  }
-  const sid = toNumber(m.slave_id)
-  if (!isInteger(sid) || sid < 1 || sid > 247) {
-    ;(point as any).isInvalid = true
-    point.description = 'Error: invalid slave_id (1-247)'
-    return false
+  // slave_id 范围有效（可为空）
+  if (!(m.slave_id === undefined || m.slave_id === null || m.slave_id === '')) {
+    const sid = Number(m.slave_id)
+    if (!Number.isInteger(sid) || sid < 1 || sid > 247) {
+      ;(point as any).isInvalid = true
+      return false
+    }
   }
   // register_address 范围（存在时）
   if (m.register_address != null) {
-    const ra = toNumber(m.register_address)
-    if (!isInteger(ra) || ra < 0 || ra > 65535) {
+    const ra = Number(m.register_address)
+    if (!Number.isInteger(ra) || ra < 0 || ra > 65535) {
       ;(point as any).isInvalid = true
-      point.description = 'Error: invalid register_address (0-65535)'
       return false
     }
   }
   // bit_position 规则：可为空；若填写则必须为 0-15 的整数
   const rawBp = m.bit_position
   if (!(rawBp === undefined || rawBp === null || rawBp === '')) {
-    const n = toNumber(rawBp)
-    if (!isInteger(n) || n < 0 || n > 15) {
+    const n = Number(rawBp)
+    if (!Number.isInteger(n) || n < 0 || n > 15) {
       ;(point as any).isInvalid = true
-      point.description = 'Error: bit_position must be 0-15 when provided'
       return false
     }
   }
   ;(point as any).isInvalid = false
-  if (point.description && point.description.startsWith('Error:')) point.description = ''
   return true
 }
 
@@ -771,7 +879,7 @@ const handleStartMappingEdit = (item: PointInfo) => {
   if (!item.protocol_mapping) {
     if (props.channelProtocol === 'di_do') item.protocol_mapping = {} as any
     else {
-      ElMessage.warning('No mapping data available for this point')
+      // ElMessage.warning('No mapping data available for this point')
       item.protocol_mapping = {
         slave_id: undefined,
         function_code: undefined,
@@ -780,7 +888,7 @@ const handleStartMappingEdit = (item: PointInfo) => {
         byte_order: undefined,
         bit_position: undefined,
       }
-      return
+      // return
     }
   }
   if (props.channelProtocol === 'di_do') {
@@ -817,7 +925,6 @@ const handleCancelMappingEdit = (item: PointInfo) => {
   item.isEditing = false
   // 取消编辑后清除当前筛选条件
   signalNameFilter.value = ''
-  showSignalNameFilter.value = false
 }
 // 确认单行编辑：与“接口原始数据”对比生成 modifiedFields/rowStatus
 const handleConfirmMappingEdit = (item: PointInfo) => {
@@ -842,6 +949,8 @@ const handleConfirmMappingEdit = (item: PointInfo) => {
       item.modifiedFields = changes
     }
     validateMappingValidity(item)
+    // 刷新字段级别的错误提示
+    refreshMappingFieldErrorsForRow(item)
     delete item.originalData
     item.isEditing = false
     return
@@ -850,33 +959,65 @@ const handleConfirmMappingEdit = (item: PointInfo) => {
   if (original && original.protocol_mapping) {
     const o = original.protocol_mapping
     const c = item.protocol_mapping
-    const normInt = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
-    const normRA = (v: any) =>
-      v === '' || v === null || v === undefined
-        ? null
-        : Number.isFinite(Number(v))
-          ? Number(v)
-          : null
-    const normDT = (v: any) => normalizeType(v || '')
-    const normBO = (v: any) => String(v || '').toUpperCase()
-    const normBP = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
 
-    if (normInt(c.slave_id) !== normInt(o.slave_id)) changes.push('mapping_slave_id')
-    if (normInt(c.function_code) !== normInt(o.function_code)) changes.push('mapping_function_code')
-    if (normRA(c.register_address) !== normRA(o.register_address))
-      changes.push('mapping_register_address')
-    if (normDT(c.data_type) !== normDT(o.data_type)) changes.push('mapping_data_type')
-    if (normBO(c.byte_order) !== normBO(o.byte_order)) changes.push('mapping_byte_order')
-    if (normBP(c.bit_position) !== normBP(o.bit_position)) changes.push('mapping_bit_position')
+    // 检查原始 mapping 是否所有字段都为空（除了 bit_position）
+    const origHasAnyValue =
+      !(o.slave_id === undefined || o.slave_id === null) ||
+      !(o.function_code === undefined || o.function_code === null) ||
+      !(o.register_address === undefined || o.register_address === null) ||
+      !(o.data_type === undefined || o.data_type === null || o.data_type === '') ||
+      !(o.byte_order === undefined || o.byte_order === null || o.byte_order === '')
+
+    // 如果原始 mapping 所有字段都为空，则任何修改都标记为修改
+    if (!origHasAnyValue) {
+      const cur = item.protocol_mapping
+      if (cur.slave_id !== undefined && cur.slave_id !== null) changes.push('mapping_slave_id')
+      if (cur.function_code !== undefined && cur.function_code !== null)
+        changes.push('mapping_function_code')
+      if (cur.register_address !== undefined && cur.register_address !== null)
+        changes.push('mapping_register_address')
+      if (cur.data_type !== undefined && cur.data_type !== null && cur.data_type !== '')
+        changes.push('mapping_data_type')
+      if (cur.byte_order !== undefined && cur.byte_order !== null && cur.byte_order !== '')
+        changes.push('mapping_byte_order')
+      if (cur.bit_position !== undefined && cur.bit_position !== null)
+        changes.push('mapping_bit_position')
+    } else {
+      // 原始 mapping 有值，正常对比
+      const normInt = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
+      const normRA = (v: any) =>
+        v === '' || v === null || v === undefined
+          ? null
+          : Number.isFinite(Number(v))
+            ? Number(v)
+            : null
+      const normDT = (v: any) => normalizeType(v || '')
+      const normBO = (v: any) => String(v || '').toUpperCase()
+      const normBP = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
+
+      if (normInt(c.slave_id) !== normInt(o.slave_id)) changes.push('mapping_slave_id')
+      if (normInt(c.function_code) !== normInt(o.function_code))
+        changes.push('mapping_function_code')
+      if (normRA(c.register_address) !== normRA(o.register_address))
+        changes.push('mapping_register_address')
+      if (normDT(c.data_type) !== normDT(o.data_type)) changes.push('mapping_data_type')
+      if (normBO(c.byte_order) !== normBO(o.byte_order)) changes.push('mapping_byte_order')
+      if (normBP(c.bit_position) !== normBP(o.bit_position)) changes.push('mapping_bit_position')
+    }
   } else if (item.protocol_mapping) {
     // 原始数据无 protocol_mapping，则认为当前行均为修改
     const cur = item.protocol_mapping
-    if (cur.slave_id !== undefined) changes.push('mapping_slave_id')
-    if (cur.function_code !== undefined) changes.push('mapping_function_code')
-    if (cur.register_address !== undefined) changes.push('mapping_register_address')
-    if (cur.data_type !== undefined) changes.push('mapping_data_type')
-    if (cur.byte_order !== undefined) changes.push('mapping_byte_order')
-    if (cur.bit_position !== undefined) changes.push('mapping_bit_position')
+    if (cur.slave_id !== undefined && cur.slave_id !== null) changes.push('mapping_slave_id')
+    if (cur.function_code !== undefined && cur.function_code !== null)
+      changes.push('mapping_function_code')
+    if (cur.register_address !== undefined && cur.register_address !== null)
+      changes.push('mapping_register_address')
+    if (cur.data_type !== undefined && cur.data_type !== null && cur.data_type !== '')
+      changes.push('mapping_data_type')
+    if (cur.byte_order !== undefined && cur.byte_order !== null && cur.byte_order !== '')
+      changes.push('mapping_byte_order')
+    if (cur.bit_position !== undefined && cur.bit_position !== null)
+      changes.push('mapping_bit_position')
   }
   const isNew = item.rowStatus === 'added'
   if (!isNew && changes.length > 0) {
@@ -888,6 +1029,8 @@ const handleConfirmMappingEdit = (item: PointInfo) => {
   }
   // 行编辑确认后立即进行有效性校验，便于及时提示错误
   validateMappingValidity(item)
+  // 刷新字段级别的错误提示
+  refreshMappingFieldErrorsForRow(item)
   delete item.originalData
   item.isEditing = false
 }
@@ -968,34 +1111,72 @@ function updateMappingChangeStatus(item: PointInfo) {
 
   if (cur) {
     if (origMap) {
-      const normInt = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
-      const normRA = (v: any) =>
-        v === '' || v === null || v === undefined
-          ? null
-          : Number.isFinite(Number(v))
-            ? Number(v)
-            : null
-      const normDT = (v: any) => normalizeType(v || '')
-      const normBO = (v: any) => String(v || '').toUpperCase()
-      const normBP = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
+      // 检查原始 mapping 是否所有字段都为空（除了 bit_position）
+      const origHasAnyValue =
+        !(origMap.slave_id === undefined || origMap.slave_id === null) ||
+        !(origMap.function_code === undefined || origMap.function_code === null) ||
+        !(origMap.register_address === undefined || origMap.register_address === null) ||
+        !(
+          origMap.data_type === undefined ||
+          origMap.data_type === null ||
+          origMap.data_type === ''
+        ) ||
+        !(
+          origMap.byte_order === undefined ||
+          origMap.byte_order === null ||
+          origMap.byte_order === ''
+        )
 
-      if (normInt(cur.slave_id) !== normInt(origMap.slave_id)) changes.push('mapping_slave_id')
-      if (normInt(cur.function_code) !== normInt(origMap.function_code))
-        changes.push('mapping_function_code')
-      if (normRA(cur.register_address) !== normRA(origMap.register_address))
-        changes.push('mapping_register_address')
-      if (normDT(cur.data_type) !== normDT(origMap.data_type)) changes.push('mapping_data_type')
-      if (normBO(cur.byte_order) !== normBO(origMap.byte_order)) changes.push('mapping_byte_order')
-      if (normBP(cur.bit_position) !== normBP(origMap.bit_position))
-        changes.push('mapping_bit_position')
+      // 如果原始 mapping 所有字段都为空，则任何修改都标记为修改
+      if (!origHasAnyValue) {
+        if (cur.slave_id !== undefined && cur.slave_id !== null) changes.push('mapping_slave_id')
+        if (cur.function_code !== undefined && cur.function_code !== null)
+          changes.push('mapping_function_code')
+        if (cur.register_address !== undefined && cur.register_address !== null)
+          changes.push('mapping_register_address')
+        if (cur.data_type !== undefined && cur.data_type !== null && cur.data_type !== '')
+          changes.push('mapping_data_type')
+        if (cur.byte_order !== undefined && cur.byte_order !== null && cur.byte_order !== '')
+          changes.push('mapping_byte_order')
+        if (cur.bit_position !== undefined && cur.bit_position !== null)
+          changes.push('mapping_bit_position')
+      } else {
+        // 原始 mapping 有值，正常对比
+        const normInt = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
+        const normRA = (v: any) =>
+          v === '' || v === null || v === undefined
+            ? null
+            : Number.isFinite(Number(v))
+              ? Number(v)
+              : null
+        const normDT = (v: any) => normalizeType(v || '')
+        const normBO = (v: any) => String(v || '').toUpperCase()
+        const normBP = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
+
+        if (normInt(cur.slave_id) !== normInt(origMap.slave_id)) changes.push('mapping_slave_id')
+        if (normInt(cur.function_code) !== normInt(origMap.function_code))
+          changes.push('mapping_function_code')
+        if (normRA(cur.register_address) !== normRA(origMap.register_address))
+          changes.push('mapping_register_address')
+        if (normDT(cur.data_type) !== normDT(origMap.data_type)) changes.push('mapping_data_type')
+        if (normBO(cur.byte_order) !== normBO(origMap.byte_order))
+          changes.push('mapping_byte_order')
+        if (normBP(cur.bit_position) !== normBP(origMap.bit_position))
+          changes.push('mapping_bit_position')
+      }
     } else {
       // 无原始映射时，任意当前映射都视为修改
-      if (cur.slave_id !== undefined) changes.push('mapping_slave_id')
-      if (cur.function_code !== undefined) changes.push('mapping_function_code')
-      if (cur.register_address !== undefined) changes.push('mapping_register_address')
-      if (cur.data_type !== undefined) changes.push('mapping_data_type')
-      if (cur.byte_order !== undefined) changes.push('mapping_byte_order')
-      if (cur.bit_position !== undefined) changes.push('mapping_bit_position')
+      if (cur.slave_id !== undefined && cur.slave_id !== null) changes.push('mapping_slave_id')
+      if (cur.function_code !== undefined && cur.function_code !== null)
+        changes.push('mapping_function_code')
+      if (cur.register_address !== undefined && cur.register_address !== null)
+        changes.push('mapping_register_address')
+      if (cur.data_type !== undefined && cur.data_type !== null && cur.data_type !== '')
+        changes.push('mapping_data_type')
+      if (cur.byte_order !== undefined && cur.byte_order !== null && cur.byte_order !== '')
+        changes.push('mapping_byte_order')
+      if (cur.bit_position !== undefined && cur.bit_position !== null)
+        changes.push('mapping_bit_position')
     }
   } else if (origMap) {
     // 原来有映射，现在被清空（保护性处理）
@@ -1030,19 +1211,27 @@ const getEditedData = () => {
     const changed = item.modifiedFields.filter((f) => f.startsWith('mapping_'))
     if (changed.length === 0) return
     const data: Record<string, any> = {}
+    // 归一化：将“清空/未填”的值转成 null，确保请求中携带清空操作
+    const normIntOrNull = (v: any) => (v === '' || v === null || v === undefined ? null : Number(v))
+    const normStrOrNull = (v: any) => (v === '' || v === null || v === undefined ? null : String(v))
     if (props.channelProtocol === 'di_do') {
-      if (changed.includes('mapping_gpio_number'))
-        data.gpio_number = (item.protocol_mapping as any).gpio_number
+      if (changed.includes('mapping_gpio_number')) {
+        const v = (item.protocol_mapping as any).gpio_number
+        data.gpio_number = normIntOrNull(v)
+      }
     } else {
-      if (changed.includes('mapping_slave_id')) data.slave_id = item.protocol_mapping.slave_id
+      if (changed.includes('mapping_slave_id'))
+        data.slave_id = normIntOrNull(item.protocol_mapping.slave_id)
       if (changed.includes('mapping_function_code'))
-        data.function_code = item.protocol_mapping.function_code
+        data.function_code = normIntOrNull(item.protocol_mapping.function_code)
       if (changed.includes('mapping_register_address'))
-        data.register_address = item.protocol_mapping.register_address
-      if (changed.includes('mapping_data_type')) data.data_type = item.protocol_mapping.data_type
-      if (changed.includes('mapping_byte_order')) data.byte_order = item.protocol_mapping.byte_order
+        data.register_address = normIntOrNull(item.protocol_mapping.register_address)
+      if (changed.includes('mapping_data_type'))
+        data.data_type = normStrOrNull(item.protocol_mapping.data_type)
+      if (changed.includes('mapping_byte_order'))
+        data.byte_order = normStrOrNull(item.protocol_mapping.byte_order)
       if (changed.includes('mapping_bit_position'))
-        data.bit_position = item.protocol_mapping.bit_position
+        data.bit_position = normIntOrNull(item.protocol_mapping.bit_position)
     }
     if (Object.keys(data).length > 0 && item.point_id > 0) {
       updates.push({
@@ -1056,12 +1245,23 @@ const getEditedData = () => {
 }
 
 // CSV 导入功能
-// 期望表头：point_id,slave_id,function_code,register_address,data_type,byte_order,bit_position
+// 期望表头：
+// - di_do：至少包含 point_id、gpio_number（其他列可有可无，顺序不限）
+// - modbus_tcp/modbus_rtu：必须包含 point_id、slave_id、function_code、register_address、data_type、byte_order、bit_position；
+//   point_name 可有可无（其他列也可有可无，顺序不限）
 // - 校验字段取值范围并标注 isInvalid，用于“invalid”筛选
 // - 仅更新当前 Tab 存在的 point_id 的映射
 // - 应用后与“接口原始数据”对比，计算 modified 状态
-const handleImportClick = () => {
-  fileInputRef.value?.click()
+const handleImportClick = (event: MouseEvent) => {
+  event.preventDefault()
+  event.stopPropagation()
+  // 在 Mac 浏览器中，使用 mousedown 事件可以确保文件选择对话框正常打开
+  // 使用 setTimeout 确保在事件处理完成后调用
+  setTimeout(() => {
+    if (fileInputRef.value) {
+      fileInputRef.value.click()
+    }
+  }, 0)
 }
 
 const handleFileChange = (event: Event) => {
@@ -1079,27 +1279,66 @@ const handleFileChange = (event: Event) => {
         return
       }
 
-      // 验证表头（逗号分隔）
+      // 根据通道类型验证表头
       const header = lines[0].trim()
-      const expectedHeader =
-        'point_id,slave_id,function_code,register_address,data_type,byte_order,bit_position'
-      if (header !== expectedHeader) {
-        ElMessage.error(`Invalid CSV header. Expected: ${expectedHeader}, Got: ${header}`)
-        return
+      const headerColumns = header.split(',').map((col) => col.trim().toLowerCase())
+      let expectedColumnCount: number
+      // di_do：只要求必需列存在（point_id、gpio_number），其余列可有可无
+      let diDoPointIdIndex = 0
+      let diDoGpioIndex = 0
+      let diDoRequiredMaxIndex = 0
+      // modbus：必需列
+      const modbusRequiredColumns = [
+        'point_id',
+        // point_name 可选
+        'slave_id',
+        'function_code',
+        'register_address',
+        'data_type',
+        'byte_order',
+        'bit_position',
+      ]
+      const modbusColumnIndices: Record<string, number> = {}
+      let modbusRequiredMaxIndex = 0
+
+      if (props.channelProtocol === 'di_do') {
+        // di_do 类型：只强制要求 point_id、gpio_number；其他列（如 point_name）可有可无
+        diDoPointIdIndex = headerColumns.findIndex((h) => h === 'point_id')
+        diDoGpioIndex = headerColumns.findIndex((h) => h === 'gpio_number')
+        if (diDoPointIdIndex === -1 || diDoGpioIndex === -1) {
+          ElMessage.error('Invalid CSV header. Required columns: point_id,gpio_number')
+          return
+        }
+        diDoRequiredMaxIndex = Math.max(diDoPointIdIndex, diDoGpioIndex)
+        // di_do 行列数不固定，不再强制 expectedColumnCount
+        expectedColumnCount = 0
+      } else {
+        // modbus_tcp/modbus_rtu 类型：只要求必需列存在；point_name 可带可不带
+        for (const colName of modbusRequiredColumns) {
+          const idx = headerColumns.findIndex((h) => h === colName)
+          if (idx === -1) {
+            ElMessage.error(`Required column "${colName}" not found in CSV header`)
+            return
+          }
+          modbusColumnIndices[colName] = idx
+        }
+        modbusRequiredMaxIndex = Math.max(...Object.values(modbusColumnIndices))
+        // 行列数不固定，不再强制 expectedColumnCount
+        expectedColumnCount = 0
       }
 
       // 构建按 point_id 的导入映射
       const byId: Record<
         number,
         {
-          slave_id: number
-          function_code: number
-          register_address: number
-          data_type: string
-          byte_order: string
-          bit_position: number
+          slave_id?: number
+          function_code?: number
+          register_address?: number
+          data_type?: string
+          byte_order?: string
+          bit_position?: number
+          gpio_number?: number | string
           isInvalid?: boolean
-          reason?: string
         }
       > = {}
       const invalidRecords: number[] = []
@@ -1110,12 +1349,24 @@ const handleFileChange = (event: Event) => {
         if (!line) continue
 
         const values = line.split(',').map((v) => v.trim())
-        if (values.length !== 7) {
-          invalidRecords.push(i + 1)
-          continue
+        if (props.channelProtocol === 'di_do') {
+          // 只要能覆盖必需列的索引即可（允许额外列；允许省略非必需列）
+          if (values.length <= diDoRequiredMaxIndex) {
+            invalidRecords.push(i + 1)
+            continue
+          }
+        } else {
+          // modbus：只要能覆盖必需列的索引即可（允许额外列；允许 point_name 缺失）
+          if (values.length <= modbusRequiredMaxIndex) {
+            invalidRecords.push(i + 1)
+            continue
+          }
         }
 
-        const [pointIdStr, slaveIdStr, fcStr, regStr, dtStr, orderStr, bitStr] = values
+        const pointIdStr =
+          props.channelProtocol === 'di_do'
+            ? values[diDoPointIdIndex]
+            : values[modbusColumnIndices.point_id]
         const pointId = Number(pointIdStr)
         if (!Number.isInteger(pointId) || pointId <= 0) {
           invalidRecords.push(i + 1)
@@ -1129,78 +1380,129 @@ const handleFileChange = (event: Event) => {
           continue
         }
 
-        // 解析字段
-        const slave_id = Number(slaveIdStr)
-        const function_code = Number(fcStr)
-        const register_address = Number(regStr)
-        const data_type = normalizeType(dtStr)
-        const byte_order = String(orderStr || '').toUpperCase()
-        const bit_position = Number(bitStr)
+        // 根据通道类型解析字段
+        let slave_id: number
+        let function_code: number
+        let register_address: number
+        let data_type: string
+        let byte_order: string
+        let bit_position: number
+        let gpio_number: number | string | undefined
+
+        if (props.channelProtocol === 'di_do') {
+          // di_do 类型：point_id + gpio_number（其他列可有可无）
+          const gpioStr = values[diDoGpioIndex] ?? ''
+          // 无论是否有效，都要尝试解析并保存值（即使无效也要显示）
+          if (gpioStr && gpioStr.trim()) {
+            const gpioNum = Number(gpioStr.trim())
+            // 保存解析后的数值，即使无效也要保存（用于显示）
+            // 如果无法解析为数字，保存为 NaN，否则保存解析后的数字
+            gpio_number = isNaN(gpioNum) ? gpioStr : gpioNum
+          } else {
+            // 空字符串保持为 undefined
+            gpio_number = undefined
+          }
+          // point_name 在 CSV 中存在，但不需要用于更新（points 数据中已有）
+          // di_do 类型不需要其他字段
+          slave_id = 0
+          function_code = 0
+          register_address = 0
+          data_type = ''
+          byte_order = ''
+          bit_position = 0
+        } else {
+          // modbus_tcp/modbus_rtu 类型：按表头索引取值，point_name 可忽略
+          const slaveIdStr = values[modbusColumnIndices.slave_id] ?? ''
+          const fcStr = values[modbusColumnIndices.function_code] ?? ''
+          const regStr = values[modbusColumnIndices.register_address] ?? ''
+          const dtStr = values[modbusColumnIndices.data_type] ?? ''
+          const orderStr = values[modbusColumnIndices.byte_order] ?? ''
+          const bitStr = values[modbusColumnIndices.bit_position] ?? ''
+          slave_id = Number(slaveIdStr)
+          function_code = Number(fcStr)
+          register_address = Number(regStr)
+          data_type = normalizeType(dtStr)
+          byte_order = String(orderStr || '').toUpperCase()
+          bit_position = Number(bitStr)
+        }
 
         // 校验规则
         let isInvalid = false
-        let reason = ''
 
-        // 1) slave_id 1-247
-        if (!Number.isInteger(slave_id) || slave_id < 1 || slave_id > 247) {
-          isInvalid = true
-          reason = 'invalid slave_id (1-247)'
-        }
-
-        // 2) data_type 合规
-        const allowedDT = DATA_TYPE_BY_POINT[props.pointType] || []
-        if (!isInvalid && !allowedDT.includes(data_type)) {
-          isInvalid = true
-          reason = 'invalid data_type for point type'
-        }
-
-        // 3) function_code 合规（结合 pointType 与 data_type）
-        if (!isInvalid) {
-          const allowedByPoint = FC_BY_POINT[props.pointType] || []
-          const base =
-            data_type === 'bool' || data_type === 'boolean' ? [1, 2, 5, 15] : [3, 4, 6, 16]
-          const allowedFC = base.filter((c) => allowedByPoint.includes(c))
-          if (!allowedFC.includes(function_code)) {
-            isInvalid = true
-            reason = 'invalid function_code for data_type/point_type'
-          }
-        }
-
-        // 4) register_address 0-65535
-        if (
-          !isInvalid &&
-          (!Number.isInteger(register_address) || register_address < 0 || register_address > 65535)
-        ) {
-          isInvalid = true
-          reason = 'invalid register_address (0-65535)'
-        }
-
-        // 5) byte_order 合规
-        if (!isInvalid) {
-          // 构造临时 item 以复用字节序校验
-          const temp: any = { protocol_mapping: { data_type } }
-          const allowedOrders = getMappingByteOrderOptions(temp as PointInfo).map((o: any) =>
-            String(o.value).toUpperCase(),
-          )
-          if (!allowedOrders.includes(byte_order)) {
-            isInvalid = true
-            reason = 'invalid byte_order for data_type'
-          }
-        }
-
-        // 6) bit_position 合规
-        if (!isInvalid) {
-          const temp: any = { protocol_mapping: { data_type, function_code } }
-          const canEdit = canEditMappingBitPosition(temp as PointInfo)
-          if (canEdit) {
-            if (!Number.isInteger(bit_position) || bit_position < 0 || bit_position > 15) {
+        if (props.channelProtocol === 'di_do') {
+          // di_do 类型：只校验 gpio_number
+          // 如果 gpio_number 为空（undefined/null），不报错（允许为空）
+          // 只有当 gpio_number 有值但无效时才报错（但值仍会保存用于显示）
+          if (gpio_number !== undefined && gpio_number !== null) {
+            // 检查是否为 NaN（无法解析为数字）或无效的正整数
+            if (
+              isNaN(gpio_number as number) ||
+              !Number.isInteger(gpio_number) ||
+              Number(gpio_number) <= 0
+            ) {
               isInvalid = true
-              reason = 'invalid bit_position (0-15)'
             }
-          } else {
-            if (bit_position !== 0) {
+          }
+        } else {
+          // modbus_tcp/modbus_rtu 类型：校验所有字段
+          // 1) slave_id 1-247
+          if (!Number.isInteger(slave_id) || slave_id < 1 || slave_id > 247) {
+            isInvalid = true
+          }
+
+          // 2) data_type 合规
+          if (!isInvalid) {
+            const allowedDT = DATA_TYPE_BY_POINT[props.pointType] || []
+            if (!allowedDT.includes(data_type)) {
               isInvalid = true
-              reason = 'bit_position must be 0 for this data_type/fc'
+            }
+          }
+
+          // 3) function_code 合规（结合 pointType 与 data_type）
+          if (!isInvalid) {
+            const allowedByPoint = FC_BY_POINT[props.pointType] || []
+            const base =
+              data_type === 'bool' || data_type === 'boolean' ? [1, 2, 5, 15] : [3, 4, 6, 16]
+            const allowedFC = base.filter((c) => allowedByPoint.includes(c))
+            if (!allowedFC.includes(function_code)) {
+              isInvalid = true
+            }
+          }
+
+          // 4) register_address 0-65535
+          if (
+            !isInvalid &&
+            (!Number.isInteger(register_address) ||
+              register_address < 0 ||
+              register_address > 65535)
+          ) {
+            isInvalid = true
+          }
+
+          // 5) byte_order 合规
+          if (!isInvalid) {
+            // 构造临时 item 以复用字节序校验
+            const temp: any = { protocol_mapping: { data_type } }
+            const allowedOrders = getMappingByteOrderOptions(temp as PointInfo).map((o: any) =>
+              String(o.value).toUpperCase(),
+            )
+            if (!allowedOrders.includes(byte_order)) {
+              isInvalid = true
+            }
+          }
+
+          // 6) bit_position 合规
+          if (!isInvalid) {
+            const temp: any = { protocol_mapping: { data_type, function_code } }
+            const canEdit = canEditMappingBitPosition(temp as PointInfo)
+            if (canEdit) {
+              if (!Number.isInteger(bit_position) || bit_position < 0 || bit_position > 15) {
+                isInvalid = true
+              }
+            } else {
+              if (bit_position !== 0) {
+                isInvalid = true
+              }
             }
           }
         }
@@ -1212,8 +1514,8 @@ const handleFileChange = (event: Event) => {
           data_type,
           byte_order,
           bit_position,
+          gpio_number: props.channelProtocol === 'di_do' ? gpio_number : undefined,
           isInvalid,
-          reason,
         }
       }
 
@@ -1221,56 +1523,119 @@ const handleFileChange = (event: Event) => {
       importedFileName.value = file.name
       emit('enter-edit-mode')
 
-      // 应用到当前tab的点位（只更新存在的点）
+      // 应用到当前tab的点位：整体覆盖，如果导入文件中没有某个点，清除该点的mapping信息
       let updated = 0
-      const invalidApplied: number[] = []
       nextTick(() => {
         editPoints.value = (editPoints.value as PointInfo[]).map((item) => {
           const incoming = byId[item.point_id]
-          if (!incoming) return item
-
-          // 记录原值用于比较
           const orig = (originalPointsList.value as PointInfo[]).find(
             (p) => p.point_id === item.point_id,
           )
           const origMap = orig?.protocol_mapping || {}
 
-          // 写入 mapping
-          item.protocol_mapping = {
-            ...(item.protocol_mapping || {}),
-            slave_id: incoming.slave_id,
-            function_code: incoming.function_code,
-            register_address: incoming.register_address,
-            data_type: incoming.data_type,
-            byte_order: incoming.byte_order,
-            bit_position: incoming.bit_position,
+          if (!incoming) {
+            // 导入文件中没有该点，清除mapping信息
+            item.protocol_mapping =
+              props.channelProtocol === 'di_do'
+                ? ({} as any)
+                : {
+                    slave_id: undefined,
+                    function_code: undefined,
+                    register_address: undefined,
+                    data_type: undefined,
+                    byte_order: undefined,
+                    bit_position: undefined,
+                  }
+
+            // 计算修改字段（相对接口原始数据）
+            const changes: string[] = []
+            const cur = item.protocol_mapping
+            if (cur || origMap) {
+              const normInt = (v: any) =>
+                v === '' || v === null || v === undefined ? null : Number(v)
+              const normStr = (v: any) => String(v || '').toUpperCase()
+              const normBP = (v: any) =>
+                v === '' || v === null || v === undefined ? null : Number(v)
+
+              if (props.channelProtocol === 'di_do') {
+                const curGpio = normInt((cur as any)?.gpio_number)
+                const origGpio = normInt((origMap as any)?.gpio_number)
+                if (curGpio !== origGpio) changes.push('mapping_gpio_number')
+              } else {
+                if (normInt(cur?.slave_id) !== normInt(origMap?.slave_id))
+                  changes.push('mapping_slave_id')
+                if (normInt(cur?.function_code) !== normInt(origMap?.function_code))
+                  changes.push('mapping_function_code')
+                if (normInt(cur?.register_address) !== normInt(origMap?.register_address))
+                  changes.push('mapping_register_address')
+                if (normStr(cur?.data_type || '') !== normStr(origMap?.data_type || ''))
+                  changes.push('mapping_data_type')
+                if (normStr(cur?.byte_order || '') !== normStr(origMap?.byte_order || ''))
+                  changes.push('mapping_byte_order')
+                if (normBP(cur?.bit_position) !== normBP(origMap?.bit_position))
+                  changes.push('mapping_bit_position')
+              }
+            }
+            if (changes.length > 0) {
+              item.rowStatus = item.rowStatus === 'added' ? 'added' : 'modified'
+              item.modifiedFields = Array.from(
+                new Set([...(item.modifiedFields || []), ...changes]),
+              )
+              updated++
+            }
+            return item
           }
 
-          // 标注 invalid
-          if (incoming.isInvalid) {
-            ;(item as any).isInvalid = true
-            item.description = `Error: ${incoming.reason}`
-            invalidApplied.push(item.point_id)
+          // 导入文件中有该点，覆盖 mapping
+          if (props.channelProtocol === 'di_do') {
+            // 即使 gpio_number 无效，也要保存值用于显示
+            item.protocol_mapping = {
+              gpio_number: incoming.gpio_number,
+            } as any
+            // 如果导入数据标记为无效，设置错误状态
+            if (incoming.isInvalid) {
+              ;(item as any).isInvalid = true
+            }
           } else {
-            ;(item as any).isInvalid = false
-            if (item.description && item.description.startsWith('Error:')) item.description = ''
+            item.protocol_mapping = {
+              slave_id: incoming.slave_id,
+              function_code: incoming.function_code,
+              register_address: incoming.register_address,
+              data_type: incoming.data_type,
+              byte_order: incoming.byte_order,
+              bit_position: incoming.bit_position,
+            }
           }
 
           // 计算修改字段（相对接口原始数据）
           const changes: string[] = []
           const cur = item.protocol_mapping
           if (cur) {
-            if (cur.slave_id !== origMap.slave_id) changes.push('mapping_slave_id')
-            if (cur.function_code !== origMap.function_code) changes.push('mapping_function_code')
-            if (cur.register_address !== origMap.register_address)
-              changes.push('mapping_register_address')
-            if (cur.data_type !== origMap.data_type) changes.push('mapping_data_type')
-            if (
-              String(cur.byte_order || '').toUpperCase() !==
-              String(origMap.byte_order || '').toUpperCase()
-            )
-              changes.push('mapping_byte_order')
-            if (cur.bit_position !== origMap.bit_position) changes.push('mapping_bit_position')
+            if (props.channelProtocol === 'di_do') {
+              const normGpio = (v: any) =>
+                v === '' || v === null || v === undefined ? null : Number(v)
+              const curGpio = normGpio((cur as any).gpio_number)
+              const origGpio = normGpio((origMap as any)?.gpio_number)
+              if (curGpio !== origGpio) changes.push('mapping_gpio_number')
+            } else {
+              const normInt = (v: any) =>
+                v === '' || v === null || v === undefined ? null : Number(v)
+              const normStr = (v: any) => String(v || '').toUpperCase()
+              const normBP = (v: any) =>
+                v === '' || v === null || v === undefined ? null : Number(v)
+              if (normInt(cur.slave_id) !== normInt(origMap.slave_id))
+                changes.push('mapping_slave_id')
+              if (normInt(cur.function_code) !== normInt(origMap.function_code))
+                changes.push('mapping_function_code')
+              if (normInt(cur.register_address) !== normInt(origMap.register_address))
+                changes.push('mapping_register_address')
+              if (normStr(cur.data_type || '') !== normStr(origMap.data_type || ''))
+                changes.push('mapping_data_type')
+              if (normStr(cur.byte_order || '') !== normStr(origMap.byte_order || ''))
+                changes.push('mapping_byte_order')
+              if (normBP(cur.bit_position) !== normBP(origMap.bit_position))
+                changes.push('mapping_bit_position')
+            }
           }
           if (changes.length > 0) {
             item.rowStatus = item.rowStatus === 'added' ? 'added' : 'modified'
@@ -1279,25 +1644,41 @@ const handleFileChange = (event: Event) => {
           }
           return item
         })
-        // 导入后初始化字段级错误提示
-        refreshMappingFieldErrorsForList()
-      })
 
-      if (updated === 0) {
-        ElMessage.info('No mappings updated (no matching point_id or no changes)')
-      } else {
-        ElMessage.success(`Applied mappings to ${updated} point(s)`)
-      }
-      if (invalidRecords.length > 0 || invalidApplied.length > 0) {
-        ElMessage.warning(
-          `CSV invalid rows: ${invalidRecords.join(', ')}${invalidApplied.length ? '; Applied with errors on point_id: ' + invalidApplied.slice(0, 10).join(', ') + (invalidApplied.length > 10 ? '...' : '') : ''}`,
-        )
-      }
-      if (skippedNoPoint.length > 0) {
-        ElMessage.info(
-          `Skipped non-existing point_id: ${Array.from(new Set(skippedNoPoint)).slice(0, 10).join(', ')}${skippedNoPoint.length > 10 ? '...' : ''}`,
-        )
-      }
+        // 导入后执行校验，自动设置字段级错误和行级 invalid 状态
+        editPoints.value.forEach((p) => validateMappingValidity(p))
+        refreshMappingFieldErrorsForList()
+
+        // 只显示简单的成功/信息提示，不显示详细错误（错误已在每行下方显示）
+        if (invalidRecords.length > 0) {
+          ElMessage.warning(
+            `CSV file has ${invalidRecords.length} invalid row(s). Please check the format.`,
+          )
+        }
+
+        if (updated === 0) {
+          ElMessage.info('No mappings updated (no matching point_id or no changes)')
+        } else {
+          const invalidCount = editPoints.value.filter((p: any) => (p as any).isInvalid).length
+          if (invalidCount === 0) {
+            ElMessage.success(`Successfully applied mappings to ${updated} point(s)`)
+          } else {
+            ElMessage.warning(
+              `Applied mappings to ${updated} point(s), but ${invalidCount} point(s) have errors. Please check the rows marked in red.`,
+            )
+          }
+        }
+
+        if (skippedNoPoint.length > 0) {
+          ElMessage.info(
+            `Skipped ${skippedNoPoint.length} non-existing point_id(s): ${Array.from(
+              new Set(skippedNoPoint),
+            )
+              .slice(0, 10)
+              .join(', ')}${skippedNoPoint.length > 10 ? '...' : ''}`,
+          )
+        }
+      })
     } catch (error) {
       console.error('Error parsing CSV:', error)
       ElMessage.error('Failed to parse CSV file')
@@ -1328,21 +1709,35 @@ const handleExport = () => {
     return
   }
 
-  // 生成CSV内容（映射字段）
-  const header =
-    'point_id,slave_id,function_code,register_address,data_type,byte_order,bit_position'
-  const rows = editPoints.value.map((point) => {
-    const m = point.protocol_mapping || ({} as any)
-    return [
-      point.point_id,
-      m.slave_id ?? '',
-      m.function_code ?? '',
-      m.register_address ?? '',
-      m.data_type ?? '',
-      m.byte_order ?? '',
-      m.bit_position ?? '',
-    ].join(',')
-  })
+  // 根据通道类型生成CSV内容
+  let header: string
+  let rows: string[]
+
+  if (props.channelProtocol === 'di_do') {
+    // di_do 类型：point_id,point_name,gpio_number
+    header = 'point_id,point_name,gpio_number'
+    rows = editPoints.value.map((point) => {
+      const m = point.protocol_mapping || ({} as any)
+      return [point.point_id, point.signal_name ?? '', m.gpio_number ?? ''].join(',')
+    })
+  } else {
+    // modbus_tcp/modbus_rtu 类型
+    header =
+      'point_id,point_name,slave_id,function_code,register_address,data_type,byte_order,bit_position'
+    rows = editPoints.value.map((point) => {
+      const m = point.protocol_mapping || ({} as any)
+      return [
+        point.point_id,
+        point.signal_name ?? '',
+        m.slave_id ?? '',
+        m.function_code ?? '',
+        m.register_address ?? '',
+        m.data_type ?? '',
+        m.byte_order ?? '',
+        m.bit_position ?? '',
+      ].join(',')
+    })
+  }
 
   const csvContent = [header, ...rows].join('\n')
 
@@ -1380,12 +1775,20 @@ const handleExport = () => {
   ElMessage.success(`Exported to ${filename}`)
 }
 
+// 检查是否有修改、添加或删除
+const hasChanges = () => {
+  if (!Array.isArray(editPoints.value)) return false
+  return editPoints.value.some(
+    (p: any) =>
+      p && (p.rowStatus === 'modified' || p.rowStatus === 'added' || p.rowStatus === 'deleted'),
+  )
+}
+
 defineExpose({
   getEditedData,
   clearImportedFileName,
   clearSignalNameFilter: () => {
     signalNameFilter.value = ''
-    showSignalNameFilter.value = false
   },
   hasInvalid: () => {
     return Array.isArray(editPoints.value)
@@ -1396,6 +1799,13 @@ defineExpose({
         )
       : false
   },
+  scrollToTop: () => {
+    nextTick(() => {
+      const sc = scrollerRef.value
+      if (sc && sc.$el) sc.scrollToItem(0)
+    })
+  },
+  hasChanges,
 })
 </script>
 
@@ -1408,7 +1818,7 @@ defineExpose({
   padding-bottom: 0.1rem;
 
   .imported-file-name {
-    color: #67c23a;
+    color: #ff6900;
     font-size: 0.14rem;
     padding: 0 0.1rem;
   }
@@ -1426,6 +1836,34 @@ defineExpose({
       flex-direction: column;
       align-items: flex-start;
     }
+  }
+
+  // 仅表头预留左右占位，行内不加 padding，左侧状态使用浮动条
+  .vtable__header {
+    position: relative;
+    padding-left: 0.03rem;
+    padding-right: 0.08rem;
+  }
+  .row-status-float {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0.03rem;
+    background: transparent;
+    pointer-events: none;
+  }
+  .vtable__row.row-status-added .row-status-float {
+    background: #67c23a;
+  }
+  .vtable__row.row-status-modified .row-status-float {
+    background: #409eff;
+  }
+  .vtable__row.row-status-deleted .row-status-float {
+    background: #f56c6c;
+  }
+  .vtable__row.row-invalid .row-status-float {
+    background: #f56c6c;
   }
 
   .vtable__cell--point-id {
@@ -1446,6 +1884,7 @@ defineExpose({
       position: absolute;
       top: 100%;
       left: 0;
+      right: 0;
       z-index: 100;
       background: #1e2f52;
       padding: 0.1rem;
@@ -1454,23 +1893,29 @@ defineExpose({
       min-width: 2.5rem;
     }
   }
+  // 让筛选下拉与输入框左侧对齐
+  :deep(.signal-name-popper) {
+    left: 0 !important;
+    transform: none !important;
+    min-width: 100% !important;
+  }
   .vtable__cell--value {
-    width: 12%;
+    width: 1.56rem; // 12% of 13.07
   }
   .vtable__cell--scale {
-    width: 10%;
+    width: 1.3rem; // 10%
   }
   .vtable__cell--offset {
-    width: 10%;
+    width: 1.3rem; // 10%
   }
   .vtable__cell--unit {
-    width: 10%;
+    width: 1.3rem; // 10%
   }
   .vtable__cell--reverse {
-    width: 10%;
+    width: 1.3rem; // 10%
   }
   .vtable__cell--operation {
-    width: 13%;
+    width: 1.69rem; // 13%
 
     .point-table__operation-cell {
       display: flex;
@@ -1596,7 +2041,7 @@ defineExpose({
     width: 9%;
   }
   .vtable__cell--gpio-number {
-    width: 12%;
+    width: 61%;
   }
 
   .row-status-normal {

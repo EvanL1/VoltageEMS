@@ -1,21 +1,40 @@
 <template>
   <div class="voltage-class alarm-records">
     <LoadingBg :loading="loading">
-      <!-- 表格工具-->
+      <!-- 表格工具栏 -->
       <div class="alarm-records__toolbar">
         <div class="alarm-records__toolbar-left" ref="toolbarLeftRef">
-          <!-- 选择-->
-          <el-select
-            v-model="filters.warning_level"
-            @change="fetchTableData(true)"
-            :append-to="toolbarLeftRef"
-            placeholder="select warning level"
-            clearable
-          >
-            <el-option label="L1" :value="1" />
-            <el-option label="L2" :value="2" />
-            <el-option label="L3" :value="3" />
-          </el-select>
+          <el-form :model="filters" :inline="true" class="test-form">
+            <el-form-item label="Alarm Level:">
+              <el-select
+                v-model="filters.warning_level"
+                :append-to="toolbarLeftRef"
+                clearable
+                placeholder="Please select level"
+              >
+                <el-option label="L1" :value="1" />
+                <el-option label="L2" :value="2" />
+                <el-option label="L3" :value="3" />
+              </el-select>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <div class="alarm-records__toolbar-right">
+          <IconButton
+            type="warning"
+            :icon="reloadIcon"
+            text="Reload"
+            custom-class="alarm-records__export-btn"
+            @click="reloadFilters"
+          />
+          <IconButton
+            type="primary"
+            :icon="searchIcon"
+            text="Search"
+            custom-class="alarm-records__export-btn"
+            @click="fetchTableData(true)"
+          />
         </div>
       </div>
 
@@ -57,7 +76,8 @@
 import type { CurrentAlarmData } from '@/types/alarm'
 import { useTableData, type TableConfig } from '@/composables/useTableData'
 
-// import alarmExportIcon from '@/assets/icons/alarm-export.svg'
+import reloadIcon from '@/assets/icons/table-refresh.svg'
+import searchIcon from '@/assets/icons/table-search.svg'
 import level1Icon from '@/assets/icons/home-alter-L1.svg'
 import level2Icon from '@/assets/icons/home-alter-L2.svg'
 import level3Icon from '@/assets/icons/home-alter-L3.svg'
@@ -82,26 +102,11 @@ const {
   handlePageSizeChange,
   fetchTableData,
   filters,
+  reloadFilters,
   handlePageChange,
 } = useTableData<CurrentAlarmData>(tableConfig)
 
-filters.warning_level = undefined
-
-// const warningLevelList = [
-//   {
-//     label: 'L1',
-//     value: 1,
-//   },
-
-//   {
-//     label: 'L2',
-//     value: 2,
-//   },
-//   {
-//     label: 'L3',
-//     value: 3,
-//   },
-// ]
+filters.warning_level = null
 </script>
 
 <style scoped lang="scss">
@@ -126,7 +131,7 @@ filters.warning_level = undefined
     .alarm-records__toolbar-right {
       display: flex;
       align-items: center;
-      gap: 0.16rem;
+      gap: 0.1rem;
 
       .alarm-records__export-btn {
         display: flex;
@@ -139,6 +144,14 @@ filters.warning_level = undefined
         }
       }
     }
+  }
+
+  :deep(.test-form.el-form--inline .el-form-item) {
+    margin-bottom: 0rem !important;
+  }
+
+  :deep(.el-form--inline .el-form-item) {
+    margin-bottom: 0.4rem !important;
   }
 
   .alarm-records__table {

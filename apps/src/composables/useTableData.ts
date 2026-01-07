@@ -138,43 +138,12 @@ export function useTableData<T = any>(config: TableConfig) {
   }
 
   /**
-   * 搜索数据
-   * @param keyword 搜索关键字
-   */
-  const searchData = (keyword: string) => {
-    queryParams.keyword = keyword
-    fetchTableData(true)
-  }
-
-  /**
-   * 设置筛选条件
-   * @param filterKey 筛选字段
-   * @param filterValue 筛选值
-   */
-  const setFilter = (filterKey: string, filterValue: any) => {
-    if (filterValue === null || filterValue === undefined || filterValue === '') {
-      delete filters[filterKey]
-    } else {
-      filters[filterKey] = filterValue
-    }
-    fetchTableData(true)
-  }
-
-  /**
-   * 批量设置筛选条件
-   * @param newFilters 新的筛选条件
-   */
-  const setFilters = (newFilters: Record<string, any>) => {
-    Object.keys(filters).forEach((key) => delete filters[key])
-    Object.assign(filters, newFilters)
-    fetchTableData(true)
-  }
-
-  /**
    * 清空筛选条件
    */
-  const clearFilters = () => {
-    Object.keys(filters).forEach((key) => delete filters[key])
+  const reloadFilters = () => {
+    Object.keys(filters).forEach((key) => {
+      filters[key] = null
+    })
     queryParams.keyword = ''
     fetchTableData(true)
   }
@@ -306,7 +275,9 @@ export function useTableData<T = any>(config: TableConfig) {
     queryParams.keyword = ''
     delete queryParams.sortBy
     delete queryParams.sortOrder
-    Object.keys(filters).forEach((key) => delete filters[key])
+    Object.keys(filters).forEach((key) => {
+      filters[key] = null
+    })
     fetchTableData()
   }
 
@@ -381,10 +352,7 @@ export function useTableData<T = any>(config: TableConfig) {
     resetTable,
 
     // 查询和筛选方法
-    searchData,
-    setFilter,
-    setFilters,
-    clearFilters,
+    reloadFilters,
 
     // el-table 集成方法
     handleSortChange,

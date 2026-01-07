@@ -4,7 +4,7 @@
       <BatteryCard
         class="battery-card"
         v-for="item in batteryCardData"
-        :key="item.title"
+        :key="item.pointId"
         :title="item.title"
         :value="item.value"
         :unit="item.unit"
@@ -13,180 +13,127 @@
   </div>
 </template>
 <script setup lang="ts">
+import { formatNumber } from '@/utils/common'
+import { watch, ref } from 'vue'
 import useWebSocket from '@/composables/useWebSocket'
+
 interface BatteryCardItem {
-  id: number
   title: string
   value?: number | null | string
   unit?: string
   pointId: number
 }
+
+// WebSocket 数据
+const wsData = ref<any>(null)
+
+// 订阅 WebSocket - Overview 使用 inst 源
 useWebSocket(
-  'deviceBatteryOverview',
   {
-    channels: [2],
-    dataTypes: ['T'],
+    source: 'inst',
+    channels: [1],
+    dataTypes: ['A', 'M', 'P'] as any,
     interval: 1000,
-    source: 'comsrv',
   },
   {
-    onDataUpdate: (data) => {
-      console.log(data, 'data')
-    },
-    onBatchDataUpdate: (data) => {
-      const channel2TData = data.updates.find(
-        (item: any) => item.channel_id === 2 && item.data_type === 'T',
-      )?.values
-      if (channel2TData) {
-        console.log(channel2TData, 'channel2TData')
-        batteryCardData.value.forEach((item) => {
-          item.value = channel2TData[item.pointId]?.toFixed(3)
-        })
-      }
+    onBatchDataUpdate: (data: any) => {
+      wsData.value = data
     },
   },
 )
+
+// 监听 WebSocket 数据更新
+watch(
+  wsData,
+  (data) => {
+    if (!data?.updates?.length) return
+    // 从数据类型 M 中取值
+    const mUpdate = data.updates.find(
+      (item: any) => item.channel_id === 1 && item.data_type === 'M',
+    )
+    if (!mUpdate) return
+    const values = mUpdate.values || {}
+    batteryCardData.value.forEach((item) => {
+      const pointValue = values[item.pointId]
+      if (pointValue !== undefined && pointValue !== null) {
+        item.value = formatNumber(pointValue)
+      }
+    })
+  },
+  { deep: true, immediate: true },
+)
 const batteryCardData = ref<BatteryCardItem[]>([
-  // {
-  //   id: 1,
-  //   title: 'Off Grid',
-  // },
-  // {
-  //   id: 2,
-  //   title: 'Cell Count',
-  //   value: 0,
-  // },
   {
-    id: 4,
+    pointId: 2,
+    title: 'Charge Discharge Status',
+    value: '-',
+    unit: '',
+  },
+  {
+    pointId: 3,
     title: 'SoC',
     value: '-',
     unit: '%',
-    pointId: 4,
   },
   {
-    id: 3,
+    pointId: 4,
     title: 'SoH',
     value: '-',
     unit: '%',
-    pointId: 5,
   },
 
-  // {
-  //   id: 5,
-  //   title: 'Energy',
-  //   value: 0,
-  //   unit: 'kWh',
-  // },
-  // {
-  //   id: 6,
-  //   title: 'Cycle',
-  //   value: 0,
-  // },
   {
-    id: 7,
+    pointId: 1,
     title: 'Voltage',
     value: '-',
     unit: 'V',
-    pointId: 1,
   },
-  // {
-  //   id: 8,
-  //   title: 'Running Status',
-  //   value: '',
-  // },
-  // {
-  //   id: 9,
-  //   title: 'Cooling',
-  //   value: '',
-  // },
+
   {
-    id: 10,
+    pointId: 2,
     title: 'Current',
     value: '-',
     unit: 'A',
-    pointId: 2,
   },
-  // {
-  //   id: 11,
-  //   title: 'Max Cell Temp',
-  //   value: null,
-  //   unit: '°F',
-  //   pointId: 23,
-  // },
-  // {
-  //   id: 11,
-  //   title: 'Alarms',
-  //   value: '',
-  // },
+
+  //no
   {
-    id: 12,
     title: 'Power',
     value: '-',
     unit: 'KW',
     pointId: 3,
   },
-  // {
-  //   id: 13,
-  //   title: 'Min Temp',
-  //   value: 0,
-  //   unit: '°F',
-  // },
   {
-    id: 14,
     title: 'Max Cell Voltage',
     value: '-',
     unit: 'V',
-    pointId: 15,
-  },
-  {
-    id: 15,
-    title: 'Min Cell Voltage',
-    value: '-',
-    unit: 'V',
-    pointId: 18,
-  },
-  {
-    id: 20,
-    title: 'Avg Cell Voltage',
-    value: '-',
-    unit: 'V',
-    pointId: 21,
-  },
-
-  {
-    id: 16,
-    title: 'Permit Charge Power',
-    value: '-',
-    unit: 'KW',
-    pointId: 6,
-  },
-  {
-    id: 21,
-    title: 'Cell Voltage Difference',
-    value: '-',
-    unit: 'V',
-    pointId: 22,
-  },
-  {
-    id: 17,
-    title: 'Permit Discharge Power',
-    value: '-',
-    unit: 'KW',
     pointId: 7,
   },
   {
-    id: 18,
-    title: 'Permit Charge Current',
+    title: 'Min Cell Voltage',
     value: '-',
-    unit: 'A',
+    unit: 'V',
     pointId: 8,
   },
   {
-    id: 19,
-    title: 'Permit Discharge Current',
+    title: 'Avg Cell Voltage',
     value: '-',
-    unit: 'A',
+    unit: 'V',
     pointId: 9,
+  },
+  //no
+  {
+    title: 'Cell Voltage Difference',
+    value: '-',
+    unit: 'V',
+    pointId: 10,
+  },
+  //no
+  {
+    title: 'Avg Cell Temperature',
+    value: '-',
+    unit: '℃',
+    pointId: 11,
   },
 ])
 </script>

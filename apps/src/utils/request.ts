@@ -5,10 +5,23 @@
 
 import axios, { type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+import { ref } from 'vue'
 import { useUserStore } from '@/stores/user'
+import { useGlobalStore } from '@/stores/global'
 
-// 存储所有pending的请求
-const pendingRequests = new Map()
+// 存储所有pending的请求（使用 ref 包装 Map 以确保响应式）
+const pendingRequests = ref(new Map<string, any>())
+
+// 更新全局 loading 状态的函数
+const updateGlobalLoading = () => {
+  try {
+    const globalStore = useGlobalStore()
+    globalStore.loading = pendingRequests.value.size > 0
+  } catch (error) {
+    // Pinia 未初始化时忽略错误
+    console.warn('Pinia store not available:', error)
+  }
+}
 
 // 规范化用于生成请求唯一标识的负载（排除 _t，稳定排序）
 const normalizeForKey = (value: any): any => {
@@ -67,7 +80,8 @@ export interface ApiResponse<T = any> {
 export interface RequestConfig extends AxiosRequestConfig {
   showErrorMessage?: boolean // 是否显示错误消息，默认true
   showSuccessMessage?: boolean // 是否显示成功消息，默认false
-  loading?: boolean // 是否显示loading，默认false
+  skipGlobalLoading?: boolean // 是否跳过全局loading，默认false
+  _isRefreshTokenRequest?: boolean // 是否为刷新token请求（内部使用，避免重复刷新）
 }
 
 /**
@@ -91,22 +105,46 @@ const service = axios.create({
  * 在发送请求之前做一些统一处理
  */
 const requestInterceptor = (config: any) => {
-  // 生成请求的唯一标识
+  // 添加时间戳防止缓存 (GET请求) - 在生成 key 之前添加，但 normalizeForKey 会过滤掉 _t
+  if (
+    config.method?.toLowerCase() === 'get' &&
+    config.url !== '/modApi/api/instances/search' &&
+    config.url !== '/comApi/api/channels/search'
+  ) {
+    config.params = {
+      ...config.params,
+      _t: Date.now(),
+    }
+  }
+
+  // 生成请求的唯一标识（_t 会被 normalizeForKey 过滤掉，所以 key 是稳定的）
   const requestKey = buildRequestKey(config)
 
-  // 如果存在相同的pending请求，取消它
-  if (pendingRequests.has(requestKey)) {
-    const cancelToken = pendingRequests.get(requestKey)
+  // 检查是否跳过全局loading
+  const requestConfig = config as any
+  const skipGlobalLoading = requestConfig.skipGlobalLoading === true
+
+  // 如果存在相同的pending请求，取消它（但需要检查是否跳过全局loading）
+  if (!skipGlobalLoading && pendingRequests.value.has(requestKey)) {
+    const cancelToken = pendingRequests.value.get(requestKey)
     cancelToken.cancel('请求被取消')
-    pendingRequests.delete(requestKey)
+    pendingRequests.value.delete(requestKey)
+    updateGlobalLoading()
   }
 
   // 创建新的cancelToken
   const cancelToken = axios.CancelToken.source()
   config.cancelToken = cancelToken.token
-  pendingRequests.set(requestKey, cancelToken)
+  // 将 requestKey 保存到 config 中，以便在错误处理时能够清除
+  config._requestKey = requestKey
 
-  // 从localStorage获取token并添加到请求头
+  // 如果配置了 skipGlobalLoading，则不添加到 pendingRequests
+  if (!skipGlobalLoading) {
+    pendingRequests.value.set(requestKey, cancelToken)
+    updateGlobalLoading()
+  }
+
+  // 从内存中获取token并添加到请求头（token存储在内存中，refreshToken存储在localStorage）
   const userStore = useUserStore()
   const token = userStore.token
   if (token && config.headers) {
@@ -120,24 +158,21 @@ const requestInterceptor = (config: any) => {
     }
   }
 
-  // 添加时间戳防止缓存 (GET请求)
-  if (
-    config.method?.toLowerCase() === 'get' &&
-    config.url !== '/modApi/api/instances/search' &&
-    config.url !== '/comApi/api/channels/search'
-  ) {
-    config.params = {
-      ...config.params,
-      _t: Date.now(),
-    }
-  }
-
   console.log(`[请求] ${config.method?.toUpperCase()} ${config.url}`, config)
   return config
 }
 
 const requestErrorInterceptor = (error: any) => {
   console.error('[请求错误]', error)
+  // 如果错误对象有 config，尝试清除 pendingRequests
+  const requestErrorConfig = error.config as any
+  if (error.config?._requestKey && !requestErrorConfig?.skipGlobalLoading) {
+    const requestKey = error.config._requestKey
+    if (pendingRequests.value.has(requestKey)) {
+      pendingRequests.value.delete(requestKey)
+      updateGlobalLoading()
+    }
+  }
   ElMessage.error('Request configuration error')
   return Promise.reject(error)
 }
@@ -173,8 +208,14 @@ const createResponseInterceptor = (serviceInstance: any, logPrefix: string = '')
   // 响应成功时的处理
   const responseSuccessHandler = (response: any) => {
     // 请求完成后，从pendingRequests中移除
-    const requestKey = buildRequestKey(response.config)
-    pendingRequests.delete(requestKey)
+    // 优先使用 config._requestKey，如果没有则使用 buildRequestKey 生成
+    const requestKey = response.config?._requestKey || buildRequestKey(response.config)
+    const responseConfig = response.config as any
+    // 如果配置了 skipGlobalLoading，则不需要从 pendingRequests 中移除
+    if (!responseConfig?.skipGlobalLoading && requestKey && pendingRequests.value.has(requestKey)) {
+      pendingRequests.value.delete(requestKey)
+      updateGlobalLoading()
+    }
 
     console.log(
       `${logPrefix}[响应] ${response.config.method?.toUpperCase()} ${response.config.url}`,
@@ -229,21 +270,59 @@ const createResponseInterceptor = (serviceInstance: any, logPrefix: string = '')
 
   // 响应失败时的处理
   const responseErrorHandler = async (error: any) => {
-    // 如果是取消请求的错误，不显示错误信息
+    // 如果是取消请求的错误，尝试清除 pendingRequests
     if (axios.isCancel(error)) {
       console.log(`${logPrefix}[请求已取消] ${error.message}`)
+      // 尝试从 error.config 中获取 requestKey（Cancel 错误可能没有 config）
+      const cancelError = error as any
+      if (cancelError.config) {
+        const requestKey = cancelError.config._requestKey || buildRequestKey(cancelError.config)
+        const cancelConfig = cancelError.config as any
+        // 如果配置了 skipGlobalLoading，则不需要从 pendingRequests 中移除
+        if (
+          !cancelConfig?.skipGlobalLoading &&
+          requestKey &&
+          pendingRequests.value.has(requestKey)
+        ) {
+          pendingRequests.value.delete(requestKey)
+          updateGlobalLoading()
+        }
+      }
       return Promise.reject(error)
     }
 
     // 请求完成后，从pendingRequests中移除
-    const requestKey = buildRequestKey(error.config)
-    if (requestKey) {
-      pendingRequests.delete(requestKey)
+    // 优先使用 config._requestKey，如果没有则使用 buildRequestKey 生成
+    const requestKey =
+      error.config?._requestKey || (error.config ? buildRequestKey(error.config) : null)
+    const errorConfig = error.config as any
+    // 如果配置了 skipGlobalLoading，则不需要从 pendingRequests 中移除
+    if (!errorConfig?.skipGlobalLoading && requestKey && pendingRequests.value.has(requestKey)) {
+      pendingRequests.value.delete(requestKey)
+      updateGlobalLoading()
     }
 
     console.error(`${logPrefix}[响应错误]`, error)
 
     const originalRequest = error.config
+    const requestConfig = originalRequest as any
+
+    // 如果是刷新token请求返回401，直接跳转登录页，不再尝试刷新
+    if (error.response?.status === 401 && requestConfig?._isRefreshTokenRequest) {
+      console.log('[请求拦截器] 刷新token请求返回401，直接跳转登录页')
+      const userStore = useUserStore()
+      userStore.clearUserData()
+
+      // 处理队列中的请求（如果有）
+      if (isRefreshing) {
+        processQueue(new Error('Token refresh failed'), null)
+        isRefreshing = false
+      }
+
+      ElMessage.error('Login expired, please log in again')
+      window.location.href = '/login'
+      return Promise.reject(new Error('Token refresh request returned 401'))
+    }
 
     // 处理401错误 - 自动刷新token
     if (error.response?.status === 401 && !originalRequest._retry) {
@@ -265,33 +344,21 @@ const createResponseInterceptor = (serviceInstance: any, logPrefix: string = '')
       isRefreshing = true
       try {
         const userStore = useUserStore()
-        const refreshToken = userStore.refreshToken
 
-        if (!refreshToken) {
-          throw new Error('No refresh token available')
-        }
+        // 调用 userStore 的 refreshUserToken 方法
+        const result = await userStore.refreshUserToken()
 
-        // 调用刷新token的API
-        const response = await service.post('auth/refresh', {
-          refresh_token: refreshToken,
-        })
-        console.log('response', response)
-
-        if (response.data.success) {
-          // 更新store中的token
-          userStore.token = response.data.data.access_token
-          userStore.refreshToken = response.data.data.refresh_token
-
+        if (result.success && userStore.token) {
           // 更新当前请求的Authorization头
-          originalRequest.headers['Authorization'] = `Bearer ${response.data.data.access_token}`
+          originalRequest.headers['Authorization'] = `Bearer ${userStore.token}`
 
           // 处理队列中的请求
-          processQueue(null, response.data.data.access_token)
+          processQueue(null, userStore.token)
 
           // 重试原请求
           return serviceInstance(originalRequest)
         } else {
-          throw new Error('Token refresh failed')
+          throw new Error(result.message || 'Token refresh failed')
         }
       } catch (refreshError) {
         // 刷新token失败，清除用户数据并跳转到登录页
@@ -510,10 +577,11 @@ class Request {
 
 // 取消所有pending请求的方法
 export const cancelAllPendingRequests = () => {
-  pendingRequests.forEach((cancelToken) => {
+  pendingRequests.value.forEach((cancelToken: any) => {
     cancelToken.cancel('路由切换，请求被取消')
   })
-  pendingRequests.clear()
+  pendingRequests.value.clear()
+  updateGlobalLoading()
 }
 
 // 导出服务实例和Request类

@@ -30,12 +30,18 @@ interface WebSocketConfig {
   heartbeatTimeout?: number
 }
 
+/** 订阅记录 */
+interface SubscriptionRecord {
+  id: string // subscriptionId
+  config: SubscriptionConfig
+  listeners: Partial<ListenerConfig>
+}
+
 /** 待订阅信息记录，用于重连或等待 ACK */
 interface PendingSubscription {
-  id: string
-  pageId: string
+  subscriptionId: string
   config: SubscriptionConfig
-  listeners: any
+  listeners: Partial<ListenerConfig>
   timestamp: number
 }
 
@@ -48,23 +54,15 @@ class WebSocketManager {
   private reconnectTimer: number | null = null
   private messageIdCounter = 0
   private isManualDisconnect = false
+  private connectingPromise: Promise<void> | null = null // 连接 Promise 缓存，避免并发调用
 
   public readonly status = ref<ConnectionStatus>('disconnected')
   public readonly isConnected = computed(() => this.status.value === 'connected')
   public readonly isConnecting = computed(() => this.status.value === 'connecting')
 
-  private globalListeners: ListenerConfig = {}
-
-  private pageSubscriptions = new Map<
-    string,
-    {
-      id: string
-      config: SubscriptionConfig
-      listeners: Partial<ListenerConfig>
-    }
-  >()
-
+  private subscriptions = new Map<string, SubscriptionRecord>()
   private pendingSubscriptionsMap = new Map<string, PendingSubscription>()
+  private globalListeners: Partial<ListenerConfig> = {}
 
   public readonly connectionStats = reactive({
     connectTime: 0,
@@ -94,58 +92,73 @@ class WebSocketManager {
   private cloneConfig(config: SubscriptionConfig): SubscriptionConfig {
     return {
       ...config,
-      channels: [...config.channels],
-      dataTypes: [...config.dataTypes],
+      channels: [...(config.channels || [])],
+      dataTypes: config.dataTypes ? [...config.dataTypes] : undefined,
     }
-  }
-
-  /** 判断两个订阅配置是否等价（用于去重复用） */
-  private isSameSubscription(config1: SubscriptionConfig, config2: SubscriptionConfig): boolean {
-    return (
-      JSON.stringify([...config1.channels].sort()) ===
-        JSON.stringify([...config2.channels].sort()) &&
-      JSON.stringify([...config1.dataTypes].sort()) ===
-        JSON.stringify([...config2.dataTypes].sort()) &&
-      config1.interval === config2.interval &&
-      config1.source === config2.source
-    )
   }
 
   /** 发送订阅消息 */
   private sendSubscribeMessage(config: SubscriptionConfig, messageId: string): void {
-    const subscribeMessage: SubscribeMessage = {
-      id: messageId,
-      type: 'subscribe',
-      timestamp: '',
-      data: {
-        channels: config.channels,
-        data_types: config.dataTypes,
-        interval: config.interval,
-        source: config.source,
-      },
+    let subscribeMessage: SubscribeMessage
+    if (config.source === 'rule') {
+      // rule 类型订阅：使用 channels 数组存储规则ID
+      subscribeMessage = {
+        id: messageId,
+        type: 'subscribe',
+        timestamp: '',
+        data: {
+          source: 'rule',
+          channels: config.channels!,
+          interval: config.interval,
+        },
+      }
+    } else {
+      // inst 或 comsrv 类型订阅
+      subscribeMessage = {
+        id: messageId,
+        type: 'subscribe',
+        timestamp: '',
+        data: {
+          channels: config.channels!,
+          data_types: config.dataTypes!,
+          interval: config.interval,
+          source: config.source,
+        },
+      }
     }
     this.sendMessage(subscribeMessage)
     console.log('[WebSocket] 发送订阅', messageId, config)
   }
 
   /** 发送取消订阅消息 */
-  private sendUnsubscribeMessage(
-    channels: number[],
-    source: 'inst' | 'comsrv' = 'inst',
-    messageId: string,
-  ): void {
-    const unsubscribeMessage: UnsubscribeMessage = {
-      id: messageId,
-      type: 'unsubscribe',
-      timestamp: '',
-      data: {
-        channels: channels,
-        source: source,
-      },
+  private sendUnsubscribeMessage(config: SubscriptionConfig, messageId: string): void {
+    let unsubscribeMessage: UnsubscribeMessage
+    if (config.source === 'rule') {
+      // rule 类型取消订阅：使用 channels 数组存储规则ID
+      unsubscribeMessage = {
+        id: messageId,
+        type: 'unsubscribe',
+        timestamp: '',
+        data: {
+          source: 'rule',
+          channels: config.channels!,
+        },
+      }
+    } else {
+      // inst 或 comsrv 类型取消订阅
+      unsubscribeMessage = {
+        id: messageId,
+        type: 'unsubscribe',
+        timestamp: '',
+        data: {
+          channels: config.channels!,
+          source: config.source,
+        },
+      }
     }
 
     this.sendMessage(unsubscribeMessage)
-    console.log('[WebSocket] 发送取消订阅', messageId, channels)
+    console.log('[WebSocket] 发送取消订阅', messageId, config)
   }
 
   /** WebSocket 发送统一入口，补充时间戳 */
@@ -163,10 +176,10 @@ class WebSocketManager {
     if (this.pendingSubscriptionsMap.size === 0) return
 
     console.log('[WebSocket] 处理待订阅队列:', this.pendingSubscriptionsMap.size)
-    for (const [id, subInfo] of this.pendingSubscriptionsMap) {
-      this.sendSubscribeMessage(subInfo.config, id)
-      this.pageSubscriptions.set(subInfo.pageId, {
-        id: subInfo.id,
+    for (const [messageId, subInfo] of this.pendingSubscriptionsMap) {
+      this.sendSubscribeMessage(subInfo.config, messageId)
+      this.subscriptions.set(subInfo.subscriptionId, {
+        id: subInfo.subscriptionId,
         config: subInfo.config,
         listeners: subInfo.listeners,
       })
@@ -175,17 +188,15 @@ class WebSocketManager {
 
   /** 重连前将已有订阅补回待订阅队列 */
   private enqueueExistingSubscriptionsForReconnect(): void {
-    for (const [pageId, record] of this.pageSubscriptions) {
+    for (const [subscriptionId, record] of this.subscriptions) {
       const exists = Array.from(this.pendingSubscriptionsMap.values()).some(
-        (pending) =>
-          pending.pageId === pageId && this.isSameSubscription(pending.config, record.config),
+        (pending) => pending.subscriptionId === subscriptionId,
       )
 
       if (!exists) {
         const messageId = this.generateMessageId()
         this.pendingSubscriptionsMap.set(messageId, {
-          id: record.id,
-          pageId,
+          subscriptionId: record.id,
           config: this.cloneConfig(record.config),
           listeners: record.listeners,
           timestamp: Date.now(),
@@ -194,32 +205,47 @@ class WebSocketManager {
     }
   }
 
-  /** 统一订阅入口，支持全局/页面订阅 */
-  public subscribe(
-    config: SubscriptionConfig,
-    pageId = 'global',
-    listeners: Partial<ListenerConfig> = {},
-  ): string {
+  /** 订阅入口 */
+  public subscribe(config: SubscriptionConfig, listeners: Partial<ListenerConfig> = {}): string {
     const normalizedConfig = this.cloneConfig(config)
     const subscriptionId = this.generateMessageId()
 
-    const existing = this.pageSubscriptions.get(pageId)
-    if (existing && this.isSameSubscription(existing.config, normalizedConfig)) {
-      existing.listeners = { ...existing.listeners, ...listeners }
-      return existing.id
-    }
-
-    for (const [pendingId, subInfo] of this.pendingSubscriptionsMap) {
-      if (subInfo.pageId === pageId && this.isSameSubscription(subInfo.config, normalizedConfig)) {
-        this.pendingSubscriptionsMap.set(pendingId, {
-          ...subInfo,
-          listeners: { ...subInfo.listeners, ...listeners },
-        })
-        return subInfo.id
+    // 检查是否已存在相同的订阅
+    for (const [subId, record] of this.subscriptions) {
+      if (
+        record.config.source === normalizedConfig.source &&
+        record.config.interval === normalizedConfig.interval &&
+        JSON.stringify([...(record.config.channels || [])].sort()) ===
+          JSON.stringify([...(normalizedConfig.channels || [])].sort()) &&
+        (normalizedConfig.source === 'rule' ||
+          JSON.stringify([...(record.config.dataTypes || [])].sort()) ===
+            JSON.stringify([...(normalizedConfig.dataTypes || [])].sort()))
+      ) {
+        // 合并 listeners
+        record.listeners = { ...record.listeners, ...listeners }
+        return record.id
       }
     }
 
-    this.pageSubscriptions.set(pageId, {
+    // 检查待订阅队列中是否已存在
+    for (const [messageId, subInfo] of this.pendingSubscriptionsMap) {
+      if (
+        subInfo.config.source === normalizedConfig.source &&
+        subInfo.config.interval === normalizedConfig.interval &&
+        JSON.stringify([...(subInfo.config.channels || [])].sort()) ===
+          JSON.stringify([...(normalizedConfig.channels || [])].sort()) &&
+        (normalizedConfig.source === 'rule' ||
+          JSON.stringify([...(subInfo.config.dataTypes || [])].sort()) ===
+            JSON.stringify([...(normalizedConfig.dataTypes || [])].sort()))
+      ) {
+        // 合并 listeners
+        subInfo.listeners = { ...subInfo.listeners, ...listeners }
+        return subInfo.subscriptionId
+      }
+    }
+
+    // 创建新订阅
+    this.subscriptions.set(subscriptionId, {
       id: subscriptionId,
       config: normalizedConfig,
       listeners,
@@ -227,8 +253,7 @@ class WebSocketManager {
 
     const messageId = this.generateMessageId()
     this.pendingSubscriptionsMap.set(messageId, {
-      id: subscriptionId,
-      pageId,
+      subscriptionId,
       config: normalizedConfig,
       listeners,
       timestamp: Date.now(),
@@ -241,63 +266,39 @@ class WebSocketManager {
     return subscriptionId
   }
 
-  /** 从待订阅队列删除/截断指定页面的频道 */
-  private trimPendingSubscriptions(pageId: string, channels?: number[]): void {
-    for (const [pendingId, subInfo] of Array.from(this.pendingSubscriptionsMap.entries())) {
-      if (subInfo.pageId !== pageId) continue
-
-      if (!channels || channels.length === 0) {
-        this.pendingSubscriptionsMap.delete(pendingId)
-        continue
+  /** 取消订阅 */
+  public unsubscribe(subscriptionId: string): void {
+    const record = this.subscriptions.get(subscriptionId)
+    if (!record) {
+      // 如果订阅不存在，尝试从待订阅队列中删除
+      for (const [messageId, subInfo] of this.pendingSubscriptionsMap) {
+        if (subInfo.subscriptionId === subscriptionId) {
+          this.pendingSubscriptionsMap.delete(messageId)
+        }
       }
+      return
+    }
 
-      const remainingChannels = subInfo.config.channels.filter(
-        (channel) => !channels.includes(channel),
-      )
-      if (remainingChannels.length === 0) {
-        this.pendingSubscriptionsMap.delete(pendingId)
-      } else {
-        this.pendingSubscriptionsMap.set(pendingId, {
-          ...subInfo,
-          config: {
-            ...subInfo.config,
-            channels: remainingChannels,
-          },
-        })
+    // 从订阅列表中删除
+    this.subscriptions.delete(subscriptionId)
+
+    // 从待订阅队列中删除
+    for (const [messageId, subInfo] of this.pendingSubscriptionsMap) {
+      if (subInfo.subscriptionId === subscriptionId) {
+        this.pendingSubscriptionsMap.delete(messageId)
       }
+    }
+
+    // 如果已连接，发送取消订阅消息
+    if (this.isConnected.value) {
+      const messageId = this.generateMessageId()
+      this.sendUnsubscribeMessage(record.config, messageId)
     }
   }
 
-  /** 统一取消订阅入口，支持全局/页面取消 */
-  public unsubscribe(
-    pageId = 'global',
-    channels?: number[],
-    source: 'inst' | 'comsrv' = 'inst',
-  ): void {
-    const record = this.pageSubscriptions.get(pageId)
-    const targetChannels = channels || record?.config.channels || []
-
-    if (targetChannels.length === 0) return
-
-    this.trimPendingSubscriptions(pageId, targetChannels)
-
-    if (record) {
-      if (channels && channels.length > 0) {
-        record.config.channels = record.config.channels.filter(
-          (channel) => !targetChannels.includes(channel),
-        )
-        if (record.config.channels.length === 0) {
-          this.pageSubscriptions.delete(pageId)
-        }
-      } else {
-        this.pageSubscriptions.delete(pageId)
-      }
-    }
-
-    if (this.isConnected.value) {
-      const messageId = this.generateMessageId()
-      this.sendUnsubscribeMessage(targetChannels, source, messageId)
-    }
+  /** 设置全局监听器 */
+  public setGlobalListeners(listeners: Partial<ListenerConfig>): void {
+    this.globalListeners = listeners
   }
 
   /** 绑定 WebSocket 事件 */
@@ -310,11 +311,12 @@ class WebSocketManager {
       this.reconnectAttempts = 0
       this.connectionStats.connectTime = Date.now()
       this.startHeartbeat()
-      this.globalListeners.onConnect?.()
 
       this.enqueueExistingSubscriptionsForReconnect()
       this.processPendingSubscriptions()
 
+      // 调用全局监听器
+      this.globalListeners.onConnect?.()
       onConnect()
     }
 
@@ -334,6 +336,13 @@ class WebSocketManager {
       this.status.value = 'disconnected'
       this.connectionStats.disconnectTime = Date.now()
       this.stopHeartbeat()
+
+      // 清理连接 Promise 缓存（连接失败时）
+      if (this.connectingPromise) {
+        this.connectingPromise = null
+      }
+
+      // 调用全局监听器
       this.globalListeners.onDisconnect?.()
 
       if (
@@ -350,22 +359,35 @@ class WebSocketManager {
       this.connectionStats.errorCount++
       const wsError = new Error('WebSocket connection error')
       this.handleError(wsError)
+      // 调用全局监听器，将 Error 转换为 ErrorMessage['data'] 格式
+      this.globalListeners.onError?.({
+        code: 'CONNECTION_ERROR',
+        message: wsError.message,
+        details: wsError.stack,
+      })
       onError(wsError)
     }
   }
 
   /** 建立连接（含登录校验） */
   public connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    // 如果已连接，直接返回 resolved Promise
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      return Promise.resolve()
+    }
+
+    // 如果正在连接，返回现有的连接 Promise，避免并发调用
+    if (this.connectingPromise) {
+      return this.connectingPromise
+    }
+
+    // 创建新的连接 Promise
+    this.connectingPromise = new Promise((resolve, reject) => {
       const userStore = useUserStore()
       if (!userStore.isLoggedIn || !userStore.token) {
         console.log('[WebSocket] 未登录或无 token，跳过连接')
+        this.connectingPromise = null
         reject(new Error('User not logged in or token invalid'))
-        return
-      }
-
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        resolve()
         return
       }
 
@@ -375,12 +397,24 @@ class WebSocketManager {
 
       try {
         this.ws = new WebSocket(this.config.url)
-        this.setupEventHandlers(resolve, reject)
+        this.setupEventHandlers(
+          () => {
+            this.connectingPromise = null
+            resolve()
+          },
+          (error) => {
+            this.connectingPromise = null
+            reject(error)
+          },
+        )
       } catch (error) {
+        this.connectingPromise = null
         this.handleError(error as Error)
         reject(error)
       }
     })
+
+    return this.connectingPromise
   }
 
   /** 服务端消息分发 */
@@ -424,10 +458,9 @@ class WebSocketManager {
 
   /** 处理单条数据更新 */
   private handleDataUpdate(data: any): void {
-    this.globalListeners.onDataUpdate?.(data)
-
-    this.pageSubscriptions.forEach((record) => {
-      if (record.config.channels.includes(data.channel_id)) {
+    this.subscriptions.forEach((record) => {
+      // 只处理 inst 或 comsrv 类型的订阅
+      if (record.config.source !== 'rule' && record.config.channels?.includes(data.channel_id)) {
         record.listeners.onDataUpdate?.(data)
       }
     })
@@ -435,23 +468,32 @@ class WebSocketManager {
 
   /** 处理批量数据更新 */
   private handleBatchDataUpdate(data: any, timestamp: string): void {
-    this.globalListeners.onBatchDataUpdate?.(data, timestamp)
-
-    this.pageSubscriptions.forEach((record) => {
-      const relevantUpdates = data.updates.filter((update: any) =>
-        record.config.channels.includes(update.channel_id),
-      )
-      if (relevantUpdates.length > 0) {
-        record.listeners.onBatchDataUpdate?.({ updates: relevantUpdates }, timestamp)
+    this.subscriptions.forEach((record) => {
+      if (record.config.source === 'rule') {
+        // 处理 rule 类型的数据：检查 rule_id 是否匹配
+        if (data.rule_id && record.config.channels?.includes(data.rule_id)) {
+          record.listeners.onBatchDataUpdate?.(data, timestamp)
+        }
+      } else {
+        // 处理 inst 或 comsrv 类型的数据
+        if (data.updates) {
+          const relevantUpdates = data.updates.filter((update: any) =>
+            record.config.channels?.includes(update.channel_id),
+          )
+          if (relevantUpdates.length > 0) {
+            record.listeners.onBatchDataUpdate?.({ updates: relevantUpdates }, timestamp)
+          }
+        }
       }
     })
   }
 
   /** 处理告警 */
   private handleAlarm(alarm: any): void {
+    // 调用全局监听器
     this.globalListeners.onAlarm?.(alarm)
-
-    this.pageSubscriptions.forEach((record) => {
+    // 调用订阅级别的监听器
+    this.subscriptions.forEach((record) => {
       record.listeners.onAlarm?.(alarm)
     })
   }
@@ -490,13 +532,23 @@ class WebSocketManager {
   /** 处理告警数量更新 */
   private handleAlarmNum(data: any): void {
     console.log('[WebSocket] 告警数量更新:', data)
+    // 调用全局监听器
     this.globalListeners.onAlarmNum?.(data)
+    // 调用订阅级别的监听器
+    this.subscriptions.forEach((record) => {
+      record.listeners.onAlarmNum?.(data)
+    })
   }
 
   /** 处理服务端错误 */
   private handleServerError(error: any): void {
     console.error('[WebSocket] 服务端错误', error)
+    // 调用全局监听器
     this.globalListeners.onError?.(error)
+    // 调用订阅级别的监听器
+    this.subscriptions.forEach((record) => {
+      record.listeners.onError?.(error)
+    })
     ElMessage.error(`WebSocket错误: ${error.message}`)
   }
 
@@ -544,11 +596,6 @@ class WebSocketManager {
     }
 
     this.sendMessage(pingMessage)
-  }
-
-  /** 设置/合并全局监听 */
-  public setGlobalListeners(listeners: ListenerConfig): void {
-    this.globalListeners = { ...this.globalListeners, ...listeners }
   }
 
   /** 启动心跳与超时检测 */
@@ -613,7 +660,6 @@ class WebSocketManager {
     console.log(`[WebSocket] ${delay}ms后尝试重连（第${this.reconnectAttempts}次）`)
 
     this.reconnectTimer = setTimeout(() => {
-      this.globalListeners.onReconnect?.()
       this.connect().catch((error) => {
         console.error('[WebSocket] 重连失败:', error)
       })
@@ -623,7 +669,6 @@ class WebSocketManager {
   /** 统一错误处理回调 */
   private handleError(error: Error): void {
     console.error('[WebSocket] 连接出错:', error)
-    this.globalListeners.onError?.({ code: 'CONNECTION_ERROR', message: error.message })
   }
 
   /** 主动断开连接并清理所有状态 */
@@ -636,14 +681,17 @@ class WebSocketManager {
     this.isManualDisconnect = true
     this.stopHeartbeat()
 
+    // 清理连接 Promise 缓存
+    this.connectingPromise = null
+
     if (this.ws) {
       this.ws.close(1000, 'manual disconnect')
       this.ws = null
     }
 
-    this.globalListeners = {}
-    this.pageSubscriptions.clear()
+    this.subscriptions.clear()
     this.pendingSubscriptionsMap.clear()
+    this.globalListeners = {}
     this.status.value = 'disconnected'
   }
 
@@ -652,25 +700,9 @@ class WebSocketManager {
     return {
       status: this.status.value,
       isConnected: this.isConnected.value,
-      pageSubscriptions: this.pageSubscriptions.size,
+      subscriptions: this.subscriptions.size,
       ...this.connectionStats,
     }
-  }
-
-  public subscribePage(
-    pageId: string,
-    config: SubscriptionConfig,
-    listeners: Partial<ListenerConfig>,
-  ): string {
-    return this.subscribe(config, pageId, listeners)
-  }
-
-  public unsubscribePage(
-    pageId: string,
-    channels?: number[],
-    source: 'inst' | 'comsrv' = 'inst',
-  ): void {
-    this.unsubscribe(pageId, channels, source)
   }
 }
 

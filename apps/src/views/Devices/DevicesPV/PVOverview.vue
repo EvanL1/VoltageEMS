@@ -7,28 +7,38 @@
     </div>
     <div class="pv-overview__content">
       <div class="trap-wrap">
-        <div v-for="(item, idx) in rowData" :key="item.id" class="row" @mouseleave="hoveredRow = null"
-          @mouseenter="handleHoveredRow(idx)">
+        <div
+          v-for="(item, idx) in rowData"
+          :key="item.id"
+          class="row"
+          @mouseleave="hoveredRow = null"
+          @mouseenter="handleHoveredRow(idx)"
+        >
           <div v-show="hoveredRow === idx - 1" class="row-highlight" aria-hidden="true" />
         </div>
       </div>
 
       <!-- 单独的行卡片，根据悬停状态显示 -->
-      <div v-for="(item, idx) in rowData" :key="`card-${item.id}`" v-show="hoveredRow === idx - 1" class="row-cards"
-        :style="getRowCardStyle(idx)">
+      <div
+        v-for="(item, idx) in rowData"
+        :key="`card-${item.id}`"
+        v-show="hoveredRow === idx - 1"
+        class="row-cards"
+        :style="getRowCardStyle(idx)"
+      >
         <div class="card-content-item">
           <div class="card-name">P:</div>
-          <div class="card-value">{{ item.PValue }}</div>
+          <div class="card-value">{{ formatNumber(item.PValue) }}</div>
           <div class="card-unit">kw</div>
         </div>
         <div class="card-content-item">
           <div class="card-name">V:</div>
-          <div class="card-value">{{ item.VValue }}</div>
+          <div class="card-value">{{ formatNumber(item.VValue) }}</div>
           <div class="card-unit">V</div>
         </div>
         <div class="card-content-item">
           <div class="card-name">I:</div>
-          <div class="card-value">{{ item.IValue }}</div>
+          <div class="card-value">{{ formatNumber(item.IValue) }}</div>
           <div class="card-unit">A</div>
         </div>
       </div>
@@ -36,15 +46,14 @@
   </div>
 </template>
 <script setup lang="ts">
-import useWebSocket from '@/composables/useWebSocket'
-import type { SubscriptionConfig } from '@/types/websocket'
 import powerIcon from '@/assets/icons/Power.svg'
 import voltageIcon from '@/assets/icons/Voltage.svg'
 import currentIcon from '@/assets/icons/Current.svg'
 import coolantTempIcon from '@/assets/icons/CoolantTemp.svg'
+import { formatNumber } from '@/utils/common'
+import useWebSocket from '@/composables/useWebSocket'
 
-import { ref } from 'vue'
-
+import { ref, watch, reactive } from 'vue'
 
 const hoveredRow = ref<number | null>(null)
 const rowData = reactive([
@@ -85,6 +94,39 @@ const rowData = reactive([
     IValue: 10,
   },
 ])
+
+// 必须在 watch 之前声明 energyCardData，因为 watch 设置了 immediate: true
+const energyCardData = reactive([
+  {
+    title: 'PV Power',
+    icon: powerIcon,
+    value: '-',
+    unit: 'kW',
+    pointId: 5,
+  },
+  {
+    pointId: 17,
+    title: 'PV Voltage',
+    icon: voltageIcon,
+    value: '-',
+    unit: 'V',
+  },
+  {
+    pointId: 18,
+    title: 'PV Current',
+    icon: currentIcon,
+    value: '-',
+    unit: 'A',
+  },
+  {
+    id: 23,
+    title: "Today's Energy",
+    icon: coolantTempIcon,
+    value: '-',
+    unit: 'kWh',
+  },
+])
+
 /**
  * 让第 i 行（0~rows-1）在 topScale 与 bottomScale 之间做线性插值，
  * 使得上窄下宽（形成梯形）。
@@ -112,59 +154,55 @@ const getRowCardStyle = (idx: number) => {
   return {
     top: `calc(${currentRowCenter}% + ${topvhPosition}vh)`,
     left: 'calc(50% + 28.5% + 1rem)', // 50% + 梯形容器宽度的一半(57%/2) + 额外间距
-    transform: 'translate(-50%, -50%)'
+    transform: 'translate(-50%, -50%)',
   }
 }
-// // 页面订阅配置
-// const pageId = 'pv-overview'
-// const pageSubscriptionConfig: SubscriptionConfig = {
-//   channels: [1001], // 订阅更多频道
-//   dataTypes: ['T'], // 订阅遥测和遥信数据
-//   interval: 1000,
-// }
+// WebSocket 数据
+const wsData = ref<any>(null)
 
-// // 页面监听器
-// const pageListeners = {
-//   onBatchDataUpdate: (data: any) => {
-//     console.log('[PVOverview] 页面批量数据更新:', data)
-//     // 处理批量数据更新
-//     energyCardData.forEach((item, index) => {
-//       item.value = data.updates[0].values[index + 1]
-//     })
-//   },
-// }
-// const { stats, subscribePage, unsubscribePage } = useWebSocket(
-//   pageId,
-//   pageSubscriptionConfig,
-//   pageListeners,
-// )
+// 订阅 WebSocket - Overview 使用 inst 源
+useWebSocket(
+  {
+    source: 'inst',
+    channels: [4],
+    dataTypes: ['A', 'M', 'P'] as any,
+    interval: 1000,
+  },
+  {
+    onBatchDataUpdate: (data: any) => {
+      wsData.value = data
+    },
+  },
+)
 
-const energyCardData = reactive([
-  {
-    title: 'PV Power',
-    icon: powerIcon,
-    value: 35,
-    unit: 'kW',
+// 监听 WebSocket 数据更新
+watch(
+  wsData,
+  (data) => {
+    if (!data?.updates?.length) return
+    // 从数据类型 M 中取值
+    const mUpdate = data.updates.find(
+      (item: any) => item.channel_id === 4 && item.data_type === 'M',
+    )
+    if (!mUpdate) return
+    const values = mUpdate.values || {}
+    energyCardData.forEach((item: any) => {
+      if (item.pointId) {
+        const pointValue = values[item.pointId]
+        if (pointValue !== undefined && pointValue !== null) {
+          item.value = formatNumber(pointValue)
+        }
+      }
+    })
+    // 更新行数据
+    rowData.forEach((row: any) => {
+      // 假设 rowData 中的 id 对应 pointId
+      // 这里需要根据实际的数据结构来映射
+      // 暂时保持原有逻辑，后续可以根据实际需求调整
+    })
   },
-  {
-    title: 'PV Voltage',
-    icon: voltageIcon,
-    value: 220,
-    unit: 'V',
-  },
-  {
-    title: 'PV Current',
-    icon: currentIcon,
-    value: 20,
-    unit: 'A',
-  },
-  {
-    title: 'Coolant Temp',
-    icon: coolantTempIcon,
-    value: 96,
-    unit: '°F',
-  },
-])
+  { deep: true, immediate: true },
+)
 </script>
 <style scoped lang="scss">
 .voltage-class.pv-overview {
@@ -198,6 +236,14 @@ const energyCardData = reactive([
     justify-content: center;
     align-items: center;
     overflow: visible;
+
+    .update-time {
+      position: absolute;
+      top: 0.1rem;
+      right: 0;
+      color: #fff;
+      z-index: 10;
+    }
 
     /* 行卡片样式 */
     .row-cards {
@@ -262,8 +308,7 @@ const energyCardData = reactive([
     position: relative;
     width: 100%;
     margin-inline: auto;
-    transition: width .12s ease;
-
+    transition: width 0.12s ease;
 
     &:nth-child(1) {
       height: 10.3%;
@@ -296,8 +341,6 @@ const energyCardData = reactive([
     }
   }
 
-
-
   /* 每两行与第三行之间有较大空隙 */
   .row:nth-child(2) {
     margin-bottom: 4vh;
@@ -313,7 +356,7 @@ const energyCardData = reactive([
   .row-highlight {
     position: absolute;
     inset: 0;
-    background: rgba(255, 105, 0, .2);
+    background: rgba(255, 105, 0, 0.2);
     pointer-events: none;
   }
 }

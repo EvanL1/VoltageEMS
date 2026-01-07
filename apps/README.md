@@ -220,6 +220,11 @@ const handleDetailSubmit = (data: any) => {
 
 ## 开发指南
 
+## 用户文档（推荐先看）
+
+- **Viewer 用户使用手册（只读用户）**：`docs/Viewer_UserManual.md`
+- **Points/Mappings 表用户操作手册（通道点位配置，面向非技术同学）**：`docs/PointsTables_UserGuide.md`
+
 ### 环境要求
 
 - Node.js 18.0+

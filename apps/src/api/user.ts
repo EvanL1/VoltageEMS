@@ -35,16 +35,27 @@ export const userApi = {
   getUserInfo(): Promise<ApiResponse<UserInfo>> {
     return Request.get('/api/v1/auth/me')
   },
-
   /**
    * 刷新Token
    * @param refreshToken 刷新令牌
-   * @returns 新的Token
+   * @returns 新的Token和RefreshToken
    */
-  refreshToken(
-    refreshToken: string,
-  ): Promise<ApiResponse<{ token: string; refreshToken: string }>> {
-    return Request.post('/api/v1/auth/refresh', { refresh_token: refreshToken })
+  refreshToken(refreshToken: string): Promise<
+    ApiResponse<{
+      access_token: string
+      refresh_token: string
+      token_type: string
+      expires_in: number
+    }>
+  > {
+    // 标记这是刷新token请求，避免在响应拦截器中再次触发刷新逻辑
+    return Request.post(
+      '/api/v1/auth/refresh',
+      { refresh_token: refreshToken },
+      {
+        _isRefreshTokenRequest: true,
+      },
+    )
   },
   /**
    * 获取用户详情

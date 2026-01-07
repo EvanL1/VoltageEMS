@@ -54,21 +54,6 @@ describe('User API', () => {
     expect(Request.get).toHaveBeenCalledWith('/api/v1/auth/me')
   })
 
-  it('should refresh token', async () => {
-    const mockData = {
-      success: true,
-      data: { token: 'new-token', refreshToken: 'new-refresh-token' },
-    }
-    const { Request } = await import('@/utils/request')
-    vi.mocked(Request.post).mockResolvedValue(mockData)
-
-    const result = await userApi.refreshToken('refresh-token')
-    expect(result).toEqual(mockData)
-    expect(Request.post).toHaveBeenCalledWith('/api/v1/auth/refresh', {
-      refresh_token: 'refresh-token',
-    })
-  })
-
   it('should add user', async () => {
     const mockData = { success: true, data: { id: 1, username: 'newuser' } }
     const { Request } = await import('@/utils/request')

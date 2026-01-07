@@ -156,7 +156,6 @@ import useWebSocket from '@/composables/useWebSocket'
 
 import HomeBg from './HomeBg.vue'
 useWebSocket(
-  'home',
   {
     channels: [2],
     dataTypes: ['T'],
@@ -164,7 +163,7 @@ useWebSocket(
     source: 'comsrv',
   },
   {
-    onBatchDataUpdate: (data) => {
+    onBatchDataUpdate: (data: any) => {
       const channel2TData = data.updates.find(
         (item: any) => item.channel_id === 2 && item.data_type === 'T',
       )?.values
@@ -240,7 +239,7 @@ const deviceInfoList = reactive([
       },
     ],
     icon: deviceBattery,
-    name: 'Battery',
+    name: 'ESS',
   },
   // {
   //   data: [

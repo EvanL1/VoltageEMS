@@ -116,3 +116,66 @@ ol {
 ::-webkit-scrollbar-button {
   display: none;
 }
+
+/* 变量浮层样式（全局） */
+.node-vars-bubble-fixed {
+  background: rgba(19, 44, 84, 0.9);
+  border: 0.01rem solid #435678;
+  border-radius: 0.06rem;
+  padding: 0.08rem 0.12rem;
+  box-shadow: 0 0.04rem 0.12rem rgba(0, 0, 0, 0.35);
+  width: 2.5rem;
+  max-height: 3rem;
+  overflow-y: auto;
+  pointer-events: none;
+  z-index: 99999;
+}
+
+.node-vars-bubble__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.12rem;
+}
+
+.node-vars-bubble__row + .node-vars-bubble__row {
+  margin-top: 0.06rem;
+}
+
+.node-vars-bubble__left {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.06rem;
+  flex: 1;
+  width: calc(100% - 1rem);
+}
+
+.node-vars-bubble__left .var-item {
+  font-size: 0.12rem;
+  color: #cfe2ff;
+  opacity: 0.9;
+  word-break: break-word;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.node-vars-bubble__right {
+  font-size: 0.12rem;
+  color: #fff;
+  opacity: 0.95;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.04rem;
+  flex-shrink: 0;
+  width: 0.8rem;
+  text-align: right;
+}
+
+.node-vars-bubble__unit {
+  font-size: 0.1rem;
+  color: #cfe2ff;
+  opacity: 0.8;
+}

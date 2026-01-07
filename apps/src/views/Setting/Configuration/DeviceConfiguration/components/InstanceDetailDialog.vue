@@ -202,14 +202,14 @@ const removePropertyByIndex = (index: number) => {
 const open = async (instanceIdOrNull: number | null) => {
   // 新建：传入空字符串时，清空表单并进入编辑状态
   try {
-  if (!instanceIdOrNull) {
-    isEditing.value = true
-    form.value = {
-      instance_id: null,
-      instance_name: '',
-      product_name: '',
-      properties: {},
-    } as any
+    if (!instanceIdOrNull) {
+      isEditing.value = true
+      form.value = {
+        instance_id: null,
+        instance_name: '',
+        product_name: '',
+        properties: {},
+      } as any
       editProperties.value = []
       originalFormSnapshot.value = JSON.parse(JSON.stringify(form.value))
     } else {
@@ -372,7 +372,9 @@ defineExpose({ open, close })
     // padding: 0.1rem;
     background-color: transparent;
     position: relative;
-    padding: 0.05rem 0;
+    border-top: 0.01rem solid #e4e7ed;
+    border-bottom: 0.01rem solid #e4e7ed;
+    // padding: 0.05rem 0;
 
     .instance-detail__property-item {
       display: flex;
@@ -382,15 +384,15 @@ defineExpose({ open, close })
       // padding: 0.04rem;
       background-color: transparent;
       // border-radius: 0.03rem;
-      border-top: 0.01rem solid #e4e7ed;
+
       min-height: 0.32rem;
       position: relative;
-      padding: 0.05rem 0;
+      padding: 0.05rem;
 
-      &:last-child {
-        // padding-bottom: 0.05rem;
-        border-bottom: 0.01rem solid #e4e7ed;
-      }
+      // &:last-child {
+      //   // padding-bottom: 0.05rem;
+      //   border-bottom: 0.01rem solid #e4e7ed;
+      // }
     }
 
     .instance-detail__property-content {

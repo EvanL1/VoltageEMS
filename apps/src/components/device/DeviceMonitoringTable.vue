@@ -19,7 +19,7 @@
               <DynamicScrollerItem :item="item" :active="true" :index="index">
                 <div class="vtable__row">
                   <div class="vtable__cell vtable__cell--name">{{ item.name }}</div>
-                  <div class="vtable__cell vtable__cell--value">{{ item.value }}</div>
+                  <div class="vtable__cell vtable__cell--value">{{ formatNumber(item.value) }}</div>
                   <div class="vtable__cell vtable__cell--unit">{{ item.unit }}</div>
                 </div>
               </DynamicScrollerItem>
@@ -56,9 +56,11 @@
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
 import type { LeftTableItem, RightTableItem } from '@/types/deviceMonitoring'
 import { pxToResponsive } from '@/utils/responsive'
-// import { ref, onMounted, onUnmounted } from 'vue'
+import { formatNumber } from '@/utils/common'
+
 defineProps<{
   leftTableData: LeftTableItem[]
   rightTableData: RightTableItem[]

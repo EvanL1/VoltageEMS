@@ -11,14 +11,34 @@ router.beforeEach(async (to, from, next) => {
 
   const user = useUserStore()
 
-  // 未登录：只允许进入白名单
-  // if (!user.token && !user.userInfo) {
-  //   if (WHITE_LIST.includes(to.path) || to.meta.public) return next()
-  //   return next({ path: '/login', query: { redirect: to.path } })
-  // }
+  // 如果是登录页，直接放行
+  if (WHITE_LIST.includes(to.path)) {
+    return next()
+  }
 
-  // 已登录：确保已注入动态路由
+  // 如果不是登录页，需要先获取用户信息
   try {
+    // 如果没有 token，跳转到登录页
+    if (!user.token || !user.userInfo) {
+      // 如果有 refreshToken，尝试刷新 token（可选，根据实际需求）
+      // 这里直接跳转到登录页
+      if (!user.refreshToken) {
+        return next({ path: '/login' })
+      } else {
+        const result = await user.refreshUserToken()
+        if (result.success) {
+          const res = await user.getUserInfo()
+          if (!res.success) {
+            user.clearUserData()
+            return next({ path: '/login' })
+          }
+        } else {
+          user.clearUserData()
+          return next({ path: '/login' })
+        }
+      }
+    }
+    // 确保已注入动态路由
     if (!user.routesInjected) {
       await ensureRoutesInjected()
       return next({ ...to, replace: true }) // 路由重定向
@@ -26,8 +46,9 @@ router.beforeEach(async (to, from, next) => {
       next()
     }
   } catch (e) {
-    // 注入失败，保险起见登出
+    // 发生错误，清除数据并跳转到登录页
+    console.error('Route guard error:', e)
     user.clearUserData()
-    next('/login')
+    next({ path: '/login' })
   }
 })

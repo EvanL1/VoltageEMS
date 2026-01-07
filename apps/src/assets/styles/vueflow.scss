@@ -27,8 +27,8 @@
   //     border-color: rgba(255, 138, 0, 0.35);
   //   }
   .vue-flow__minimap {
-    width: 2.6rem;
-    height: 1.8rem;
+    width: 2rem;
+    height: 1.5rem;
     background: rgba(19, 44, 84, 0.7);
     // border: 0.01rem solid #4fbbff;
     border: none !important;
@@ -77,11 +77,11 @@
 
   .vue-flow__minimap-node {
     width: 1.2rem;
-    height: 0.35rem;
+    height: 0.3rem;
   }
 
   .rf-minimap-custom svg {
-    width: 2.6rem;
-    height: 1.8rem;
+    width: 2rem;
+    height: 1.5rem;
   }
 }

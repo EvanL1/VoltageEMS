@@ -77,5 +77,14 @@ export const updateInstanceRouting = (
 }
 
 export const getAllInstances = () => {
-  return Request.get('/modApi/api/instances/search')
+  return Request.get('/modApi/api/instances/list')
+}
+
+/** 批量获取实例信息（用于回显优化） */
+export const getInstancesByIds = (ids: number[]) => {
+  if (!ids || ids.length === 0) {
+    return Promise.resolve({ success: true, data: { list: [] } })
+  }
+  const idsParam = ids.join(',')
+  return Request.get(`/modApi/api/instances/search`, { ids: idsParam })
 }

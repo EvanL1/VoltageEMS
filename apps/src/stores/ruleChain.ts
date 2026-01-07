@@ -39,6 +39,10 @@ export const useRuleChainStore = defineStore('ruleChain', () => {
   const isLeftPanelCollapsed = ref(false)
   const hasUnsavedChanges = ref(false)
 
+  // 监控模式下的节点和边副本（用于记录拖拽等操作，不影响编辑模式）
+  const monitorNodes = ref<Node[]>([])
+  const monitorEdges = ref<Edge[]>([])
+
   const addRuleChain = (ruleChainData: Omit<RuleChain, 'id' | 'createdAt' | 'updatedAt'>) => {
     const newRuleChain: RuleChain = {
       id: `chain-${Date.now()}`,
@@ -99,6 +103,32 @@ export const useRuleChainStore = defineStore('ruleChain', () => {
     hasUnsavedChanges.value = false
     nodes.value = newNodes
     edges.value = newEdges
+    // 提交后同步更新监控模式副本
+    monitorNodes.value = JSON.parse(JSON.stringify(newNodes))
+    monitorEdges.value = JSON.parse(JSON.stringify(newEdges))
+  }
+
+  // 创建监控模式副本（从当前节点和边深拷贝）
+  const createMonitorSnapshot = () => {
+    monitorNodes.value = JSON.parse(JSON.stringify(nodes.value))
+    monitorEdges.value = JSON.parse(JSON.stringify(edges.value))
+  }
+
+  // 恢复监控模式副本到当前节点和边
+  const restoreMonitorSnapshot = () => {
+    if (monitorNodes.value.length > 0 || monitorEdges.value.length > 0) {
+      nodes.value = JSON.parse(JSON.stringify(monitorNodes.value))
+      edges.value = JSON.parse(JSON.stringify(monitorEdges.value))
+    }
+  }
+
+  // 更新监控模式下的节点和边
+  const updateMonitorNodes = (newNodes: Node[]) => {
+    monitorNodes.value = JSON.parse(JSON.stringify(newNodes))
+  }
+
+  const updateMonitorEdges = (newEdges: Edge[]) => {
+    monitorEdges.value = JSON.parse(JSON.stringify(newEdges))
   }
 
   const discardChanges = () => {
@@ -139,37 +169,25 @@ export const useRuleChainStore = defineStore('ruleChain', () => {
     hasUnsavedChanges.value = false
   }
 
-  const exportRuleChain = () => {
-    const buildNodeData = (node: Node) => {
-      if (!node.data || typeof node.data !== 'object') return null
-      const data: Record<string, any> = {}
-      if (node.data.config) data.config = node.data.config
-      if (node.type !== 'start' && node.type !== 'end') {
-        if (node.data.label) data.label = node.data.label
-        if (node.data.type) data.type = node.data.type
-      }
-      if (node.data.id) data.id = node.data.id
-      if (node.data.description) data.description = node.data.description
-      // 始终保留 description（包括 start/end 节点）
-      if ((node.data as any).description) data.description = (node.data as any).description
-      return Object.keys(data).length ? data : null
-    }
+  const exportRuleChain = (customNodes?: Node[], customEdges?: Edge[]) => {
+    // 如果传入了自定义的 nodes 和 edges，使用它们；否则使用 store 中的数据
+    const nodesToExport = customNodes || nodes.value
+    const edgesToExport = customEdges || edges.value
 
     const flow_json = {
-      edges: edges.value.map((edge) => ({
+      edges: edgesToExport.map((edge) => ({
         id: edge.id,
         source: edge.source,
         target: edge.target,
         ...(edge.sourceHandle ? { sourceHandle: edge.sourceHandle } : {}),
         ...(edge.targetHandle ? { targetHandle: edge.targetHandle } : {}),
       })),
-      nodes: nodes.value.map((node) => {
-        const data = buildNodeData(node)
+      nodes: nodesToExport.map((node) => {
         return {
           id: node.id,
           type: node.type,
           position: node.position,
-          ...(data ? { data } : {}),
+          ...(node.data ? { data: node.data } : {}),
         }
       }),
     }
@@ -193,6 +211,20 @@ export const useRuleChainStore = defineStore('ruleChain', () => {
     hasUnsavedChanges.value = false
   }
 
+  /**
+   * 根据“亮起的节点”推断需要动画的边（一个统一样式）
+   * 规则：源节点和目标节点都在激活集合中的边视为“本次分支”的动画边
+   * 说明：外部只需传入激活节点列表（整条分支的节点集合），本函数返回应高亮的边ID列表
+   */
+  const inferAnimatedEdges = (activeNodeIds: string[] | Set<string>) => {
+    const active = new Set<string>(
+      Array.isArray(activeNodeIds) ? activeNodeIds : Array.from(activeNodeIds),
+    )
+    return edges.value
+      .filter((e) => active.has(String(e.source)) && active.has(String(e.target)))
+      .map((e) => String(e.id))
+  }
+
   return {
     ruleChains,
     nodes,
@@ -201,6 +233,8 @@ export const useRuleChainStore = defineStore('ruleChain', () => {
     isFullscreen,
     isLeftPanelCollapsed,
     hasUnsavedChanges,
+    monitorNodes,
+    monitorEdges,
     addRuleChain,
     updateRuleChain,
     deleteRuleChain,
@@ -215,5 +249,10 @@ export const useRuleChainStore = defineStore('ruleChain', () => {
     initDefaultGraph,
     exportRuleChain,
     clearAll,
+    inferAnimatedEdges,
+    createMonitorSnapshot,
+    restoreMonitorSnapshot,
+    updateMonitorNodes,
+    updateMonitorEdges,
   }
 })

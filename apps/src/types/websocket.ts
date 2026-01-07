@@ -44,21 +44,32 @@ export type CommandType = 'set_value' | 'get_value' | 'execute'
 // 订阅数据
 export interface SubscribeMessage extends WebSocketMessage {
   type: 'subscribe'
-  data: {
-    channels: number[]
-    data_types: DataType[]
-    interval: number // 推送间隔(ms)
-    source: 'inst' | 'comsrv'
-  }
+  data:
+    | {
+        channels: number[]
+        data_types: DataType[]
+        interval: number // 推送间隔(ms)
+        source: 'inst' | 'comsrv'
+      }
+    | {
+        source: 'rule'
+        channels: number[] // 规则ID数组
+        interval: number // 推送间隔(ms)
+      }
 }
 
 // 取消订阅
 export interface UnsubscribeMessage extends WebSocketMessage {
   type: 'unsubscribe'
-  data: {
-    channels: number[]
-    source: 'inst' | 'comsrv'
-  }
+  data:
+    | {
+        channels: number[]
+        source: 'inst' | 'comsrv'
+      }
+    | {
+        source: 'rule'
+        channels: number[] // 规则ID数组
+      }
 }
 
 // 控制命令
@@ -99,13 +110,21 @@ export interface DataUpdateMessage extends WebSocketMessage {
 // 批量数据更新
 export interface DataBatchMessage extends WebSocketMessage {
   type: 'data_batch'
-  data: {
-    updates: Array<{
-      channel_id: number
-      data_type: DataType
-      values: Record<string, number>
-    }>
-  }
+  data:
+    | {
+        updates: Array<{
+          channel_id: number
+          data_type: DataType
+          values: Record<string, number>
+        }>
+      }
+    | {
+        rule_id: number
+        execution_path: Array<{
+          id: string
+          variables?: Record<string, number>
+        }>
+      }
 }
 
 // 告警事件
@@ -205,9 +224,9 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'er
 
 // 订阅配置
 export interface SubscriptionConfig {
-  source: 'inst' | 'comsrv'
-  channels: number[]
-  dataTypes: DataType[]
+  source: 'inst' | 'comsrv' | 'rule'
+  channels?: number[] // inst/comsrv 类型为频道ID数组，rule 类型为规则ID数组
+  dataTypes?: DataType[]
   interval: number
 }
 

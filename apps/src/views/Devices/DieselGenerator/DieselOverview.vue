@@ -13,33 +13,85 @@ import powerIcon from '@/assets/icons/Power.svg'
 import oilIcon from '@/assets/icons/Oil.svg'
 import voltageIcon from '@/assets/icons/Voltage.svg'
 import coolantTempIcon from '@/assets/icons/CoolantTemp.svg'
-const energyCardData = [
+import { formatNumber } from '@/utils/common'
+import { watch, ref } from 'vue'
+import useWebSocket from '@/composables/useWebSocket'
+
+// WebSocket 数据
+const wsData = ref<any>(null)
+
+// 订阅 WebSocket - Overview 使用 inst 源
+useWebSocket(
   {
+    source: 'inst',
+    channels: [2],
+    dataTypes: ['A', 'M', 'P'] as any,
+    interval: 1000,
+  },
+  {
+    onBatchDataUpdate: (data: any) => {
+      wsData.value = data
+    },
+  },
+)
+
+const energyCardData = reactive([
+  //no
+  {
+    pointId: 1,
     title: 'Power',
     icon: powerIcon,
-    value: '35',
+    value: '-',
     unit: 'kW',
   },
-
+  //no
   {
+    pointId: 2,
     title: 'oil',
     icon: oilIcon,
-    value: '56',
+    value: '-',
     unit: '%',
   },
+  //no
   {
+    pointId: 3,
     title: 'Voltage',
     icon: voltageIcon,
-    value: '220',
+    value: '-',
     unit: 'V',
   },
+  //no
   {
+    pointId: 4,
     title: 'Coolant Temp',
     icon: coolantTempIcon,
-    value: '96',
+    value: '-',
     unit: '°F',
   },
-]
+])
+
+// 监听 WebSocket 数据更新
+watch(
+  wsData,
+  (data) => {
+    if (!data?.updates?.length) return
+    // 从数据类型 M 中取值
+    const mUpdate = data.updates.find(
+      (item: any) => item.channel_id === 2 && item.data_type === 'M',
+    )
+    if (!mUpdate) return
+    const values = mUpdate.values || {}
+    energyCardData.forEach((item: any) => {
+      if (item.pointId) {
+        const pointValue = values[item.pointId]
+        if (pointValue !== undefined && pointValue !== null) {
+          item.value = formatNumber(pointValue)
+        }
+      }
+    })
+  },
+  { deep: true, immediate: true },
+)
 </script>
 <style scoped lang="scss">
 .voltage-class.pv-overview {
@@ -84,11 +136,9 @@ const energyCardData = [
     width: 100%;
     flex: 1;
 
-
     // background-image: url('@/assets/images/DieselGenerator-bg.png');
     // background-repeat: no-repeat;
     // background-size: 100% 100%;
-
   }
 }
 </style>
