@@ -22,13 +22,13 @@ LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
 # =============================================================================
 # Command Line Arguments
 # =============================================================================
-AUTO_MODE=true  # Default to auto mode for production deployments
+AUTO_MODE=false  # Default to interactive mode
 SHOW_HELP=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        -i|--interactive)
-            AUTO_MODE=false
+        -a|--auto)
+            AUTO_MODE=true
             shift
             ;;
         --help|-h)
@@ -37,7 +37,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo -e "${RED}Unknown option: $1${NC}"
-            echo "Usage: $0 [-i|--interactive] [--help|-h]"
+            echo "Usage: $0 [-a|--auto] [--help|-h]"
             exit 1
             ;;
     esac
@@ -49,12 +49,12 @@ if [[ "$SHOW_HELP" == true ]]; then
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  -i, --interactive   Interactive mode: prompt for confirmations"
+    echo "  -a, --auto          Auto mode: no prompts, start services automatically"
     echo "  --help, -h          Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                  Automatic update (default, no prompts)"
-    echo "  $0 -i               Interactive installation with prompts"
+    echo "  $0                  Interactive installation (default)"
+    echo "  $0 -a               Automatic installation with auto-start"
     exit 0
 fi
 
@@ -304,7 +304,11 @@ update_service() {
     done
 
     # Step 4: Health check (wait for containers to start)
-    sleep 3
+    # Frontend (nginx) needs more time to initialize
+    case "$image" in
+        voltage-apps:*) sleep 8 ;;
+        *) sleep 3 ;;
+    esac
 
     if all_containers_running "$containers"; then
         echo -e "    ${GREEN}✓ Update successful${NC}"
@@ -410,7 +414,7 @@ ensure_core_services_running() {
         if ! docker ps --filter "name=^${container}$" --filter "status=running" -q 2>/dev/null | grep -q .; then
             local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
             echo "  Starting $service..."
-            
+
             # Detect docker compose command
             local compose_cmd
             if docker compose version &>/dev/null 2>&1; then
@@ -421,7 +425,7 @@ ensure_core_services_running() {
                 echo -e "    ${YELLOW}Warning: docker-compose not found${NC}"
                 continue
             fi
-            
+
             # Use timeout with direct docker compose command
             if timeout 60 $compose_cmd -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service" 2>&1; then
                 services_started=$((services_started + 1))
@@ -560,17 +564,6 @@ fi
 
 echo -e "${GREEN}[DONE] CLI tools installed${NC}"
 
-# CRITICAL: Pre-install docker-compose.yml before image updates
-# This is needed because Step 2 may update Redis container and requires this file
-if [[ -f docker-compose.yml ]]; then
-    echo "Pre-installing docker-compose.yml for Smart Update Mode..."
-    $SUDO mkdir -p "$INSTALL_DIR"
-    $SUDO cp docker-compose.yml "$INSTALL_DIR/docker-compose.yml"
-    echo -e "${GREEN}✓ docker-compose.yml ready for container updates${NC}"
-else
-    echo -e "${YELLOW}Warning: docker-compose.yml not found (will be created later)${NC}"
-fi
-
 # Step 2: Load Docker images (Smart Update Mode)
 echo -e "${YELLOW}[2/3] Loading Docker images...${NC}"
 if command -v docker &> /dev/null; then
@@ -583,8 +576,8 @@ if command -v docker &> /dev/null; then
         EXISTING_IMAGES=true
     fi
 
-    if [ "$EXISTING_IMAGES" = true ]; then
-        echo -e "${BLUE}Existing VoltageEMS images detected.${NC}"
+    if [ "$EXISTING_IMAGES" = true ] && [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+        echo -e "${BLUE}Existing VoltageEMS installation detected.${NC}"
         echo ""
         echo -e "${BLUE}Smart Update Mode:${NC}"
         echo "  1. Smart load (skip unchanged images)"
@@ -619,11 +612,11 @@ if command -v docker &> /dev/null; then
             # Smart load: only load images that have changed
             # Process in specific order to handle dependencies
             tarball_list=(docker/voltageems.tar.gz docker/python-services.tar.gz docker/voltage-redis.tar.gz docker/voltage-influxdb.tar.gz docker/apps.tar.gz)
-            
+
             tarball_idx=0
             for tarball in "${tarball_list[@]}"; do
                 tarball_idx=$((tarball_idx + 1))
-                
+
                 if [[ -f "$tarball" ]]; then
                     _basename=$(basename "$tarball")
                     _image="${TARBALL_TO_IMAGE[$_basename]:-}"
@@ -671,25 +664,25 @@ if command -v docker &> /dev/null; then
                 echo ""
                 echo -e "  ${GREEN}✓ All images unchanged (Image ID matches)${NC}"
                 echo -e "  ${GREEN}✓ No backup or restart needed${NC}"
-                
+
                 # Skip to Phase 3 directly (no updates needed)
                 echo ""
                 echo -e "${BLUE}Phase 2: Confirming updates...${NC}"
                 echo -e "${BLUE}No updates selected (all images unchanged).${NC}"
-                
+
                 # Skip Phase 3
                 echo ""
                 echo -e "${GREEN}[DONE] Smart update completed${NC}"
                 echo ""
                 echo -e "${BLUE}Update Summary:${NC}"
                 echo "  • ${#SKIPPED_IMAGES[@]} image(s) skipped (Image ID unchanged)"
-                
+
                 # List skipped images
                 for img in "${SKIPPED_IMAGES[@]}"; do
                     local_id=$(get_local_image_id "$img")
                     echo -e "    ${GREEN}✓${NC} $img (${local_id:0:12})"
                 done
-                
+
                 # Ensure core services are running
                 echo ""
                 ensure_core_services_running
@@ -959,51 +952,23 @@ else
     echo -e "${YELLOW}Warning: config.template not found${NC}"
 fi
 
-# Install Python service configuration files
-# Python services configs go directly to config/ directory (not config.template/)
-# Try to copy from services/{service}/config/ first (development), then from installer package config/ (production)
+# Install Python service configuration files (only services with config dirs)
 echo "Installing Python service configuration files..."
-PYTHON_SERVICES="hissrv apigateway netsrv alarmsrv"
-for service in $PYTHON_SERVICES; do
+for service in hissrv netsrv; do
     SERVICE_CONFIG_DIR="services/$service/config"
     INSTALLER_CONFIG_DIR="config/$service"
-    
-    # Try to copy from services directory first (development scenario)
+
     if [[ -d "$SERVICE_CONFIG_DIR" ]]; then
-        echo "  Copying $service configuration files from services directory..."
         $SUDO mkdir -p "$INSTALL_DIR/config/$service"
-        
-        # Copy all files and directories from service config directory
-        find "$SERVICE_CONFIG_DIR" -type f \( -name "*.yaml" -o -name "*.yml" -o -name "*.json" -o -name "*.conf" -o -name "*.ini" -o -name "*.txt" \) | while read file; do
-            # Get relative path from service config directory
-            rel_path="${file#$SERVICE_CONFIG_DIR/}"
-            # Create directory structure if needed
-            if [[ "$rel_path" == *"/"* ]]; then
-                $SUDO mkdir -p "$INSTALL_DIR/config/$service/$(dirname "$rel_path")"
-            fi
-            # Copy file
-            $SUDO cp "$file" "$INSTALL_DIR/config/$service/$rel_path"
-        done
-        
-        # Also copy directories if they exist (for nested config structures)
-        find "$SERVICE_CONFIG_DIR" -mindepth 1 -type d | while read dir; do
-            rel_dir="${dir#$SERVICE_CONFIG_DIR/}"
-            $SUDO mkdir -p "$INSTALL_DIR/config/$service/$rel_dir"
-        done
-        
-        echo -e "    ${GREEN}✓ $service configuration files copied to $INSTALL_DIR/config/$service/${NC}"
-    # Fallback: copy from installer package config/ directory (production scenario)
+        $SUDO cp -r "$SERVICE_CONFIG_DIR"/* "$INSTALL_DIR/config/$service/" 2>/dev/null || true
+        echo -e "  ${GREEN}✓${NC} $service"
     elif [[ -d "$INSTALLER_CONFIG_DIR" ]]; then
-        echo "  Copying $service configuration files from installer package..."
         $SUDO mkdir -p "$INSTALL_DIR/config/$service"
         $SUDO cp -r "$INSTALLER_CONFIG_DIR"/* "$INSTALL_DIR/config/$service/" 2>/dev/null || true
-        echo -e "    ${GREEN}✓ $service configuration files copied from installer package${NC}"
-    else
-        echo -e "    ${YELLOW}⚠ $service config directory not found: $SERVICE_CONFIG_DIR or $INSTALLER_CONFIG_DIR${NC}"
+        echo -e "  ${GREEN}✓${NC} $service (from package)"
     fi
 done
-
-echo -e "${GREEN}✓ Python service configuration files installed${NC}"
+echo -e "${GREEN}✓ Python service configuration installed${NC}"
 
 # Create a symlink if logs are external
 if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
@@ -1098,107 +1063,32 @@ else
     DOCKER_GID=$(getent group docker | cut -d: -f3)
 fi
 
-# Set ownership: actual_user:docker
-echo "Setting ownership to $ACTUAL_USER:docker..."
-
-# Set ownership for main directory first
-if [[ -z "$SUDO" ]]; then
-    chown $ACTUAL_USER:docker "$INSTALL_DIR"
-else
-    $SUDO chown $ACTUAL_USER:docker "$INSTALL_DIR"
-fi
-
-# Then set ownership for subdirectories
-if [[ -z "$SUDO" ]]; then
-    chown -R $ACTUAL_USER:docker "$INSTALL_DIR/data" 2>/dev/null || true
-    chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config.template" 2>/dev/null || true
-    chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config" 2>/dev/null || true
-    # Fix scripts directory if it exists
-    [[ -d "$INSTALL_DIR/scripts" ]] && chown -R $ACTUAL_USER:docker "$INSTALL_DIR/scripts" 2>/dev/null || true
-else
-    $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/data" 2>/dev/null || true
-    $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config.template" 2>/dev/null || true
-    $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/config" 2>/dev/null || true
-    # Fix scripts directory if it exists
-    [[ -d "$INSTALL_DIR/scripts" ]] && $SUDO chown -R $ACTUAL_USER:docker "$INSTALL_DIR/scripts" 2>/dev/null || true
-fi
-
-# Special handling for log directories (may be external)
-echo "Fixing log directory permissions..."
-
-# Get numeric UID and GID for the actual user and docker group
+# Get numeric UID and GID
 ACTUAL_UID=$(id -u $ACTUAL_USER)
-ACTUAL_GID=$DOCKER_GID  # Use the docker GID we detected earlier
+ACTUAL_GID=$DOCKER_GID
 
-echo "Using numeric IDs for permissions: UID=$ACTUAL_UID, GID=$ACTUAL_GID"
+echo "Setting permissions (UID=$ACTUAL_UID, GID=$ACTUAL_GID)..."
 
-# Fix /extp ownership if it exists (parent of external log directory)
+# Set ownership for all directories
+$SUDO chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$INSTALL_DIR" 2>/dev/null || true
+
+# Fix /extp if using external storage
 if [[ "$LOG_DIR" == "/extp/logs" ]] && [[ -d "/extp" ]]; then
-    echo "Fixing /extp parent directory ownership..."
-    if [[ -z "$SUDO" ]]; then
-        chown ${ACTUAL_UID}:${ACTUAL_GID} "/extp" 2>/dev/null || echo "Warning: Could not set ownership for /extp (may need sudo)"
-        chmod 755 "/extp" 2>/dev/null || true
-    else
-        $SUDO chown ${ACTUAL_UID}:${ACTUAL_GID} "/extp" || echo "Warning: Could not set ownership for /extp"
-        $SUDO chmod 755 "/extp" || true
-    fi
-    echo "Set /extp ownership to ${ACTUAL_UID}:${ACTUAL_GID}"
+    $SUDO chown ${ACTUAL_UID}:${ACTUAL_GID} "/extp" 2>/dev/null || true
+    $SUDO chmod 755 "/extp" 2>/dev/null || true
 fi
 
-if [[ -d "$LOG_DIR" ]]; then
-    if [[ -z "$SUDO" ]]; then
-        # Fix main log directory using numeric IDs
-        chown ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR" || echo "Warning: Could not set ownership for $LOG_DIR"
-        chmod 775 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
+# Set permissions: 755 for dirs, 777 for logs (container write access)
+$SUDO chmod 755 "$INSTALL_DIR" 2>/dev/null || true
+$SUDO chmod -R 775 "$INSTALL_DIR/data" 2>/dev/null || true
+$SUDO chmod -R 775 "$INSTALL_DIR/config" 2>/dev/null || true
+$SUDO chmod -R 775 "$INSTALL_DIR/config.template" 2>/dev/null || true
+$SUDO chmod -R 777 "$LOG_DIR" 2>/dev/null || true
 
-        # Fix each service subdirectory explicitly
-        for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
-            if [[ -d "$LOG_DIR/$service" ]]; then
-                chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR/$service" || echo "Warning: Could not set ownership for $LOG_DIR/$service"
-                chmod 775 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
-            fi
-        done
+# Fix symlink ownership if exists
+[[ -L "$INSTALL_DIR/logs" ]] && $SUDO chown -h ${ACTUAL_UID}:${ACTUAL_GID} "$INSTALL_DIR/logs" 2>/dev/null || true
 
-        # Fix symlink if it exists
-        [[ -L "$INSTALL_DIR/logs" ]] && chown -h ${ACTUAL_UID}:${ACTUAL_GID} "$INSTALL_DIR/logs" 2>/dev/null || true
-    else
-        # Fix main log directory using numeric IDs
-        $SUDO chown ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR" || echo "Warning: Could not set ownership for $LOG_DIR"
-        $SUDO chmod 777 "$LOG_DIR" || echo "Warning: Could not set permissions for $LOG_DIR"
-
-        # Fix each service subdirectory explicitly
-        for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
-            if [[ -d "$LOG_DIR/$service" ]]; then
-                $SUDO chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR/$service" || echo "Warning: Could not set ownership for $LOG_DIR/$service"
-                $SUDO chmod -R 777 "$LOG_DIR/$service" || echo "Warning: Could not set permissions for $LOG_DIR/$service"
-            fi
-        done
-
-        # Fix symlink if it exists
-        [[ -L "$INSTALL_DIR/logs" ]] && $SUDO chown -h ${ACTUAL_UID}:${ACTUAL_GID} "$INSTALL_DIR/logs" 2>/dev/null || true
-    fi
-    echo -e "${GREEN}✓ Log directory permissions fixed (UID=$ACTUAL_UID, GID=$ACTUAL_GID)${NC}"
-else
-    echo -e "${YELLOW}Warning: Log directory $LOG_DIR does not exist${NC}"
-fi
-
-# Set permissions for main directory (755 - owner can write, others can read/execute)
-if [[ -z "$SUDO" ]]; then
-    chmod 755 "$INSTALL_DIR"
-else
-    $SUDO chmod 755 "$INSTALL_DIR"
-fi
-
-# Set permissions for subdirectories (777 for logs to allow any container user to write)
-if [[ -z "$SUDO" ]]; then
-    chmod -R 775 "$INSTALL_DIR/data"
-    chmod -R 777 "$LOG_DIR"
-    [[ -d "$INSTALL_DIR/config" ]] && chmod -R 775 "$INSTALL_DIR/config" || true
-else
-    $SUDO chmod -R 775 "$INSTALL_DIR/data"
-    $SUDO chmod -R 777 "$LOG_DIR"
-    [[ -d "$INSTALL_DIR/config" ]] && $SUDO chmod -R 775 "$INSTALL_DIR/config" || true
-fi
+echo -e "${GREEN}✓ Permissions configured${NC}"
 
 # Create system-wide environment variables for Docker Compose
 echo "Creating system environment variables..."
@@ -1235,36 +1125,6 @@ if [[ -f docker-compose.yml ]]; then
     echo -e "${GREEN}docker-compose.yml installed${NC}"
 else
     echo -e "${YELLOW}Warning: docker-compose.yml not found${NC}"
-fi
-
-# Create soft link to user's home directory for convenience
-echo "Creating docker-compose.yml symlink in user home directory..."
-if [[ -n "$ACTUAL_USER" ]]; then
-    USER_HOME=$(eval echo ~$ACTUAL_USER)
-    if [[ -d "$USER_HOME" ]]; then
-        # Create symlink in user's home directory (as the target user to avoid permission issues)
-        if command -v sudo &> /dev/null; then
-            # Use sudo to create symlink as the target user
-            sudo -u "$ACTUAL_USER" ln -sf "$INSTALL_DIR/docker-compose.yml" "$USER_HOME/docker-compose.yml" 2>/dev/null
-            if [[ $? -eq 0 ]]; then
-                echo -e "${GREEN}Created symlink: $USER_HOME/docker-compose.yml → $INSTALL_DIR/docker-compose.yml${NC}"
-            else
-                echo -e "${YELLOW}Note: Could not create symlink in home directory (permission denied)${NC}"
-                echo -e "${YELLOW}You can manually create it later with:${NC}"
-                echo -e "${YELLOW}  ln -sf $INSTALL_DIR/docker-compose.yml ~/docker-compose.yml${NC}"
-            fi
-        else
-            # Try without sudo (might fail due to permissions)
-            ln -sf "$INSTALL_DIR/docker-compose.yml" "$USER_HOME/docker-compose.yml" 2>/dev/null
-            if [[ $? -eq 0 ]]; then
-                echo -e "${GREEN}Created symlink: $USER_HOME/docker-compose.yml → $INSTALL_DIR/docker-compose.yml${NC}"
-            else
-                echo -e "${YELLOW}Note: Could not create symlink in home directory${NC}"
-                echo -e "${YELLOW}You can manually create it later with:${NC}"
-                echo -e "${YELLOW}  ln -sf $INSTALL_DIR/docker-compose.yml ~/docker-compose.yml${NC}"
-            fi
-        fi
-    fi
 fi
 
 echo -e "${GREEN}[DONE] Configuration installed${NC}"
@@ -1409,7 +1269,38 @@ echo ""
 echo -e "${YELLOW}Note: Using host network mode - ensure ports are not in use${NC}"
 echo ""
 
-# Offer to clean up installer package
+# =============================================================================
+# Start Services
+# =============================================================================
+echo -e "${BLUE}================================${NC}"
+echo -e "${BLUE}  Start Services                ${NC}"
+echo -e "${BLUE}================================${NC}"
+echo ""
+
+if [[ "$AUTO_MODE" == true ]]; then
+    echo -e "${GREEN}Auto mode: Starting services...${NC}"
+    cd "$INSTALL_DIR" && docker-compose up -d
+    echo ""
+    echo -e "${GREEN}✓ Services started${NC}"
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+else
+    read -p "Start services now? (Y/n): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        echo -e "${GREEN}Starting services...${NC}"
+        cd "$INSTALL_DIR" && docker-compose up -d
+        echo ""
+        echo -e "${GREEN}✓ Services started${NC}"
+        docker ps --format "table {{.Names}}\t{{.Status}}"
+    else
+        echo -e "${YELLOW}Skipped. Start manually: cd $INSTALL_DIR && docker-compose up -d${NC}"
+    fi
+fi
+echo ""
+
+# =============================================================================
+# Cleanup
+# =============================================================================
 echo -e "${BLUE}================================${NC}"
 echo -e "${BLUE}  Cleanup                       ${NC}"
 echo -e "${BLUE}================================${NC}"
@@ -1442,48 +1333,16 @@ if [[ -n "$INSTALLER_NAME" ]]; then
     echo "  Location: $INSTALLER_NAME"
     echo "  Size: $(du -h "$INSTALLER_NAME" 2>/dev/null | cut -f1)"
     echo ""
-
-    if [[ "$AUTO_MODE" == true ]]; then
-        echo -e "${BLUE}Auto mode: keeping installer package${NC}"
+    echo -e "${GREEN}Cleaning up installer package...${NC}"
+    if rm -f "$INSTALLER_NAME" 2>/dev/null; then
+        echo -e "${GREEN}✓ Installer package deleted${NC}"
     else
-        read -p "Do you want to delete the installer package? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            if rm -f "$INSTALLER_NAME" 2>/dev/null; then
-                echo -e "${GREEN}✓ Installer package deleted${NC}"
-            else
-                echo -e "${YELLOW}Warning: Failed to delete installer (may need sudo)${NC}"
-                echo "  You can manually delete it with:"
-                echo "  $SUDO rm -f '$INSTALLER_NAME'"
-            fi
-        else
-            echo -e "${BLUE}Installer package kept at: $INSTALLER_NAME${NC}"
-        fi
+        echo -e "${YELLOW}Warning: Failed to delete installer (may need sudo)${NC}"
+        echo "  You can manually delete it with:"
+        echo "  $SUDO rm -f '$INSTALLER_NAME'"
     fi
 else
-    if [[ "$AUTO_MODE" != true ]]; then
-        echo -e "${BLUE}No installer package found in common locations.${NC}"
-        echo ""
-        read -p "Do you want to specify the installer location for cleanup? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            read -p "Enter full path to installer: " INSTALLER_PATH
-            if [[ -f "$INSTALLER_PATH" ]]; then
-                read -p "Delete $INSTALLER_PATH? (y/N): " -n 1 -r
-                echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
-                    if rm -f "$INSTALLER_PATH" 2>/dev/null; then
-                        echo -e "${GREEN}✓ Installer deleted${NC}"
-                    else
-                        echo -e "${YELLOW}Failed to delete (may need sudo)${NC}"
-                        echo "  Try: $SUDO rm -f '$INSTALLER_PATH'"
-                    fi
-                fi
-            else
-                echo -e "${YELLOW}File not found: $INSTALLER_PATH${NC}"
-            fi
-        fi
-    fi
+    echo -e "${BLUE}No installer package found in common locations.${NC}"
 fi
 
 echo ""

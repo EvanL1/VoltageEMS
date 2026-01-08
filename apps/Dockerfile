@@ -1,14 +1,14 @@
 # 构建阶段
-FROM node:18-alpine AS builder
+FROM node:22-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
 
+# 启用 corepack 并准备 pnpm（自动使用 package.json 中指定的版本）
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 # 复制 package.json 和 pnpm-lock.yaml
 COPY package.json pnpm-lock.yaml ./
-
-# 安装 pnpm
-RUN npm install -g pnpm
 
 # 安装依赖
 RUN pnpm install --frozen-lockfile
