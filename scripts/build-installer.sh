@@ -227,8 +227,9 @@ done
 
 # Build voltageems Docker image using pre-compiled binaries
 echo -e "${BLUE}Building VoltageEMS Docker image...${NC}"
-# 使用标准的 docker build 替代 buildx，避免 vbuilder 节点的缓存和 ID 不一致问题
+# 二进制已由 cargo-zigbuild 交叉编译完成，这里只需打包，无需 buildx
 docker build --platform $DOCKER_PLATFORM \
+    --build-arg TARGET_TRIPLE=$TARGET \
     -f "$ROOT_DIR/Dockerfile" \
     -t voltageems:latest \
     "$ROOT_DIR"

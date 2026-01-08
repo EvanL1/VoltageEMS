@@ -1,6 +1,9 @@
-# VoltageEMS Dockerfile for ARM64
+# VoltageEMS Dockerfile for multi-architecture builds
 # Uses pre-compiled binaries from cargo-zigbuild for fast builds
 # No compilation happens in Docker - just packaging the pre-built binaries
+
+# Build argument for target triple (set by build script)
+ARG TARGET_TRIPLE=aarch64-unknown-linux-musl
 
 FROM alpine:3.19
 
@@ -12,10 +15,11 @@ RUN apk add --no-cache \
 # Set working directory
 WORKDIR /app
 
-# Copy pre-compiled ARM64 binaries (built with cargo-zigbuild)
+# Copy pre-compiled binaries (built with cargo-zigbuild)
 # These are already built by the build script before Docker runs
-COPY target/aarch64-unknown-linux-musl/release/comsrv /usr/local/bin/comsrv
-COPY target/aarch64-unknown-linux-musl/release/modsrv /usr/local/bin/modsrv
+ARG TARGET_TRIPLE
+COPY target/${TARGET_TRIPLE}/release/comsrv /usr/local/bin/comsrv
+COPY target/${TARGET_TRIPLE}/release/modsrv /usr/local/bin/modsrv
 
 # Make binaries executable
 RUN chmod +x /usr/local/bin/*
