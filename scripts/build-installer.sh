@@ -246,6 +246,29 @@ fi
 echo -e "${BLUE}Building unified Python services...${NC}"
 build_python_services
 
+# Build Frontend (Vue.js)
+echo -e "${BLUE}Building Frontend (Vue.js)...${NC}"
+FRONTEND_DOCKERFILE="$ROOT_DIR/apps/Dockerfile"
+if [[ -f "$FRONTEND_DOCKERFILE" ]]; then
+    echo -e "${BLUE}Building voltage-apps:latest for $ARCH...${NC}"
+    docker build --platform $DOCKER_PLATFORM \
+        -f "$FRONTEND_DOCKERFILE" \
+        -t voltage-apps:latest \
+        "$ROOT_DIR/apps"
+    
+    if [ $? -eq 0 ]; then
+        docker save voltage-apps:latest | gzip > "$BUILD_DIR/docker/apps.tar.gz"
+        sync
+        size=$(ls -lh "$BUILD_DIR/docker/apps.tar.gz" | awk '{print $5}')
+        echo -e "${GREEN}✓ Saved apps.tar.gz ($size)${NC}"
+    else
+        echo -e "${YELLOW}Warning: Frontend build failed, continuing without frontend...${NC}"
+    fi
+else
+    echo -e "${YELLOW}Warning: Frontend Dockerfile not found at $FRONTEND_DOCKERFILE${NC}"
+    echo -e "${YELLOW}Skipping frontend build...${NC}"
+fi
+
 # Pull official images
 echo -e "${BLUE}Pulling official images...${NC}"
 pull_and_save_image "redis:8-alpine" "voltage-redis.tar.gz"
@@ -253,12 +276,23 @@ pull_and_save_image "influxdb:2-alpine" "voltage-influxdb.tar.gz"
 
 # Verify images
 echo -e "${YELLOW}Verifying Docker images...${NC}"
-for img in voltageems voltage-redis voltage-influxdb python-services; do
+REQUIRED_IMAGES=("voltageems" "voltage-redis" "voltage-influxdb" "python-services")
+OPTIONAL_IMAGES=("apps")
+
+for img in "${REQUIRED_IMAGES[@]}"; do
     if [[ ! -f "$BUILD_DIR/docker/$img.tar.gz" ]]; then
         echo -e "${RED}$img.tar.gz not found!${NC}"
         exit 1
     fi
     echo -e "${GREEN}✓ $img.tar.gz${NC}"
+done
+
+for img in "${OPTIONAL_IMAGES[@]}"; do
+    if [[ -f "$BUILD_DIR/docker/$img.tar.gz" ]]; then
+        echo -e "${GREEN}✓ $img.tar.gz (optional)${NC}"
+    else
+        echo -e "${YELLOW}⚠ $img.tar.gz not found (optional, skipping)${NC}"
+    fi
 done
 
 # Copy docker-compose.yml

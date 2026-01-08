@@ -46,4 +46,35 @@ else
     echo -e "${YELLOW}Integration tests require Redis${NC}"
 fi
 
+# Check Frontend (Vue.js)
+echo -e "${YELLOW}Checking Frontend (Vue.js)...${NC}"
+if [[ -d "apps" ]]; then
+    if [[ -f "apps/package.json" ]]; then
+        echo -e "${GREEN}✓ Frontend directory and package.json found${NC}"
+        
+        # Check for required frontend files
+        if [[ -f "apps/Dockerfile" ]]; then
+            echo -e "${GREEN}✓ Frontend Dockerfile found${NC}"
+        else
+            echo -e "${YELLOW}⚠ Frontend Dockerfile not found${NC}"
+        fi
+        
+        if [[ -f "apps/nginx.conf" ]]; then
+            echo -e "${GREEN}✓ Frontend nginx.conf found${NC}"
+        else
+            echo -e "${YELLOW}⚠ Frontend nginx.conf not found${NC}"
+        fi
+        
+        if [[ -f "apps/vite.config.ts" ]] || [[ -f "apps/vite.config.js" ]]; then
+            echo -e "${GREEN}✓ Frontend Vite config found${NC}"
+        else
+            echo -e "${YELLOW}⚠ Frontend Vite config not found${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠ Frontend package.json not found${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ Frontend directory (apps) not found${NC}"
+fi
+
 echo -e "${GREEN}All checks passed!${NC}"
