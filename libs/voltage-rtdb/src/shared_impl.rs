@@ -1387,6 +1387,81 @@ impl SharedVecRtdbReader {
             writer_heartbeat: header.writer_heartbeat.load(Ordering::Acquire),
         }
     }
+
+    // ==================== Iteration API ====================
+
+    /// Get all registered instance IDs
+    ///
+    /// Returns a Vec of instance IDs that have been indexed.
+    /// This is useful for iterating over all instances without
+    /// blindly scanning a range.
+    pub fn instance_ids(&self) -> Vec<u32> {
+        self.instance_layouts.keys().copied().collect()
+    }
+
+    /// Get all registered channel IDs
+    ///
+    /// Returns a Vec of channel IDs that have been indexed.
+    pub fn channel_ids(&self) -> Vec<u32> {
+        self.channel_layouts.keys().copied().collect()
+    }
+
+    /// Iterate over all measurement points for a given instance
+    ///
+    /// The callback receives (point_id, value) for each registered measurement point.
+    /// This is more efficient than blindly querying a range of point IDs.
+    pub fn iter_instance_measurements<F>(&self, instance_id: u32, mut f: F)
+    where
+        F: FnMut(u32, f64),
+    {
+        if let Some(layout) = self.instance_layouts.get(&instance_id) {
+            for (point_id, &rel_offset) in layout.measurement_point_to_offset.iter().enumerate() {
+                if rel_offset != InstanceLayout::INVALID_OFFSET {
+                    let slot_offset = layout.measurement_base + rel_offset as usize;
+                    let slot = self.slot_at(slot_offset);
+                    f(point_id as u32, slot.load_value(Ordering::Acquire));
+                }
+            }
+        }
+    }
+
+    /// Iterate over all action points for a given instance
+    ///
+    /// The callback receives (point_id, value) for each registered action point.
+    pub fn iter_instance_actions<F>(&self, instance_id: u32, mut f: F)
+    where
+        F: FnMut(u32, f64),
+    {
+        if let Some(layout) = self.instance_layouts.get(&instance_id) {
+            for (point_id, &rel_offset) in layout.action_point_to_offset.iter().enumerate() {
+                if rel_offset != InstanceLayout::INVALID_OFFSET {
+                    let slot_offset = layout.action_base + rel_offset as usize;
+                    let slot = self.slot_at(slot_offset);
+                    f(point_id as u32, slot.load_value(Ordering::Acquire));
+                }
+            }
+        }
+    }
+
+    /// Iterate over all points of a given type for a channel
+    ///
+    /// The callback receives (point_id, value) for each registered point.
+    pub fn iter_channel_points<F>(&self, channel_id: u32, point_type: PointType, mut f: F)
+    where
+        F: FnMut(u32, f64),
+    {
+        if let Some(layout) = self.channel_layouts.get(&channel_id) {
+            let type_idx = ChannelIndex::point_type_to_index(point_type);
+            for (point_id, &slot_idx) in layout.type_mappings[type_idx].iter().enumerate() {
+                if slot_idx != u32::MAX {
+                    let slot_offset = layout.type_bases[type_idx]
+                        + (slot_idx as usize) * std::mem::size_of::<PointSlot>();
+                    let slot = self.channel_slot_at(slot_offset);
+                    f(point_id as u32, slot.load_value(Ordering::Acquire));
+                }
+            }
+        }
+    }
 }
 
 /// Statistics for SharedVecRtdbReader

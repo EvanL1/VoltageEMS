@@ -11,6 +11,7 @@ mod models;
 mod rtdb;
 mod rules;
 mod services;
+mod shm;
 mod utils;
 
 // ===== Library Mode API =====
@@ -241,6 +242,13 @@ enum Commands {
         #[command(subcommand)]
         command: logs::LogCommands,
     },
+
+    /// Shared memory operations (interactive REPL)
+    #[command(about = "Zero-latency shared memory CLI (like mysql-cli)")]
+    Shm {
+        #[command(subcommand)]
+        command: Option<shm::ShmCommands>,
+    },
 }
 
 fn print_banner() {
@@ -428,6 +436,10 @@ async fn main() -> Result<()> {
         },
         Commands::Logs { command } => {
             logs::handle_command(command).await?;
+        },
+        Commands::Shm { command } => {
+            // Shm command doesn't need async or service context
+            shm::handle_command(command)?;
         },
     }
 

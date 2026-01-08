@@ -36,7 +36,7 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro
-      - voltage-shm:/shm/rtdb:rw  # Shared memory (writer - Round 118)
+      - /dev/shm/voltage-rtdb.shm:/shm/rtdb/voltage-rtdb.shm:rw  # Shared memory (writer) - bind mount for host access
     environment:
       - SERVICE_NAME=comsrv
       - SERVICE_PORT=6001
@@ -78,7 +78,7 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro # Read-only access to Unix socket
-      - voltage-shm:/shm/rtdb:ro  # Shared memory (reader - Round 118)
+      - /dev/shm/voltage-rtdb.shm:/shm/rtdb/voltage-rtdb.shm:ro  # Shared memory (reader) - bind mount for host access
     restart: unless-stopped
 
   # ============================================
@@ -238,10 +238,4 @@ volumes:
   redis-socket: # Shared Unix socket volume for better performance
   influxdb-data:
   influxdb-config:
-  # Shared memory volume for zero-copy data sharing between comsrv and modsrv (Round 118)
-  voltage-shm:
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: size=16m,mode=1777
+  # Note: voltage-shm now uses host /dev/shm bind mount for external access
