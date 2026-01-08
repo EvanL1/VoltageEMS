@@ -664,6 +664,7 @@ if command -v docker &> /dev/null; then
             INFRA_CHANGED=()
             RUST_CHANGED=()
             PYTHON_CHANGED=()
+            FRONTEND_CHANGED=()
 
             # If nothing was loaded, skip detection
             if [[ ${#LOADED_IMAGES[@]} -eq 0 ]]; then
@@ -711,8 +712,11 @@ if command -v docker &> /dev/null; then
                                 voltageems:latest)
                                     RUST_CHANGED+=("$image")
                                     ;;
-                                voltageems-ss:*|voltage-*)
+                                voltageems-ss:*)
                                     PYTHON_CHANGED+=("$image")
+                                    ;;
+                                voltage-apps:*)
+                                    FRONTEND_CHANGED+=("$image")
                                     ;;
                             esac
                             ;;
@@ -726,8 +730,11 @@ if command -v docker &> /dev/null; then
                                 voltageems:latest)
                                     RUST_CHANGED+=("$image")
                                     ;;
-                                voltageems-ss:*|voltage-*)
+                                voltageems-ss:*)
                                     PYTHON_CHANGED+=("$image")
+                                    ;;
+                                voltage-apps:*)
+                                    FRONTEND_CHANGED+=("$image")
                                     ;;
                             esac
                             ;;
@@ -771,6 +778,12 @@ if command -v docker &> /dev/null; then
                     fi
                 done
             fi
+
+            # Frontend: auto-confirm (optional service)
+            for image in "${FRONTEND_CHANGED[@]}"; do
+                echo -e "  ${GREEN}Auto-confirmed: $image (Frontend)${NC}"
+                TO_UPDATE+=("$image")
+            done
 
             # === PHASE 3: EXECUTE ===
             if [[ ${#TO_UPDATE[@]} -eq 0 ]]; then
