@@ -45,13 +45,15 @@ pub use redis_impl::RedisRtdb;
 
 pub use memory_impl::{MemoryRtdb, MemoryStats};
 
-pub use vec_impl::{instance_point_type, ChannelVecStore, PointSlot, VecRtdb, VecRtdbStats};
+// VecRtdb removed from public API - using SharedMemory + Redis two-tier architecture
+// PointSlot and ChannelVecStore are still used internally by SharedMemory
+pub use vec_impl::{instance_point_type, ChannelVecStore, PointSlot};
 
-// Shared memory exports (Round 115-117, 123)
+// Shared memory exports (123, 145)
 pub use shared_impl::{
-    is_shm_available, try_open_reader, ChannelToSlotIndex, SharedConfig, SharedHeader,
-    SharedReaderStats, SharedVecRtdbReader, SharedVecRtdbWriter, SharedWriterStats, SHARED_MAGIC,
-    SHARED_VERSION,
+    default_shm_path, is_shm_available, try_open_reader, ChannelIndex, ChannelToSlotIndex,
+    SharedConfig, SharedHeader, SharedReaderStats, SharedVecRtdbReader, SharedVecRtdbWriter,
+    SharedWriterStats, SHARED_MAGIC,
 };
 
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
@@ -172,7 +174,7 @@ pub mod helpers {
     /// * `Ok(usize)` - Number of points written
     /// * `Err(anyhow::Error)` - Write error
     ///
-    /// # Round 129-130 Optimization
+    /// # Optimization
     /// - Uses zero-allocation number formatting (itoa/ryu)
     /// - Uses Arc<str> for O(1) clone across 3 layers, converts to String only at final push
     pub async fn write_channel_points<R>(
@@ -229,7 +231,7 @@ pub mod helpers {
     /// Synchronous version that buffers writes for later flush to Redis.
     /// Used with WriteBuffer for high-frequency updates.
     ///
-    /// Round 129: Uses precomputed point ID pool and itoa/ryu for zero-allocation formatting.
+    /// Uses precomputed point ID pool and itoa/ryu for zero-allocation formatting.
     ///
     /// # Arguments
     /// * `write_buffer` - WriteBuffer for aggregating writes
@@ -347,5 +349,53 @@ pub mod helpers {
         }
 
         Ok(timestamp_ms)
+    }
+
+    /// Write channel point to Hash only (no TODO queue trigger)
+    ///
+    /// # Optimization
+    /// When direct mpsc trigger succeeds, use this function to persist data
+    /// to Redis Hash without triggering the TODO queue (already triggered via mpsc).
+    ///
+    /// This reduces Redis operations by 50%:
+    /// - Before: HSET + RPUSH (TODO queue)
+    /// - After: HSET only
+    ///
+    /// # Arguments
+    /// * `rtdb` - RTDB trait object
+    /// * `config` - KeySpace configuration
+    /// * `channel_id` - Channel ID
+    /// * `point_type` - Point type (Control or Adjustment)
+    /// * `point_id` - Point ID
+    /// * `value` - Point value
+    /// * `timestamp_ms` - Timestamp in milliseconds
+    ///
+    /// # Returns
+    /// * `Ok(())` - Success
+    /// * `Err(anyhow::Error)` - Write error
+    pub async fn write_channel_hash_only<R>(
+        rtdb: &R,
+        config: &KeySpaceConfig,
+        channel_id: u32,
+        point_type: PointType,
+        point_id: u32,
+        value: f64,
+        timestamp_ms: i64,
+    ) -> Result<()>
+    where
+        R: Rtdb,
+    {
+        let channel_key = config.channel_key(channel_id, point_type);
+
+        // Write to three-layer Hash (value/ts/raw) - NO TODO queue trigger
+        write_channel_points(
+            rtdb,
+            &channel_key,
+            vec![(point_id, value, value)], // (point_id, value, raw_value)
+            timestamp_ms,
+        )
+        .await?;
+
+        Ok(())
     }
 }

@@ -13,7 +13,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+
 use tower::util::ServiceExt; // for `oneshot` and `ready`
 use voltage_rtdb::{MemoryRtdb, Rtdb};
 
@@ -50,29 +50,31 @@ async fn create_test_sqlite_pool_with_points() -> sqlx::SqlitePool {
 }
 
 /// Helper: Create API routes with MemoryRtdb for testing
-async fn create_test_api_routes(
-    channel_manager: Arc<RwLock<ChannelManager<MemoryRtdb>>>,
-) -> Router {
+async fn create_test_api_routes(channel_manager: Arc<ChannelManager<MemoryRtdb>>) -> Router {
     let rtdb = Arc::new(MemoryRtdb::new());
     let sqlite_pool = create_test_sqlite_pool().await;
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, None)
+    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache)
 }
 
 /// Helper: Build a Router using a provided in-memory SQLite pool
 async fn create_test_api_with_pool(
-    channel_manager: Arc<RwLock<ChannelManager<MemoryRtdb>>>,
+    channel_manager: Arc<ChannelManager<MemoryRtdb>>,
     sqlite_pool: SqlitePool,
 ) -> Router {
     let rtdb = Arc::new(MemoryRtdb::new());
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, None)
+    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache)
 }
 
 async fn create_test_api_with_pool_rtdb_and_instance(
-    channel_manager: Arc<RwLock<ChannelManager<MemoryRtdb>>>,
+    channel_manager: Arc<ChannelManager<MemoryRtdb>>,
     sqlite_pool: SqlitePool,
     rtdb: Arc<MemoryRtdb>,
 ) -> (Router, Arc<MemoryRtdb>) {
-    let router = create_api_routes_generic(channel_manager, rtdb.clone(), sqlite_pool, None);
+    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
+    let router =
+        create_api_routes_generic(channel_manager, rtdb.clone(), sqlite_pool, command_tx_cache);
     (router, rtdb)
 }
 
@@ -113,10 +115,10 @@ fn assert_json_field(json: &serde_json::Value, path: &str, expected: serde_json:
 
 #[tokio::test]
 async fn test_get_service_status_returns_200() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -131,10 +133,10 @@ async fn test_get_service_status_returns_200() {
 
 #[tokio::test]
 async fn test_health_check_returns_200() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -153,10 +155,10 @@ async fn test_health_check_returns_200() {
 
 #[tokio::test]
 async fn test_get_all_channels_returns_200() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -192,10 +194,10 @@ async fn test_get_all_channels_with_filters() {
         .unwrap();
 
     // Build factory without external Redis for unit tests
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_with_pool(channel_manager, pool).await;
 
     // Protocol filter
@@ -225,10 +227,10 @@ async fn test_get_all_channels_with_filters() {
 
 #[tokio::test]
 async fn test_get_channel_status_invalid_id_returns_400() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -243,10 +245,10 @@ async fn test_get_channel_status_invalid_id_returns_400() {
 
 #[tokio::test]
 async fn test_get_channel_status_not_found_returns_404() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -261,10 +263,10 @@ async fn test_get_channel_status_not_found_returns_404() {
 
 #[tokio::test]
 async fn test_get_point_info_handler_returns_200() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -283,10 +285,10 @@ async fn test_get_point_info_handler_returns_200() {
 
 #[tokio::test]
 async fn test_create_channel_returns_description() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
 
     // Use simple in-memory DB (channels table only)
     let sqlite_pool = create_test_sqlite_pool().await;
@@ -323,10 +325,10 @@ async fn test_create_channel_returns_description() {
 
 #[tokio::test]
 async fn test_update_channel_returns_description() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -382,10 +384,10 @@ async fn test_update_channel_returns_description() {
 
 #[tokio::test]
 async fn test_enable_disable_preserves_description() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -437,10 +439,10 @@ async fn test_enable_disable_preserves_description() {
 
 #[tokio::test]
 async fn test_grouped_points_unfiltered_and_filtered() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     // Seed a channel and some points
@@ -515,10 +517,10 @@ async fn test_grouped_points_unfiltered_and_filtered() {
 
 #[tokio::test]
 async fn test_grouped_mappings_unfiltered() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     // Seed channel and points with protocol_mappings
@@ -566,10 +568,10 @@ async fn test_grouped_mappings_unfiltered() {
 
 #[tokio::test]
 async fn test_channel_detail_returns_description() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -603,10 +605,10 @@ async fn test_channel_detail_returns_description() {
 
 #[tokio::test]
 async fn test_delete_channel_ok() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -641,10 +643,10 @@ async fn test_delete_channel_ok() {
 
 #[tokio::test]
 async fn test_update_mappings_validate_only() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
     // seed channel and telemetry points
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (8001, 'Ch8001', 'modbus_tcp', 1, '{}')")
@@ -677,10 +679,10 @@ async fn test_update_mappings_validate_only() {
 
 #[tokio::test]
 async fn test_update_mappings_replace_persists() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (8002, 'Ch8002', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
@@ -722,10 +724,10 @@ async fn test_update_mappings_replace_persists() {
 
 #[tokio::test]
 async fn test_update_mappings_merge_persists() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
     // seed channel and telemetry point with existing mapping
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (8010, 'Ch8010', 'modbus_tcp', 1, '{}')")
@@ -770,10 +772,10 @@ async fn test_update_mappings_merge_persists() {
 
 #[tokio::test]
 async fn test_update_mappings_invalid_four_remote_400() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (8011, 'Ch8011', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
@@ -801,10 +803,10 @@ async fn test_update_mappings_invalid_four_remote_400() {
 
 #[tokio::test]
 async fn test_update_mappings_point_not_found_400() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (8012, 'Ch8012', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
@@ -832,10 +834,10 @@ async fn test_update_mappings_point_not_found_400() {
 
 #[tokio::test]
 async fn test_update_mappings_invalid_function_code_for_t_400() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (8013, 'Ch8013', 'modbus_tcp', 1, '{}')")
         .execute(&pool)
@@ -885,10 +887,10 @@ async fn test_reload_configuration_disabled_channel_adds_without_runtime() {
         .unwrap();
 
     // Factory with pools to avoid filesystem DB
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_with_pool(channel_manager, pool).await;
 
     let req = Request::builder()
@@ -902,10 +904,10 @@ async fn test_reload_configuration_disabled_channel_adds_without_runtime() {
 
 #[tokio::test]
 async fn test_get_point_info_invalid_type_400() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
     let req = Request::builder()
         .uri("/api/channels/1/X/1")
@@ -917,10 +919,10 @@ async fn test_get_point_info_invalid_type_400() {
 
 #[tokio::test]
 async fn test_grouped_points_filter_c_and_a() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
     // Seed channel and minimal points
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (9101, 'Ch9101', 'virtual', 1, '{}')")
@@ -965,10 +967,10 @@ async fn test_grouped_points_filter_c_and_a() {
 
 #[tokio::test]
 async fn test_get_channel_status_valid_id() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -988,10 +990,10 @@ async fn test_get_channel_status_valid_id() {
 
 #[tokio::test]
 async fn test_control_channel_start_operation() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let operation = ChannelOperation {
@@ -1017,10 +1019,10 @@ async fn test_control_channel_start_operation() {
 
 #[tokio::test]
 async fn test_control_channel_stop_operation() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let operation = ChannelOperation {
@@ -1045,10 +1047,10 @@ async fn test_control_channel_stop_operation() {
 
 #[tokio::test]
 async fn test_control_channel_restart_operation() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let operation = ChannelOperation {
@@ -1073,10 +1075,10 @@ async fn test_control_channel_restart_operation() {
 
 #[tokio::test]
 async fn test_control_channel_invalid_operation_returns_400() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let operation = ChannelOperation {
@@ -1099,10 +1101,10 @@ async fn test_control_channel_invalid_operation_returns_400() {
 
 #[tokio::test]
 async fn test_control_channel_not_found_returns_404() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let operation = ChannelOperation {
@@ -1153,10 +1155,10 @@ fn test_adjustment_command_structure() {
 
 #[tokio::test]
 async fn test_api_routes_with_memory_rtdb() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let _app = create_test_api_routes(channel_manager).await;
     // Basic test to ensure routes compile with MemoryRtdb
     // Test passes if code compiles
@@ -1173,14 +1175,16 @@ fn test_api_routes_compile() {
 
     // This unit test ensures the API structure is valid
     // by verifying the create_api_routes function exists and has the correct type signature
+    // Removed VecRtdb parameter
     use super::*;
-    use voltage_rtdb::{RedisRtdb, VecRtdb};
+    use crate::api::command_cache::CommandTxCache;
+    use voltage_rtdb::RedisRtdb;
     let _ = create_api_routes
         as fn(
-            Arc<RwLock<ChannelManager<RedisRtdb>>>,
+            Arc<ChannelManager<RedisRtdb>>,
             Arc<common::redis::RedisClient>,
             sqlx::SqlitePool,
-            Option<Arc<VecRtdb>>,
+            Arc<CommandTxCache>,
         ) -> Router;
 }
 
@@ -1190,10 +1194,10 @@ fn test_api_routes_compile() {
 
 #[tokio::test]
 async fn test_create_channel_handler_returns_response() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let mut params = HashMap::new();
@@ -1228,10 +1232,10 @@ async fn test_create_channel_handler_returns_response() {
 
 #[tokio::test]
 async fn test_get_channel_detail_handler() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1247,10 +1251,10 @@ async fn test_get_channel_detail_handler() {
 
 #[tokio::test]
 async fn test_update_channel_handler() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let mut params = HashMap::new();
@@ -1282,10 +1286,10 @@ async fn test_update_channel_handler() {
 
 #[tokio::test]
 async fn test_delete_channel_handler() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1311,10 +1315,10 @@ async fn test_delete_channel_handler() {
 
 #[tokio::test]
 async fn test_get_channel_points_handler() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1330,10 +1334,10 @@ async fn test_get_channel_points_handler() {
 
 #[tokio::test]
 async fn test_get_channel_points_with_type_filter() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1349,10 +1353,10 @@ async fn test_get_channel_points_with_type_filter() {
 
 #[tokio::test]
 async fn test_get_channel_mappings_handler() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1380,10 +1384,10 @@ async fn test_get_channel_mappings_handler() {
 
 #[tokio::test]
 async fn test_set_channel_enabled_handler() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request_body = crate::dto::ChannelEnabledRequest { enabled: true };
@@ -1407,10 +1411,10 @@ async fn test_set_channel_enabled_handler() {
 
 #[tokio::test]
 async fn test_set_channel_disabled() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request_body = crate::dto::ChannelEnabledRequest { enabled: false };
@@ -1434,10 +1438,10 @@ async fn test_set_channel_disabled() {
 
 #[tokio::test]
 async fn test_reload_configuration_handler() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1461,10 +1465,10 @@ async fn test_reload_configuration_handler() {
 
 #[tokio::test]
 async fn test_get_all_channels_with_pagination() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1479,10 +1483,10 @@ async fn test_get_all_channels_with_pagination() {
 
 #[tokio::test]
 async fn test_get_all_channels_with_filter() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     let request = Request::builder()
@@ -1497,10 +1501,10 @@ async fn test_get_all_channels_with_filter() {
 
 #[tokio::test]
 async fn test_get_all_channels_large_page_size() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     // Test page_size exceeding maximum (should be clamped to 100)
@@ -1523,10 +1527,10 @@ async fn test_get_all_channels_large_page_size() {
 /// Tests complete data flow from POST to persistence to retrieval
 #[tokio::test]
 async fn test_create_channel_full_closed_loop() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     // Step 1: POST - Create channel with full configuration
@@ -1594,10 +1598,10 @@ async fn test_create_channel_full_closed_loop() {
 /// Tests that updates are properly persisted and retrievable
 #[tokio::test]
 async fn test_update_channel_full_closed_loop() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     // Step 1: Create initial channel
@@ -1675,10 +1679,10 @@ async fn test_update_channel_full_closed_loop() {
 /// Verifies that deleted channels are no longer accessible
 #[tokio::test]
 async fn test_delete_channel_closed_loop() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let app = create_test_api_routes(channel_manager).await;
 
     // Step 1: POST - Create channel
@@ -1759,10 +1763,10 @@ async fn test_delete_channel_closed_loop() {
 
 #[tokio::test]
 async fn test_get_point_mapping_with_type_telemetry_success() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     // Insert channel
@@ -1806,10 +1810,10 @@ async fn test_get_point_mapping_with_type_telemetry_success() {
 
 #[tokio::test]
 async fn test_get_point_mapping_with_type_signal_success() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (1001, 'TestChannel', 'modbus_tcp', 1, '{}')")
@@ -1848,10 +1852,10 @@ async fn test_get_point_mapping_with_type_signal_success() {
 
 #[tokio::test]
 async fn test_get_point_mapping_with_type_control_success() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (1002, 'TestChannel', 'modbus_tcp', 1, '{}')")
@@ -1890,10 +1894,10 @@ async fn test_get_point_mapping_with_type_control_success() {
 
 #[tokio::test]
 async fn test_get_point_mapping_with_type_adjustment_success() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (1003, 'TestChannel', 'modbus_tcp', 1, '{}')")
@@ -1932,10 +1936,10 @@ async fn test_get_point_mapping_with_type_adjustment_success() {
 
 #[tokio::test]
 async fn test_get_point_mapping_with_invalid_type_returns_400() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (1004, 'TestChannel', 'modbus_tcp', 1, '{}')")
@@ -1968,10 +1972,10 @@ async fn test_get_point_mapping_with_invalid_type_returns_400() {
 
 #[tokio::test]
 async fn test_get_point_mapping_channel_not_found_returns_404() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     let app = create_test_api_with_pool(channel_manager, pool).await;
@@ -1999,10 +2003,10 @@ async fn test_get_point_mapping_channel_not_found_returns_404() {
 
 #[tokio::test]
 async fn test_get_point_mapping_point_not_found_returns_404() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (1005, 'TestChannel', 'modbus_tcp', 1, '{}')")
@@ -2037,10 +2041,10 @@ async fn test_get_point_mapping_point_not_found_returns_404() {
 /// Tests that database changes are immediately reflected in API responses
 #[tokio::test]
 async fn test_get_point_mapping_reflects_database_changes() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     // Step 1: Initialize - Create channel and point
@@ -2132,10 +2136,10 @@ async fn test_get_point_mapping_reflects_database_changes() {
 
 #[tokio::test]
 async fn test_get_point_mapping_null_mappings_returns_empty_object() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (3000, 'TestChannel', 'modbus_tcp', 1, '{}')")
@@ -2174,10 +2178,10 @@ async fn test_get_point_mapping_null_mappings_returns_empty_object() {
 
 #[tokio::test]
 async fn test_get_point_mapping_type_case_insensitive() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     sqlx::query("INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (3001, 'TestChannel', 'modbus_tcp', 1, '{}')")
@@ -2245,10 +2249,10 @@ async fn test_get_point_mapping_type_case_insensitive() {
 /// normalization → storage → GET with properly typed JSON numbers.
 #[tokio::test]
 async fn test_protocol_data_type_normalization_closed_loop() {
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool_with_points().await;
 
     // Create test channel
@@ -2389,10 +2393,10 @@ async fn test_protocol_data_type_normalization_closed_loop() {
 /// Helper: Setup test environment with pool and MemoryRtdb
 async fn setup_write_test_env() -> (Router, Arc<MemoryRtdb>) {
     let rtdb = Arc::new(MemoryRtdb::new());
-    let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+    let channel_manager = Arc::new(ChannelManager::new(
         rtdb.clone(),
         crate::test_utils::create_test_routing_cache(),
-    )));
+    ));
     let pool = create_test_sqlite_pool().await;
     let (app, _) =
         create_test_api_with_pool_rtdb_and_instance(channel_manager, pool, rtdb.clone()).await;

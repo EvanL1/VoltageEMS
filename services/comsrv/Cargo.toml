@@ -59,6 +59,7 @@ tower-http = { workspace = true }
 
 # Data structures
 dashmap = { workspace = true }
+arc-swap = "1.7"
 bytes = { workspace = true }
 
 # Utils

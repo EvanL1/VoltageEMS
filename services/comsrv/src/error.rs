@@ -179,6 +179,11 @@ impl ComSrvError {
         ComSrvError::ChannelError(format!("Channel already exists: {}", id))
     }
 
+    /// Invalid channel ID (out of bounds for pre-allocated Vec)
+    pub fn invalid_channel_id(id: u32) -> Self {
+        ComSrvError::ChannelError(format!("Invalid channel ID: {} (must be < 10000)", id))
+    }
+
     pub fn point_not_found(id: impl std::fmt::Display) -> Self {
         ComSrvError::PointError(format!("Point not found: {}", id))
     }

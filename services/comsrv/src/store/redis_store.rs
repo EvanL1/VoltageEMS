@@ -33,8 +33,7 @@ use igw::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 use voltage_model::{KeySpaceConfig, PointType};
 use voltage_routing::ChannelPointUpdate;
 use voltage_rtdb::{
-    ChannelToSlotIndex, RoutingCache, Rtdb, SharedVecRtdbWriter, VecRtdb, WriteBuffer,
-    WriteBufferConfig,
+    ChannelToSlotIndex, RoutingCache, Rtdb, SharedVecRtdbWriter, WriteBuffer, WriteBufferConfig,
 };
 
 /// Redis-backed data store for VoltageEMS.
@@ -59,8 +58,6 @@ pub struct RedisDataStore<R: Rtdb> {
     routing_cache: Arc<RoutingCache>,
     /// Write buffer for aggregating Redis writes
     write_buffer: Arc<WriteBuffer>,
-    /// VecRtdb local cache for O(1) reads (optional)
-    vec_rtdb: Option<Arc<VecRtdb>>,
     /// Shared memory writer for zero-copy cross-process data sharing (optional)
     shared_writer: Option<Arc<SharedVecRtdbWriter>>,
     /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
@@ -84,6 +81,8 @@ impl<R: Rtdb> RedisDataStore<R> {
     ///
     /// * `rtdb` - Redis connection
     /// * `routing_cache` - C2M/M2C routing cache
+    ///
+    /// Note: Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         // Create single broadcast channel - all subscribers share this sender
         let (event_sender, _) = tokio::sync::broadcast::channel(1024);
@@ -91,7 +90,6 @@ impl<R: Rtdb> RedisDataStore<R> {
             rtdb,
             routing_cache,
             write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
-            vec_rtdb: None,
             shared_writer: None,
             channel_index: None,
             point_configs: DashMap::new(),
@@ -100,20 +98,6 @@ impl<R: Rtdb> RedisDataStore<R> {
             flush_handle: RwLock::new(None),
             shutdown_notify: Arc::new(Notify::new()),
         }
-    }
-
-    /// Set the VecRtdb local cache for O(1) reads.
-    ///
-    /// When enabled, writes will go to both WriteBuffer (Redis) and VecRtdb (memory).
-    /// Reads can then use VecRtdb for fast local access.
-    pub fn with_vec_rtdb(mut self, vec_rtdb: Arc<VecRtdb>) -> Self {
-        self.vec_rtdb = Some(vec_rtdb);
-        self
-    }
-
-    /// Get reference to VecRtdb if configured
-    pub fn vec_rtdb(&self) -> Option<&Arc<VecRtdb>> {
-        self.vec_rtdb.as_ref()
     }
 
     /// Set shared memory writer and channel index for high-performance writes.
@@ -232,8 +216,9 @@ impl<R: Rtdb> RedisDataStore<R> {
     ///
     /// 1. **Shared Memory Path** (fastest): If `shared_writer` and `channel_index` are configured,
     ///    uses `write_channel_batch_direct()` for O(1) direct slot writes (~10ns per point).
-    /// 2. **Buffered Path** (fallback): Uses `write_channel_batch_buffered()` with optional
-    ///    VecRtdb local cache (~90ns per point).
+    /// 2. **Buffered Path** (fallback): Uses `write_channel_batch_buffered()` for Redis writes.
+    ///
+    /// Note: Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub async fn write_batch(&self, channel_id: u32, batch: DataBatch) -> IgwResult<()> {
         if batch.is_empty() {
             return Ok(());
@@ -254,10 +239,9 @@ impl<R: Rtdb> RedisDataStore<R> {
                 updates,
             )
         } else {
-            // Fallback path: buffered write with optional VecRtdb
+            // Fallback path: buffered write to Redis only
             voltage_routing::write_channel_batch_buffered(
                 &self.write_buffer,
-                self.vec_rtdb.as_deref(),
                 &self.routing_cache,
                 updates,
             )

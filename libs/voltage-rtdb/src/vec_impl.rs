@@ -25,7 +25,7 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// ========== Instance Point Type Constants (Round 111) ==========
+// ========== Instance Point Type Constants ==========
 
 /// Instance point type constants for VecRtdb instance mode.
 ///
@@ -39,7 +39,7 @@ pub mod instance_point_type {
     pub const ACTION: u8 = 1;
 }
 
-// ========== PointSlot (Round 104) ==========
+// ========== PointSlot ==========
 
 /// Point slot for atomic storage of point data
 ///
@@ -99,12 +99,17 @@ impl PointSlot {
     }
 
     /// Set all point data atomically (per-field)
+    ///
+    /// Uses Release ordering on timestamp to ensure value/raw writes are visible
+    /// to readers that use Acquire ordering on timestamp. This prevents torn reads
+    /// where a reader might see a new timestamp but old value/raw values.
     #[inline]
     pub fn set(&self, value: f64, raw: f64, timestamp: u64) {
         self.value_bits.store(value.to_bits(), Ordering::Relaxed);
         self.raw_bits.store(raw.to_bits(), Ordering::Relaxed);
-        self.timestamp.store(timestamp, Ordering::Relaxed);
-        // Set dirty flag
+        // Release ensures preceding Relaxed stores are visible before this store
+        self.timestamp.store(timestamp, Ordering::Release);
+        // Set dirty flag (after Release, order doesn't matter for correctness)
         self.flags.fetch_or(1, Ordering::Relaxed);
     }
 
@@ -121,7 +126,7 @@ impl PointSlot {
     }
 }
 
-// ========== ChannelVecStore (Round 105) ==========
+// ========== ChannelVecStore ==========
 
 pub struct ChannelVecStore {
     /// Contiguous memory storage for point slots
@@ -249,7 +254,7 @@ impl ChannelVecStore {
     }
 }
 
-// ========== VecRtdb (Round 106) ==========
+// ========== VecRtdb ==========
 
 /// Global Vec-based realtime database
 ///
@@ -351,7 +356,7 @@ impl VecRtdb {
         self.stores.read().contains_key(&(channel_id, point_type))
     }
 
-    // ========== Instance Mode API (Round 111) ==========
+    // ========== Instance Mode API ==========
 
     /// Register an instance with its point IDs (for modsrv rule engine)
     ///
@@ -551,7 +556,7 @@ mod tests {
         assert_eq!(stats.point_count, 7);
     }
 
-    // ========== Instance Mode Tests (Round 111) ==========
+    // ========== Instance Mode Tests ==========
 
     #[test]
     fn test_instance_register_and_check() {

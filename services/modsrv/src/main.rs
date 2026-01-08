@@ -3,7 +3,7 @@
 //! Model management service supporting measurement/action separation architecture.
 //! Rule Engine API is integrated on the same port (6002).
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -20,7 +20,7 @@ use modsrv::{
     rule_routes::{create_rule_routes, RuleEngineState},
     Result, RuleScheduler, DEFAULT_TICK_MS,
 };
-use voltage_rtdb::{is_shm_available, SharedConfig, SharedVecRtdbReader, VecRtdb};
+use voltage_rtdb::{is_shm_available, SharedConfig, SharedVecRtdbReader};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -70,37 +70,103 @@ async fn main() -> Result<()> {
 
     debug!("Rule scheduler tick_ms: {}", tick_ms);
 
-    // Create VecRtdb for read-through cache (Round 113)
-    // The cache will be populated lazily as rule variables are read
-    let vec_rtdb = Arc::new(VecRtdb::new());
-    info!("VecRtdb initialized (read-through cache for rule engine)");
-
-    // Initialize SharedVecRtdbReader for cross-process zero-copy reads (Round 127)
-    // This enables direct mmap access to comsrv's shared memory via Docker tmpfs volume
+    // Initialize SharedVecRtdbReader for cross-process zero-copy reads
+    // Uses smart path selection - works on any filesystem
+    // Added retry mechanism for cold start race condition
+    // Load SharedConfig from global config (SQLite key-value table)
+    // This enables direct mmap access to comsrv's shared memory
     let shared_reader = {
-        let config = SharedConfig::default();
-        if is_shm_available(&config) {
-            match SharedVecRtdbReader::open(&config) {
-                Ok(reader) => {
-                    let stats = reader.stats();
-                    info!(
-                        "SharedVecRtdbReader opened: {} instances, {} points",
-                        stats.instance_count, stats.total_points
-                    );
-                    Some(Arc::new(reader))
-                },
-                Err(e) => {
-                    warn!("SharedVecRtdbReader unavailable: {}", e);
-                    None
-                },
+        // Load SharedConfig parameters from database
+        let config = {
+            let mut cfg = SharedConfig::default();
+
+            // Helper to load usize value from service_config
+            async fn load_usize(pool: &sqlx::SqlitePool, key: &str) -> Option<usize> {
+                sqlx::query_scalar::<_, String>(&format!(
+                    "SELECT value FROM service_config WHERE service_name = 'global' AND key = '{}'",
+                    key
+                ))
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse().ok())
             }
-        } else {
-            info!("SharedMemory path not found, skipping (non-Docker environment)");
-            None
+
+            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_instances").await {
+                cfg = cfg.with_max_instances(v);
+            }
+            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_points_per_instance").await
+            {
+                cfg = cfg.with_max_points_per_instance(v);
+            }
+            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_channels").await {
+                cfg = cfg.with_max_channels(v);
+            }
+            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_points_per_channel").await
+            {
+                cfg = cfg.with_max_points_per_channel(v);
+            }
+
+            debug!(
+                "SharedConfig: max_instances={}, max_channels={}, points_per_inst={}, points_per_ch={}",
+                cfg.max_instances, cfg.max_channels, cfg.max_points_per_instance, cfg.max_points_per_channel
+            );
+            cfg
+        };
+        const MAX_RETRIES: u32 = 3;
+        const RETRY_DELAY: Duration = Duration::from_secs(2);
+        let mut retry_count = 0;
+
+        loop {
+            if is_shm_available(&config) {
+                match SharedVecRtdbReader::open(&config) {
+                    Ok(reader) => {
+                        let stats = reader.stats();
+                        info!(
+                            "SharedVecRtdbReader opened: {} instances, {} points",
+                            stats.instance_count, stats.total_points
+                        );
+                        break Some(Arc::new(reader));
+                    },
+                    Err(e) if retry_count < MAX_RETRIES => {
+                        info!(
+                            "SharedMemory not ready (retry {}/{}): {}",
+                            retry_count + 1,
+                            MAX_RETRIES,
+                            e
+                        );
+                        tokio::time::sleep(RETRY_DELAY).await;
+                        retry_count += 1;
+                    },
+                    Err(e) => {
+                        warn!(
+                            "SharedVecRtdbReader unavailable after {} retries: {}",
+                            MAX_RETRIES, e
+                        );
+                        break None;
+                    },
+                }
+            } else if retry_count < MAX_RETRIES {
+                info!(
+                    "SharedMemory path not found (retry {}/{}), waiting for comsrv...",
+                    retry_count + 1,
+                    MAX_RETRIES
+                );
+                tokio::time::sleep(RETRY_DELAY).await;
+                retry_count += 1;
+            } else {
+                info!(
+                    "SharedMemory path not found after {} retries, using Redis fallback",
+                    MAX_RETRIES
+                );
+                break None;
+            }
         }
     };
 
-    // Create rule scheduler with three-tier priority (SharedMemory > VecRtdb > Redis)
+    // Create rule scheduler with two-tier priority (SharedMemory > Redis)
+    // Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     let rule_log_root = PathBuf::from("logs/modsrv");
     let scheduler = Arc::new(RuleScheduler::with_shared_reader(
         rtdb,
@@ -108,7 +174,6 @@ async fn main() -> Result<()> {
         sqlite_pool.clone(),
         tick_ms,
         rule_log_root,
-        vec_rtdb,
         shared_reader,
     ));
 

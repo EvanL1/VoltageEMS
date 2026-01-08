@@ -12,8 +12,8 @@ use chrono::{DateTime, Utc};
 
 use crate::api::routes::AppState;
 use crate::dto::{
-    AppError, ChannelConfig, ChannelDetail, ChannelListQuery, ChannelRuntimeStatus, ChannelStatus,
-    ChannelStatusResponse, PaginatedResponse, PointCounts, SuccessResponse,
+    AppError, ChannelConfig, ChannelDetail, ChannelListQuery, ChannelRuntimeStatus,
+    ChannelStatusDto, ChannelStatusResponse, PaginatedResponse, PointCounts, SuccessResponse,
 };
 use voltage_rtdb::Rtdb;
 
@@ -119,7 +119,8 @@ pub async fn get_all_channels<R: Rtdb>(
                 AppError::internal_error(format!("Failed to load channels from database: {}", e))
             })?;
 
-    let manager = state.channel_manager.read().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
     let mut all_channels = Vec::new();
 
     for (id, name, protocol, enabled, config_str) in db_channels {
@@ -175,7 +176,6 @@ pub async fn get_all_channels<R: Rtdb>(
             all_channels.push(channel_response);
         }
     }
-    drop(manager);
 
     // Use shared pagination utility
     let paginated_response =
@@ -192,7 +192,7 @@ pub async fn get_all_channels<R: Rtdb>(
         ("id" = String, Path, description = "Channel identifier")
     ),
     responses(
-        (status = 200, description = "Channel status", body = crate::dto::ChannelStatus,
+        (status = 200, description = "Channel status", body = crate::dto::ChannelStatusDto,
             example = json!({
                 "success": true,
                 "data": {
@@ -221,11 +221,12 @@ pub async fn get_all_channels<R: Rtdb>(
 pub async fn get_channel_status<R: Rtdb>(
     State(state): State<AppState<R>>,
     Path(id): Path<String>,
-) -> Result<Json<SuccessResponse<ChannelStatus>>, AppError> {
+) -> Result<Json<SuccessResponse<ChannelStatusDto>>, AppError> {
     let id_u16 = id
         .parse::<u32>()
         .map_err(|_| AppError::bad_request(format!("Invalid channel ID format: {}", id)))?;
-    let manager = state.channel_manager.read().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
 
     if let Some(channel_impl) = manager.get_channel(id_u16) {
         let (name, protocol) = manager
@@ -240,7 +241,7 @@ pub async fn get_channel_status<R: Rtdb>(
             .await
             .unwrap_or_else(|_| serde_json::json!({}));
 
-        let status = ChannelStatus {
+        let status = ChannelStatusDto {
             id: id_u16,
             name,
             protocol,
@@ -396,7 +397,8 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
         },
     };
 
-    let manager = state.channel_manager.read().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
     let (connected, last_update, statistics) =
         if let Some(channel_impl) = manager.get_channel(id_u16) {
             let wrapper = channel_impl.read().await;
@@ -589,7 +591,8 @@ pub async fn search_channels<R: Rtdb>(
         })?;
 
     // Get runtime status for connected info
-    let manager = state.channel_manager.read().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
 
     // Batch query helper: fetch all points for multiple channels at once (N+1 → 1 query)
     async fn fetch_points_batch(

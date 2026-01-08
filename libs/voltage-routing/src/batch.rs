@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::debug;
 use voltage_model::PointType;
 use voltage_rtdb::numfmt::{f64_to_bytes, precomputed};
-use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, VecRtdb, WriteBuffer};
+use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, WriteBuffer};
 
 use crate::MAX_C2C_CASCADE_DEPTH;
 
@@ -73,7 +73,7 @@ impl BatchRoutingResult {
 
 /// Write channel batch with C2M/C2C routing (optimized with itoa/ryu)
 ///
-/// Round 129: Uses precomputed point ID pool and ryu for zero-allocation formatting.
+/// Uses precomputed point ID pool and ryu for zero-allocation formatting.
 pub async fn write_channel_batch<R>(
     rtdb: &R,
     routing_cache: &RoutingCache,
@@ -86,7 +86,7 @@ where
         return Ok(BatchRoutingResult::default());
     }
 
-    // Group updates by (channel_id, point_type) - FxHashMap for faster hashing (Round 129)
+    // Group updates by (channel_id, point_type) - FxHashMap for faster hashing
     let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
         grouped
@@ -104,7 +104,7 @@ where
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
-    // Cache point_id -> Arc<str> for O(1) clone - FxHashMap for faster hashing (Round 129)
+    // Cache point_id -> Arc<str> for O(1) clone - FxHashMap for faster hashing
     let mut point_id_str_cache: FxHashMap<u32, Arc<str>> = FxHashMap::default();
 
     for ((channel_id, point_type), updates) in grouped {
@@ -187,18 +187,17 @@ where
     Ok(result)
 }
 
-/// Write channel points to buffer with optional VecRtdb local cache
+/// Write channel points to buffer (Redis only)
 ///
-/// Round 129: Uses precomputed point ID pool and ryu for zero-allocation formatting.
+/// Uses precomputed point ID pool and ryu for zero-allocation formatting.
+/// Removed VecRtdb - using SharedMemory + Redis two-tier architecture.
 ///
 /// # Arguments
 /// * `write_buffer` - WriteBuffer for deferred Redis writes
-/// * `vec_rtdb` - Optional VecRtdb for local memory cache (enables fast reads)
 /// * `routing_cache` - Routing cache for C2M/C2C lookups
 /// * `updates` - Point updates to process
 pub fn write_channel_batch_buffered(
     write_buffer: &WriteBuffer,
-    vec_rtdb: Option<&VecRtdb>,
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
 ) -> BatchRoutingResult {
@@ -206,7 +205,7 @@ pub fn write_channel_batch_buffered(
         return BatchRoutingResult::default();
     }
 
-    // Group updates by (channel_id, point_type) - FxHashMap for faster hashing (Round 129)
+    // Group updates by (channel_id, point_type) - FxHashMap for faster hashing
     let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
         grouped
@@ -224,13 +223,13 @@ pub fn write_channel_batch_buffered(
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
-    // Cache point_id -> Arc<str> using precomputed pool - FxHashMap (Round 129)
+    // Cache point_id -> Arc<str> using precomputed pool - FxHashMap
     let mut point_id_str_cache: FxHashMap<u32, Arc<str>> = FxHashMap::default();
 
     for ((channel_id, point_type), updates) in grouped {
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
-        // Use Arc<str> for field names to match WriteBuffer signature - FxHashMap (Round 129)
+        // Use Arc<str> for field names to match WriteBuffer signature - FxHashMap
         let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> =
             FxHashMap::default();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
@@ -272,23 +271,14 @@ pub fn write_channel_batch_buffered(
             }
         }
 
-        // Round 131: Write to VecRtdb FIRST (uses reference), then move to buffer
-        // This avoids cloning points_3layer
+        // Removed VecRtdb - write directly to WriteBuffer for Redis
         let channel_key = config.channel_key(channel_id, point_type);
 
-        // Write to VecRtdb local cache (if enabled) - uses reference
-        if let Some(vec_db) = vec_rtdb {
-            let pt = point_type as u8;
-            for &(point_id, value, raw) in &points_3layer {
-                vec_db.set(channel_id, pt, point_id, value, raw, timestamp_ms as u64);
-            }
-        }
-
-        // Buffer 3-layer channel data to WriteBuffer (for Redis) - moves ownership
+        // Buffer 3-layer channel data to WriteBuffer (for Redis)
         let buffered = voltage_rtdb::helpers::buffer_channel_points(
             write_buffer,
             &channel_key,
-            points_3layer, // No clone needed - ownership transferred
+            points_3layer,
             timestamp_ms,
         );
         result.channel_writes += buffered;
@@ -308,7 +298,7 @@ pub fn write_channel_batch_buffered(
                 forward_count, channel_id
             );
             let sub_result =
-                write_channel_batch_buffered(write_buffer, vec_rtdb, routing_cache, c2c_forwards);
+                write_channel_batch_buffered(write_buffer, routing_cache, c2c_forwards);
             result.c2c_forwards += forward_count;
             result.merge(sub_result);
         }
@@ -319,8 +309,8 @@ pub fn write_channel_batch_buffered(
 
 /// High-performance batch write using direct channel-to-slot mapping
 ///
-/// Round 124: Uses ChannelToSlotIndex to bypass C2M routing lookup during writes.
-/// Round 129: Uses precomputed point ID pool and ryu for zero-allocation formatting.
+/// Uses ChannelToSlotIndex to bypass C2M routing lookup during writes.
+/// Uses precomputed point ID pool and ryu for zero-allocation formatting.
 ///
 /// # Architecture
 /// ```text
@@ -361,7 +351,7 @@ pub fn write_channel_batch_direct(
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
-    // Group updates by (channel_id, point_type) for efficient buffer writes - FxHashMap (Round 129)
+    // Group updates by (channel_id, point_type) for efficient buffer writes - FxHashMap
     let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
         grouped
@@ -370,14 +360,14 @@ pub fn write_channel_batch_direct(
             .push(update);
     }
 
-    // Cache point_id -> Arc<str> using precomputed pool - FxHashMap (Round 129)
+    // Cache point_id -> Arc<str> using precomputed pool - FxHashMap
     let mut point_id_str_cache: FxHashMap<u32, Arc<str>> = FxHashMap::default();
     let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
     for ((channel_id, point_type), updates) in grouped {
         // Prepare 3-layer data for Redis backup
         let mut points_3layer = Vec::with_capacity(updates.len());
-        // Instance writes for C2M routing (Redis backup) - FxHashMap (Round 129)
+        // Instance writes for C2M routing (Redis backup) - FxHashMap
         let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> =
             FxHashMap::default();
 
@@ -386,11 +376,20 @@ pub fn write_channel_batch_direct(
             points_3layer.push((update.point_id, update.value, raw_value));
 
             // ★ Direct shared memory write (fastest path)
+            // Dual write - Instance area (via C2M) + Channel area
             if let Some(slot_offset) = channel_index.lookup(channel_id, point_type, update.point_id)
             {
                 shared_writer.set_direct(slot_offset, update.value, timestamp_ms);
                 result.channel_writes += 1; // Count shared memory writes
             }
+            // Also write to Channel area directly (unified RTDB)
+            shared_writer.set_channel(
+                channel_id,
+                point_type,
+                update.point_id,
+                update.value,
+                timestamp_ms,
+            );
 
             // C2M routing for Redis backup
             if let Some(target) =

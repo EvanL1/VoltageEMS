@@ -31,7 +31,8 @@ use voltage_rtdb::Rtdb;
 pub async fn get_service_status<R: Rtdb>(
     State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<ServiceStatus>>, AppError> {
-    let manager = state.channel_manager.read().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
     let total_channels = manager.channel_count();
     let active_channels = manager.running_channel_count().await;
 
@@ -143,10 +144,10 @@ pub async fn health_check<R: Rtdb>(
     }
 
     // Get channel manager stats
-    let manager = state.channel_manager.read().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
     let total_channels = manager.channel_count();
     let running_channels = manager.running_channel_count().await;
-    drop(manager);
 
     checks.insert(
         "channels".to_string(),

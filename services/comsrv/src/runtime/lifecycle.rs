@@ -7,7 +7,6 @@ use crate::core::channels::ChannelManager;
 use crate::core::config::ConfigManager;
 use crate::error::Result;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use voltage_rtdb::{RedisRtdb, Rtdb};
@@ -68,7 +67,7 @@ use voltage_rtdb::{RedisRtdb, Rtdb};
 ///
 /// ```rust,no_run
 /// use std::sync::Arc;
-/// use tokio::sync::RwLock;
+///
 /// use comsrv::core::channel_manager;
 ///
 /// #[tokio::main]
@@ -76,7 +75,7 @@ use voltage_rtdb::{RedisRtdb, Rtdb};
 ///     use common::DEFAULT_REDIS_URL;
 ///
 ///     let config_manager = Arc::new(ConfigManager::load().await?);
-///     let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+///     let channel_manager = Arc::new(ChannelManager::new(
 ///         protocol_factory,
 ///         DEFAULT_REDIS_URL.into(),
 ///     )));
@@ -88,18 +87,22 @@ use voltage_rtdb::{RedisRtdb, Rtdb};
 /// ```
 ///
 /// This function provides a convenient public interface for starting the communication service.
+///
+/// # Lock-free channel_manager
 pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
-    channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>,
+    channel_manager: Arc<ChannelManager<RedisRtdb>>,
 ) -> Result<usize> {
     start_communication_service_generic(config_manager, channel_manager).await
 }
 
 /// Generic version of start_communication_service that accepts any Rtdb implementation.
 /// Used by tests with MemoryRtdb.
+///
+/// # Lock-free channel_manager
 pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
     config_manager: Arc<ConfigManager>,
-    channel_manager: Arc<RwLock<ChannelManager<R>>>,
+    channel_manager: Arc<ChannelManager<R>>,
 ) -> Result<usize> {
     debug!("start_communication_service called");
 
@@ -154,10 +157,8 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
                     channel_id
                 );
 
-                // Acquire the lock briefly to insert the channel.
-                let manager_guard = channel_manager.write().await;
-                let result = manager_guard.create_channel(channel_config).await;
-                drop(manager_guard); // Release the lock immediately.
+                // Direct access without RwLock (lock-free)
+                let result = channel_manager.create_channel(channel_config).await;
                 match result {
                     Ok(_) => {
                         info!("Channel created successfully: {}", channel_id);
@@ -211,8 +212,8 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
 
     // Phase 2: Establish connections for all channels in batch
     info!("Starting connection phase for all initialized channels...");
-    let manager_guard = channel_manager.read().await;
-    match manager_guard.connect_all_channels().await {
+    // Direct access without RwLock (lock-free)
+    match channel_manager.connect_all_channels().await {
         Ok(()) => {
             info!("All channel connections completed successfully");
         },
@@ -221,7 +222,6 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
             // Connection failure should not prevent service startup, continue running
         },
     }
-    drop(manager_guard);
 
     info!(
         "Communication service started with {} channels successfully initialized",
@@ -279,7 +279,7 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
 ///
 /// ```rust,ignore
 /// use std::sync::Arc;
-/// use tokio::sync::RwLock;
+///
 /// use comsrv::runtime::shutdown_handler;
 ///
 /// async fn main() {
@@ -299,22 +299,23 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
 /// ```
 ///
 /// This function provides a convenient public interface for graceful service shutdown.
-pub async fn shutdown_handler(channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>) {
+///
+/// # Lock-free channel_manager
+pub async fn shutdown_handler(channel_manager: Arc<ChannelManager<RedisRtdb>>) {
     shutdown_handler_generic(channel_manager).await
 }
 
 /// Generic version of shutdown_handler that accepts any Rtdb implementation.
 /// Used by tests with MemoryRtdb.
+///
+/// # Lock-free channel_manager
 pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
-    channel_manager: Arc<RwLock<ChannelManager<R>>>,
+    channel_manager: Arc<ChannelManager<R>>,
 ) {
     info!("Starting graceful shutdown...");
 
-    // Get all channel IDs
-    let channel_ids = {
-        let manager_guard = channel_manager.read().await;
-        manager_guard.get_channel_ids()
-    };
+    // Get all channel IDs (Direct access without RwLock)
+    let channel_ids = channel_manager.get_channel_ids();
 
     let total_channels = channel_ids.len();
     if total_channels == 0 {
@@ -332,10 +333,8 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
         .map(|channel_id| {
             let channel_manager = Arc::clone(&channel_manager);
             async move {
-                // For each channel, acquire the lock and stop it independently.
-                let manager_guard = channel_manager.write().await;
-                let result = manager_guard.remove_channel(channel_id).await;
-                drop(manager_guard); // Release the lock immediately.
+                // Direct access without RwLock (lock-free)
+                let result = channel_manager.remove_channel(channel_id).await;
 
                 match result {
                     Ok(_) => {
@@ -432,7 +431,7 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
 ///
 /// ```rust,ignore
 /// use std::sync::Arc;
-/// use tokio::sync::RwLock;
+///
 /// use comsrv::runtime::start_cleanup_task;
 ///
 /// async fn main() {
@@ -456,8 +455,10 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
 /// ```
 ///
 /// This function provides a convenient public interface for resource cleanup management.
+///
+/// # Lock-free channel_manager
 pub fn start_cleanup_task(
-    channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>,
+    channel_manager: Arc<ChannelManager<RedisRtdb>>,
     configured_count: usize,
 ) -> (tokio::task::JoinHandle<()>, CancellationToken) {
     start_cleanup_task_generic(channel_manager, configured_count)
@@ -465,8 +466,10 @@ pub fn start_cleanup_task(
 
 /// Generic version of start_cleanup_task that accepts any Rtdb implementation.
 /// Used by tests with MemoryRtdb.
+///
+/// # Lock-free channel_manager
 pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
-    channel_manager: Arc<RwLock<ChannelManager<R>>>,
+    channel_manager: Arc<ChannelManager<R>>,
     configured_count: usize,
 ) -> (tokio::task::JoinHandle<()>, CancellationToken) {
     let token = CancellationToken::new();
@@ -479,10 +482,10 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
             tokio::select! {
                 _ = interval.tick() => {
                     // Clean up idle channels (1 hour idle time)
-                    let manager_guard = channel_manager.read().await;
+                    // Direct access without RwLock (lock-free)
 
                     // Log statistics
-                    let all_stats = manager_guard.get_all_channel_stats().await;
+                    let all_stats = channel_manager.get_all_channel_stats().await;
 
                     // Collect active channels for display
                     let active_channels: Vec<String> = all_stats
@@ -506,7 +509,6 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
                             active_channels.join(", ")
                         );
                     }
-                    drop(manager_guard);
                 }
                 () = task_token.cancelled() => {
                     info!("Cleanup task received cancellation signal, shutting down");
@@ -529,8 +531,10 @@ pub async fn wait_for_shutdown() {
 }
 
 /// Perform graceful shutdown of all services
+///
+/// # Lock-free channel_manager
 pub async fn shutdown_services(
-    channel_manager: Arc<RwLock<ChannelManager<RedisRtdb>>>,
+    channel_manager: Arc<ChannelManager<RedisRtdb>>,
     shutdown_token: CancellationToken,
     cleanup_token: CancellationToken,
     cleanup_handle: tokio::task::JoinHandle<()>,
@@ -550,8 +554,10 @@ pub async fn shutdown_services(
 
 /// Generic version of shutdown_services that accepts any Rtdb implementation.
 /// Used by tests with MemoryRtdb.
+///
+/// # Lock-free channel_manager
 pub(crate) async fn shutdown_services_generic<R: Rtdb + 'static>(
-    channel_manager: Arc<RwLock<ChannelManager<R>>>,
+    channel_manager: Arc<ChannelManager<R>>,
     shutdown_token: CancellationToken,
     cleanup_token: CancellationToken,
     cleanup_handle: tokio::task::JoinHandle<()>,
@@ -601,7 +607,6 @@ mod tests {
     use sqlx::SqlitePool;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use tokio::sync::RwLock;
 
     /// Helper: Create a test database with minimal configuration
     async fn create_test_database() -> (TempDir, String) {
@@ -707,10 +712,10 @@ mod tests {
         add_test_channels(&db_path, true).await;
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         let result = start_communication_service_generic(config_manager, channel_manager).await;
 
@@ -728,10 +733,10 @@ mod tests {
         // Don't add any channels
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         let result = start_communication_service_generic(config_manager, channel_manager).await;
 
@@ -749,10 +754,10 @@ mod tests {
         add_test_channels(&db_path, false).await; // disabled channels
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         let result = start_communication_service_generic(config_manager, channel_manager).await;
 
@@ -777,10 +782,10 @@ mod tests {
         add_test_channels(&db_path, true).await;
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         // Start service first
         let _ = start_communication_service_generic(config_manager, channel_manager.clone()).await;
@@ -788,10 +793,9 @@ mod tests {
         // Now shutdown
         shutdown_handler_generic(channel_manager.clone()).await;
 
-        // Verify all channels are stopped
-        let manager_guard = channel_manager.read().await;
+        // Verify all channels are stopped (direct access without RwLock)
         assert_eq!(
-            manager_guard.channel_count(),
+            channel_manager.channel_count(),
             0,
             "All channels should be removed after shutdown"
         );
@@ -799,10 +803,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown_with_no_channels() {
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         // Shutdown without starting any channels
         shutdown_handler_generic(channel_manager).await;
@@ -816,10 +820,10 @@ mod tests {
         add_test_channels(&db_path, true).await;
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         // Start service
         let _ = start_communication_service_generic(config_manager, channel_manager.clone()).await;
@@ -837,10 +841,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_task_starts() {
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         let (handle, cancel_token) = start_cleanup_task_generic(channel_manager, 0);
 
@@ -854,10 +858,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_task_cancellation() {
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         let (handle, cancel_token) = start_cleanup_task_generic(channel_manager, 0);
 
@@ -875,10 +879,10 @@ mod tests {
         add_test_channels(&db_path, true).await;
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         // Start service
         let configured_count =
@@ -908,10 +912,10 @@ mod tests {
         add_test_channels(&db_path, true).await;
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         // Start service includes connection phase
         let result = start_communication_service_generic(config_manager, channel_manager).await;
@@ -928,10 +932,10 @@ mod tests {
         add_test_channels(&db_path, true).await;
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         // Even if connections fail, startup should succeed
         let result = start_communication_service_generic(config_manager, channel_manager).await;
@@ -961,10 +965,10 @@ mod tests {
         pool.close().await;
 
         let config_manager = Arc::new(ConfigManager::from_sqlite(&db_path).await.unwrap());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
+        let channel_manager = Arc::new(ChannelManager::new(
             crate::test_utils::create_test_rtdb(),
             crate::test_utils::create_test_routing_cache(),
-        )));
+        ));
 
         let start_time = std::time::Instant::now();
         let result = start_communication_service_generic(config_manager, channel_manager).await;

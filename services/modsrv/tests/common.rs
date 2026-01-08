@@ -75,6 +75,7 @@ impl TestEnv {
     }
 
     /// Borrow the database connection pool
+    #[allow(dead_code)]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }

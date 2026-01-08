@@ -62,25 +62,8 @@ pub async fn get_point_info_handler<R: Rtdb>(
         ))
     })?;
 
-    // ★ Round 128: VecRtdb priority read (~10μs vs ~3ms Redis)
-    // Try VecRtdb local cache first for O(1) lookup
-    if let Some(vec_rtdb) = &state.vec_rtdb {
-        if let Some((value, raw, timestamp)) =
-            vec_rtdb.get(channel_id, point_type.to_u8(), point_id)
-        {
-            return Ok(Json(SuccessResponse::new(serde_json::json!({
-                "channel_id": channel_id,
-                "telemetry_type": point_type.as_str(),
-                "point_id": point_id,
-                "value": value,
-                "timestamp": timestamp,
-                "raw": raw,
-                "source": "cache"  // Indicate data source for debugging
-            }))));
-        }
-    }
-
-    // Fallback to Redis (3 hash_get calls)
+    // Removed VecRtdb - now reading directly from Redis
+    // Read from Redis (3 hash_get calls)
     // Use cached &'static config for zero allocation on key generation
     let keyspace = KeySpaceConfig::production_cached();
     let field = point_id.to_string();
@@ -2716,19 +2699,17 @@ async fn perform_channel_reload<R: Rtdb>(
     .map_err(|e| anyhow::anyhow!("Failed to load channel config: {}", e))?;
 
     // 2. Remove old channel
-    let manager = state.channel_manager.write().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
     if let Err(e) = manager.remove_channel(channel_id).await {
         tracing::warn!("Ch{} remove: {}", channel_id, e);
     }
-    drop(manager);
 
     // 3. Create new channel with updated config
-    let manager = state.channel_manager.write().await;
     let channel_impl = manager
         .create_channel(std::sync::Arc::new(config))
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create channel: {}", e))?;
-    drop(manager);
 
     // 4. Connect in background (non-blocking)
     tokio::spawn(async move {
@@ -2861,16 +2842,16 @@ pub async fn delete_adjustment_point_handler<R: Rtdb>(
 }
 
 // ============================================================================
-// Tests for cache priority read (Round 128)
+// Tests for cache priority read
 // ============================================================================
 
+// VecRtdb cache tests removed - now using two-tier architecture (SharedMemory → Redis)
 #[cfg(test)]
 mod cache_tests {
     use super::*;
     use axum::extract::{Path, State};
     use std::sync::Arc;
-    use tokio::sync::RwLock;
-    use voltage_rtdb::{Bytes, MemoryRtdb, VecRtdb};
+    use voltage_rtdb::{Bytes, MemoryRtdb};
 
     use crate::api::routes::AppState;
     use crate::core::channels::ChannelManager;
@@ -2891,64 +2872,25 @@ mod cache_tests {
         pool
     }
 
-    /// Helper: Create test AppState with VecRtdb
-    async fn create_test_state_with_cache(
-        rtdb: Arc<MemoryRtdb>,
-        vec_rtdb: Option<Arc<VecRtdb>>,
-    ) -> AppState<MemoryRtdb> {
+    /// Helper: Create test AppState (removed VecRtdb)
+    async fn create_test_state(rtdb: Arc<MemoryRtdb>) -> AppState<MemoryRtdb> {
         let sqlite_pool = create_test_sqlite_pool().await;
         let routing_cache = Arc::new(RoutingCache::default());
-        let channel_manager = Arc::new(RwLock::new(ChannelManager::new(
-            rtdb.clone(),
-            routing_cache,
-        )));
+        let channel_manager = Arc::new(ChannelManager::new(rtdb.clone(), routing_cache));
+        let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
 
         AppState {
             channel_manager,
             rtdb,
             sqlite_pool,
-            vec_rtdb,
+            command_tx_cache,
         }
     }
 
-    /// Test: VecRtdb cache hit returns source: "cache"
+    /// Test: Read point info from Redis
     #[tokio::test]
-    async fn test_get_point_info_cache_hit() {
-        // Setup: Create VecRtdb with pre-populated data
-        let vec_rtdb = Arc::new(VecRtdb::new());
-        let channel_id: u32 = 1;
-        let point_id: u32 = 101;
-        let point_type: u8 = 0; // Telemetry
-
-        // Register channel and set value
-        vec_rtdb.register_channel(channel_id, point_type, &[point_id]);
-        vec_rtdb.set(channel_id, point_type, point_id, 650.5, 6505.0, 1729000815);
-
-        // Create state with VecRtdb
+    async fn test_get_point_info_from_redis() {
         let rtdb = Arc::new(MemoryRtdb::new());
-        let state = create_test_state_with_cache(rtdb, Some(vec_rtdb)).await;
-
-        // Call handler
-        let result =
-            get_point_info_handler(State(state), Path((channel_id, "T".to_string(), point_id)))
-                .await;
-
-        // Verify: source should be "cache"
-        let response = result.expect("Handler should succeed");
-        let data = &response.0.data;
-        assert_eq!(data["source"], "cache", "Should return from VecRtdb cache");
-        assert_eq!(data["value"], 650.5);
-        assert_eq!(data["raw"], 6505.0); // raw is stored as f64
-        assert_eq!(data["timestamp"], 1729000815);
-    }
-
-    /// Test: VecRtdb cache miss falls back to Redis, returns source: "redis"
-    #[tokio::test]
-    async fn test_get_point_info_cache_miss_redis_fallback() {
-        // Setup: Create empty VecRtdb, populate MemoryRtdb
-        let vec_rtdb = Arc::new(VecRtdb::new());
-        let rtdb = Arc::new(MemoryRtdb::new());
-
         let channel_id: u32 = 1;
         let point_id: u32 = 102;
 
@@ -2969,58 +2911,25 @@ mod cache_tests {
             .await
             .unwrap();
 
-        // Create state with empty VecRtdb
-        let state = create_test_state_with_cache(rtdb, Some(vec_rtdb)).await;
+        let state = create_test_state(rtdb).await;
 
         // Call handler
         let result =
             get_point_info_handler(State(state), Path((channel_id, "T".to_string(), point_id)))
                 .await;
 
-        // Verify: source should be "redis" (cache miss)
-        let response = result.expect("Handler should succeed");
-        let data = &response.0.data;
-        assert_eq!(data["source"], "redis", "Should fallback to Redis");
-        assert_eq!(data["value"], "750.0");
-    }
-
-    /// Test: No VecRtdb (None) goes directly to Redis
-    #[tokio::test]
-    async fn test_get_point_info_no_cache() {
-        // Setup: No VecRtdb, only MemoryRtdb
-        let rtdb = Arc::new(MemoryRtdb::new());
-
-        let channel_id: u32 = 1;
-        let point_id: u32 = 103;
-
-        // Populate Redis
-        let keyspace = KeySpaceConfig::production_cached();
-        let data_key = keyspace.channel_key(channel_id, PointType::Signal);
-        let field = point_id.to_string();
-
-        rtdb.hash_set(&data_key, &field, Bytes::from("1.0"))
-            .await
-            .unwrap();
-
-        // Create state without VecRtdb
-        let state = create_test_state_with_cache(rtdb, None).await;
-
-        // Call handler
-        let result =
-            get_point_info_handler(State(state), Path((channel_id, "S".to_string(), point_id)))
-                .await;
-
         // Verify: source should be "redis"
         let response = result.expect("Handler should succeed");
         let data = &response.0.data;
         assert_eq!(data["source"], "redis");
+        assert_eq!(data["value"], "750.0");
     }
 
     /// Test: Invalid telemetry type returns 400
     #[tokio::test]
     async fn test_get_point_info_invalid_type() {
         let rtdb = Arc::new(MemoryRtdb::new());
-        let state = create_test_state_with_cache(rtdb, None).await;
+        let state = create_test_state(rtdb).await;
 
         // Call handler with invalid type
         let result = get_point_info_handler(

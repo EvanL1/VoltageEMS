@@ -233,7 +233,7 @@ pub struct ChannelStatusResponse {
 
 /// channel status response - Enhanced version combining API and `ComBase` requirements
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ChannelStatus {
+pub struct ChannelStatusDto {
     pub id: u32,
     pub name: String,
     pub protocol: String,
@@ -244,7 +244,7 @@ pub struct ChannelStatus {
     pub statistics: HashMap<String, serde_json::Value>,
 }
 
-impl From<crate::core::channels::ChannelStatus> for ChannelStatus {
+impl From<crate::core::channels::ChannelStatus> for ChannelStatusDto {
     /// Convert from `ComBase` `ChannelStatus` to API `ChannelStatus`
     fn from(status: crate::core::channels::ChannelStatus) -> Self {
         Self {
@@ -901,7 +901,7 @@ mod tests {
         parameters.insert("timeout".to_string(), json!(5000));
         parameters.insert("slave_id".to_string(), json!(1));
 
-        let status = ChannelStatus {
+        let status = ChannelStatusDto {
             id: 1,
             name: "Test Channel".to_string(),
             protocol: "modbus_tcp".to_string(),
@@ -996,7 +996,7 @@ mod tests {
     #[test]
     fn test_channel_status_with_empty_parameters() {
         let now = Utc::now();
-        let status = ChannelStatus {
+        let status = ChannelStatusDto {
             id: 1,
             name: "Simple Channel".to_string(),
             protocol: "Virtual".to_string(),
@@ -1017,7 +1017,7 @@ mod tests {
             is_connected: true,
             last_update: 1_234_567_890,
         };
-        let api_status = ChannelStatus::from(combase_status);
+        let api_status = ChannelStatusDto::from(combase_status);
 
         assert_eq!(api_status.id, 0); // Default value
         assert_eq!(api_status.name, "Unknown");

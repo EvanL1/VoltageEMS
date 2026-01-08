@@ -3,7 +3,7 @@
 //! Provides zero-allocation number-to-string conversion for hot paths.
 //! Uses `itoa` for integers and `ryu` for floats, avoiding heap allocations.
 //!
-//! # Performance (Round 129)
+//! # Performance
 //!
 //! | Method | Time | Allocations |
 //! |--------|------|-------------|

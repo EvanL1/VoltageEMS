@@ -234,7 +234,8 @@ async fn perform_hot_reload<R: Rtdb + 'static>(
     state: &AppState<R>,
     new_config: crate::core::config::ChannelConfig,
 ) -> Result<String, String> {
-    let manager = state.channel_manager.write().await;
+    // Direct access without RwLock (lock-free)
+    let manager = &state.channel_manager;
 
     // 1. Remove old channel (allow failure)
     if let Err(e) = manager.remove_channel(id).await {
@@ -246,8 +247,6 @@ async fn perform_hot_reload<R: Rtdb + 'static>(
         .create_channel(Arc::new(new_config))
         .await
         .map_err(|e| format!("Failed to create channel: {}", e))?;
-
-    drop(manager);
 
     // 3. Async connection (don't wait) using ChannelImpl's unified interface
     tokio::spawn(async move {
@@ -402,14 +401,14 @@ pub async fn create_channel_handler<R: Rtdb>(
     // 2. Determine channel ID (auto-assign or use provided)
     let channel_id = if let Some(id) = req.channel_id {
         // Manual ID specified - validate it doesn't exist
-        let manager = state.channel_manager.read().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         if manager.get_channel(id).is_some() {
             return Err(AppError::conflict(format!(
                 "Channel ID {} already exists in runtime",
                 id
             )));
         }
-        drop(manager);
 
         // Check if ID exists in database
         let db_exists: bool =
@@ -466,7 +465,8 @@ pub async fn create_channel_handler<R: Rtdb>(
     // Determine runtime status based on enabled flag
     let runtime_status = if enabled {
         // enabled = true: Create runtime channel and connect in background (non-blocking)
-        let manager = state.channel_manager.write().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         match manager.create_channel(Arc::new(channel_config)).await {
             Ok(channel_impl) => {
                 // Spawn background connection to avoid failing API on initial connect error
@@ -511,7 +511,8 @@ pub async fn create_channel_handler<R: Rtdb>(
     {
         tracing::error!("Insert Ch{}: {}", channel_id, e);
         // Database write failed, remove the runtime channel
-        let manager = state.channel_manager.write().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         let _ = manager.remove_channel(channel_id).await;
         return Err(AppError::internal_error(format!("Database error: {}", e)));
     }
@@ -571,7 +572,8 @@ pub async fn update_channel_handler<R: Rtdb>(
 
     // 1. Check if channel is currently running
     let is_running = {
-        let manager = state.channel_manager.read().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         manager.get_channel(id).is_some()
     };
 
@@ -895,7 +897,8 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
             logging: ChannelLoggingConfig::default(),
         };
 
-        let manager = state.channel_manager.write().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         match manager.create_channel(Arc::new(config)).await {
             Ok(channel_impl) => {
                 // Trigger asynchronous connection in background
@@ -907,7 +910,6 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
                         Err(e) => tracing::warn!("Ch{} connect: {}", channel_id_for_log, e),
                     }
                 });
-                drop(manager);
 
                 // Update database
                 if let Err(e) = sqlx::query("UPDATE channels SET enabled = ? WHERE channel_id = ?")
@@ -918,7 +920,8 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
                 {
                     tracing::error!("Ch{} DB update: {}", id, e);
                     // DB update failed - remove the runtime channel
-                    let manager = state.channel_manager.write().await;
+                    // Direct access without RwLock (lock-free)
+                    let manager = &state.channel_manager;
                     let _ = manager.remove_channel(id).await;
                     return Err(AppError::internal_error(format!(
                         "Database update failed: {}",
@@ -931,7 +934,6 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
             },
             Err(e) => {
                 tracing::warn!("Ch{} runtime create: {}", id, e);
-                drop(manager);
 
                 // Update database to enabled even if runtime creation failed
                 if let Err(e) = sqlx::query("UPDATE channels SET enabled = ? WHERE channel_id = ?")
@@ -953,11 +955,11 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
         }
     } else {
         // Disable: stop and remove channel
-        let manager = state.channel_manager.write().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         if let Err(e) = manager.remove_channel(id).await {
             tracing::warn!("Ch{} remove: {}", id, e);
         }
-        drop(manager);
 
         // Update database
         if let Err(e) = sqlx::query("UPDATE channels SET enabled = ? WHERE channel_id = ?")
@@ -1056,7 +1058,8 @@ pub async fn delete_channel_handler<R: Rtdb>(
     // 4. Remove from runtime (best effort - doesn't affect data consistency)
     // Even if this fails, the channel is gone from database which is the source of truth
     {
-        let manager = state.channel_manager.write().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         if let Err(e) = manager.remove_channel(id).await {
             tracing::warn!("Ch{} runtime remove: {}", id, e);
         }
@@ -1103,7 +1106,8 @@ pub async fn reload_configuration_handler<R: Rtdb>(
 
     // 2. Get runtime channel IDs
     let runtime_ids: std::collections::HashSet<u32> = {
-        let manager = state.channel_manager.read().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         manager.get_channel_ids().into_iter().collect()
     };
 
@@ -1122,7 +1126,8 @@ pub async fn reload_configuration_handler<R: Rtdb>(
 
     // 4. Remove channels that are no longer in SQLite
     {
-        let manager = state.channel_manager.write().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
         for id in &to_remove {
             match manager.remove_channel(*id).await {
                 Ok(_) => {
@@ -1169,7 +1174,8 @@ pub async fn reload_configuration_handler<R: Rtdb>(
 
             // Only create and connect if enabled
             if *enabled {
-                let manager = state.channel_manager.write().await;
+                // Direct access without RwLock (lock-free)
+                let manager = &state.channel_manager;
                 match manager.create_channel(Arc::new(channel_config)).await {
                     Ok(channel_impl) => {
                         // Try to connect using ChannelImpl's unified interface
@@ -1210,7 +1216,8 @@ pub async fn reload_configuration_handler<R: Rtdb>(
 
             let (description, parameters, _logging) = parse_channel_config(*id, config_str)?;
 
-            let manager = state.channel_manager.write().await;
+            // Direct access without RwLock (lock-free)
+            let manager = &state.channel_manager;
 
             // Remove old channel (if exists)
             if let Err(e) = manager.remove_channel(*id).await {
@@ -1300,7 +1307,8 @@ pub async fn reload_routing_handler<R: Rtdb>(
 
     // Get routing_cache reference from channel_manager
     let (c2m_count, m2c_count, c2c_count) = {
-        let manager = state.channel_manager.read().await;
+        // Direct access without RwLock (lock-free)
+        let manager = &state.channel_manager;
 
         // Call the public reload_routing_cache method
         match ChannelManager::<voltage_rtdb::RedisRtdb>::reload_routing_cache(

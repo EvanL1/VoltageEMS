@@ -60,7 +60,7 @@ impl PointType {
         }
     }
 
-    /// Convert to u8 for VecRtdb indexing (Round 128)
+    /// Convert to u8 for VecRtdb indexing
     ///
     /// Returns: T=0, S=1, C=2, A=3
     #[inline]

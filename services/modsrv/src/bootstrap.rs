@@ -21,7 +21,6 @@ use super::error::{ModSrvError, Result};
 use crate::app_state::AppState;
 use crate::instance_manager::InstanceManager;
 use crate::product_loader::ProductLoader;
-use crate::redis_state;
 
 /// Initialize service info for unified bootstrap
 pub fn create_service_info() -> ServiceInfo {
@@ -415,50 +414,6 @@ pub async fn refresh_routing_cache(
     info!("Routes refreshed: {}", total_routes);
 
     Ok(total_routes)
-}
-
-/// Load routing cache from Redis (legacy method, for compatibility)
-///
-/// NOTE: This method is kept for backward compatibility but should be
-/// avoided during service initialization. Use `load_routing_maps_from_sqlite`
-/// instead for better performance.
-pub async fn load_routing_cache<R>(rtdb: &Arc<R>) -> Result<Arc<voltage_rtdb::RoutingCache>>
-where
-    R: voltage_rtdb::Rtdb,
-{
-    debug!("Loading routes from Redis");
-
-    // Load C2M routing (Channel to Model)
-    let c2m_data = redis_state::get_routing(
-        rtdb.as_ref(),
-        redis_state::RoutingDirection::ChannelToModel,
-        None,
-    )
-    .await
-    .unwrap_or_else(|e| {
-        warn!("C2M load failed: {}", e);
-        std::collections::HashMap::new()
-    });
-
-    // Load M2C routing (Model to Channel)
-    let m2c_data = redis_state::get_routing(
-        rtdb.as_ref(),
-        redis_state::RoutingDirection::ModelToChannel,
-        None,
-    )
-    .await
-    .unwrap_or_else(|e| {
-        warn!("M2C load failed: {}", e);
-        std::collections::HashMap::new()
-    });
-
-    info!("Routes: {} C2M, {} M2C", c2m_data.len(), m2c_data.len());
-
-    Ok(Arc::new(voltage_rtdb::RoutingCache::from_maps(
-        c2m_data,
-        m2c_data,
-        std::collections::HashMap::new(), // C2C routing not yet implemented
-    )))
 }
 
 /// Create application state with all initialized components

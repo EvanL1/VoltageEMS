@@ -969,63 +969,6 @@ pub type ComsrvValidator = common::GenericValidator<ComsrvConfig>;
 // Centralized Configuration Constants for Comsrv
 // ============================================================================
 
-/// Redis key patterns for comsrv data storage and command queues
-///
-/// **DEPRECATED**: Use `voltage_model::KeySpaceConfig::production_cached()` instead.
-/// KeySpaceConfig provides zero-allocation key generation through `&'static` caching,
-/// while ChannelRedisKeys allocates a new String on every method call.
-#[deprecated(
-    since = "0.3.0",
-    note = "Use voltage_model::KeySpaceConfig::production_cached() for zero-allocation key generation"
-)]
-pub struct ChannelRedisKeys;
-
-#[allow(deprecated)]
-impl ChannelRedisKeys {
-    /// Channel data storage key pattern: "comsrv:{channel_id}:{point_type}"
-    /// point_type: T (telemetry), S (signal), C (control), A (adjustment)
-    pub const CHANNEL_DATA: &'static str = "comsrv:{}:{}";
-
-    /// Control command TODO queue: "comsrv:{channel_id}:C:TODO"
-    pub const CONTROL_TODO: &'static str = "comsrv:{}:C:TODO";
-
-    /// Adjustment command TODO queue: "comsrv:{channel_id}:A:TODO"
-    pub const ADJUSTMENT_TODO: &'static str = "comsrv:{}:A:TODO";
-
-    /// Helper method to format channel data key
-    pub fn channel_data(channel_id: u32, point_type: &str) -> String {
-        format!("comsrv:{}:{}", channel_id, point_type)
-    }
-
-    /// Helper method to format control TODO key
-    pub fn control_todo(channel_id: u32) -> String {
-        format!("comsrv:{}:C:TODO", channel_id)
-    }
-
-    /// Helper method to format adjustment TODO key
-    pub fn adjustment_todo(channel_id: u32) -> String {
-        format!("comsrv:{}:A:TODO", channel_id)
-    }
-
-    /// Helper method to format channel point data key: "comsrv:{channel_id}:{type}:{point_id}"
-    /// Used for storing individual point values within a channel
-    pub fn channel_point_data(channel_id: u32, point_type: &str, point_id: u32) -> String {
-        format!("comsrv:{}:{}:{}", channel_id, point_type, point_id)
-    }
-
-    /// Helper method to format channel timestamp key: "comsrv:{channel_id}:{type}:ts"
-    /// Used for storing timestamp of last update for a channel data type
-    pub fn channel_timestamp(channel_id: u32, point_type: &str) -> String {
-        format!("comsrv:{}:{}:ts", channel_id, point_type)
-    }
-
-    /// Helper method to format channel raw data key: "comsrv:{channel_id}:{type}:raw"
-    /// Used for storing raw/unprocessed data before transformation
-    pub fn channel_raw_data(channel_id: u32, point_type: &str) -> String {
-        format!("comsrv:{}:{}:raw", channel_id, point_type)
-    }
-}
-
 /// Database table names for comsrv
 pub struct TableNames;
 

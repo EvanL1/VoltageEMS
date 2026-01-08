@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{RoutingCache, SharedVecRtdbReader, VecRtdb};
+use voltage_rtdb::{RoutingCache, SharedVecRtdbReader};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
@@ -98,53 +98,23 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         }
     }
 
-    /// Create with VecRtdb read-through cache for O(1) variable reads (Round 113)
+    /// Create with SharedVecRtdbReader for two-tier priority reads
     ///
-    /// Enables VecRtdb caching in the executor, which:
-    /// 1. First checks VecRtdb for cached values (O(1))
-    /// 2. Falls back to Redis on cache miss
-    /// 3. Updates cache after Redis read
-    ///
-    /// This significantly reduces Redis round trips for rule variable reads.
-    pub fn with_vec_rtdb(
-        rtdb: Arc<R>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-        vec_rtdb: Arc<VecRtdb>,
-    ) -> Self {
-        Self {
-            rtdb: Arc::clone(&rtdb),
-            executor: Arc::new(RuleExecutor::new(rtdb, routing_cache).with_vec_rtdb(vec_rtdb)),
-            pool,
-            rules: Arc::new(RwLock::new(Vec::new())),
-            shutdown: Arc::new(tokio::sync::Notify::new()),
-            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            tick_ms,
-            logger_manager: RuleLoggerManager::new(log_root),
-        }
-    }
-
-    /// Create with VecRtdb + SharedVecRtdbReader for three-tier priority reads (Round 127)
-    ///
-    /// Enables both caching layers in the executor:
+    /// Enables SharedMemory layer in the executor:
     /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
-    /// 2. VecRtdb (~20μs) - process-local read-through cache
-    /// 3. Redis (~1ms) - remote fallback
+    /// 2. Redis (~1ms) - remote fallback
     ///
-    /// SharedMemory is populated by comsrv via Docker tmpfs volume.
+    /// SharedMemory is populated by comsrv and works on any filesystem.
+    /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub fn with_shared_reader(
         rtdb: Arc<R>,
         routing_cache: Arc<RoutingCache>,
         pool: SqlitePool,
         tick_ms: u64,
         log_root: PathBuf,
-        vec_rtdb: Arc<VecRtdb>,
         shared_reader: Option<Arc<SharedVecRtdbReader>>,
     ) -> Self {
-        let mut executor =
-            RuleExecutor::new(Arc::clone(&rtdb), routing_cache).with_vec_rtdb(vec_rtdb);
+        let mut executor = RuleExecutor::new(Arc::clone(&rtdb), routing_cache);
         if let Some(reader) = shared_reader {
             executor = executor.with_shared_reader(reader);
         }
@@ -242,78 +212,132 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
     }
 
     /// Single scheduler tick - check all rules and execute if due
+    ///
+    /// Snapshot execution pattern for minimal lock hold time
+    /// - Phase 1: Read lock to collect rules due for execution (~10μs)
+    /// - Phase 2: Execute rules without holding any lock (bulk of time)
+    /// - Phase 3: Write lock to update timestamps (~100μs)
+    ///
+    /// This reduces write lock hold time from 100ms+ to ~100μs.
     async fn tick(&self) -> Result<()> {
         let now = Instant::now();
-        let mut rules = self.rules.write().await;
 
-        for scheduled in rules.iter_mut() {
-            if !scheduled.rule.enabled {
-                continue;
-            }
-
-            let should_execute = match &scheduled.trigger {
-                TriggerConfig::Interval { interval_ms } => {
-                    match scheduled.last_execution {
-                        None => true, // First execution
-                        Some(last) => {
-                            let elapsed = now.duration_since(last).as_millis() as u64;
-                            elapsed >= *interval_ms
-                        },
+        // Phase 1: Read lock to collect rules that need execution (fast)
+        let rules_to_execute: Vec<(usize, Rule)> = {
+            let rules = self.rules.read().await;
+            rules
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, scheduled)| {
+                    if !scheduled.rule.enabled {
+                        return None;
                     }
-                },
-            };
 
-            // Check cooldown
-            let cooldown_ok = if scheduled.rule.cooldown_ms > 0 {
-                match scheduled.last_cooldown_start {
-                    None => true,
-                    Some(start) => {
-                        let elapsed = now.duration_since(start).as_millis() as u64;
-                        elapsed >= scheduled.rule.cooldown_ms
-                    },
-                }
-            } else {
-                true
-            };
-
-            if should_execute && cooldown_ok {
-                debug!("Executing rule: {}", scheduled.rule.id);
-
-                match self.executor.execute(&scheduled.rule).await {
-                    Ok(result) => {
-                        // Log rule execution to independent rule log file
-                        let logger = self
-                            .logger_manager
-                            .get_logger(scheduled.rule.id, &scheduled.rule.name);
-                        logger.log_execution(&result, &result.variable_values);
-
-                        // Write rule execution result to Redis for WebSocket monitoring
-                        // Note: node_details already contains input_values for each node
-                        self.write_rule_exec_to_redis(scheduled.rule.id, &result)
-                            .await;
-
-                        scheduled.last_execution = Some(now);
-                        if result.success {
-                            debug!(
-                                "Rule {} executed successfully, {} actions",
-                                result.rule_id,
-                                result.actions_executed.len()
-                            );
-                            // Start cooldown on successful execution with actions
-                            if !result.actions_executed.is_empty() {
-                                scheduled.last_cooldown_start = Some(now);
+                    let should_execute = match &scheduled.trigger {
+                        TriggerConfig::Interval { interval_ms } => {
+                            match scheduled.last_execution {
+                                None => true, // First execution
+                                Some(last) => {
+                                    let elapsed = now.duration_since(last).as_millis() as u64;
+                                    elapsed >= *interval_ms
+                                },
                             }
-                        } else {
-                            warn!("Rule {} fail: {:?}", result.rule_id, result.error);
+                        },
+                    };
+
+                    // Check cooldown
+                    let cooldown_ok = if scheduled.rule.cooldown_ms > 0 {
+                        match scheduled.last_cooldown_start {
+                            None => true,
+                            Some(start) => {
+                                let elapsed = now.duration_since(start).as_millis() as u64;
+                                elapsed >= scheduled.rule.cooldown_ms
+                            },
                         }
-                    },
-                    Err(e) => {
-                        error!("Rule {} err: {}", scheduled.rule.id, e);
-                        scheduled.last_execution = Some(now);
-                    },
-                }
+                    } else {
+                        true
+                    };
+
+                    if should_execute && cooldown_ok {
+                        Some((idx, scheduled.rule.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }; // Read lock released here (~10μs)
+
+        if rules_to_execute.is_empty() {
+            return Ok(());
+        }
+
+        // Phase 2: Execute rules without holding any lock (bulk of time)
+        // Track execution outcomes for Phase 3 timestamp updates
+        struct ExecutionOutcome {
+            idx: usize,
+            rule_id: i64,
+            start_cooldown: bool,
+        }
+        let mut outcomes: Vec<ExecutionOutcome> = Vec::with_capacity(rules_to_execute.len());
+
+        for (idx, rule) in rules_to_execute {
+            debug!("Executing rule: {}", rule.id);
+            let rule_id = rule.id;
+
+            match self.executor.execute(&rule).await {
+                Ok(result) => {
+                    // Log rule execution to independent rule log file
+                    let logger = self.logger_manager.get_logger(rule.id, &rule.name);
+                    logger.log_execution(&result, &result.variable_values);
+
+                    // Write rule execution result to Redis for WebSocket monitoring
+                    self.write_rule_exec_to_redis(rule.id, &result).await;
+
+                    let start_cooldown = result.success && !result.actions_executed.is_empty();
+
+                    if result.success {
+                        debug!(
+                            "Rule {} executed successfully, {} actions",
+                            result.rule_id,
+                            result.actions_executed.len()
+                        );
+                    } else {
+                        warn!("Rule {} fail: {:?}", result.rule_id, result.error);
+                    }
+
+                    outcomes.push(ExecutionOutcome {
+                        idx,
+                        rule_id,
+                        start_cooldown,
+                    });
+                },
+                Err(e) => {
+                    error!("Rule {} err: {}", rule_id, e);
+                    // Still update last_execution to prevent retry spam
+                    outcomes.push(ExecutionOutcome {
+                        idx,
+                        rule_id,
+                        start_cooldown: false,
+                    });
+                },
             }
         }
+
+        // Phase 3: Write lock to update timestamps (fast)
+        if !outcomes.is_empty() {
+            let mut rules = self.rules.write().await;
+            for outcome in outcomes {
+                if let Some(scheduled) = rules.get_mut(outcome.idx) {
+                    // Verify rule ID matches (safety check against concurrent modifications)
+                    if scheduled.rule.id == outcome.rule_id {
+                        scheduled.last_execution = Some(now);
+                        if outcome.start_cooldown {
+                            scheduled.last_cooldown_start = Some(now);
+                        }
+                    }
+                }
+            }
+        } // Write lock released here (~100μs)
 
         Ok(())
     }

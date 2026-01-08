@@ -209,7 +209,7 @@ fn format_route_key(key: &StructuredRouteKey) -> String {
 
 /// Internal routing tables snapshot (immutable after creation)
 ///
-/// Round 121: Replaces DashMap with FxHashMap for lock-free reads.
+/// Replaces DashMap with FxHashMap for lock-free reads.
 /// Wrapped in Arc for atomic replacement via ArcSwap.
 #[derive(Debug, Default)]
 struct RoutingTables {
@@ -230,7 +230,7 @@ struct RoutingTables {
 /// Uses ArcSwap + FxHashMap for lock-free reads (~25ns vs ~50ns for DashMap).
 /// Routing tables are atomically replaced during hot-reload.
 ///
-/// ## Performance (Round 121)
+/// ## Performance
 /// - Read: `ArcSwap::load()` (~5ns) + `FxHashMap::get()` (~20ns) = ~25ns total
 /// - Write: Build new tables + `ArcSwap::store()` (atomic pointer swap)
 ///
@@ -616,7 +616,7 @@ impl RoutingCache {
 
     /// Iterate over all C2M routes (for building ChannelToSlotIndex)
     ///
-    /// Round 122: Returns a Vec of all C2M routes for building direct channel-to-slot mappings.
+    /// Returns a Vec of all C2M routes for building direct channel-to-slot mappings.
     /// The returned Vec is a snapshot of the current routing state.
     ///
     /// # Example
@@ -634,7 +634,7 @@ impl RoutingCache {
 
     /// Iterate over all M2C routes (for building reverse mappings)
     ///
-    /// Round 122: Returns a Vec of all M2C routes.
+    /// Returns a Vec of all M2C routes.
     #[inline]
     pub fn m2c_iter(&self) -> Vec<(StructuredM2CKey, M2CTarget)> {
         let tables = self.tables.load();

@@ -217,7 +217,7 @@ impl WriteBuffer {
 
     /// Collect and clear all pending data
     ///
-    /// Round 132: Optimized to avoid double iteration and unnecessary clones.
+    /// Optimized to avoid double iteration and unnecessary clones.
     /// Converts `Arc<str>` field names to `String` for the Rtdb trait.
     /// This conversion happens at flush time (batched), not per-write.
     fn drain_pending(&self) -> Vec<(String, Vec<(String, Bytes)>)> {
