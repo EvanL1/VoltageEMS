@@ -98,33 +98,17 @@ pub async fn health_check(
         },
     }
 
-    // Check product loader
+    // Check product loader (products are compile-time constants, always healthy)
     let product_start = Instant::now();
-    match state.product_loader.get_all_products().await {
-        Ok(products) => {
-            checks.insert(
-                "products".to_string(),
-                json!({
-                    "status": "healthy",
-                    "count": products.len(),
-                    "duration_ms": product_start.elapsed().as_millis()
-                }),
-            );
-        },
-        Err(e) => {
-            overall_healthy = false;
-            let err_msg = format!("Failed to load products: {}", e);
-            errors.push(format!("products: {}", err_msg));
-            checks.insert(
-                "products".to_string(),
-                json!({
-                    "status": "unhealthy",
-                    "message": err_msg,
-                    "duration_ms": product_start.elapsed().as_millis()
-                }),
-            );
-        },
-    }
+    let products = state.product_loader.get_all_products();
+    checks.insert(
+        "products".to_string(),
+        json!({
+            "status": "healthy",
+            "count": products.len(),
+            "duration_ms": product_start.elapsed().as_millis()
+        }),
+    );
 
     // Collect system metrics (CPU, memory)
     let metrics = SystemMetrics::collect();

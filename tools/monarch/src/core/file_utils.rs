@@ -52,51 +52,6 @@ pub fn load_csv<P: AsRef<Path>>(path: P) -> Result<Vec<HashMap<String, String>>>
     Ok(records)
 }
 
-/// Load CSV file and deserialize directly into typed structs
-pub fn load_csv_typed<T, P>(path: P) -> Result<Vec<T>>
-where
-    T: DeserializeOwned,
-    P: AsRef<Path>,
-{
-    let path = path.as_ref();
-    debug!("Loading CSV file with typed deserialization: {:?}", path);
-
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("Failed to open CSV file: {:?}", path))?;
-
-    let mut reader = Reader::from_reader(file);
-    let mut records = Vec::new();
-
-    for (line_number, result) in reader.deserialize().enumerate() {
-        let record: T = match result {
-            Ok(rec) => rec,
-            Err(e) => {
-                // Print detailed CSV error before propagating
-                eprintln!(
-                    "CSV deserialization error at line {}: {:#?}",
-                    line_number + 2,
-                    e
-                );
-                return Err(anyhow::Error::new(e)).with_context(|| {
-                    format!(
-                        "Failed to deserialize CSV record from: {:?} (line {})",
-                        path,
-                        line_number + 2
-                    )
-                });
-            },
-        };
-        records.push(record);
-    }
-
-    debug!(
-        "Loaded and deserialized {} typed records from CSV: {:?}",
-        records.len(),
-        path
-    );
-    Ok(records)
-}
-
 /// Load CSV file with error recovery - returns successful rows and errors separately
 ///
 /// This version does not fail on individual row errors, instead collecting them

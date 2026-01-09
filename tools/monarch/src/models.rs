@@ -34,40 +34,22 @@ pub enum ModelCommands {
 
 #[derive(Subcommand)]
 pub enum ProductCommands {
-    /// List all imported products
-    #[command(about = "Show all products that have been imported to ModSrv")]
+    /// List all built-in products
+    #[command(about = "Show all built-in products from voltage-model")]
     List,
 
-    /// Show available products to import
-    #[command(about = "List products available in the products/ directory")]
+    /// Show available products in products/ directory (for development)
+    #[command(about = "List product definitions in the products/ directory")]
     Available,
 
-    /// Import a product from CSV files
-    #[command(
-        about = "Import a product definition from CSV files",
-        long_about = "Import a product definition from the products/{name}/ directory.\nThis will load measurements.csv, actions.csv, and properties.csv files."
-    )]
-    Import {
-        /// Product name (directory name in products/)
-        name: String,
-    },
-
     /// Get product details
-    #[command(about = "Show detailed information about a product")]
+    #[command(about = "Show detailed information about a built-in product")]
     Get {
         /// Product name
         name: String,
     },
-
-    /// Delete a product
-    #[command(about = "Delete a product and all its instances")]
-    Delete {
-        /// Product name
-        name: String,
-        /// Force deletion without confirmation
-        #[arg(short, long)]
-        force: bool,
-    },
+    // Note: Import and Delete commands have been removed.
+    // Products are now compile-time built-in constants from voltage-model crate.
 }
 
 #[derive(Subcommand)]
@@ -172,28 +154,10 @@ async fn handle_product_command(
         ProductCommands::Available => {
             csv_loader::list_available_products()?;
         },
-        ProductCommands::Import { name } => {
-            let product = csv_loader::load_product_from_csv(&name)?;
-
-            if use_lib_api {
-                #[cfg(feature = "lib-mode")]
-                {
-                    warn!("Product import: offline unsupported, use monarch sync");
-                }
-            } else {
-                // Online mode: use HTTP API
-                let url = base_url.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Base URL required for online mode. Please set MODSRV_URL or use --offline"
-                    )
-                })?;
-                let client = client::ModelClient::new(url)?;
-                client.import_product(product).await?;
-                info!("Product '{}' imported", name);
-            }
-        },
 
         // Remote operations (support both modes)
+        // Note: Products are now built-in constants from voltage-model crate.
+        // Import command has been removed.
         ProductCommands::List => {
             if use_lib_api {
                 #[cfg(feature = "lib-mode")]
@@ -244,36 +208,8 @@ async fn handle_product_command(
                 );
             }
         },
-        ProductCommands::Delete { name, force } => {
-            if !force {
-                println!(
-                    "Delete product '{}'? This will also delete all instances. [y/N]",
-                    name
-                );
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input)?;
-                if !input.trim().eq_ignore_ascii_case("y") {
-                    println!("Cancelled");
-                    return Ok(());
-                }
-            }
-
-            if use_lib_api {
-                #[cfg(feature = "lib-mode")]
-                {
-                    warn!("Product delete: offline unsupported");
-                }
-            } else {
-                let url = base_url.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Base URL required for online mode. Please set MODSRV_URL or use --offline"
-                    )
-                })?;
-                let client = client::ModelClient::new(url)?;
-                client.delete_product(&name).await?;
-                info!("Product '{}' deleted", name);
-            }
-        },
+        // Note: Delete command has been removed.
+        // Products are compile-time built-in constants and cannot be deleted.
     }
     Ok(())
 }

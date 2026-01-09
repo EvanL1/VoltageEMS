@@ -20,47 +20,9 @@ async fn create_test_database() -> (TempDir, SqlitePool) {
     (temp_dir, pool)
 }
 
-// Helper: Create test product with points
-async fn create_test_product(pool: &SqlitePool, product_name: &str) {
-    // Insert product
-    sqlx::query("INSERT INTO products (product_name, parent_name) VALUES (?, NULL)")
-        .bind(product_name)
-        .execute(pool)
-        .await
-        .unwrap();
-
-    // Insert measurement points
-    sqlx::query(
-        "INSERT INTO measurement_points (product_name, measurement_id, name, unit) VALUES (?, ?, ?, ?)"
-    )
-    .bind(product_name)
-    .bind(1)
-    .bind("Temperature")
-    .bind("°C")
-    .execute(pool)
-    .await
-    .unwrap();
-
-    sqlx::query(
-        "INSERT INTO measurement_points (product_name, measurement_id, name, unit) VALUES (?, ?, ?, ?)"
-    )
-    .bind(product_name)
-    .bind(2)
-    .bind("Voltage")
-    .bind("V")
-    .execute(pool)
-    .await
-    .unwrap();
-
-    // Insert action point
-    sqlx::query("INSERT INTO action_points (product_name, action_id, name) VALUES (?, ?, ?)")
-        .bind(product_name)
-        .bind(1)
-        .bind("SetPower")
-        .execute(pool)
-        .await
-        .unwrap();
-}
+// Note: create_test_product has been removed.
+// Products are now compile-time built-in constants from voltage-model crate.
+// Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
 
 // Helper: Create test ProductLoader
 fn create_test_product_loader(pool: SqlitePool) -> Arc<ProductLoader> {
@@ -86,8 +48,7 @@ async fn test_instance_manager_new() {
 #[tokio::test]
 async fn test_create_instance_success() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
+    // Use built-in product "Battery" instead of creating test product
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
@@ -95,8 +56,8 @@ async fn test_create_instance_success() {
 
     let req = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "test_instance_01".to_string(),
-        product_name: "test_product".to_string(),
+        instance_name: "test_battery_01".to_string(),
+        product_name: "Battery".to_string(),
         properties: HashMap::new(),
     };
 
@@ -109,15 +70,14 @@ async fn test_create_instance_success() {
     );
     let instance = result.unwrap();
     assert_eq!(instance.instance_id(), 1001);
-    assert_eq!(instance.instance_name(), "test_instance_01");
-    assert_eq!(instance.product_name(), "test_product");
+    assert_eq!(instance.instance_name(), "test_battery_01");
+    assert_eq!(instance.product_name(), "Battery");
 }
 
 #[tokio::test]
 async fn test_create_instance_with_properties() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "solar_panel").await;
-
+    // Use built-in product "PCS" instead of creating test product
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
@@ -129,8 +89,8 @@ async fn test_create_instance_with_properties() {
 
     let req = CreateInstanceRequest {
         instance_id: 2001,
-        instance_name: "solar_panel_01".to_string(),
-        product_name: "solar_panel".to_string(),
+        instance_name: "pcs_unit_01".to_string(),
+        product_name: "PCS".to_string(),
         properties,
     };
 
@@ -152,8 +112,6 @@ async fn test_create_instance_with_properties() {
 #[tokio::test]
 async fn test_create_instance_already_exists() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
@@ -162,7 +120,7 @@ async fn test_create_instance_already_exists() {
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "duplicate_instance".to_string(),
-        product_name: "test_product".to_string(),
+        product_name: "Battery".to_string(),
         properties: HashMap::new(),
     };
 
@@ -184,7 +142,7 @@ async fn test_create_instance_already_exists() {
 #[tokio::test]
 async fn test_create_instance_product_not_found() {
     let (_temp_dir, pool) = create_test_database().await;
-    // Don't create the product
+    // Don't use any product - test with non-existent product name
 
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
@@ -206,27 +164,25 @@ async fn test_create_instance_product_not_found() {
 #[tokio::test]
 async fn test_list_instances_all() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "product_a").await;
-    create_test_product(&pool, "product_b").await;
-
+    // Use built-in products: Battery and PCS
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
-    // Create multiple instances
+    // Create multiple instances using built-in products
     let req1 = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "instance_01".to_string(),
-        product_name: "product_a".to_string(),
+        instance_name: "battery_01".to_string(),
+        product_name: "Battery".to_string(),
         properties: HashMap::new(),
     };
     manager.create_instance(req1).await.unwrap();
 
     let req2 = CreateInstanceRequest {
         instance_id: 1002,
-        instance_name: "instance_02".to_string(),
-        product_name: "product_b".to_string(),
+        instance_name: "pcs_01".to_string(),
+        product_name: "PCS".to_string(),
         properties: HashMap::new(),
     };
     manager.create_instance(req2).await.unwrap();
@@ -240,9 +196,7 @@ async fn test_list_instances_all() {
 #[tokio::test]
 async fn test_list_instances_by_product() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "product_a").await;
-    create_test_product(&pool, "product_b").await;
-
+    // Use built-in products: Battery and PCS
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
@@ -252,8 +206,8 @@ async fn test_list_instances_by_product() {
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
-            instance_name: "product_a_instance_01".to_string(),
-            product_name: "product_a".to_string(),
+            instance_name: "battery_instance_01".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -262,8 +216,8 @@ async fn test_list_instances_by_product() {
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1002,
-            instance_name: "product_a_instance_02".to_string(),
-            product_name: "product_a".to_string(),
+            instance_name: "battery_instance_02".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -272,36 +226,34 @@ async fn test_list_instances_by_product() {
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 2001,
-            instance_name: "product_b_instance_01".to_string(),
-            product_name: "product_b".to_string(),
+            instance_name: "pcs_instance_01".to_string(),
+            product_name: "PCS".to_string(),
             properties: HashMap::new(),
         })
         .await
         .unwrap();
 
-    // List instances for product_a only
-    let instances = manager.list_instances(Some("product_a")).await.unwrap();
+    // List instances for Battery only
+    let instances = manager.list_instances(Some("Battery")).await.unwrap();
 
     assert_eq!(instances.len(), 2);
-    assert!(instances.iter().all(|i| i.product_name() == "product_a"));
+    assert!(instances.iter().all(|i| i.product_name() == "Battery"));
 }
 
 #[tokio::test]
 async fn test_get_instance_success() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
-    // Create instance
+    // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "get_test_instance".to_string(),
-            product_name: "test_product".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -337,19 +289,17 @@ async fn test_get_instance_not_found() {
 #[tokio::test]
 async fn test_delete_instance() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
-    // Create instance
+    // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "delete_test".to_string(),
-            product_name: "test_product".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -386,8 +336,6 @@ async fn setup_instance_name_index(
 #[tokio::test]
 async fn test_execute_action_instance_not_found() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
@@ -408,19 +356,17 @@ async fn test_execute_action_instance_not_found() {
 #[tokio::test]
 async fn test_execute_action_no_route_stores_locally() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
     let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
 
-    // Create instance
+    // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "action_test_instance".to_string(),
-            product_name: "test_product".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -450,8 +396,6 @@ async fn test_execute_action_no_route_stores_locally() {
 #[tokio::test]
 async fn test_execute_action_with_route_triggers_downstream() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
 
@@ -466,12 +410,12 @@ async fn test_execute_action_with_route_triggers_downstream() {
 
     let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
 
-    // Create instance
+    // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "routed_action_instance".to_string(),
-            product_name: "test_product".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -512,8 +456,6 @@ async fn test_execute_action_with_route_triggers_downstream() {
 #[tokio::test]
 async fn test_execute_action_multiple_points() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
 
@@ -533,7 +475,7 @@ async fn test_execute_action_multiple_points() {
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "multi_action_instance".to_string(),
-            product_name: "test_product".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -561,8 +503,6 @@ async fn test_execute_action_multiple_points() {
 #[tokio::test]
 async fn test_execute_action_value_overwrite() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
@@ -572,7 +512,7 @@ async fn test_execute_action_value_overwrite() {
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "overwrite_test".to_string(),
-            product_name: "test_product".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await
@@ -595,8 +535,6 @@ async fn test_execute_action_value_overwrite() {
 #[tokio::test]
 async fn test_execute_action_negative_values() {
     let (_temp_dir, pool) = create_test_database().await;
-    create_test_product(&pool, "test_product").await;
-
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
@@ -606,7 +544,7 @@ async fn test_execute_action_negative_values() {
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "negative_test".to_string(),
-            product_name: "test_product".to_string(),
+            product_name: "Battery".to_string(),
             properties: HashMap::new(),
         })
         .await

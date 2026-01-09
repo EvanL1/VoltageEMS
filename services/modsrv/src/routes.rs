@@ -14,9 +14,9 @@ use utoipa::OpenApi;
 use crate::app_state::AppState;
 
 // Import handlers from api module
-use crate::api::cloud_sync::{export_instances, sync_products};
+use crate::api::cloud_sync::export_instances;
 use crate::api::health_handlers::health_check;
-use crate::api::product_handlers::{create_product, get_product_points, list_products};
+use crate::api::product_handlers::{get_product_points, list_products};
 
 use crate::api::instance_management_handlers::{
     create_instance, delete_instance, execute_instance_action, reload_instances_from_db,
@@ -88,9 +88,7 @@ use common::admin_api::{get_log_level, set_log_level};
         crate::api::global_routing_handlers::delete_channel_routing_handler,
         crate::api::product_handlers::list_products,
         crate::api::product_handlers::get_product_points,
-        crate::api::product_handlers::create_product,
         // Cloud sync endpoints
-        crate::api::cloud_sync::sync_products,
         crate::api::cloud_sync::export_instances,
         // Admin endpoints
         common::admin_api::set_log_level,
@@ -123,7 +121,7 @@ use common::admin_api::{get_log_level, set_log_level};
     ),
     tags(
         (name = "modsrv", description = "Model Service API"),
-        (name = "products", description = "Product template management"),
+        (name = "products", description = "Product template management (read-only)"),
         (name = "admin", description = "Administration and service management")
     )
 )]
@@ -200,11 +198,10 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/api/routing/instances/{id}", axum::routing::delete(global_delete_instance_routing))
         .route("/api/routing/channels/{channel_id}", axum::routing::delete(delete_channel_routing_handler))
 
-        // Product management endpoints
-        .route("/api/products", get(list_products).post(create_product))
+        // Product management endpoints (read-only)
+        .route("/api/products", get(list_products))
         .route("/api/products/{product_name}/points", get(get_product_points))
         // Cloud sync endpoints
-        .route("/api/products/sync", post(sync_products))
         .route("/api/instances/export", get(export_instances))
         // Admin endpoints (log level management)
         .route(

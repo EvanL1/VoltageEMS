@@ -1,6 +1,9 @@
 //! Routing Integration Tests
 //!
 //! Tests the complete data flow from channels to instances
+//!
+//! Note: Products are now compile-time built-in constants from voltage-model crate.
+//! Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
 
@@ -18,12 +21,10 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
 
-    // 2. Prepare product and instance
-    let product_id = "test_inverter";
-    fixtures::create_test_product(env.pool(), product_id).await?;
-    fixtures::create_test_product_points(env.pool(), product_id).await?;
+    // 2. Use built-in product "Battery" instead of creating test product
+    let product_name = "Battery";
 
-    // products_dir no longer needed - loaded from code
+    // 3. Create ProductLoader and InstanceManager
     let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
@@ -36,16 +37,16 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
         product_loader,
     );
 
-    // 3. Create instance
+    // 4. Create instance
     let req = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "inverter_001".to_string(),
-        product_name: product_id.to_string(),
+        instance_name: "battery_001".to_string(),
+        product_name: product_name.to_string(),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req).await?;
 
-    // 4. Create test channel (required by FK constraint in unified database architecture)
+    // 5. Create test channel (required by FK constraint in unified database architecture)
     sqlx::query(
         r#"
         INSERT INTO channels (channel_id, name, protocol, enabled)
@@ -59,7 +60,7 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
     .execute(env.pool())
     .await?;
 
-    // 5. Create a measurement routing record
+    // 6. Create a measurement routing record
     sqlx::query(
         r#"
         INSERT INTO measurement_routing
@@ -68,15 +69,15 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
         "#,
     )
     .bind(1001)
-    .bind("inverter_001")
-    .bind(3001)  // channel_id
-    .bind("T")   // telemetry
-    .bind(1)     // channel point 1
-    .bind(1)     // maps to measurement point 1
+    .bind("battery_001")
+    .bind(3001) // channel_id
+    .bind("T")  // telemetry
+    .bind(1)    // channel point 1
+    .bind(1)    // maps to measurement point 1
     .execute(env.pool())
     .await?;
 
-    // 6. Verify the routing record is created
+    // 7. Verify the routing record is created
     let routing_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM measurement_routing WHERE instance_id = ?")
             .bind(1001)
@@ -93,12 +94,9 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
 async fn test_action_routing_load_from_db() -> Result<()> {
     let env = TestEnv::create().await?;
 
-    // Prepare data
-    let product_id = "test_inverter";
-    fixtures::create_test_product(env.pool(), product_id).await?;
-    fixtures::create_test_product_points(env.pool(), product_id).await?;
+    // Use built-in product "Battery"
+    let product_name = "Battery";
 
-    // products_dir no longer needed - loaded from code
     let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
@@ -113,8 +111,8 @@ async fn test_action_routing_load_from_db() -> Result<()> {
 
     let req = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "inverter_001".to_string(),
-        product_name: product_id.to_string(),
+        instance_name: "battery_001".to_string(),
+        product_name: product_name.to_string(),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req).await?;
@@ -142,11 +140,11 @@ async fn test_action_routing_load_from_db() -> Result<()> {
         "#,
     )
     .bind(1001)
-    .bind("inverter_001")
-    .bind(1)     // action point 1
-    .bind(3001)  // channel_id
-    .bind("C")   // control
-    .bind(1)     // channel point 1
+    .bind("battery_001")
+    .bind(1)    // action point 1
+    .bind(3001) // channel_id
+    .bind("C")  // control
+    .bind(1)    // channel point 1
     .execute(env.pool())
     .await?;
 
@@ -167,11 +165,9 @@ async fn test_action_routing_load_from_db() -> Result<()> {
 async fn test_multiple_routing_for_instance() -> Result<()> {
     let env = TestEnv::create().await?;
 
-    let product_id = "test_inverter";
-    fixtures::create_test_product(env.pool(), product_id).await?;
-    fixtures::create_test_product_points(env.pool(), product_id).await?;
+    // Use built-in product "Battery"
+    let product_name = "Battery";
 
-    // products_dir no longer needed - loaded from code
     let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
@@ -186,8 +182,8 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
 
     let req = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "inverter_001".to_string(),
-        product_name: product_id.to_string(),
+        instance_name: "battery_001".to_string(),
+        product_name: product_name.to_string(),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req).await?;
@@ -216,11 +212,11 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
             "#,
         )
         .bind(1001)
-        .bind("inverter_001")
+        .bind("battery_001")
         .bind(3001)
         .bind("T")
         .bind(channel_point_id)
-        .bind(channel_point_id)  // 1:1 mapping
+        .bind(channel_point_id) // 1:1 mapping
         .execute(env.pool())
         .await?;
     }

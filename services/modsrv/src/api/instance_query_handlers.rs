@@ -254,6 +254,7 @@ pub async fn search_instances(
         let product_name = inst.product_name().to_string();
 
         // Load product template (cached) - includes properties, measurements, actions
+        // Products are compile-time constants, synchronous access
         let product = if let Some(cached) = product_cache.get(&product_name) {
             Arc::clone(cached) // O(1) ref count increment
         } else {
@@ -261,7 +262,6 @@ pub async fn search_instances(
                 state
                     .product_loader
                     .get_product(&product_name)
-                    .await
                     .map_err(|e| {
                         ModSrvError::InternalError(format!(
                             "Failed to load product {}: {}",

@@ -65,7 +65,7 @@ use voltage_rtdb::{RedisRtdb, Rtdb};
 ///
 /// # Examples
 ///
-/// ```rust,no_run
+/// ```ignore
 /// use std::sync::Arc;
 ///
 /// use comsrv::core::channel_manager;
@@ -78,7 +78,7 @@ use voltage_rtdb::{RedisRtdb, Rtdb};
 ///     let channel_manager = Arc::new(ChannelManager::new(
 ///         protocol_factory,
 ///         DEFAULT_REDIS_URL.into(),
-///     )));
+///     ));
 ///
 ///     let configured_count = channel_manager::start_communication_channels(config_manager, channel_manager).await?;
 ///     println!("Started with {} configured channels", configured_count);

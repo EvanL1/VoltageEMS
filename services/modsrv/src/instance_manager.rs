@@ -103,10 +103,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             return Err(anyhow!("Invalid instance name: {}", e));
         }
 
-        // 2. Verify product exists
+        // 2. Verify product exists (products are compile-time constants)
         // Note: Name uniqueness is enforced by database UNIQUE constraint.
         // We rely on the constraint rather than check-then-act to avoid race conditions.
-        let product = self.product_loader.get_product(&req.product_name).await?;
+        let product = self.product_loader.get_product(&req.product_name)?;
 
         // 3. Begin transaction for atomic creation
         let mut tx = match self.pool.begin().await {

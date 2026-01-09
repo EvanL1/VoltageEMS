@@ -3,6 +3,7 @@
 //! Handles all service initialization including logging, configuration,
 //! database connections, and component setup.
 
+#[allow(unused_imports)] // Used at runtime but not in tests
 use crate::config::{ModsrvConfig, ModsrvQueries};
 use common::bootstrap_args::ServiceArgs;
 use common::bootstrap_database::{setup_redis_connection, setup_sqlite_pool};
@@ -182,31 +183,12 @@ where
     // Products are now loaded from code definitions (no config directory needed)
     let product_loader = ProductLoader::new(sqlite_pool.clone());
 
-    // Initialize product database tables
-    product_loader.init_database().await?;
+    // Initialize instance schema (products are compile-time constants)
+    product_loader.init_schema().await?;
 
-    // Products must be in database (loaded by monarch)
-    let product_count: i64 = sqlx::query_scalar(ModsrvQueries::COUNT_PRODUCTS)
-        .fetch_one(sqlite_pool)
-        .await
-        .unwrap_or(0);
-
-    if product_count == 0 {
-        let allow_empty = std::env::var("MODSRV_ALLOW_EMPTY")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
-        if allow_empty {
-            warn!("No products (ALLOW_EMPTY)");
-        } else {
-            error!("No products in DB");
-            return Err(ModSrvError::DatabaseError(
-                "No products/instances found in voltage.db".to_string(),
-            ));
-        }
-    }
-
-    info!("{} products loaded", product_count);
+    // Products are now built-in (compile-time), no database check needed
+    let product_count = product_loader.product_count();
+    info!("{} built-in products available", product_count);
     Ok(Arc::new(product_loader))
 }
 

@@ -65,41 +65,6 @@ impl ConfigManager {
         Self::from_sqlite(&db_path).await
     }
 
-    /// Asynchronously initialize CSV configuration
-    pub async fn initialize_csv(&mut self, config_dir: &Path) -> Result<()> {
-        debug!(
-            "initialize_csv called with config_dir: {}",
-            config_dir.display()
-        );
-        info!("Initializing CSV configurations");
-        let result = Self::load_csv_configs(&mut self.config).await;
-        debug!("load_csv_configs returned: {:?}", result.is_ok());
-
-        // Debug: Print loaded points summary
-        for channel in &self.config.channels {
-            info!(
-                "Channel {} after CSV load: points will be loaded from SQLite at runtime",
-                channel.id()
-            );
-        }
-
-        result
-    }
-
-    /// Load CSV configuration
-    async fn load_csv_configs(config: &mut AppConfig) -> Result<()> {
-        for channel in &mut config.channels {
-            debug!("Processing channel {}", channel.id());
-            // Points are now loaded from SQLite at runtime, not from CSV
-            // Skip CSV loading for points
-            info!(
-                "Channel {} configured - points will be loaded from SQLite at runtime",
-                channel.id()
-            );
-        }
-        Ok(())
-    }
-
     /// Get full application configuration
     pub fn config(&self) -> &AppConfig {
         &self.config

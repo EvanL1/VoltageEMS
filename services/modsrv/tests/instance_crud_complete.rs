@@ -5,12 +5,14 @@
 //! - Delete: delete_instance with cascade cleanup
 //! - List: pagination and search
 //! - Batch: create/delete multiple instances
+//!
+//! Note: Products are now compile-time built-in constants from voltage-model crate.
+//! Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 mod common;
 
-use common::fixtures;
 use common::TestEnv;
 use modsrv::instance_manager::InstanceManager;
 use modsrv::product_loader::{CreateInstanceRequest, ProductLoader};
@@ -32,19 +34,9 @@ async fn create_test_instance_manager(env: &TestEnv) -> InstanceManager<MemoryRt
     InstanceManager::new(env.pool.clone(), rtdb, routing_cache, product_loader)
 }
 
-/// Create a test product with measurements and actions
-async fn setup_test_product(env: &TestEnv, product_name: &str) {
-    fixtures::create_complete_test_product(
-        &env.pool,
-        product_name,
-        None,
-        3, // 3 measurement points
-        2, // 2 action points
-        2, // 2 properties
-    )
-    .await
-    .expect("Failed to create test product");
-}
+// Note: setup_test_product has been removed.
+// Products are now compile-time built-in constants from voltage-model crate.
+// Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
 
 /// Create a test instance
 async fn create_test_instance(
@@ -74,9 +66,8 @@ async fn test_rename_instance_success() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create product and instance
-    setup_test_product(&env, "RenameTestProduct").await;
-    create_test_instance(&manager, 1, "original_name", "RenameTestProduct").await;
+    // Setup: create instance using built-in product
+    create_test_instance(&manager, 1, "original_name", "Battery").await;
 
     // Rename the instance
     manager
@@ -96,10 +87,9 @@ async fn test_rename_instance_duplicate_error() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create product and two instances
-    setup_test_product(&env, "DuplicateRenameProduct").await;
-    create_test_instance(&manager, 1, "instance_1", "DuplicateRenameProduct").await;
-    create_test_instance(&manager, 2, "instance_2", "DuplicateRenameProduct").await;
+    // Setup: create two instances using built-in product
+    create_test_instance(&manager, 1, "instance_1", "Battery").await;
+    create_test_instance(&manager, 2, "instance_2", "Battery").await;
 
     // Try to rename instance_2 to instance_1 (should fail)
     let result = manager.rename_instance(2, "instance_1").await;
@@ -140,9 +130,8 @@ async fn test_delete_instance_success() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup
-    setup_test_product(&env, "DeleteTestProduct").await;
-    create_test_instance(&manager, 1, "to_delete", "DeleteTestProduct").await;
+    // Setup using built-in product
+    create_test_instance(&manager, 1, "to_delete", "Battery").await;
 
     // Verify instance exists
     let instance = manager.get_instance(1).await;
@@ -178,9 +167,8 @@ async fn test_delete_instance_cascade_routing() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create product and instance
-    setup_test_product(&env, "CascadeTestProduct").await;
-    create_test_instance(&manager, 10, "cascade_instance", "CascadeTestProduct").await;
+    // Setup: create instance using built-in product
+    create_test_instance(&manager, 10, "cascade_instance", "Battery").await;
 
     // Add routing entries directly (simulate routing setup)
     // Note: channel_id can be NULL (ON DELETE SET NULL), so we don't need a valid channel
@@ -235,10 +223,9 @@ async fn test_list_instances_all() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create product and multiple instances
-    setup_test_product(&env, "ListAllProduct").await;
+    // Setup: create multiple instances using built-in product
     for i in 1..=5 {
-        create_test_instance(&manager, i, &format!("list_inst_{}", i), "ListAllProduct").await;
+        create_test_instance(&manager, i, &format!("list_inst_{}", i), "Battery").await;
     }
 
     // List all instances
@@ -261,29 +248,26 @@ async fn test_list_instances_by_product() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create two products with different instances
-    setup_test_product(&env, "ProductA").await;
-    setup_test_product(&env, "ProductB").await;
+    // Setup: create instances for different built-in products
+    create_test_instance(&manager, 1, "inst_battery_1", "Battery").await;
+    create_test_instance(&manager, 2, "inst_battery_2", "Battery").await;
+    create_test_instance(&manager, 3, "inst_pcs_1", "PCS").await;
 
-    create_test_instance(&manager, 1, "inst_a1", "ProductA").await;
-    create_test_instance(&manager, 2, "inst_a2", "ProductA").await;
-    create_test_instance(&manager, 3, "inst_b1", "ProductB").await;
-
-    // List only ProductA instances
+    // List only Battery instances
     let instances = manager
-        .list_instances(Some("ProductA"))
+        .list_instances(Some("Battery"))
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 2);
-    assert!(instances.iter().all(|i| i.core.product_name == "ProductA"));
+    assert!(instances.iter().all(|i| i.core.product_name == "Battery"));
 
-    // List only ProductB instances
+    // List only PCS instances
     let instances = manager
-        .list_instances(Some("ProductB"))
+        .list_instances(Some("PCS"))
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 1);
-    assert_eq!(instances[0].core.instance_name, "inst_b1");
+    assert_eq!(instances[0].core.instance_name, "inst_pcs_1");
 
     env.cleanup().await.expect("Cleanup failed");
 }
@@ -312,16 +296,9 @@ async fn test_list_instances_paginated() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create 15 instances
-    setup_test_product(&env, "PaginationProduct").await;
+    // Setup: create 15 instances using built-in product
     for i in 1..=15 {
-        create_test_instance(
-            &manager,
-            i,
-            &format!("page_inst_{:02}", i),
-            "PaginationProduct",
-        )
-        .await;
+        create_test_instance(&manager, i, &format!("page_inst_{:02}", i), "Battery").await;
     }
 
     // Page 1: should have 10 items
@@ -360,39 +337,24 @@ async fn test_list_instances_paginated_with_filter() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create instances across two products
-    setup_test_product(&env, "FilterProduct1").await;
-    setup_test_product(&env, "FilterProduct2").await;
-
+    // Setup: create instances for two built-in products
     for i in 1..=8 {
-        create_test_instance(
-            &manager,
-            i,
-            &format!("filter1_inst_{}", i),
-            "FilterProduct1",
-        )
-        .await;
+        create_test_instance(&manager, i, &format!("battery_inst_{}", i), "Battery").await;
     }
     for i in 9..=12 {
-        create_test_instance(
-            &manager,
-            i,
-            &format!("filter2_inst_{}", i),
-            "FilterProduct2",
-        )
-        .await;
+        create_test_instance(&manager, i, &format!("pcs_inst_{}", i), "PCS").await;
     }
 
-    // Paginate FilterProduct1 only (8 total)
+    // Paginate Battery only (8 total)
     let (total, page1) = manager
-        .list_instances_paginated(Some("FilterProduct1"), 1, 5)
+        .list_instances_paginated(Some("Battery"), 1, 5)
         .await
         .expect("Failed to paginate");
     assert_eq!(total, 8);
     assert_eq!(page1.len(), 5);
 
     let (total, page2) = manager
-        .list_instances_paginated(Some("FilterProduct1"), 2, 5)
+        .list_instances_paginated(Some("Battery"), 2, 5)
         .await
         .expect("Failed to paginate");
     assert_eq!(total, 8);
@@ -410,12 +372,11 @@ async fn test_search_instances_by_name() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create instances with different naming patterns
-    setup_test_product(&env, "SearchProduct").await;
-    create_test_instance(&manager, 1, "inverter_01", "SearchProduct").await;
-    create_test_instance(&manager, 2, "inverter_02", "SearchProduct").await;
-    create_test_instance(&manager, 3, "battery_01", "SearchProduct").await;
-    create_test_instance(&manager, 4, "solar_panel_01", "SearchProduct").await;
+    // Setup: create instances with different naming patterns using built-in product
+    create_test_instance(&manager, 1, "inverter_01", "Battery").await;
+    create_test_instance(&manager, 2, "inverter_02", "Battery").await;
+    create_test_instance(&manager, 3, "battery_01", "Battery").await;
+    create_test_instance(&manager, 4, "solar_panel_01", "Battery").await;
 
     // Search for "inverter"
     let (total, results) = manager
@@ -451,32 +412,26 @@ async fn test_search_instances_with_product_filter() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create similar named instances across products
-    // Note: instance_name is globally unique, so use different names per product
-    setup_test_product(&env, "SolarProduct").await;
-    setup_test_product(&env, "WindProduct").await;
+    // Setup: create instances for different built-in products
+    create_test_instance(&manager, 1, "battery_unit_01", "Battery").await;
+    create_test_instance(&manager, 2, "battery_unit_02", "Battery").await;
+    create_test_instance(&manager, 3, "pcs_unit_01", "PCS").await;
 
-    create_test_instance(&manager, 1, "solar_unit_01", "SolarProduct").await;
-    create_test_instance(&manager, 2, "solar_unit_02", "SolarProduct").await;
-    create_test_instance(&manager, 3, "wind_unit_01", "WindProduct").await;
-
-    // Search "unit" in SolarProduct only
+    // Search "unit" in Battery only
     let (total, results) = manager
-        .search_instances("unit", Some("SolarProduct"), 1, 10)
+        .search_instances("unit", Some("Battery"), 1, 10)
         .await
         .expect("Failed to search");
     assert_eq!(total, 2);
-    assert!(results
-        .iter()
-        .all(|i| i.core.product_name == "SolarProduct"));
+    assert!(results.iter().all(|i| i.core.product_name == "Battery"));
 
-    // Search "unit" in WindProduct only
+    // Search "unit" in PCS only
     let (total, results) = manager
-        .search_instances("unit", Some("WindProduct"), 1, 10)
+        .search_instances("unit", Some("PCS"), 1, 10)
         .await
         .expect("Failed to search");
     assert_eq!(total, 1);
-    assert_eq!(results[0].core.product_name, "WindProduct");
+    assert_eq!(results[0].core.product_name, "PCS");
 
     env.cleanup().await.expect("Cleanup failed");
 }
@@ -490,18 +445,9 @@ async fn test_batch_create_instances() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup
-    setup_test_product(&env, "BatchCreateProduct").await;
-
-    // Create 20 instances in batch
+    // Create 20 instances in batch using built-in product
     for i in 1..=20 {
-        create_test_instance(
-            &manager,
-            i,
-            &format!("batch_inst_{:02}", i),
-            "BatchCreateProduct",
-        )
-        .await;
+        create_test_instance(&manager, i, &format!("batch_inst_{:02}", i), "Battery").await;
     }
 
     // Verify all created
@@ -526,16 +472,9 @@ async fn test_batch_delete_instances() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup: create 10 instances
-    setup_test_product(&env, "BatchDeleteProduct").await;
+    // Setup: create 10 instances using built-in product
     for i in 1..=10 {
-        create_test_instance(
-            &manager,
-            i,
-            &format!("delete_inst_{}", i),
-            "BatchDeleteProduct",
-        )
-        .await;
+        create_test_instance(&manager, i, &format!("delete_inst_{}", i), "Battery").await;
     }
 
     // Delete odd-numbered instances
@@ -580,10 +519,9 @@ async fn test_get_next_instance_id_after_delete() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup
-    setup_test_product(&env, "NextIdProduct").await;
-    create_test_instance(&manager, 1, "inst_1", "NextIdProduct").await;
-    create_test_instance(&manager, 5, "inst_5", "NextIdProduct").await; // Skip IDs
+    // Setup using built-in product
+    create_test_instance(&manager, 1, "inst_1", "Battery").await;
+    create_test_instance(&manager, 5, "inst_5", "Battery").await; // Skip IDs
 
     // Next ID should be max + 1
     let next_id = manager
@@ -610,10 +548,7 @@ async fn test_instance_properties_preserved() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
 
-    // Setup
-    setup_test_product(&env, "PropsProduct").await;
-
-    // Create instance with custom properties
+    // Create instance with custom properties using built-in product
     let mut properties = HashMap::new();
     properties.insert("capacity".to_string(), serde_json::json!(500));
     properties.insert("location".to_string(), serde_json::json!("Building A"));
@@ -622,7 +557,7 @@ async fn test_instance_properties_preserved() {
     let req = CreateInstanceRequest {
         instance_id: 1,
         instance_name: "props_test".to_string(),
-        product_name: "PropsProduct".to_string(),
+        product_name: "Battery".to_string(),
         properties: properties.clone(),
     };
     manager

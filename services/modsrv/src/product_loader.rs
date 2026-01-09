@@ -1,13 +1,12 @@
-//! Product Configuration Loader for ModSrv
+//! Product Configuration - Compile-time Built-in Products
 //!
-//! Products are loaded from database at runtime (via cloud sync API or Monarch import).
-//! This loader provides database schema initialization and product query methods.
-
-#![allow(dead_code)]
+//! Products are loaded from voltage-model crate at compile time.
+//! No database queries needed - all data is embedded in the binary.
 
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use voltage_model::product_lib::{self, BuiltinProduct, PointDef};
 
 // Re-export types from local config for other modules
 pub use crate::config::{
@@ -16,87 +15,30 @@ pub use crate::config::{
 };
 pub use voltage_model::PointRole;
 
-/// Product loader that populates database from code-defined product types
+/// Product loader that provides access to built-in products
+///
+/// This is now a zero-cost abstraction over voltage_model::product_lib.
+/// Products are compile-time constants embedded in the binary.
 #[derive(Clone)]
 pub struct ProductLoader {
+    /// SQLite pool for instance schema initialization (not for product queries)
     pool: SqlitePool,
 }
 
 impl ProductLoader {
-    /// Create a new ProductLoader with database connection
+    /// Create a new ProductLoader
+    ///
+    /// The pool is only used for schema initialization, not product queries.
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
-    // with_dir() removed - was deprecated wrapper around new()
-
-    /// Initialize database tables with separate tables for each point type
-    pub async fn init_database(&self) -> Result<()> {
-        debug!("Init product tables");
-
-        // Products table (just hierarchy)
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS products (
-                product_name TEXT PRIMARY KEY,
-                parent_name TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Measurement points table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS measurement_points (
-                product_name TEXT NOT NULL,
-                measurement_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                unit TEXT,
-                description TEXT,
-                PRIMARY KEY (product_name, measurement_id),
-                FOREIGN KEY (product_name) REFERENCES products(product_name) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Action points table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS action_points (
-                product_name TEXT NOT NULL,
-                action_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                unit TEXT,
-                description TEXT,
-                PRIMARY KEY (product_name, action_id),
-                FOREIGN KEY (product_name) REFERENCES products(product_name) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Property templates table
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS property_templates (
-                product_name TEXT NOT NULL,
-                property_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                unit TEXT,
-                description TEXT,
-                PRIMARY KEY (product_name, property_id),
-                FOREIGN KEY (product_name) REFERENCES products(product_name) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
+    /// Initialize database schema for instances and mappings
+    ///
+    /// Note: Product tables are no longer created - products come from compile-time definitions.
+    /// This method only creates instance-related tables.
+    pub async fn init_schema(&self) -> Result<()> {
+        debug!("Init instance tables");
 
         // Create instances table with parent_id for topology hierarchy
         sqlx::query(
@@ -108,7 +50,6 @@ impl ProductLoader {
                 parent_id INTEGER,
                 properties TEXT,  -- JSON format
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (product_name) REFERENCES products(product_name),
                 FOREIGN KEY (parent_id) REFERENCES instances(instance_id) ON DELETE SET NULL
             )
             "#,
@@ -170,7 +111,6 @@ impl ProductLoader {
         .await?;
 
         // Calculations table for virtual/computed points
-        // Stores calculation definitions loaded from YAML via Monarch
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS calculations (
@@ -179,7 +119,7 @@ impl ProductLoader {
                 description TEXT,
                 calculation_type TEXT NOT NULL,  -- JSON serialized CalculationType
                 output_inst INTEGER NOT NULL,    -- Output instance ID
-                output_type TEXT NOT NULL CHECK(output_type IN ('M', 'A')),  -- M=Measurement, A=Action
+                output_type TEXT NOT NULL CHECK(output_type IN ('M', 'A')),
                 output_id INTEGER NOT NULL,      -- Output point ID
                 enabled BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -197,238 +137,59 @@ impl ProductLoader {
         .execute(&self.pool)
         .await?;
 
-        // Product library metadata for cloud sync versioning
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS product_library_meta (
-                version TEXT PRIMARY KEY
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        debug!("Product tables ready");
+        debug!("Instance tables ready");
         Ok(())
     }
 
-    /// Verify products exist in database
-    ///
-    /// Products are now loaded from database at runtime (via cloud sync API or Monarch import).
-    /// This method verifies the database has product definitions.
-    pub async fn load_all(&self) -> Result<()> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
-            .fetch_one(&self.pool)
-            .await?;
-
-        if count == 0 {
-            warn!("No products in database. Use /api/products/sync or monarch to import.");
-        } else {
-            info!("Database has {} products", count);
-        }
-        Ok(())
-    }
-
-    // clear_all_products() removed - was never called
+    // ============ Product Query Methods (from compile-time data) ============
 
     /// Get a complete product with nested structure
     ///
     /// @input product_name: &str - Product identifier to retrieve
     /// @output `Result<Product>` - Product with all point definitions
-    /// @throws anyhow::Error - Product not found or database error
-    /// @loads measurement_points, action_points, property_templates tables
-    /// @side-effects None (read-only)
-    pub async fn get_product(&self, product_name: &str) -> Result<Product> {
-        // Get product basic info
-        let (product_name_db, parent_name_db) = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT product_name, parent_name FROM products WHERE product_name = ?",
-        )
-        .bind(product_name)
-        .fetch_one(&self.pool)
-        .await
-        .context(format!("Product not found: {}", product_name))?;
+    /// @throws anyhow::Error - Product not found
+    pub fn get_product(&self, product_name: &str) -> Result<Product> {
+        let builtin = product_lib::get_builtin_product(product_name)
+            .context(format!("Product not found: {}", product_name))?;
 
-        // Get measurement points
-        let measurements = sqlx::query_as::<_, (i32, String, Option<String>, Option<String>)>(
-            r#"
-            SELECT measurement_id, name, unit, description
-            FROM measurement_points
-            WHERE product_name = ?
-            ORDER BY measurement_id
-            "#,
-        )
-        .bind(product_name)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .filter_map(|(measurement_id, name, unit, description)| {
-            u32::try_from(measurement_id)
-                .ok()
-                .map(|id| MeasurementPoint {
-                    measurement_id: id,
-                    name,
-                    unit,
-                    description,
-                })
-        })
-        .collect();
-
-        // Get action points
-        let actions = sqlx::query_as::<_, (i32, String, Option<String>, Option<String>)>(
-            r#"
-            SELECT action_id, name, unit, description
-            FROM action_points
-            WHERE product_name = ?
-            ORDER BY action_id
-            "#,
-        )
-        .bind(product_name)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .filter_map(|(action_id, name, unit, description)| {
-            u32::try_from(action_id).ok().map(|id| ActionPoint {
-                action_id: id,
-                name,
-                unit,
-                description,
-            })
-        })
-        .collect();
-
-        // Get property templates
-        let properties = sqlx::query_as::<_, (i32, String, Option<String>, Option<String>)>(
-            r#"
-            SELECT property_id, name, unit, description
-            FROM property_templates
-            WHERE product_name = ?
-            ORDER BY property_id
-            "#,
-        )
-        .bind(product_name)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .map(|(property_id, name, unit, description)| PropertyTemplate {
-            property_id,
-            name,
-            unit,
-            description,
-        })
-        .collect();
-
-        Ok(Product {
-            product_name: product_name_db,
-            parent_name: parent_name_db,
-            measurements,
-            actions,
-            properties,
-        })
+        Ok(convert_builtin_to_product(builtin))
     }
 
     /// Get all products
-    ///
-    /// @input None
-    /// @output `Result<Vec<Product>>` - All products with complete definitions
-    /// @throws anyhow::Error - Database query error
-    /// @side-effects None (read-only)
-    /// @performance O(n*m) where n=products, m=points per product
-    pub async fn get_all_products(&self) -> Result<Vec<Product>> {
-        let product_names = sqlx::query_scalar::<_, String>(
-            "SELECT product_name FROM products ORDER BY product_name",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut products = Vec::new();
-        for name in product_names {
-            products.push(self.get_product(&name).await?);
-        }
-
-        Ok(products)
+    pub fn get_all_products(&self) -> Vec<Product> {
+        product_lib::get_builtin_products()
+            .iter()
+            .map(convert_builtin_to_product)
+            .collect()
     }
 
-    /// Get product hierarchy
-    ///
-    /// @input None
-    /// @output `Result<ProductHierarchy>` - `Vec<(product_name, parent_name)>` tuples
-    /// @throws anyhow::Error - Database query error
-    /// @side-effects None (read-only)
-    /// @returns Flat list of parent-child relationships
-    pub async fn get_product_hierarchy(&self) -> Result<ProductHierarchy> {
-        let rows = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT product_name, parent_name FROM products ORDER BY product_name",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows)
+    /// Get product hierarchy (product_name, parent_name) tuples
+    pub fn get_product_hierarchy(&self) -> ProductHierarchy {
+        product_lib::get_builtin_products()
+            .iter()
+            .map(|p| (p.name.clone(), p.parent_name.clone()))
+            .collect()
     }
 
     /// Get all product names without loading point details
     ///
-    /// This is a lightweight query that returns only product basic information
-    /// (product_name and parent_name) without loading measurements, actions, or properties.
+    /// Returns Vec of (product_name, parent_name) tuples.
     /// Ideal for frontend dropdown lists or selection interfaces.
-    ///
-    /// @input None
-    /// @output `Result<Vec<(String, Option<String>)>>` - Vec of (product_name, parent_name) tuples
-    /// @throws anyhow::Error - Database query error
-    /// @side-effects None (read-only)
-    /// @performance O(n) where n=product count - much faster than get_all_products()
-    pub async fn get_all_product_names(&self) -> Result<Vec<(String, Option<String>)>> {
-        let rows = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT product_name, parent_name FROM products ORDER BY product_name",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows)
+    pub fn get_all_product_names(&self) -> Vec<(String, Option<String>)> {
+        product_lib::get_builtin_products()
+            .iter()
+            .map(|p| (p.name.clone(), p.parent_name.clone()))
+            .collect()
     }
 
-    /// Reload product definitions from database
-    ///
-    /// Called after cloud sync to refresh any cached state.
-    /// Currently ProductLoader queries database directly without caching,
-    /// so this method just logs the reload event for auditing.
-    ///
-    /// @output Result<()> - Success or error
-    pub async fn reload(&self) -> Result<()> {
-        // Verify database connectivity by counting products
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
-            .fetch_one(&self.pool)
-            .await?;
-
-        info!("Product library reloaded: {} products", count);
-        Ok(())
+    /// Check if a product exists
+    pub fn product_exists(&self, name: &str) -> bool {
+        product_lib::product_exists(name)
     }
 
-    /// Add a measurement point to a product
-    pub async fn add_measurement(
-        &self,
-        product_name: &str,
-        point: &MeasurementPoint,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO measurement_points
-            (product_name, measurement_id, name, unit, description)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(product_name, measurement_id) DO UPDATE SET
-                name = excluded.name,
-                unit = excluded.unit,
-                description = excluded.description
-            "#,
-        )
-        .bind(product_name)
-        .bind(point.measurement_id)
-        .bind(&point.name)
-        .bind(&point.unit)
-        .bind(&point.description)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
+    /// Get the number of built-in products
+    pub fn product_count(&self) -> usize {
+        product_lib::get_builtin_products().len()
     }
 
     /// Generate Redis key for a point
@@ -438,131 +199,129 @@ impl ProductLoader {
     }
 }
 
+// ============ Type Conversion Functions ============
+
+/// Convert BuiltinProduct to Product
+fn convert_builtin_to_product(builtin: &BuiltinProduct) -> Product {
+    Product {
+        product_name: builtin.name.clone(),
+        parent_name: builtin.parent_name.clone(),
+        measurements: builtin
+            .measurements
+            .iter()
+            .map(convert_point_to_measurement)
+            .collect(),
+        actions: builtin
+            .actions
+            .iter()
+            .map(convert_point_to_action)
+            .collect(),
+        properties: builtin
+            .properties
+            .iter()
+            .map(convert_point_to_property)
+            .collect(),
+    }
+}
+
+fn convert_point_to_measurement(point: &PointDef) -> MeasurementPoint {
+    MeasurementPoint {
+        measurement_id: point.id,
+        name: point.name.clone(),
+        unit: if point.unit.is_empty() {
+            None
+        } else {
+            Some(point.unit.clone())
+        },
+        description: None, // BuiltinProduct doesn't have description
+    }
+}
+
+fn convert_point_to_action(point: &PointDef) -> ActionPoint {
+    ActionPoint {
+        action_id: point.id,
+        name: point.name.clone(),
+        unit: if point.unit.is_empty() {
+            None
+        } else {
+            Some(point.unit.clone())
+        },
+        description: None,
+    }
+}
+
+fn convert_point_to_property(point: &PointDef) -> PropertyTemplate {
+    PropertyTemplate {
+        property_id: point.id as i32,
+        name: point.name.clone(),
+        unit: if point.unit.is_empty() {
+            None
+        } else {
+            Some(point.unit.clone())
+        },
+        description: None,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use sqlx::Row;
 
-    async fn setup_test_env() -> Result<ProductLoader> {
-        let db_path = ":memory:";
-        let sqlite_url = format!("sqlite:{db_path}?mode=memory&cache=shared");
-        let pool = SqlitePool::connect(&sqlite_url).await?;
+    #[test]
+    fn test_get_product() {
+        // Create a dummy pool for testing (not used for product queries)
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            let loader = ProductLoader::new(pool);
 
-        // Use standard modsrv schema from common test utils
-        common::test_utils::schema::init_modsrv_schema(&pool).await?;
-
-        let loader = ProductLoader::new(pool);
-        Ok(loader)
+            let product = loader.get_product("Battery").expect("Battery should exist");
+            assert_eq!(product.product_name, "Battery");
+            assert_eq!(product.parent_name, Some("ESS".to_string()));
+            assert!(!product.measurements.is_empty());
+        });
     }
 
-    /// Insert a test product fixture into database
-    async fn insert_test_product(
-        loader: &ProductLoader,
-        name: &str,
-        parent: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query("INSERT INTO products (product_name, parent_name) VALUES (?, ?)")
-            .bind(name)
-            .bind(parent)
-            .execute(&loader.pool)
-            .await?;
-        Ok(())
+    #[test]
+    fn test_get_all_products() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            let loader = ProductLoader::new(pool);
+
+            let products = loader.get_all_products();
+            assert_eq!(products.len(), 9);
+
+            let names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
+            assert!(names.contains(&"Battery"));
+            assert!(names.contains(&"PCS"));
+            assert!(names.contains(&"Station"));
+        });
     }
 
-    #[tokio::test]
-    async fn test_init_database() {
-        let loader = setup_test_env().await.expect("Failed to setup test env");
+    #[test]
+    fn test_product_exists() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            let loader = ProductLoader::new(pool);
 
-        // Verify tables were created
-        let result = sqlx::query("SELECT name FROM sqlite_master WHERE type='table'")
-            .fetch_all(&loader.pool)
-            .await
-            .expect("Failed to query tables");
-
-        let table_names: Vec<String> = result
-            .iter()
-            .map(|row| row.try_get::<String, _>("name").unwrap())
-            .collect();
-
-        assert!(table_names.contains(&"products".to_string()));
-        assert!(table_names.contains(&"measurement_points".to_string()));
-        assert!(table_names.contains(&"action_points".to_string()));
-        assert!(table_names.contains(&"property_templates".to_string()));
+            assert!(loader.product_exists("Battery"));
+            assert!(loader.product_exists("PCS"));
+            assert!(!loader.product_exists("NonExistent"));
+        });
     }
 
-    #[tokio::test]
-    async fn test_load_all_empty_database() -> Result<()> {
-        let loader = setup_test_env().await.expect("Failed to setup test env");
+    #[test]
+    fn test_product_count() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            let loader = ProductLoader::new(pool);
 
-        // load_all should succeed even with empty database (just logs warning)
-        loader.load_all().await.expect("load_all should not fail");
-
-        // Verify no products
-        let products = loader.get_all_products().await?;
-        assert!(products.is_empty());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_get_product_with_fixture() -> Result<()> {
-        let loader = setup_test_env().await.expect("Failed to setup test env");
-
-        // Insert test product
-        insert_test_product(&loader, "test_inverter", Some("station")).await?;
-
-        // Add a measurement point
-        let point = MeasurementPoint {
-            measurement_id: 1,
-            name: "Power".to_string(),
-            unit: Some("kW".to_string()),
-            description: Some("Active power output".to_string()),
-        };
-        loader.add_measurement("test_inverter", &point).await?;
-
-        // Get product
-        let product = loader.get_product("test_inverter").await?;
-
-        assert_eq!(product.product_name, "test_inverter");
-        assert_eq!(product.parent_name, Some("station".to_string()));
-        assert_eq!(product.measurements.len(), 1);
-        assert_eq!(product.measurements[0].name, "Power");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_add_measurement() -> Result<()> {
-        let loader = setup_test_env().await.expect("Failed to setup test env");
-
-        // Insert test product
-        insert_test_product(&loader, "test_product", None).await?;
-
-        // Add measurement
-        let new_point = MeasurementPoint {
-            measurement_id: 999,
-            name: "Custom Measurement".to_string(),
-            unit: Some("kW".to_string()),
-            description: Some("Custom calculated power".to_string()),
-        };
-
-        loader.add_measurement("test_product", &new_point).await?;
-
-        // Get product and verify point was added
-        let product = loader.get_product("test_product").await?;
-
-        let added_point = product
-            .measurements
-            .iter()
-            .find(|m| m.measurement_id == 999);
-        assert!(added_point.is_some());
-
-        let ap = added_point.unwrap();
-        assert_eq!(ap.name, "Custom Measurement");
-        assert_eq!(ap.description, Some("Custom calculated power".to_string()));
-
-        Ok(())
+            assert_eq!(loader.product_count(), 9);
+        });
     }
 
     #[test]
@@ -574,43 +333,25 @@ mod tests {
         assert_eq!(key, "modsrv:pv_inv_001:A:1");
     }
 
-    #[tokio::test]
-    async fn test_get_all_products() -> Result<()> {
-        let loader = setup_test_env().await.expect("Failed to setup test env");
+    #[test]
+    fn test_product_hierarchy() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+            let loader = ProductLoader::new(pool);
 
-        // Insert test products
-        insert_test_product(&loader, "station", None).await?;
-        insert_test_product(&loader, "inverter", Some("station")).await?;
-        insert_test_product(&loader, "battery", Some("station")).await?;
+            let hierarchy = loader.get_product_hierarchy();
+            assert!(!hierarchy.is_empty());
 
-        // Get all products
-        let products = loader.get_all_products().await?;
-        assert_eq!(products.len(), 3);
+            // Check Station is root
+            let station = hierarchy.iter().find(|(name, _)| name == "Station");
+            assert!(station.is_some());
+            assert!(station.unwrap().1.is_none());
 
-        let product_names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
-        assert!(product_names.contains(&"station"));
-        assert!(product_names.contains(&"inverter"));
-        assert!(product_names.contains(&"battery"));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_product_hierarchy() -> Result<()> {
-        let loader = setup_test_env().await.expect("Failed to setup test env");
-
-        // Insert hierarchical products
-        insert_test_product(&loader, "station", None).await?;
-        insert_test_product(&loader, "battery_stack", Some("station")).await?;
-        insert_test_product(&loader, "battery_cluster", Some("battery_stack")).await?;
-
-        // Verify hierarchy
-        let stack = loader.get_product("battery_stack").await?;
-        assert_eq!(stack.parent_name, Some("station".to_string()));
-
-        let cluster = loader.get_product("battery_cluster").await?;
-        assert_eq!(cluster.parent_name, Some("battery_stack".to_string()));
-
-        Ok(())
+            // Check Battery -> ESS
+            let battery = hierarchy.iter().find(|(name, _)| name == "Battery");
+            assert!(battery.is_some());
+            assert_eq!(battery.unwrap().1, Some("ESS".to_string()));
+        });
     }
 }

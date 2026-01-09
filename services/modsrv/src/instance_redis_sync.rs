@@ -58,38 +58,33 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let mut failed_count = 0;
 
         // Cache products by name to avoid repeated loads and clones
+        // Products are compile-time constants, synchronous access
         let mut product_cache: HashMap<String, Arc<crate::product_loader::Product>> =
             HashMap::new();
 
         for instance in instances {
-            // Get product details (cached)
+            // Get product details (cached, sync access)
             let product = match product_cache.get(instance.product_name()) {
                 Some(cached) => Arc::clone(cached),
-                None => {
-                    match self
-                        .product_loader
-                        .get_product(instance.product_name())
-                        .await
-                    {
-                        Ok(p) => {
-                            let arc_product = Arc::new(p);
-                            product_cache.insert(
-                                instance.product_name().to_string(),
-                                Arc::clone(&arc_product),
-                            );
-                            arc_product
-                        },
-                        Err(e) => {
-                            warn!(
-                                "Product {} not found for instance {}: {}",
-                                instance.product_name(),
-                                instance.instance_id(),
-                                e
-                            );
-                            failed_count += 1;
-                            continue;
-                        },
-                    }
+                None => match self.product_loader.get_product(instance.product_name()) {
+                    Ok(p) => {
+                        let arc_product = Arc::new(p);
+                        product_cache.insert(
+                            instance.product_name().to_string(),
+                            Arc::clone(&arc_product),
+                        );
+                        arc_product
+                    },
+                    Err(e) => {
+                        warn!(
+                            "Product {} not found for instance {}: {}",
+                            instance.product_name(),
+                            instance.instance_id(),
+                            e
+                        );
+                        failed_count += 1;
+                        continue;
+                    },
                 },
             };
 
@@ -166,11 +161,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         &self,
         instance: &crate::product_loader::Instance,
     ) -> Result<()> {
-        // Get product details
-        let product = self
-            .product_loader
-            .get_product(instance.product_name())
-            .await?;
+        // Get product details (products are compile-time constants)
+        let product = self.product_loader.get_product(instance.product_name())?;
 
         // Get point routings for this instance
         let full_instance = self.get_instance(instance.instance_id()).await?;
@@ -271,8 +263,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             action_point_routings.insert(point_id, redis_key);
         }
 
-        // Load product definition (cached) to include point metadata
-        let product = self.product_loader.get_product(&product_name).await?;
+        // Load product definition (products are compile-time constants)
+        let product = self.product_loader.get_product(&product_name)?;
 
         self.register_instance_in_redis(
             instance_id,
@@ -361,8 +353,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             action_point_routings.insert(point_id, redis_key);
         }
 
-        // Load product definition (cached) to include point metadata
-        let product = self.product_loader.get_product(&product_name).await?;
+        // Load product definition (products are compile-time constants)
+        let product = self.product_loader.get_product(&product_name)?;
 
         self.register_instance_in_redis(
             instance_id,

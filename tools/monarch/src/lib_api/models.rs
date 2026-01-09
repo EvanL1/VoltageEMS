@@ -108,18 +108,19 @@ impl<'a> ModelsService<'a> {
     /// List all product templates
     ///
     /// Returns a list of all available product templates.
+    /// Products are compile-time constants from voltage-model crate.
     pub async fn list_products(&self) -> Result<Vec<Product>> {
-        self.ctx.product_loader.get_all_products().await
+        Ok(self.ctx.product_loader.get_all_products())
     }
 
     /// Get product template details
     ///
     /// Returns detailed information about a specific product template.
+    /// Products are compile-time constants from voltage-model crate.
     pub async fn get_product(&self, product_name: &str) -> Result<Product> {
         self.ctx
             .product_loader
             .get_product(product_name)
-            .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
                     LibApiError::not_found(format!("Product '{}' not found", product_name)).into()

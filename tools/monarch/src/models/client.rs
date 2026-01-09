@@ -53,40 +53,8 @@ impl ModelClient {
         }
     }
 
-    pub async fn import_product(&self, product: Value) -> Result<()> {
-        let response = self
-            .client
-            .post(format!("{}/api/products", self.base_url))
-            .json(&product)
-            .send()
-            .await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "Failed to import product: {}",
-                response.status()
-            ))
-        }
-    }
-
-    pub async fn delete_product(&self, name: &str) -> Result<()> {
-        let response = self
-            .client
-            .delete(format!("{}/api/products/{}", self.base_url, name))
-            .send()
-            .await?;
-
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "Failed to delete product: {}",
-                response.status()
-            ))
-        }
-    }
+    // Note: import_product and delete_product methods have been removed.
+    // Products are now compile-time built-in constants from voltage-model crate.
 
     // Instance operations
     pub async fn list_instances(&self, product: Option<&str>) -> Result<Value> {

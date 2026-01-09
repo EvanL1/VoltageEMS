@@ -1,6 +1,9 @@
 //! Instance Lifecycle Integration Tests
 //!
 //! Tests the complete instance lifecycle: create → query → update → delete
+//!
+//! Note: Products are now compile-time built-in constants from voltage-model crate.
+//! Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
 
@@ -18,13 +21,10 @@ async fn test_create_instance_full_flow() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
 
-    // 2. Prepare test data
-    let product_id = "test_inverter";
-    fixtures::create_test_product(env.pool(), product_id).await?;
-    fixtures::create_test_product_points(env.pool(), product_id).await?;
+    // 2. Use built-in product "Battery" instead of creating test product
+    let product_name = "Battery";
 
     // 3. Create ProductLoader and InstanceManager
-    // products_dir no longer needed
     let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
@@ -40,8 +40,8 @@ async fn test_create_instance_full_flow() -> Result<()> {
     // 4. Create instance
     let req = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "inverter_001".to_string(),
-        product_name: product_id.to_string(),
+        instance_name: "battery_001".to_string(),
+        product_name: product_name.to_string(),
         properties: fixtures::create_test_instance_properties(),
     };
 
@@ -49,8 +49,8 @@ async fn test_create_instance_full_flow() -> Result<()> {
 
     // 5. Verify instance created successfully
     assert_eq!(instance.instance_id(), 1001);
-    assert_eq!(instance.instance_name(), "inverter_001");
-    assert_eq!(instance.product_name(), product_id);
+    assert_eq!(instance.instance_name(), "battery_001");
+    assert_eq!(instance.product_name(), product_name);
 
     // 6. Verify database record
     assert!(helpers::assert_instance_exists(env.pool(), 1001).await?);
@@ -65,11 +65,9 @@ async fn test_create_instance_full_flow() -> Result<()> {
 async fn test_create_instance_duplicate_error() -> Result<()> {
     let env = TestEnv::create().await?;
 
-    let product_id = "test_inverter";
-    fixtures::create_test_product(env.pool(), product_id).await?;
-    fixtures::create_test_product_points(env.pool(), product_id).await?;
+    // Use built-in product "Battery"
+    let product_name = "Battery";
 
-    // products_dir no longer needed
     let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
@@ -85,8 +83,8 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
     // Create first instance
     let req = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "inverter_001".to_string(),
-        product_name: product_id.to_string(),
+        instance_name: "battery_001".to_string(),
+        product_name: product_name.to_string(),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req.clone()).await?;
@@ -109,11 +107,9 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
 async fn test_get_instance_data() -> Result<()> {
     let env = TestEnv::create().await?;
 
-    let product_id = "test_inverter";
-    fixtures::create_test_product(env.pool(), product_id).await?;
-    fixtures::create_test_product_points(env.pool(), product_id).await?;
+    // Use built-in product "Battery"
+    let product_name = "Battery";
 
-    // products_dir no longer needed
     let product_loader = Arc::new(ProductLoader::new(env.pool().clone()));
 
     let redis_client = env.redis().clone();
@@ -129,8 +125,8 @@ async fn test_get_instance_data() -> Result<()> {
     // Create instance
     let req = CreateInstanceRequest {
         instance_id: 1001,
-        instance_name: "inverter_001".to_string(),
-        product_name: product_id.to_string(),
+        instance_name: "battery_001".to_string(),
+        product_name: product_name.to_string(),
         properties: fixtures::create_test_instance_properties(),
     };
     let instance = instance_manager.create_instance(req).await?;

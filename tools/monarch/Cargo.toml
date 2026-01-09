@@ -8,6 +8,7 @@ license.workspace = true
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rules = { path = "../../libs/voltage-rules" }
+voltage-model = { path = "../../libs/voltage-model" }
 # voltage-comlink removed - types moved to comsrv
 common = { path = "../../libs/common" }
 

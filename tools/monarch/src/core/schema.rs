@@ -131,19 +131,9 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
         .execute(&pool)
         .await?;
 
-    // === Product & Instance tables (modsrv) ===
-    sqlx::query(modsrv_schema::PRODUCTS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(modsrv_schema::MEASUREMENT_POINTS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(modsrv_schema::ACTION_POINTS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(modsrv_schema::PROPERTY_TEMPLATES_TABLE)
-        .execute(&pool)
-        .await?;
+    // === Instance tables (modsrv) ===
+    // Note: Product tables (products, measurement_points, action_points, property_templates)
+    // have been removed. Products are now compile-time built-in constants from voltage-model crate.
     sqlx::query(modsrv_schema::INSTANCES_TABLE)
         .execute(&pool)
         .await?;
@@ -192,17 +182,8 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    // Product/instance indexes
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_measurement_points_product ON measurement_points(product_name)",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_action_points_product ON action_points(product_name)",
-    )
-    .execute(pool)
-    .await?;
+    // Instance routing indexes
+    // Note: Product indexes removed - products are compile-time constants
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_measurement_routing_instance ON measurement_routing(instance_id)",
     )

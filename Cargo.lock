@@ -1849,6 +1849,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
  "voltage-rules",

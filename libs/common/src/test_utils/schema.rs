@@ -114,61 +114,22 @@ pub const ADJUSTMENT_POINTS_TABLE: &str = r#"
 // Modsrv Table DDL (matches modsrv::config schemas)
 // ============================================================================
 
-/// Products table DDL (matches modsrv::config::ProductRecord)
-pub const PRODUCTS_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS products (
-        product_name TEXT NOT NULL PRIMARY KEY,
-        parent_name TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-"#;
+// Note: Products table has been removed.
+// Products are now compile-time built-in constants from voltage-model crate.
+// Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
 
 /// Instances table DDL (matches modsrv::config::InstanceRecord)
+/// Note: No foreign key to products table - products are compile-time constants
 pub const INSTANCES_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS instances (
         instance_id INTEGER NOT NULL PRIMARY KEY,
         instance_name TEXT NOT NULL UNIQUE,
-        product_name TEXT NOT NULL REFERENCES products(product_name),
+        product_name TEXT NOT NULL,
+        parent_id INTEGER,
         properties TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
-"#;
-
-/// Measurement points table DDL (matches modsrv::config::MeasurementPointRecord)
-pub const MEASUREMENT_POINTS_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS measurement_points (
-        product_name TEXT NOT NULL REFERENCES products(product_name) ON DELETE CASCADE,
-        measurement_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        unit TEXT,
-        description TEXT,
-        PRIMARY KEY (product_name, measurement_id)
-    )
-"#;
-
-/// Action points table DDL (matches modsrv::config::ActionPointRecord)
-pub const ACTION_POINTS_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS action_points (
-        product_name TEXT NOT NULL REFERENCES products(product_name) ON DELETE CASCADE,
-        action_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        unit TEXT,
-        description TEXT,
-        PRIMARY KEY (product_name, action_id)
-    )
-"#;
-
-/// Property templates table DDL (matches modsrv::config::PropertyTemplateRecord)
-pub const PROPERTY_TEMPLATES_TABLE: &str = r#"
-    CREATE TABLE IF NOT EXISTS property_templates (
-        product_name TEXT NOT NULL REFERENCES products(product_name) ON DELETE CASCADE,
-        property_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        unit TEXT,
-        default_value TEXT,
-        description TEXT,
-        PRIMARY KEY (product_name, property_id)
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (parent_id) REFERENCES instances(instance_id) ON DELETE SET NULL
     )
 "#;
 
@@ -278,10 +239,11 @@ pub async fn init_comsrv_schema(pool: &SqlitePool) -> Result<()> {
 /// - service_config
 /// - sync_metadata
 /// - channels (required by routing table foreign keys)
-/// - products
 /// - instances
-/// - measurement_points, action_points, property_templates
 /// - measurement_routing, action_routing
+///
+/// Note: Products are now compile-time built-in constants from voltage-model crate.
+/// No products table is created. Use built-in product names like "Battery", "PCS", etc.
 pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
     // Service metadata tables
     sqlx::query(SERVICE_CONFIG_TABLE).execute(pool).await?;
@@ -290,14 +252,8 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
     // Channels table (required by routing table foreign keys in unified database architecture)
     sqlx::query(CHANNELS_TABLE).execute(pool).await?;
 
-    // Product and instance tables
-    sqlx::query(PRODUCTS_TABLE).execute(pool).await?;
+    // Instance table (no longer references products table)
     sqlx::query(INSTANCES_TABLE).execute(pool).await?;
-
-    // Point definition tables
-    sqlx::query(MEASUREMENT_POINTS_TABLE).execute(pool).await?;
-    sqlx::query(ACTION_POINTS_TABLE).execute(pool).await?;
-    sqlx::query(PROPERTY_TEMPLATES_TABLE).execute(pool).await?;
 
     // Routing tables
     sqlx::query(MEASUREMENT_ROUTING_TABLE).execute(pool).await?;
@@ -363,11 +319,12 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Should have 10 tables: service_config, sync_metadata, channels, products, instances,
-        // 3 point tables, 2 routing tables
+        // Should have 6 tables: service_config, sync_metadata, channels, instances,
+        // measurement_routing, action_routing
+        // Note: Products and point definition tables removed (products are compile-time constants)
         assert!(
-            result.0 >= 10,
-            "Expected at least 10 tables, found {}",
+            result.0 >= 6,
+            "Expected at least 6 tables, found {}",
             result.0
         );
     }

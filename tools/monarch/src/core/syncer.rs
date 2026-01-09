@@ -4,15 +4,17 @@
 //! to the SQLite database.
 
 use anyhow::{Context, Result};
+use common::validation::CsvFields;
 use comsrv::core::config::ComsrvConfig;
 use modsrv::config::ModsrvConfig;
+use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-use super::file_utils::{flatten_json, load_csv, load_csv_typed};
+use super::file_utils::{flatten_json, load_csv, load_csv_typed_with_errors, load_csv_with_errors};
 use super::schema;
 
 /// Normalize protocol_data numeric fields to JSON numbers (not strings)
@@ -139,6 +141,141 @@ impl SyncError {
             error: csv_error.error.clone(),
         }
     }
+}
+
+// ============================================================================
+// Point Type Sync Helpers
+// ============================================================================
+
+/// Configuration for syncing a specific point type (T/S/C/A)
+struct PointSyncConfig<'a> {
+    /// CSV filename (e.g., "telemetry.csv")
+    csv_filename: &'a str,
+    /// Mapping filename (e.g., "mapping/telemetry_mapping.csv")
+    mapping_filename: &'a str,
+    /// Database table name (e.g., "telemetry_points")
+    table_name: &'a str,
+    /// Type label for error messages (e.g., "telemetry")
+    type_label: &'a str,
+}
+
+/// Extracted point fields for database insertion
+struct PointFields {
+    point_id: u32,
+    signal_name: String,
+    unit: Option<String>,
+    description: Option<String>,
+    scale: f64,
+    offset: f64,
+    reverse: bool,
+    data_type: String,
+}
+
+/// Generic point type sync function
+///
+/// Syncs points of a specific type (T/S/C/A) from CSV to SQLite.
+/// Handles CSV loading, mapping file loading, and database insertion.
+#[allow(clippy::too_many_arguments)]
+async fn sync_point_type<T, F>(
+    tx: &mut Transaction<'_, Sqlite>,
+    path: &Path,
+    channel_id: i32,
+    protocol: &str,
+    config: &PointSyncConfig<'_>,
+    extract_fields: F,
+    errors: &mut Vec<SyncError>,
+) -> Result<usize>
+where
+    T: DeserializeOwned + CsvFields,
+    F: Fn(&T) -> PointFields,
+{
+    let csv_file = path.join(config.csv_filename);
+    if !csv_file.exists() {
+        return Ok(0);
+    }
+
+    let (points, csv_errors) = load_csv_typed_with_errors::<T, _>(&csv_file)?;
+
+    // Collect CSV parsing errors
+    for csv_error in &csv_errors {
+        errors.push(SyncError::from_csv_error(
+            csv_error,
+            &format!("channel-{}/{}", channel_id, config.csv_filename),
+        ));
+    }
+
+    // Load corresponding mappings if they exist
+    let mapping_file = path.join(config.mapping_filename);
+    let mappings_json = if mapping_file.exists() {
+        let (mappings, mapping_csv_errors) = load_csv_with_errors(&mapping_file)?;
+
+        // Collect mapping CSV errors
+        for csv_error in &mapping_csv_errors {
+            errors.push(SyncError::from_csv_error(
+                csv_error,
+                &format!("channel-{}/{}", channel_id, config.mapping_filename),
+            ));
+        }
+
+        // Normalize and convert to JSON, indexed by point_id
+        let mut mapping_map = HashMap::new();
+        for mapping in mappings {
+            if let Some(point_id) = mapping.get("point_id") {
+                let point_id = point_id.clone();
+                let normalized = normalize_protocol_mapping(protocol, mapping);
+                mapping_map.insert(point_id, normalized);
+            }
+        }
+        Some(mapping_map)
+    } else {
+        None
+    };
+
+    let mut count = 0;
+
+    // Build the INSERT query with table name
+    let insert_sql = format!(
+        "INSERT INTO {} (point_id, channel_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        config.table_name
+    );
+
+    for point in points {
+        let fields = extract_fields(&point);
+
+        let protocol_mappings = mappings_json
+            .as_ref()
+            .and_then(|m| m.get(&fields.point_id.to_string()))
+            .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string()))
+            .unwrap_or_else(|| "null".to_string());
+
+        if let Err(e) = sqlx::query(&insert_sql)
+            .bind(fields.point_id)
+            .bind(channel_id)
+            .bind(&fields.signal_name)
+            .bind(fields.scale)
+            .bind(fields.offset)
+            .bind(&fields.unit)
+            .bind(fields.reverse)
+            .bind(&fields.data_type)
+            .bind(&fields.description)
+            .bind(&protocol_mappings)
+            .execute(&mut **tx)
+            .await
+        {
+            errors.push(SyncError {
+                item: format!(
+                    "channel-{}/{}/point-{}",
+                    channel_id, config.type_label, fields.point_id
+                ),
+                error: e.to_string(),
+            });
+            continue;
+        }
+        count += 1;
+    }
+
+    Ok(count)
 }
 
 /// Result of a sync operation
@@ -432,28 +569,14 @@ impl ConfigSyncer {
             .await?;
         // Skip instance_mappings table (deprecated)
 
-        // Then delete instances (which references products)
+        // Then delete instances
+        // Note: Products are now compile-time built-in constants (voltage-model crate),
+        // no need to clear or sync product-related tables
         sqlx::query("DELETE FROM instances")
             .execute(&mut *tx)
             .await?;
 
-        // Then delete tables that reference products (using modsrv's actual table names)
-        sqlx::query("DELETE FROM measurement_points")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM action_points")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM property_templates")
-            .execute(&mut *tx)
-            .await?;
-
-        // Finally delete products (parent table)
-        sqlx::query("DELETE FROM products")
-            .execute(&mut *tx)
-            .await?;
-
-        stats.items_deleted = 8; // Cleared 8 tables
+        stats.items_deleted = 4; // Cleared 4 tables (config, routing x2, instances)
 
         // Insert service configuration
         let config_count = self
@@ -463,11 +586,8 @@ impl ConfigSyncer {
 
         debug!("Config: {}", config_count);
 
-        // Sync products from CSV files
-        let products_count = self.sync_modsrv_products(&mut tx, &config_dir).await?;
-        stats.items_synced += products_count;
-
-        debug!("Products: {}", products_count);
+        // Note: Products are now compile-time built-in constants (voltage-model crate).
+        // No need to sync from CSV files. Products are embedded in the binary.
 
         // Load and sync instances
         let instances_path = config_dir.join("instances.yaml");
@@ -647,7 +767,6 @@ impl ConfigSyncer {
         config_dir: &Path,
         errors: &mut Vec<SyncError>,
     ) -> Result<usize> {
-        use crate::core::file_utils::{load_csv_typed_with_errors, load_csv_with_errors};
         use comsrv::core::config::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
 
         let mut total_count = 0;
@@ -680,433 +799,118 @@ impl ConfigSyncer {
                     .await
                     .unwrap_or_else(|_| "modbus_tcp".to_string()); // Default fallback
 
-            // Load point definitions and mappings for each type.
+            // Load point definitions and mappings for each type (T/S/C/A)
+            // Telemetry points
+            total_count += sync_point_type::<TelemetryPoint, _>(
+                tx,
+                &path,
+                channel_id,
+                &protocol,
+                &PointSyncConfig {
+                    csv_filename: "telemetry.csv",
+                    mapping_filename: "mapping/telemetry_mapping.csv",
+                    table_name: "telemetry_points",
+                    type_label: "telemetry",
+                },
+                |p| PointFields {
+                    point_id: p.base.point_id,
+                    signal_name: p.base.signal_name.clone(),
+                    unit: p.base.unit.clone(),
+                    description: p.base.description.clone(),
+                    scale: p.scale,
+                    offset: p.offset,
+                    reverse: p.reverse,
+                    data_type: p.data_type.clone(),
+                },
+                errors,
+            )
+            .await?;
 
-            // Telemetry points with mappings
-            let telemetry_file = path.join("telemetry.csv");
-            if telemetry_file.exists() {
-                let (points, csv_errors) =
-                    load_csv_typed_with_errors::<TelemetryPoint, _>(&telemetry_file)?;
+            // Signal points (with defaults for scale/offset/data_type)
+            total_count += sync_point_type::<SignalPoint, _>(
+                tx,
+                &path,
+                channel_id,
+                &protocol,
+                &PointSyncConfig {
+                    csv_filename: "signal.csv",
+                    mapping_filename: "mapping/signal_mapping.csv",
+                    table_name: "signal_points",
+                    type_label: "signal",
+                },
+                |p| PointFields {
+                    point_id: p.base.point_id,
+                    signal_name: p.base.signal_name.clone(),
+                    unit: p.base.unit.clone(),
+                    description: p.base.description.clone(),
+                    scale: 1.0,
+                    offset: 0.0,
+                    reverse: p.reverse,
+                    data_type: "int".to_string(),
+                },
+                errors,
+            )
+            .await?;
 
-                // Collect CSV parsing errors
-                for csv_error in &csv_errors {
-                    errors.push(SyncError::from_csv_error(
-                        csv_error,
-                        &format!("channel-{}/telemetry.csv", channel_id),
-                    ));
-                }
+            // Control points (with defaults)
+            total_count += sync_point_type::<ControlPoint, _>(
+                tx,
+                &path,
+                channel_id,
+                &protocol,
+                &PointSyncConfig {
+                    csv_filename: "control.csv",
+                    mapping_filename: "mapping/control_mapping.csv",
+                    table_name: "control_points",
+                    type_label: "control",
+                },
+                |p| PointFields {
+                    point_id: p.base.point_id,
+                    signal_name: p.base.signal_name.clone(),
+                    unit: p.base.unit.clone(),
+                    description: p.base.description.clone(),
+                    scale: 1.0,
+                    offset: 0.0,
+                    reverse: false,
+                    data_type: "bool".to_string(),
+                },
+                errors,
+            )
+            .await?;
 
-                // Load corresponding mappings if they exist
-                let mapping_file = path.join("mapping/telemetry_mapping.csv");
-                let mappings_json = if mapping_file.exists() {
-                    let (mappings, mapping_csv_errors) = load_csv_with_errors(&mapping_file)?;
-
-                    // Collect mapping CSV errors
-                    for csv_error in &mapping_csv_errors {
-                        errors.push(SyncError::from_csv_error(
-                            csv_error,
-                            &format!("channel-{}/mapping/telemetry_mapping.csv", channel_id),
-                        ));
-                    }
-
-                    // Normalize and convert to JSON, indexed by point_id
-                    let mut mapping_map = HashMap::new();
-                    for mapping in mappings {
-                        if let Some(point_id) = mapping.get("point_id") {
-                            // Clone point_id first to release borrow
-                            let point_id = point_id.clone();
-                            // Normalize protocol_data before storing
-                            let normalized = normalize_protocol_mapping(&protocol, mapping);
-                            mapping_map.insert(point_id, normalized);
-                        }
-                    }
-                    Some(mapping_map)
-                } else {
-                    None
-                };
-
-                // Insert points with embedded mappings
-                for point in points {
-                    let protocol_mappings = mappings_json
-                        .as_ref()
-                        .and_then(|m| m.get(&point.base.point_id.to_string()))
-                        .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string()))
-                        .unwrap_or_else(|| "null".to_string());
-
-                    // Catch database insertion errors
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO telemetry_points (point_id, channel_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(point.base.point_id)
-                    .bind(channel_id)
-                    .bind(&point.base.signal_name)
-                    .bind(point.scale)
-                    .bind(point.offset)
-                    .bind(&point.base.unit)
-                    .bind(point.reverse)
-                    .bind(&point.data_type)
-                    .bind(&point.base.description)
-                    .bind(&protocol_mappings)
-                    .execute(&mut **tx)
-                    .await
-                    {
-                        errors.push(SyncError {
-                            item: format!("channel-{}/telemetry/point-{}", channel_id, point.base.point_id),
-                            error: e.to_string(),
-
-                        });
-                        continue;
-                    }
-                    total_count += 1;
-                }
-            }
-
-            // Signal points with mappings
-            let signal_file = path.join("signal.csv");
-            if signal_file.exists() {
-                let (points, csv_errors) =
-                    load_csv_typed_with_errors::<SignalPoint, _>(&signal_file)?;
-
-                // Collect CSV parsing errors
-                for csv_error in &csv_errors {
-                    errors.push(SyncError::from_csv_error(
-                        csv_error,
-                        &format!("channel-{}/signal.csv", channel_id),
-                    ));
-                }
-
-                // Load corresponding mappings if they exist
-                let mapping_file = path.join("mapping/signal_mapping.csv");
-                let mappings_json = if mapping_file.exists() {
-                    let (mappings, mapping_csv_errors) = load_csv_with_errors(&mapping_file)?;
-
-                    // Collect mapping CSV errors
-                    for csv_error in &mapping_csv_errors {
-                        errors.push(SyncError::from_csv_error(
-                            csv_error,
-                            &format!("channel-{}/mapping/signal_mapping.csv", channel_id),
-                        ));
-                    }
-
-                    // Normalize and convert to JSON, indexed by point_id
-                    let mut mapping_map = HashMap::new();
-                    for mapping in mappings {
-                        if let Some(point_id) = mapping.get("point_id") {
-                            // Clone point_id first to release borrow
-                            let point_id = point_id.clone();
-                            // Normalize protocol_data before storing
-                            let normalized = normalize_protocol_mapping(&protocol, mapping);
-                            mapping_map.insert(point_id, normalized);
-                        }
-                    }
-                    Some(mapping_map)
-                } else {
-                    None
-                };
-
-                for point in points {
-                    let protocol_mappings = mappings_json
-                        .as_ref()
-                        .and_then(|m| m.get(&point.base.point_id.to_string()))
-                        .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string()))
-                        .unwrap_or_else(|| "null".to_string());
-
-                    // Catch database insertion errors
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO signal_points (point_id, channel_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(point.base.point_id)
-                    .bind(channel_id)
-                    .bind(&point.base.signal_name)
-                    .bind(1.0)  // Default scale for signal
-                    .bind(0.0)  // Default offset for signal
-                    .bind(&point.base.unit)
-                    .bind(point.reverse)
-                    .bind("int")  // Default data type for signal
-                    .bind(&point.base.description)
-                    .bind(&protocol_mappings)
-                    .execute(&mut **tx)
-                    .await
-                    {
-                        errors.push(SyncError {
-                            item: format!("channel-{}/signal/point-{}", channel_id, point.base.point_id),
-                            error: e.to_string(),
-
-                        });
-                        continue;
-                    }
-                    total_count += 1;
-                }
-            }
-
-            // Control points with mappings
-            let control_file = path.join("control.csv");
-            if control_file.exists() {
-                let (points, csv_errors) =
-                    load_csv_typed_with_errors::<ControlPoint, _>(&control_file)?;
-
-                // Collect CSV parsing errors
-                for csv_error in &csv_errors {
-                    errors.push(SyncError::from_csv_error(
-                        csv_error,
-                        &format!("channel-{}/control.csv", channel_id),
-                    ));
-                }
-
-                // Load corresponding mappings if they exist
-                let mapping_file = path.join("mapping/control_mapping.csv");
-                let mappings_json = if mapping_file.exists() {
-                    let (mappings, mapping_csv_errors) = load_csv_with_errors(&mapping_file)?;
-
-                    // Collect mapping CSV errors
-                    for csv_error in &mapping_csv_errors {
-                        errors.push(SyncError::from_csv_error(
-                            csv_error,
-                            &format!("channel-{}/mapping/control_mapping.csv", channel_id),
-                        ));
-                    }
-
-                    // Normalize and convert to JSON, indexed by point_id
-                    let mut mapping_map = HashMap::new();
-                    for mapping in mappings {
-                        if let Some(point_id) = mapping.get("point_id") {
-                            // Clone point_id first to release borrow
-                            let point_id = point_id.clone();
-                            // Normalize protocol_data before storing
-                            let normalized = normalize_protocol_mapping(&protocol, mapping);
-                            mapping_map.insert(point_id, normalized);
-                        }
-                    }
-                    Some(mapping_map)
-                } else {
-                    None
-                };
-
-                for point in points {
-                    let protocol_mappings = mappings_json
-                        .as_ref()
-                        .and_then(|m| m.get(&point.base.point_id.to_string()))
-                        .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string()))
-                        .unwrap_or_else(|| "null".to_string());
-
-                    // Catch database insertion errors
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO control_points (point_id, channel_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(point.base.point_id)
-                    .bind(channel_id)
-                    .bind(&point.base.signal_name)
-                    .bind(1.0)  // Default scale for control
-                    .bind(0.0)  // Default offset for control
-                    .bind(&point.base.unit)
-                    .bind(false)  // Default reverse for control
-                    .bind("bool")  // Default data type for control
-                    .bind(&point.base.description)
-                    .bind(&protocol_mappings)
-                    .execute(&mut **tx)
-                    .await
-                    {
-                        errors.push(SyncError {
-                            item: format!("channel-{}/control/point-{}", channel_id, point.base.point_id),
-                            error: e.to_string(),
-
-                        });
-                        continue;
-                    }
-                    total_count += 1;
-                }
-            }
-
-            // Adjustment points with mappings
-            let adjustment_file = path.join("adjustment.csv");
-            if adjustment_file.exists() {
-                let (points, csv_errors) =
-                    load_csv_typed_with_errors::<AdjustmentPoint, _>(&adjustment_file)?;
-
-                // Collect CSV parsing errors
-                for csv_error in &csv_errors {
-                    errors.push(SyncError::from_csv_error(
-                        csv_error,
-                        &format!("channel-{}/adjustment.csv", channel_id),
-                    ));
-                }
-
-                // Load corresponding mappings if they exist
-                let mapping_file = path.join("mapping/adjustment_mapping.csv");
-                let mappings_json = if mapping_file.exists() {
-                    let (mappings, mapping_csv_errors) = load_csv_with_errors(&mapping_file)?;
-
-                    // Collect mapping CSV errors
-                    for csv_error in &mapping_csv_errors {
-                        errors.push(SyncError::from_csv_error(
-                            csv_error,
-                            &format!("channel-{}/mapping/adjustment_mapping.csv", channel_id),
-                        ));
-                    }
-
-                    // Normalize and convert to JSON, indexed by point_id
-                    let mut mapping_map = HashMap::new();
-                    for mapping in mappings {
-                        if let Some(point_id) = mapping.get("point_id") {
-                            // Clone point_id first to release borrow
-                            let point_id = point_id.clone();
-                            // Normalize protocol_data before storing
-                            let normalized = normalize_protocol_mapping(&protocol, mapping);
-                            mapping_map.insert(point_id, normalized);
-                        }
-                    }
-                    Some(mapping_map)
-                } else {
-                    None
-                };
-
-                for point in points {
-                    let protocol_mappings = mappings_json
-                        .as_ref()
-                        .and_then(|m| m.get(&point.base.point_id.to_string()))
-                        .map(|m| serde_json::to_string(m).unwrap_or_else(|_| "{}".to_string()))
-                        .unwrap_or_else(|| "null".to_string());
-
-                    // Catch database insertion errors
-                    if let Err(e) = sqlx::query(
-                        "INSERT INTO adjustment_points (point_id, channel_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                    )
-                    .bind(point.base.point_id)
-                    .bind(channel_id)
-                    .bind(&point.base.signal_name)
-                    .bind(point.scale)
-                    .bind(point.offset)
-                    .bind(&point.base.unit)
-                    .bind(false)  // Default reverse for adjustment
-                    .bind(&point.data_type)
-                    .bind(&point.base.description)
-                    .bind(&protocol_mappings)
-                    .execute(&mut **tx)
-                    .await
-                    {
-                        errors.push(SyncError {
-                            item: format!("channel-{}/adjustment/point-{}", channel_id, point.base.point_id),
-                            error: e.to_string(),
-
-                        });
-                        continue;
-                    }
-                    total_count += 1;
-                }
-            }
+            // Adjustment points (with default reverse)
+            total_count += sync_point_type::<AdjustmentPoint, _>(
+                tx,
+                &path,
+                channel_id,
+                &protocol,
+                &PointSyncConfig {
+                    csv_filename: "adjustment.csv",
+                    mapping_filename: "mapping/adjustment_mapping.csv",
+                    table_name: "adjustment_points",
+                    type_label: "adjustment",
+                },
+                |p| PointFields {
+                    point_id: p.base.point_id,
+                    signal_name: p.base.signal_name.clone(),
+                    unit: p.base.unit.clone(),
+                    description: p.base.description.clone(),
+                    scale: p.scale,
+                    offset: p.offset,
+                    reverse: false,
+                    data_type: p.data_type.clone(),
+                },
+                errors,
+            )
+            .await?;
         }
 
         Ok(total_count)
     }
 
-    /// Sync modsrv products from configuration
-    ///
-    /// @input tx: &mut Transaction - Active database transaction
-    /// @input config_dir: &Path - Directory containing product definitions
-    /// @output `Result<usize>` - Number of items successfully synced
-    /// @loads products.yaml - Product hierarchy definitions
-    /// @loads {product}/measurements.csv - Measurement point definitions
-    /// @loads {product}/actions.csv - Action point definitions
-    /// @loads {product}/properties.csv - Property template definitions
-    /// @side-effects Inserts into products, measurement_points, action_points, property_templates
-    async fn sync_modsrv_products(
-        &self,
-        tx: &mut Transaction<'_, Sqlite>,
-        config_dir: &Path,
-    ) -> Result<usize> {
-        let mut count = 0;
-
-        // Locate the products directory.
-        let products_dir = config_dir.join("products");
-        if !products_dir.exists() {
-            debug!("No products directory found at {:?}", products_dir);
-            return Ok(0);
-        }
-
-        // Load products.yaml.
-        let products_yaml = products_dir.join("products.yaml");
-        if products_yaml.exists() {
-            let yaml_str = std::fs::read_to_string(&products_yaml)?;
-            let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_str)?;
-
-            if let Some(products) = yaml.get("products").and_then(|p| p.as_mapping()) {
-                for (key, value) in products {
-                    let product_name = key.as_str().unwrap_or_default();
-                    let parent_name = value.as_str();
-
-                    sqlx::query("INSERT INTO products (product_name, parent_name) VALUES (?, ?)")
-                        .bind(product_name)
-                        .bind(parent_name)
-                        .execute(&mut **tx)
-                        .await?;
-
-                    count += 1;
-                }
-            }
-        }
-
-        // Load product measurement points, action points, and property templates.
-        for entry in std::fs::read_dir(&products_dir)? {
-            let entry = entry?;
-            let product_dir = entry.path();
-
-            if !product_dir.is_dir() {
-                continue;
-            }
-
-            let product_name = match product_dir.file_name().and_then(|n| n.to_str()) {
-                Some(name) => name,
-                None => continue,
-            };
-
-            // Load measurement point definitions.
-            let measurements_file = product_dir.join("measurements.csv");
-            if measurements_file.exists() {
-                use modsrv::config::{MeasurementPoint, SqlInsertableProduct};
-                eprintln!(
-                    "DEBUG: About to load measurements from: {:?}",
-                    measurements_file
-                );
-                let points: Vec<MeasurementPoint> = load_csv_typed(&measurements_file)?;
-                eprintln!(
-                    "DEBUG: Successfully loaded {} measurement points",
-                    points.len()
-                );
-                for point in points {
-                    point.insert_with(&mut **tx, product_name).await?;
-                    count += 1;
-                }
-            }
-
-            // Load action point definitions.
-            let actions_file = product_dir.join("actions.csv");
-            if actions_file.exists() {
-                use modsrv::config::{ActionPoint, SqlInsertableProduct};
-                let points: Vec<ActionPoint> = load_csv_typed(&actions_file)?;
-                for point in points {
-                    point.insert_with(&mut **tx, product_name).await?;
-                    count += 1;
-                }
-            }
-
-            // Load property template definitions.
-            let properties_file = product_dir.join("properties.csv");
-            if properties_file.exists() {
-                use modsrv::config::{PropertyTemplate, SqlInsertableProduct};
-                let templates: Vec<PropertyTemplate> = load_csv_typed(&properties_file)?;
-                for template in templates {
-                    template.insert_with(&mut **tx, product_name).await?;
-                    count += 1;
-                }
-            }
-        }
-
-        Ok(count)
-    }
+    // Note: sync_modsrv_products has been removed.
+    // Products are now compile-time built-in constants from voltage-model crate.
+    // They are embedded in the binary and don't need to be synced from CSV files.
 
     /// Sync instances and their mappings
     async fn sync_instances(

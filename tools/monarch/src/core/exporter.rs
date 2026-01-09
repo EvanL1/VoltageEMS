@@ -14,6 +14,7 @@ use tracing::{debug, info};
 // Import types from service libs (lib-mode)
 use comsrv::core::config::{ChannelConfig, ChannelCore, ComsrvConfig};
 use modsrv::config::{ModsrvConfig, RuleConfig, RuleCore, RulesConfig};
+use voltage_model::product_lib;
 
 /// Result type for export operations
 #[derive(Debug, Default)]
@@ -146,8 +147,8 @@ impl ConfigExporter {
         std::fs::write(&yaml_path, yaml_content)?;
         result.files_exported.push("modsrv.yaml".to_string());
 
-        // Export products hierarchy
-        let products_hierarchy = self.export_products_hierarchy().await?;
+        // Export products hierarchy (from compile-time built-in products)
+        let products_hierarchy = self.export_products_hierarchy();
         if !products_hierarchy.is_empty() {
             let products_yaml = output_dir.join("products.yaml");
             let records_count = products_hierarchy.len();
@@ -554,21 +555,13 @@ impl ConfigExporter {
         Ok(config)
     }
 
-    async fn export_products_hierarchy(&self) -> Result<BTreeMap<String, Option<String>>> {
-        let mut hierarchy = BTreeMap::new();
-
-        let rows =
-            sqlx::query("SELECT product_name, parent_name FROM products ORDER BY product_name")
-                .fetch_all(&self.pool)
-                .await?;
-
-        for row in rows {
-            let product_name: String = row.try_get("product_name")?;
-            let parent_name: Option<String> = row.try_get("parent_name")?;
-            hierarchy.insert(product_name, parent_name);
-        }
-
-        Ok(hierarchy)
+    /// Export products hierarchy from compile-time built-in products.
+    /// Products are now embedded in the binary via voltage-model crate.
+    fn export_products_hierarchy(&self) -> BTreeMap<String, Option<String>> {
+        product_lib::get_builtin_products()
+            .iter()
+            .map(|p| (p.name.clone(), p.parent_name.clone()))
+            .collect()
     }
 
     async fn export_instances(
