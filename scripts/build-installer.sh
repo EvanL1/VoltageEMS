@@ -33,12 +33,10 @@ case "$ARCH" in
   arm64)
     TARGET="${3:-aarch64-unknown-linux-musl}"
     DOCKER_PLATFORM="linux/arm64"
-    BASE_IMAGE="alpine:3.19"
     ;;
   amd64)
-    TARGET="${3:-x86_64-unknown-linux-gnu}"
+    TARGET="${3:-x86_64-unknown-linux-musl}"
     DOCKER_PLATFORM="linux/amd64"
-    BASE_IMAGE="debian:bookworm-slim"
     ;;
   *)
     echo -e "${RED}Error: Unknown architecture '$ARCH'. Use 'arm64' or 'amd64'${NC}"
@@ -66,7 +64,6 @@ echo -e "Version:      ${GREEN}$VERSION${NC}"
 echo -e "Architecture: ${GREEN}$ARCH${NC}"
 echo -e "Target:       ${GREEN}$TARGET${NC}"
 echo -e "Platform:     ${GREEN}$DOCKER_PLATFORM${NC}"
-echo -e "Base Image:   ${GREEN}$BASE_IMAGE${NC}"
 echo -e "CPU Cores:    ${GREEN}$CPU_CORES${NC}"
 echo ""
 

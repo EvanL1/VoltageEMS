@@ -66,7 +66,7 @@ jobs:
             target: aarch64-unknown-linux-musl
             docker_platform: linux/arm64
           - arch: amd64
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             docker_platform: linux/amd64
 
     steps:
@@ -154,16 +154,12 @@ jobs:
           fi
           echo "Build artifact:"
           ls -lh "$ARTIFACT"
-          sha256sum "$ARTIFACT" > "release/${{ steps.version.outputs.artifact_name }}.sha256"
-          cat "release/${{ steps.version.outputs.artifact_name }}.sha256"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.arch }}-installer
-          path: |
-            release/${{ steps.version.outputs.artifact_name }}
-            release/${{ steps.version.outputs.artifact_name }}.sha256
+          path: release/${{ steps.version.outputs.artifact_name }}
           retention-days: 7
           if-no-files-found: error
 
@@ -208,10 +204,10 @@ jobs:
 
           ### Downloads
 
-          | Architecture | Installer | Checksum |
-          |--------------|-----------|----------|
-          | ARM64 (树莓派/ARM开发板) | MonarchEdge-arm64-${VERSION}.run | .sha256 |
-          | AMD64 (x86_64 服务器) | MonarchEdge-amd64-${VERSION}.run | .sha256 |
+          | Architecture | Installer |
+          |--------------|-----------|
+          | ARM64 (树莓派/ARM开发板) | MonarchEdge-arm64-${VERSION}.run |
+          | AMD64 (x86_64 服务器) | MonarchEdge-amd64-${VERSION}.run |
 
           ### Installation
 
@@ -238,12 +234,6 @@ jobs:
           - **Python Services**: hissrv (6004), apigateway (6005), netsrv (6006), alarmsrv (6007)
           - **Infrastructure**: Redis 8, InfluxDB 2
           - **CLI Tool**: monarch
-
-          ### Verify Download
-
-          \`\`\`bash
-          sha256sum -c MonarchEdge-<arch>-${VERSION}.run.sha256
-          \`\`\`
 
           EOF
 
@@ -276,9 +266,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             release/MonarchEdge-arm64-${{ steps.version.outputs.version }}.run
-            release/MonarchEdge-arm64-${{ steps.version.outputs.version }}.run.sha256
             release/MonarchEdge-amd64-${{ steps.version.outputs.version }}.run
-            release/MonarchEdge-amd64-${{ steps.version.outputs.version }}.run.sha256
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

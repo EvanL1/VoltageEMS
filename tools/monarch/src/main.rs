@@ -6,6 +6,7 @@
 mod channels;
 mod context;
 mod core;
+mod doctor;
 mod logs;
 mod models;
 mod rtdb;
@@ -249,6 +250,18 @@ enum Commands {
         #[command(subcommand)]
         command: Option<shm::ShmCommands>,
     },
+
+    /// System health check and diagnostics
+    #[command(about = "Check system health and diagnose issues")]
+    Doctor {
+        /// Show detailed information (response times, etc.)
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Output as JSON (for scripts)
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn print_banner() {
@@ -440,6 +453,9 @@ async fn main() -> Result<()> {
         Commands::Shm { command } => {
             // Shm command doesn't need async or service context
             shm::handle_command(command)?;
+        },
+        Commands::Doctor { verbose, json } => {
+            doctor::run_doctor(config_path, db_path, verbose, json).await?;
         },
     }
 
