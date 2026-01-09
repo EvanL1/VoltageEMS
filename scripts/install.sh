@@ -1234,10 +1234,10 @@ echo "  monarch sync          - Sync configuration files to database"
 echo ""
 echo "Quick Start:"
 echo -e "  ${YELLOW}source /etc/profile.d/monarchedge.sh${NC}  - Load environment variables (or re-login)"
-echo "  docker-compose up -d   - Start all services"
-echo "  docker-compose down    - Stop all services"
-echo "  docker-compose ps      - Check service status"
-echo "  docker-compose logs -f - View service logs"
+echo "  monarch services start - Start all services"
+echo "  monarch services stop  - Stop all services"
+echo "  monarch services status - Check service status"
+echo "  monarch services logs <service> - View service logs"
 echo ""
 echo "CLI Management (via monarch):"
 echo ""
@@ -1279,7 +1279,7 @@ echo ""
 
 if [[ "$AUTO_MODE" == true ]]; then
     echo -e "${GREEN}Auto mode: Starting services...${NC}"
-    cd "$INSTALL_DIR" && docker-compose up -d
+    cd "$INSTALL_DIR" && run_docker_compose up -d
     echo ""
     echo -e "${GREEN}✓ Services started${NC}"
     docker ps --format "table {{.Names}}\t{{.Status}}"
@@ -1288,12 +1288,12 @@ else
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         echo -e "${GREEN}Starting services...${NC}"
-        cd "$INSTALL_DIR" && docker-compose up -d
+        cd "$INSTALL_DIR" && run_docker_compose up -d
         echo ""
         echo -e "${GREEN}✓ Services started${NC}"
         docker ps --format "table {{.Names}}\t{{.Status}}"
     else
-        echo -e "${YELLOW}Skipped. Start manually: cd $INSTALL_DIR && docker-compose up -d${NC}"
+        echo -e "${YELLOW}Skipped. Start manually: monarch services start${NC}"
     fi
 fi
 echo ""

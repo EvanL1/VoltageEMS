@@ -311,13 +311,25 @@ fi
 
 echo -e "${GREEN}[DONE] Configuration templates copied${NC}"
 
-# Step 4: Copy installation script
+# Step 4: Copy and customize installation script
 echo ""
 echo -e "${BLUE}[4/5] Copying installation script...${NC}"
 
 if [[ -f "$ROOT_DIR/scripts/install.sh" ]]; then
     cp "$ROOT_DIR/scripts/install.sh" "$BUILD_DIR/install.sh"
     chmod +x "$BUILD_DIR/install.sh"
+
+    # Customize script for target architecture
+    if [[ "$ARCH" == "amd64" ]]; then
+        echo -e "${YELLOW}Customizing install.sh for AMD64...${NC}"
+        # Replace ARM64 references with AMD64
+        sed -i.bak \
+            -e 's/ARM64/AMD64/g' \
+            -e 's/arm64/amd64/g' \
+            -e 's/aarch64/x86_64/g' \
+            "$BUILD_DIR/install.sh"
+        rm -f "$BUILD_DIR/install.sh.bak"
+    fi
     echo -e "${GREEN}[DONE] Installation script copied${NC}"
 else
     echo -e "${RED}Error: install.sh not found${NC}"
