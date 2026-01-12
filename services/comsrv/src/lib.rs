@@ -4,6 +4,7 @@
 
 // Module declarations
 pub mod error;
+pub mod protocols;
 pub mod utils;
 
 pub mod api {
@@ -40,10 +41,10 @@ pub mod store;
 // Re-export IGW DataStore implementation
 pub use store::RedisDataStore;
 
-// Legacy protocols module removed - all protocols now use igw path:
-// - modbus_tcp: igw::ModbusChannel (TCP mode)
-// - modbus_rtu: igw::ModbusChannel (RTU mode)
-// - virtual: igw::VirtualChannel
+// Protocol implementations are in crate::protocols:
+// - modbus_tcp: protocols::ModbusChannel (TCP mode)
+// - modbus_rtu: protocols::ModbusChannel (RTU mode)
+// - virtual: protocols::VirtualChannel
 
 pub mod runtime {
     //! Runtime Orchestration Layer

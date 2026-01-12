@@ -15,19 +15,20 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum", "openapi"] }
-
-# IGW - Industrial Gateway Protocol Library
-igw = { version = "0.2.20", default-features = false, features = ["virtual-channel", "tracing-support", "modbus", "gpio"] }
-# igw = { git = "https://github.com/EvanL1/igw", default-features = false, features = ["virtual-channel", "tracing-support", "modbus", "gpio"] }
-# igw = { path = "../../../igw", default-features = false, features = ["virtual-channel", "tracing-support", "modbus", "gpio"] }
-
 errors = { path = "../../libs/errors", features = ["axum-support"] }
-# voltage-comlink removed - types moved to core/channels/types.rs
 voltage-model = { path = "../../libs/voltage-model" }
-# voltage-protocols removed - all protocols now use igw
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
+
+# Protocol libraries (previously from igw)
+voltage_modbus = { version = "0.4", optional = true, features = ["rtu"] }
+voltage_iec104 = { version = "0.1", optional = true }
+voltage_j1939 = { version = "0.1", optional = true }
+async-opcua = { version = "0.14", default-features = false, features = ["client"], optional = true }
+
+# Lazy initialization
+once_cell = "1"
 
 # Core async runtime
 tokio = { workspace = true }
@@ -35,7 +36,7 @@ tokio-util = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 
-# Logging (will migrate to voltage-common)
+# Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-appender = { workspace = true }
@@ -46,7 +47,7 @@ serde_yaml = { workspace = true }
 serde_json = { workspace = true }
 csv = { workspace = true }
 
-# Error handling (will migrate to voltage-common)
+# Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
@@ -70,10 +71,10 @@ rand = { workspace = true }
 # SQLite for configuration
 sqlx = { workspace = true }
 
-# WebSocket and UUID dependencies removed - not currently used
-
-# Industrial GPIO and hardware interfaces - removed (i2cdev, spidev, rppal)
-# These can be re-added when hardware support is implemented
+# Linux-only dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+socketcan = { version = "3.5", optional = true }
+tokio-gpiod = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tracing-test = { workspace = true }
@@ -82,17 +83,20 @@ tempfile = { workspace = true }
 tower = { workspace = true }
 modsrv = { path = "../modsrv" }
 http-body-util = "0.1"
-redis = { workspace = true }  # For integration tests only
+redis = { workspace = true }
 
 [features]
-default = ["modbus", "can", "gpio", "openapi"]
-modbus = ["igw/modbus"]  # Modbus TCP + RTU
-can = ["igw/can"]                          # CAN protocol (Linux only)
-gpio = ["igw/gpio"]                        # GPIO protocol (Linux only)
-swagger-ui = ["utoipa-swagger-ui"]   # Swagger UI documentation (enabled by default for development)
-openapi = []                         # OpenAPI schema generation for types
-integration = []                     # Integration tests requiring real Redis and voltage.db
-# AFIT migration complete - handlers are now generic over R: Rtdb
+default = ["modbus", "gpio", "openapi"]
+modbus = ["dep:voltage_modbus"]
+iec104 = ["dep:voltage_iec104"]
+opcua = ["dep:async-opcua"]
+can = ["dep:socketcan"]
+j1939 = ["can", "dep:voltage_j1939"]
+gpio = ["dep:tokio-gpiod"]
+tracing-support = []
+swagger-ui = ["utoipa-swagger-ui"]
+openapi = []
+integration = []
 
 [lints]
 workspace = true

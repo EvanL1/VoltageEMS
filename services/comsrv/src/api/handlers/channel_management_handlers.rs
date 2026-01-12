@@ -243,14 +243,14 @@ async fn perform_hot_reload<R: Rtdb + 'static>(
     }
 
     // 2. Create new channel
-    let channel_impl = manager
+    let entry = manager
         .create_channel(Arc::new(new_config))
         .await
         .map_err(|e| format!("Failed to create channel: {}", e))?;
 
-    // 3. Async connection (don't wait) using ChannelImpl's unified interface
+    // 3. Async connection (don't wait) using ChannelEntry's connect method
     tokio::spawn(async move {
-        match channel_impl.write().await.connect().await {
+        match entry.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", id),
             Err(e) => tracing::warn!("Ch{} connect: {}", id, e),
         }
@@ -468,11 +468,11 @@ pub async fn create_channel_handler<R: Rtdb>(
         // Direct access without RwLock (lock-free)
         let manager = &state.channel_manager;
         match manager.create_channel(Arc::new(channel_config)).await {
-            Ok(channel_impl) => {
+            Ok(entry) => {
                 // Spawn background connection to avoid failing API on initial connect error
                 let channel_id_for_log = channel_id;
                 tokio::spawn(async move {
-                    if let Err(e) = channel_impl.write().await.connect().await {
+                    if let Err(e) = entry.connect().await {
                         tracing::warn!("Ch{} connect: {}", channel_id_for_log, e);
                     } else {
                         tracing::debug!("Ch{} connected", channel_id_for_log);
@@ -900,12 +900,12 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
         // Direct access without RwLock (lock-free)
         let manager = &state.channel_manager;
         match manager.create_channel(Arc::new(config)).await {
-            Ok(channel_impl) => {
+            Ok(entry) => {
                 // Trigger asynchronous connection in background
                 // Don't wait for connection result - let reconnection mechanism handle failures
                 let channel_id_for_log = id;
                 tokio::spawn(async move {
-                    match channel_impl.write().await.connect().await {
+                    match entry.connect().await {
                         Ok(_) => tracing::debug!("Ch{} connected", channel_id_for_log),
                         Err(e) => tracing::warn!("Ch{} connect: {}", channel_id_for_log, e),
                     }
@@ -1177,9 +1177,9 @@ pub async fn reload_configuration_handler<R: Rtdb>(
                 // Direct access without RwLock (lock-free)
                 let manager = &state.channel_manager;
                 match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(channel_impl) => {
-                        // Try to connect using ChannelImpl's unified interface
-                        if let Err(e) = channel_impl.write().await.connect().await {
+                    Ok(entry) => {
+                        // Try to connect using ChannelEntry's connect method
+                        if let Err(e) = entry.connect().await {
                             tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_added.push(*id);
@@ -1239,9 +1239,9 @@ pub async fn reload_configuration_handler<R: Rtdb>(
                 };
 
                 match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(channel_impl) => {
-                        // Connect using ChannelImpl's unified interface
-                        if let Err(e) = channel_impl.write().await.connect().await {
+                    Ok(entry) => {
+                        // Connect using ChannelEntry's direct method
+                        if let Err(e) = entry.connect().await {
                             tracing::warn!("Ch{} connect: {}", id, e);
                         }
                         channels_updated.push(*id);

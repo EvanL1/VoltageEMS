@@ -2,8 +2,8 @@
 //!
 //! Provides endpoints for discovering available protocols and their configuration options.
 
+use crate::protocols::{get_protocol_registry, DriverMetadata, ProtocolMetadata};
 use axum::response::Json;
-use igw::{get_protocol_registry, DriverMetadata, ProtocolMetadata};
 use serde::Serialize;
 
 use crate::dto::{AppError, SuccessResponse};
@@ -86,8 +86,8 @@ impl From<&DriverMetadata> for DriverInfo {
     }
 }
 
-impl From<&igw::ParameterMetadata> for ParameterInfo {
-    fn from(meta: &igw::ParameterMetadata) -> Self {
+impl From<&crate::protocols::ParameterMetadata> for ParameterInfo {
+    fn from(meta: &crate::protocols::ParameterMetadata) -> Self {
         Self {
             name: meta.name.to_string(),
             display_name: meta.display_name.to_string(),

@@ -131,9 +131,9 @@ impl<R: Rtdb + 'static> ReloadableService for ChannelManager<R> {
                     // Only create and connect if enabled
                     if channel_config.is_enabled() {
                         match self.create_channel(Arc::new(channel_config)).await {
-                            Ok(channel_impl) => {
-                                // Try to connect using ChannelImpl's unified interface
-                                if let Err(e) = channel_impl.write().await.connect().await {
+                            Ok(entry) => {
+                                // Try to connect using ChannelEntry's direct method
+                                if let Err(e) = entry.connect().await {
                                     warn!("Channel {} added but failed to connect: {}", id, e);
                                     errors.push(format!("Channel {} connection failed: {}", id, e));
                                 } else {
@@ -174,8 +174,8 @@ impl<R: Rtdb + 'static> ReloadableService for ChannelManager<R> {
                     // Only create and connect if enabled
                     if new_config.is_enabled() {
                         match self.create_channel(Arc::new(new_config)).await {
-                            Ok(channel_impl) => {
-                                if let Err(e) = channel_impl.write().await.connect().await {
+                            Ok(entry) => {
+                                if let Err(e) = entry.connect().await {
                                     warn!("Channel {} updated but failed to connect: {}", id, e);
                                     errors.push(format!("Channel {} connection failed: {}", id, e));
                                 } else {
@@ -256,10 +256,10 @@ impl<R: Rtdb + 'static> ReloadableService for ChannelManager<R> {
         self.remove_channel(channel_id).await?;
 
         // Create new channel with updated config
-        let channel_impl = self.create_channel(Arc::new(config)).await?;
+        let entry = self.create_channel(Arc::new(config)).await?;
 
-        // Connect if enabled using ChannelImpl's unified interface
-        channel_impl.write().await.connect().await?;
+        // Connect using ChannelEntry's direct method
+        entry.connect().await?;
 
         Ok("running".to_string())
     }
@@ -276,10 +276,10 @@ impl<R: Rtdb + 'static> ReloadableService for ChannelManager<R> {
         let _ = self.remove_channel(channel_id).await;
 
         // Restore previous configuration
-        let channel_impl = self.create_channel(Arc::new(previous_config)).await?;
+        let entry = self.create_channel(Arc::new(previous_config)).await?;
 
-        // Connect using ChannelImpl's unified interface
-        channel_impl.write().await.connect().await?;
+        // Connect using ChannelEntry's direct method
+        entry.connect().await?;
 
         Ok("restored".to_string())
     }

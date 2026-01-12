@@ -9,7 +9,7 @@
 //! `DataBatch` directly, and the service layer (comsrv) handles persistence:
 //!
 //! ```text
-//! IgwChannelWrapper::poll_once()
+//! run_polling_task()
 //!         ├─ protocol.poll_once() → DataBatch
 //!         └─ store.write_batch(channel_id, batch)
 //!                   ↓
@@ -25,10 +25,10 @@ use dashmap::DashMap;
 use tokio::sync::{Notify, RwLock};
 use tracing::{debug, warn};
 
-use igw::core::data::{DataBatch, DataPoint};
-use igw::core::error::Result as IgwResult;
-use igw::core::point::PointConfig;
-use igw::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
+use crate::protocols::core::data::{DataBatch, DataPoint};
+use crate::protocols::core::error::Result as IgwResult;
+use crate::protocols::core::point::PointConfig;
+use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
 use voltage_model::{KeySpaceConfig, PointType};
 use voltage_routing::ChannelPointUpdate;
@@ -39,7 +39,7 @@ use voltage_rtdb::{
 /// Redis-backed data store for VoltageEMS.
 ///
 /// This is the bridge between IGW protocols and the VoltageEMS Redis storage.
-/// Called by IgwChannelWrapper after protocol.poll_once() to persist data.
+/// Called by run_polling_task after protocol.poll_once() to persist data.
 ///
 /// IGW handles all data transformations (scale/offset/reverse) in poll_once(),
 /// so this store receives already-transformed data and writes it directly.
@@ -450,7 +450,7 @@ mod tests {
         let internal_id = PointType::Telemetry.to_internal_id(1);
         let configs = vec![PointConfig::new(
             internal_id,
-            igw::core::point::ProtocolAddress::Generic("test".to_string()),
+            crate::protocols::core::point::ProtocolAddress::Generic("test".to_string()),
         )];
         store.set_point_configs(9902, configs);
 

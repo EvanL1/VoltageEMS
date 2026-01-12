@@ -290,6 +290,70 @@ impl Default for TestChannelParams {
 }
 
 // ============================================================================
+// Protocol Command (for lock-free polling task)
+// ============================================================================
+
+use crate::protocols::core::error::GatewayError;
+use crate::protocols::core::traits::Diagnostics;
+use tokio::sync::oneshot;
+
+/// Commands sent to the unified channel task for protocol operations.
+///
+/// This enum enables lock-free communication with the polling task:
+/// - External code sends commands via `mpsc::Sender<ProtocolCommand>`
+/// - The polling task processes commands in its `select!` loop
+/// - Results are returned via embedded `oneshot::Sender`
+#[derive(Debug)]
+pub enum ProtocolCommand {
+    /// Write control command (YK) to device
+    WriteControl {
+        /// Internal point ID (encoded with point type)
+        internal_id: u32,
+        /// Value to write
+        value: f64,
+        /// Response channel
+        response_tx: oneshot::Sender<Result<usize, GatewayError>>,
+    },
+
+    /// Write adjustment command (YT) to device
+    WriteAdjustment {
+        /// Internal point ID (encoded with point type)
+        internal_id: u32,
+        /// Value to write
+        value: f64,
+        /// Response channel
+        response_tx: oneshot::Sender<Result<usize, GatewayError>>,
+    },
+
+    /// Connect to device
+    Connect {
+        /// Response channel
+        response_tx: oneshot::Sender<Result<(), GatewayError>>,
+    },
+
+    /// Disconnect from device
+    Disconnect {
+        /// Response channel
+        response_tx: oneshot::Sender<()>,
+    },
+
+    /// Get diagnostics information
+    GetDiagnostics {
+        /// Response channel
+        response_tx: oneshot::Sender<Option<Diagnostics>>,
+    },
+
+    /// Get current connection state
+    GetConnectionState {
+        /// Response channel
+        response_tx: oneshot::Sender<ConnectionState>,
+    },
+
+    /// Shutdown the channel task
+    Shutdown,
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

@@ -221,9 +221,54 @@ impl From<anyhow::Error> for ComSrvError {
     }
 }
 
-impl From<igw::GatewayError> for ComSrvError {
-    fn from(err: igw::GatewayError) -> Self {
-        ComSrvError::ProtocolError(format!("Protocol: {}", err))
+impl From<crate::protocols::GatewayError> for ComSrvError {
+    fn from(err: crate::protocols::GatewayError) -> Self {
+        use crate::protocols::GatewayError;
+        match err {
+            // Connection errors
+            GatewayError::Connection(msg) => ComSrvError::ConnectionError(msg),
+            GatewayError::NotConnected => ComSrvError::ConnectionError("Not connected".into()),
+            GatewayError::ConnectionTimeout(ms) => {
+                ComSrvError::TimeoutError(format!("Connection timeout: {}ms", ms))
+            },
+            GatewayError::ChannelClosed => ComSrvError::ChannelError("Channel closed".into()),
+
+            // Protocol errors
+            GatewayError::Protocol(msg) => ComSrvError::ProtocolError(msg),
+            GatewayError::InvalidResponse(msg) => {
+                ComSrvError::ProtocolError(format!("Invalid response: {}", msg))
+            },
+            GatewayError::Modbus(msg) => ComSrvError::ProtocolError(format!("Modbus: {}", msg)),
+            GatewayError::Iec104(msg) => ComSrvError::ProtocolError(format!("IEC 104: {}", msg)),
+            GatewayError::Dnp3(msg) => ComSrvError::ProtocolError(format!("DNP3: {}", msg)),
+            GatewayError::OpcUa(msg) => ComSrvError::ProtocolError(format!("OPC UA: {}", msg)),
+
+            // Data errors
+            GatewayError::InvalidData(msg) => ComSrvError::DataError(msg),
+            GatewayError::DataConversion(msg) => {
+                ComSrvError::DataError(format!("Conversion: {}", msg))
+            },
+            GatewayError::PointNotFound(id) => {
+                ComSrvError::PointError(format!("Not found: {}", id))
+            },
+
+            // Configuration errors
+            GatewayError::Config(msg) => ComSrvError::ConfigError(msg),
+            GatewayError::InvalidAddress(msg) => {
+                ComSrvError::ConfigError(format!("Invalid address: {}", msg))
+            },
+            GatewayError::Unsupported(msg) => {
+                ComSrvError::ValidationError(format!("Unsupported: {}", msg))
+            },
+
+            // IO/Timeout errors
+            GatewayError::Io(io_err) => ComSrvError::IoError(io_err.to_string()),
+            GatewayError::ReadTimeout => ComSrvError::TimeoutError("Read timeout".into()),
+            GatewayError::WriteTimeout => ComSrvError::TimeoutError("Write timeout".into()),
+
+            // Internal errors
+            GatewayError::Internal(msg) => ComSrvError::InternalError(msg),
+        }
     }
 }
 

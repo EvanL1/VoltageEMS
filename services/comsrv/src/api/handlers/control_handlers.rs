@@ -56,18 +56,18 @@ pub async fn control_channel<R: Rtdb>(
     // Direct access without RwLock (lock-free)
     let manager = &state.channel_manager;
 
-    // Check if channel exists and get the channel
-    let Some(channel_impl) = manager.get_channel(channel_id) else {
+    // Check if channel exists and get the channel entry
+    let Some(entry) = manager.get_channel(channel_id) else {
         return Err(AppError::not_found(format!(
             "Channel {} not found",
             channel_id
         )));
     };
 
-    // Execute operation based on type using ChannelImpl's unified interface
+    // Execute operation based on type using ChannelEntry's methods
     match operation.operation.as_str() {
         "start" => {
-            if let Err(e) = channel_impl.write().await.connect().await {
+            if let Err(e) = entry.connect().await {
                 tracing::error!("Ch{} connect: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to connect channel {}: {}",
@@ -79,7 +79,7 @@ pub async fn control_channel<R: Rtdb>(
             ))))
         },
         "stop" => {
-            if let Err(e) = channel_impl.write().await.disconnect().await {
+            if let Err(e) = entry.disconnect().await {
                 tracing::error!("Ch{} disconnect: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to disconnect channel {}: {}",
@@ -92,7 +92,7 @@ pub async fn control_channel<R: Rtdb>(
         },
         "restart" => {
             // First stop the channel
-            if let Err(e) = channel_impl.write().await.disconnect().await {
+            if let Err(e) = entry.disconnect().await {
                 tracing::error!("Ch{} stop: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to stop channel {}: {}",
@@ -104,7 +104,7 @@ pub async fn control_channel<R: Rtdb>(
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
             // Then start it again
-            if let Err(e) = channel_impl.write().await.connect().await {
+            if let Err(e) = entry.connect().await {
                 tracing::error!("Ch{} restart: {}", channel_id, e);
                 return Err(AppError::internal_error(format!(
                     "Failed to restart channel {}: {}",

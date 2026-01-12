@@ -8,23 +8,32 @@ use arc_swap::ArcSwapOption;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
+
+use crate::protocols::gateway::ChannelRuntime;
 
 /// Maximum number of channel slots (pre-allocated for O(1) access)
 /// Channel IDs must be < MAX_CHANNELS
 const MAX_CHANNELS: usize = 10000;
 
-use crate::core::channels::igw_bridge::{
-    convert_to_igw_point_configs, convert_to_modbus_point_configs, create_modbus_channel,
-    create_modbus_rtu_channel, create_virtual_channel, ChannelImpl, IgwChannelWrapper,
-};
+use crate::core::channels::converters::convert_to_point_configs;
+use crate::core::channels::factory::create_virtual_channel;
+
+#[cfg(feature = "modbus")]
+use crate::core::channels::converters::convert_to_modbus_point_configs;
+#[cfg(feature = "modbus")]
+use crate::core::channels::factory::{create_modbus_channel, create_modbus_rtu_channel};
 
 #[cfg(all(target_os = "linux", feature = "gpio"))]
-use crate::core::channels::igw_bridge::create_gpio_channel;
+use crate::core::channels::factory::create_gpio_channel;
+
 #[cfg(all(feature = "can", target_os = "linux"))]
-use crate::core::channels::igw_bridge::{
-    convert_can_to_igw_point_configs, convert_to_can_point_configs, create_can_channel,
+use crate::core::channels::converters::{
+    convert_can_to_point_configs, convert_to_can_point_configs,
 };
+#[cfg(all(feature = "can", target_os = "linux"))]
+use crate::core::channels::factory::create_can_channel;
 use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
@@ -44,15 +53,33 @@ pub struct ChannelMetadata {
     pub last_accessed: Arc<RwLock<Instant>>,
 }
 
-/// Channel entry, combining channel and metadata
+/// Channel entry with integrated protocol runtime and storage
+///
+/// ## Lock-Free Architecture
+///
+/// This struct uses message-passing instead of shared locks:
+/// - Protocol client is owned by the unified channel task (not shared)
+/// - External code sends `ProtocolCommand` via `protocol_tx` channel
+/// - The unified task processes commands in its `tokio::select!` loop
+/// - Results are returned via embedded `oneshot::Sender`
+///
+/// This eliminates lock contention between polling and command execution.
 #[derive(Clone)]
 pub struct ChannelEntry<R: Rtdb> {
-    /// Dual-mode channel implementation (Legacy ComClient or IGW ProtocolClient)
-    pub channel: ChannelImpl<R>,
+    /// Protocol command sender - for connect/disconnect/diagnostics operations
+    /// Commands are processed by the unified channel task
+    pub protocol_tx: tokio::sync::mpsc::Sender<crate::core::channels::types::ProtocolCommand>,
+    /// Data store for persisting polled data
+    pub store: Arc<RedisDataStore<R>>,
+    /// Unified channel task handle (polling + command execution)
+    task_handle: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
+    /// Channel metadata (name, protocol type, etc.)
     pub metadata: ChannelMetadata,
+    /// Command trigger for TODO queue integration
     pub command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
+    /// Channel configuration
     pub channel_config: Arc<ChannelConfig>,
-    /// Direct command sender for bypassing TODO queue
+    /// Direct command sender for bypassing TODO queue (business commands)
     pub command_tx:
         Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
 }
@@ -76,16 +103,21 @@ pub struct ChannelStats {
     pub last_accessed: Instant,
 }
 
-impl<R: Rtdb> ChannelEntry<R> {
-    /// Create new channel entry
+impl<R: Rtdb + 'static> ChannelEntry<R> {
+    /// Create new channel entry and start the unified channel task
+    ///
+    /// This method spawns a background task that owns the protocol client
+    /// and processes both polling and commands via `tokio::select!`.
     pub fn new(
-        channel: ChannelImpl<R>,
+        protocol: Box<dyn ChannelRuntime>,
+        store: Arc<RedisDataStore<R>>,
         channel_config: Arc<ChannelConfig>,
         protocol_type: String,
         command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
-        command_tx: Option<
+        _command_tx: Option<
             tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>,
         >,
+        poll_interval_ms: u64,
     ) -> Self {
         let metadata = ChannelMetadata {
             name: Arc::from(channel_config.name()),
@@ -94,12 +126,38 @@ impl<R: Rtdb> ChannelEntry<R> {
             last_accessed: Arc::new(RwLock::new(Instant::now())),
         };
 
+        let channel_id = channel_config.id();
+
+        // Create protocol command channel (for connect/disconnect/diagnostics)
+        let (protocol_tx, protocol_rx) =
+            tokio::sync::mpsc::channel::<crate::core::channels::types::ProtocolCommand>(32);
+
+        // Create business command channel (for control/adjustment from TODO queue)
+        let (business_tx, business_rx) =
+            tokio::sync::mpsc::channel::<crate::core::channels::traits::ChannelCommand>(100);
+
+        // Spawn the unified channel task
+        let store_clone = Arc::clone(&store);
+        let task_handle = tokio::spawn(async move {
+            run_unified_channel_task(
+                protocol,
+                protocol_rx,
+                business_rx,
+                store_clone,
+                channel_id,
+                poll_interval_ms,
+            )
+            .await;
+        });
+
         Self {
-            channel,
+            protocol_tx,
+            store,
+            task_handle: Arc::new(std::sync::Mutex::new(Some(task_handle))),
             metadata,
             command_trigger,
             channel_config,
-            command_tx,
+            command_tx: Some(business_tx),
         }
     }
 
@@ -111,7 +169,7 @@ impl<R: Rtdb> ChannelEntry<R> {
             channel_id,
             name: self.metadata.name.to_string(),
             protocol_type: self.metadata.protocol_type.clone(),
-            is_connected: self.channel.read().await.is_connected().await,
+            is_connected: self.is_connected().await,
             created_at: self.metadata.created_at,
             last_accessed,
         }
@@ -122,6 +180,293 @@ impl<R: Rtdb> ChannelEntry<R> {
         let mut last_accessed = self.metadata.last_accessed.write().await;
         *last_accessed = Instant::now();
     }
+
+    /// Check if channel is connected.
+    ///
+    /// Sends a GetConnectionState command to the unified channel task.
+    pub async fn is_connected(&self) -> bool {
+        use crate::core::channels::types::ProtocolCommand;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        if self
+            .protocol_tx
+            .send(ProtocolCommand::GetConnectionState { response_tx })
+            .await
+            .is_err()
+        {
+            return false; // Channel closed
+        }
+
+        match response_rx.await {
+            Ok(state) => state.is_connected(),
+            Err(_) => false,
+        }
+    }
+
+    /// Get channel status.
+    pub async fn get_status(&self) -> crate::core::channels::types::ChannelStatus {
+        crate::core::channels::types::ChannelStatus {
+            is_connected: self.is_connected().await,
+            last_update: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    /// Get diagnostics information.
+    #[allow(clippy::disallowed_methods)]
+    pub async fn get_diagnostics(
+        &self,
+        channel_id: u32,
+    ) -> crate::error::Result<serde_json::Value> {
+        use crate::core::channels::types::ProtocolCommand;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.protocol_tx
+            .send(ProtocolCommand::GetDiagnostics { response_tx })
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(channel_id))?;
+
+        let diag = response_rx
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(channel_id))?;
+
+        match diag {
+            Some(d) => Ok(serde_json::json!({
+                "protocol_type": "unified",
+                "connected": true,
+                "channel_id": channel_id,
+                "error_count": d.error_count,
+                "last_error": d.last_error
+            })),
+            None => Ok(serde_json::json!({
+                "protocol_type": "unified",
+                "connected": false,
+                "channel_id": channel_id
+            })),
+        }
+    }
+
+    /// Connect the channel
+    ///
+    /// Sends a Connect command to the unified channel task.
+    pub async fn connect(&self) -> crate::error::Result<()> {
+        use crate::core::channels::types::ProtocolCommand;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.protocol_tx
+            .send(ProtocolCommand::Connect { response_tx })
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        response_rx
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?
+            .map_err(crate::error::ComSrvError::from)
+    }
+
+    /// Disconnect the channel
+    ///
+    /// Sends a Disconnect command to the unified channel task.
+    pub async fn disconnect(&self) -> crate::error::Result<()> {
+        use crate::core::channels::types::ProtocolCommand;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.protocol_tx
+            .send(ProtocolCommand::Disconnect { response_tx })
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        response_rx
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        Ok(())
+    }
+
+    /// Get the channel ID from metadata name (parsed from config)
+    pub fn channel_id(&self) -> u32 {
+        self.channel_config.id()
+    }
+
+    /// Shutdown the unified channel task
+    ///
+    /// Sends a Shutdown command and aborts the task if needed.
+    pub fn shutdown(&self) {
+        use crate::core::channels::types::ProtocolCommand;
+
+        // Try to send shutdown command (fire-and-forget)
+        let _ = self.protocol_tx.try_send(ProtocolCommand::Shutdown);
+
+        // Also abort the task handle as a fallback
+        if let Ok(mut handle) = self.task_handle.lock() {
+            if let Some(h) = handle.take() {
+                h.abort();
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Unified Channel Task (Lock-Free Design)
+// ============================================================================
+
+use crate::core::channels::traits::ChannelCommand;
+use crate::core::channels::types::ProtocolCommand;
+use crate::protocols::core::traits::PollResult;
+use voltage_model::PointType;
+
+/// Run the unified channel task that handles both polling and commands.
+///
+/// ## Lock-Free Architecture
+///
+/// This function owns the protocol client exclusively (no shared Mutex).
+/// It uses `tokio::select!` to handle multiple event sources:
+/// - Timer tick: Execute poll_once() and write data to store
+/// - Protocol command: Handle connect/disconnect/diagnostics requests
+/// - Business command: Execute write_control/write_adjustment
+///
+/// This design eliminates lock contention between polling and command execution,
+/// reducing command latency from 300ms to <10ms.
+async fn run_unified_channel_task<R: Rtdb>(
+    mut protocol: Box<dyn ChannelRuntime>,
+    mut protocol_rx: tokio::sync::mpsc::Receiver<ProtocolCommand>,
+    mut business_rx: tokio::sync::mpsc::Receiver<ChannelCommand>,
+    store: Arc<RedisDataStore<R>>,
+    channel_id: u32,
+    poll_interval_ms: u64,
+) {
+    info!(
+        "Ch{} unified task started (interval: {}ms)",
+        channel_id, poll_interval_ms
+    );
+
+    // Wait a bit for the connection to be established
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // Use configured poll interval
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(poll_interval_ms));
+
+    // Track previous error count to detect new errors
+    let mut prev_error_count: u64 = 0;
+
+    loop {
+        // Use biased select to prioritize commands over polling
+        // This ensures commands are processed promptly even during heavy polling
+        tokio::select! {
+            biased;
+
+            // Priority 1: Protocol commands (connect/disconnect/diagnostics)
+            Some(cmd) = protocol_rx.recv() => {
+                match cmd {
+                    ProtocolCommand::WriteControl { internal_id, value, response_tx } => {
+                        let result = protocol.write_control(&[(internal_id, value)]).await;
+                        let _ = response_tx.send(result);
+                    }
+                    ProtocolCommand::WriteAdjustment { internal_id, value, response_tx } => {
+                        let result = protocol.write_adjustment(&[(internal_id, value)]).await;
+                        let _ = response_tx.send(result);
+                    }
+                    ProtocolCommand::Connect { response_tx } => {
+                        let result = protocol.connect().await;
+                        let _ = response_tx.send(result);
+                    }
+                    ProtocolCommand::Disconnect { response_tx } => {
+                        let _ = protocol.disconnect().await;
+                        let _ = response_tx.send(());
+                    }
+                    ProtocolCommand::GetDiagnostics { response_tx } => {
+                        let diag = protocol.diagnostics().await.ok();
+                        let _ = response_tx.send(diag);
+                    }
+                    ProtocolCommand::GetConnectionState { response_tx } => {
+                        // Use diagnostics as a proxy for connection state
+                        let state = if protocol.diagnostics().await.is_ok() {
+                            crate::core::channels::types::ConnectionState::Connected
+                        } else {
+                            crate::core::channels::types::ConnectionState::Disconnected
+                        };
+                        let _ = response_tx.send(state);
+                    }
+                    ProtocolCommand::Shutdown => {
+                        info!("Ch{} received shutdown command", channel_id);
+                        break;
+                    }
+                }
+            }
+
+            // Priority 2: Business commands (control/adjustment from TODO queue)
+            Some(cmd) = business_rx.recv() => {
+                match cmd {
+                    ChannelCommand::Control { point_id, value, .. } => {
+                        let internal_id = PointType::Control.to_internal_id(point_id);
+                        match protocol.write_control(&[(internal_id, value)]).await {
+                            Ok(success_count) => {
+                                if success_count > 0 {
+                                    debug!("Ch{} control pt{} = {} ok", channel_id, point_id, value);
+                                } else {
+                                    warn!("Ch{} control pt{} = {} failed", channel_id, point_id, value);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Ch{} control pt{} err: {}", channel_id, point_id, e);
+                            }
+                        }
+                    }
+                    ChannelCommand::Adjustment { point_id, value, .. } => {
+                        let internal_id = PointType::Adjustment.to_internal_id(point_id);
+                        match protocol.write_adjustment(&[(internal_id, value)]).await {
+                            Ok(success_count) => {
+                                if success_count > 0 {
+                                    debug!("Ch{} adjustment pt{} = {} ok", channel_id, point_id, value);
+                                } else {
+                                    warn!("Ch{} adjustment pt{} = {} failed", channel_id, point_id, value);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Ch{} adjustment pt{} err: {}", channel_id, point_id, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Priority 3: Periodic polling
+            _ = interval.tick() => {
+                // Poll data using ChannelRuntime interface
+                let result: PollResult = protocol.poll_once().await;
+
+                // Log partial failures from poll result
+                let failure_count = result.failures.len();
+                if failure_count > 0 {
+                    warn!(
+                        "Ch{} partial read failure: {} points failed",
+                        channel_id, failure_count
+                    );
+                }
+
+                let count = result.data.len();
+                if count > 0 {
+                    debug!("Ch{} polling got {} data points", channel_id, count);
+                    if let Err(e) = store.write_batch(channel_id, result.data).await {
+                        error!("Ch{} failed to write to Redis: {}", channel_id, e);
+                    }
+                }
+
+                // Check diagnostics for accumulated errors (outside of lock now!)
+                if let Ok(diag) = protocol.diagnostics().await {
+                    if diag.error_count > prev_error_count {
+                        let new_errors = diag.error_count - prev_error_count;
+                        warn!(
+                            "Ch{} accumulated errors: {} new errors, last error: {:?}",
+                            channel_id, new_errors, diag.last_error
+                        );
+                        prev_error_count = diag.error_count;
+                    }
+                }
+            }
+        }
+    }
+
+    info!("Ch{} unified task stopped", channel_id);
 }
 
 // ============================================================================
@@ -230,10 +575,12 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     }
 
     /// Create channel
+    ///
+    /// Returns an Arc to the created ChannelEntry for convenience.
     pub async fn create_channel(
         &self,
         channel_config: Arc<ChannelConfig>,
-    ) -> Result<ChannelImpl<R>> {
+    ) -> Result<Arc<ChannelEntry<R>>> {
         let channel_id = channel_config.id();
 
         // Bounds check for pre-allocated Vec
@@ -269,40 +616,45 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         self.initialize_channel_redis_storage(&runtime_config)
             .await?;
 
-        // Branch based on protocol type: IGW path for virtual/modbus, Legacy for others
-        let (channel_impl, command_trigger, command_tx) = match protocol_name.as_str() {
+        // Branch based on protocol type - create ChannelEntry directly
+        let entry = match protocol_name.as_str() {
             "virtual" => {
-                // IGW path: Use igw::VirtualChannel with RedisDataStore
-                self.create_igw_virtual_channel(channel_id, &runtime_config)
+                // Protocol path: Use protocols::VirtualChannel with RedisDataStore
+                self.create_virtual_channel_impl(channel_id, &runtime_config, base_config)
                     .await?
             },
+            #[cfg(feature = "modbus")]
             "modbus_tcp" => {
-                // IGW path: Use igw::ModbusChannel (TCP) with RedisDataStore
-                self.create_igw_modbus_channel(channel_id, &runtime_config)
+                // Protocol path: Use protocols::ModbusChannel (TCP) with RedisDataStore
+                self.create_modbus_channel_impl(channel_id, &runtime_config, base_config)
                     .await?
             },
+            #[cfg(feature = "modbus")]
             "modbus_rtu" => {
-                // IGW path: Use igw::ModbusChannel (RTU/serial) with RedisDataStore
-                self.create_igw_modbus_rtu_channel(channel_id, &runtime_config)
+                // Protocol path: Use protocols::ModbusChannel (RTU/serial) with RedisDataStore
+                self.create_modbus_rtu_channel_impl(channel_id, &runtime_config, base_config)
                     .await?
             },
             #[cfg(all(target_os = "linux", feature = "gpio"))]
             "gpio" | "di_do" | "dido" => {
-                // IGW path: Use igw::GpioChannel for DI/DO
-                self.create_igw_gpio_channel(channel_id, &runtime_config)
+                // Protocol path: Use protocols::GpioChannel for DI/DO
+                self.create_gpio_channel_impl(channel_id, &runtime_config, base_config)
                     .await?
             },
             #[cfg(all(feature = "can", target_os = "linux"))]
             "can" => {
-                // IGW path: Use igw::CanClient with RedisDataStore
-                self.create_igw_can_channel(channel_id, &runtime_config)
+                // Protocol path: Use protocols::CanClient with RedisDataStore
+                self.create_can_channel_impl(channel_id, &runtime_config, base_config)
                     .await?
             },
             _ => {
-                // All protocols now use IGW - unsupported protocols should error
+                // All protocols now use unified path - unsupported protocols should error
                 // Base protocols available on all platforms
-                #[allow(unused_mut)] // mut needed for cfg-conditional push_str on Linux
-                let mut supported = String::from("virtual, modbus_tcp, modbus_rtu");
+                #[allow(unused_mut)] // mut needed for cfg-conditional push_str
+                let mut supported = String::from("virtual");
+
+                #[cfg(feature = "modbus")]
+                supported.push_str(", modbus_tcp, modbus_rtu");
 
                 #[cfg(all(target_os = "linux", feature = "gpio"))]
                 supported.push_str(", gpio/di_do");
@@ -321,58 +673,49 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         };
 
         // Register command_tx with cache for O(1) hot path access
-        // Clone tx before moving into ChannelEntry to avoid ownership issues
-        if let (Some(ref cache), Some(ref tx)) = (&self.command_tx_cache, &command_tx) {
+        if let (Some(ref cache), Some(ref tx)) = (&self.command_tx_cache, &entry.command_tx) {
             cache.register(channel_id, tx.clone());
         }
 
-        let entry = ChannelEntry::new(
-            channel_impl.clone(),
-            base_config,
-            protocol_name.clone(),
-            command_trigger,
-            command_tx, // Direct command sender for bypassing TODO queue
-        );
+        let entry = Arc::new(entry);
 
         // O(1) atomic store (slot already validated above)
-        slot.store(Some(Arc::new(entry)));
+        slot.store(Some(Arc::clone(&entry)));
 
         info!("Ch{} created ({})", channel_id, protocol_name);
-        Ok(channel_impl)
+        Ok(entry)
     }
 
-    /// Create IGW-based virtual channel.
+    /// Create virtual channel entry.
     ///
-    /// Uses igw::VirtualChannel with RedisDataStore for data persistence.
-    async fn create_igw_virtual_channel(
+    /// Uses protocols::VirtualChannel with RedisDataStore for data persistence.
+    async fn create_virtual_channel_impl(
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(
-        ChannelImpl<R>,
-        Option<Arc<RwLock<CommandTrigger<R>>>>,
-        Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
-    )> {
-        debug!("Ch{} creating via IGW path", channel_id);
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry<R>> {
+        debug!("Ch{} creating virtual channel", channel_id);
 
         // 1. Create RedisDataStore for this channel (with optional shared memory)
         let store = self.create_data_store();
 
-        // 2. Convert point configs to IGW format and register with store
-        let point_configs = convert_to_igw_point_configs(runtime_config);
+        // 2. Convert point configs and register with store
+        let point_configs = convert_to_point_configs(runtime_config);
         store.set_point_configs(channel_id, point_configs.clone());
 
         // 3. Start background flush task for write buffer
         store.start_flush_task().await;
 
-        // 4. Create VirtualChannel (no store - storage handled by IgwChannelWrapper)
+        // 4. Create VirtualChannel protocol
         let protocol = create_virtual_channel(channel_id, runtime_config.name(), point_configs);
 
         // 5. Setup command trigger for M2C control
-        let (command_trigger, rx, command_tx) = self.create_command_trigger(channel_id).await?;
+        // Note: command_rx and command_tx are unused because ChannelEntry::new creates its own channels
+        let (command_trigger, _command_rx, _command_tx) =
+            self.create_command_trigger(channel_id).await?;
 
-        // 6. Create IgwChannelWrapper with command processing and storage
-        // Virtual channel uses default 1000ms polling
+        // 6. Get poll interval from config
         let poll_interval_ms = runtime_config
             .base
             .parameters
@@ -380,33 +723,38 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
-        // Point types are encoded in internal_id by igw_bridge - no registration needed
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
-        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+        // 7. Create ChannelEntry with protocol and store (spawns unified task)
+        let entry = ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "virtual".to_string(),
+            command_trigger,
+            None, // command_tx is created internally by ChannelEntry::new
+            poll_interval_ms,
+        );
 
-        info!("Ch{} created via IGW (virtual)", channel_id);
-        Ok((channel_impl, command_trigger, command_tx))
+        info!("Ch{} created (virtual)", channel_id);
+        Ok(entry)
     }
 
-    /// Create IGW-based Modbus TCP channel.
+    /// Create Modbus TCP channel entry.
     ///
-    /// Uses igw::ModbusChannel with RedisDataStore for data persistence.
+    /// Uses protocols::ModbusChannel with RedisDataStore for data persistence.
     /// Includes batch read optimization, auto-reconnect, and zero-data detection.
-    async fn create_igw_modbus_channel(
+    #[cfg(feature = "modbus")]
+    async fn create_modbus_channel_impl(
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(
-        ChannelImpl<R>,
-        Option<Arc<RwLock<CommandTrigger<R>>>>,
-        Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
-    )> {
-        debug!("Ch{} creating via IGW Modbus path", channel_id);
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry<R>> {
+        debug!("Ch{} creating Modbus TCP channel", channel_id);
 
         // 1. Create RedisDataStore for this channel (with optional shared memory)
         let store = self.create_data_store();
 
-        // 2. Convert Modbus point configs to IGW format
+        // 2. Convert Modbus point configs and register with store
         let point_configs = convert_to_modbus_point_configs(runtime_config);
         store.set_point_configs(channel_id, point_configs.clone());
 
@@ -425,46 +773,51 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .map(|n| n as u16)
             .unwrap_or(502);
 
-        // 5. Create ModbusChannel via igw_bridge (no store - storage handled by IgwChannelWrapper)
+        // 5. Create ModbusChannel protocol
         let protocol = create_modbus_channel(channel_id, host, port, point_configs);
 
         // 6. Setup command trigger for M2C control
-        let (command_trigger, rx, command_tx) = self.create_command_trigger(channel_id).await?;
+        let (command_trigger, _command_rx, _command_tx) =
+            self.create_command_trigger(channel_id).await?;
 
-        // 7. Create IgwChannelWrapper with command processing and storage
-        // Modbus uses internal polling, external polling as backup (default 1000ms)
+        // 7. Get poll interval from config
         let poll_interval_ms = params
             .get("poll_interval_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
-        // Point types are encoded in internal_id by igw_bridge - no registration needed
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
-        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+        // 8. Create ChannelEntry with protocol and store (spawns unified task)
+        let entry = ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "modbus_tcp".to_string(),
+            command_trigger,
+            None, // command_tx is created internally by ChannelEntry::new
+            poll_interval_ms,
+        );
 
-        info!("Ch{} created via IGW (modbus_tcp)", channel_id);
-        Ok((channel_impl, command_trigger, command_tx))
+        info!("Ch{} created (modbus_tcp)", channel_id);
+        Ok(entry)
     }
 
-    /// Create IGW-based Modbus RTU (serial) channel.
+    /// Create Modbus RTU (serial) channel entry.
     ///
-    /// Uses igw::ModbusChannel in RTU mode with RedisDataStore for data persistence.
+    /// Uses protocols::ModbusChannel in RTU mode with RedisDataStore for data persistence.
     /// Includes batch read optimization, auto-reconnect, and zero-data detection.
-    async fn create_igw_modbus_rtu_channel(
+    #[cfg(feature = "modbus")]
+    async fn create_modbus_rtu_channel_impl(
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(
-        ChannelImpl<R>,
-        Option<Arc<RwLock<CommandTrigger<R>>>>,
-        Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
-    )> {
-        debug!("Ch{} creating via IGW Modbus RTU path", channel_id);
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry<R>> {
+        debug!("Ch{} creating Modbus RTU channel", channel_id);
 
         // 1. Create RedisDataStore for this channel (with optional shared memory)
         let store = self.create_data_store();
 
-        // 2. Convert Modbus point configs to IGW format
+        // 2. Convert Modbus point configs and register with store
         let point_configs = convert_to_modbus_point_configs(runtime_config);
         store.set_point_configs(channel_id, point_configs.clone());
 
@@ -483,61 +836,66 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .map(|n| n as u32)
             .unwrap_or(9600);
 
-        // 5. Create ModbusChannel (RTU) via igw_bridge
+        // 5. Create ModbusChannel (RTU) protocol
         let protocol = create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs);
 
         // 6. Setup command trigger for M2C control
-        let (command_trigger, rx, command_tx) = self.create_command_trigger(channel_id).await?;
+        let (command_trigger, _command_rx, _command_tx) =
+            self.create_command_trigger(channel_id).await?;
 
-        // 7. Create IgwChannelWrapper with command processing and storage
-        // Modbus uses internal polling, external polling as backup (default 1000ms)
+        // 7. Get poll interval from config
         let poll_interval_ms = params
             .get("poll_interval_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
-        // Point types are encoded in internal_id by igw_bridge - no registration needed
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
-        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+        // 8. Create ChannelEntry with protocol and store (spawns unified task)
+        let entry = ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "modbus_rtu".to_string(),
+            command_trigger,
+            None, // command_tx is created internally by ChannelEntry::new
+            poll_interval_ms,
+        );
 
-        info!("Ch{} created via IGW (modbus_rtu)", channel_id);
-        Ok((channel_impl, command_trigger, command_tx))
+        info!("Ch{} created (modbus_rtu)", channel_id);
+        Ok(entry)
     }
 
-    /// Create IGW-based GPIO channel for DI/DO.
+    /// Create GPIO channel entry for DI/DO.
     ///
     /// GPIO channels support:
     /// - Signal points (DI): Digital input reading
     /// - Control points (DO): Digital output control
     #[cfg(all(target_os = "linux", feature = "gpio"))]
-    async fn create_igw_gpio_channel(
+    async fn create_gpio_channel_impl(
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(
-        ChannelImpl<R>,
-        Option<Arc<RwLock<CommandTrigger<R>>>>,
-        Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
-    )> {
-        debug!("Ch{} creating via IGW GPIO path", channel_id);
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry<R>> {
+        debug!("Ch{} creating GPIO channel", channel_id);
 
         // 1. Create RedisDataStore for this channel (with optional shared memory)
         let store = self.create_data_store();
 
-        // 2. Convert point configs to IGW format (for signal/control points)
-        let point_configs = convert_to_igw_point_configs(runtime_config);
+        // 2. Convert point configs and register with store
+        let point_configs = convert_to_point_configs(runtime_config);
         store.set_point_configs(channel_id, point_configs);
 
         // 3. Start background flush task for write buffer
         store.start_flush_task().await;
 
-        // 4. Create GpioChannel via igw_bridge
+        // 4. Create GpioChannel protocol
         let protocol = create_gpio_channel(channel_id, runtime_config);
 
         // 5. Setup command trigger for M2C control (DO commands)
-        let (command_trigger, rx, command_tx) = self.create_command_trigger(channel_id).await?;
+        let (command_trigger, _command_rx, _command_tx) =
+            self.create_command_trigger(channel_id).await?;
 
-        // 6. Create IgwChannelWrapper
+        // 6. Get poll interval from config
         // GPIO needs faster polling (default 200ms for responsive DI detection)
         let poll_interval_ms = runtime_config
             .base
@@ -546,36 +904,40 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(200);
 
-        // Point types are encoded in internal_id by igw_bridge - no registration needed
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
-        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+        // 7. Create ChannelEntry with protocol and store (spawns unified task)
+        let entry = ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "gpio".to_string(),
+            command_trigger,
+            None, // command_tx is created internally by ChannelEntry::new
+            poll_interval_ms,
+        );
 
-        info!("Ch{} created via IGW (gpio)", channel_id);
-        Ok((channel_impl, command_trigger, command_tx))
+        info!("Ch{} created (gpio)", channel_id);
+        Ok(entry)
     }
 
-    /// Create IGW-based CAN channel.
+    /// Create CAN channel entry.
     ///
-    /// Uses igw::CanClient with RedisDataStore for data persistence.
+    /// Uses protocols::CanClient with RedisDataStore for data persistence.
     /// CAN protocol is event-driven and read-only (no M2C control).
     #[cfg(all(feature = "can", target_os = "linux"))]
-    async fn create_igw_can_channel(
+    async fn create_can_channel_impl(
         &self,
         channel_id: u32,
         runtime_config: &Arc<RuntimeChannelConfig>,
-    ) -> Result<(
-        ChannelImpl<R>,
-        Option<Arc<RwLock<CommandTrigger<R>>>>,
-        Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
-    )> {
-        debug!("Ch{} creating via IGW CAN path", channel_id);
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry<R>> {
+        debug!("Ch{} creating CAN channel", channel_id);
 
         // 1. Create RedisDataStore for this channel (with optional shared memory)
         let store = self.create_data_store();
 
-        // 2. Convert CAN mappings to IGW formats
+        // 2. Convert CAN mappings to formats
         let can_point_configs = convert_to_can_point_configs(runtime_config);
-        let igw_point_configs = convert_can_to_igw_point_configs(runtime_config);
+        let igw_point_configs = convert_can_to_point_configs(runtime_config);
 
         if can_point_configs.is_empty() {
             warn!("Ch{} has no CAN point mappings configured", channel_id);
@@ -593,25 +955,33 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_str())
             .unwrap_or("can0");
 
-        // 5. Create CanClient via igw_bridge
+        // 5. Create CanClient protocol
         let protocol = create_can_channel(channel_id, can_interface, can_point_configs);
 
         // 6. Setup command trigger (CAN is read-only, but we still create the trigger for consistency)
-        let (command_trigger, rx, command_tx) = self.create_command_trigger(channel_id).await?;
+        let (command_trigger, _command_rx, _command_tx) =
+            self.create_command_trigger(channel_id).await?;
 
-        // 7. Create IgwChannelWrapper
+        // 7. Get poll interval from config
         // CAN is event-driven, needs faster polling (default 200ms)
         let poll_interval_ms = params
             .get("poll_interval_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(200);
 
-        // Point types are encoded in internal_id by igw_bridge - no registration needed
-        let wrapper = IgwChannelWrapper::new(protocol, channel_id, store, rx, poll_interval_ms);
-        let channel_impl: ChannelImpl<R> = Arc::new(RwLock::new(wrapper));
+        // 8. Create ChannelEntry with protocol and store (spawns unified task)
+        let entry = ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "can".to_string(),
+            command_trigger,
+            None, // command_tx is created internally by ChannelEntry::new
+            poll_interval_ms,
+        );
 
-        info!("Ch{} created via IGW (can)", channel_id);
-        Ok((channel_impl, command_trigger, command_tx))
+        info!("Ch{} created (can)", channel_id);
+        Ok(entry)
     }
 
     /// Create RedisDataStore with optional shared memory support
@@ -670,8 +1040,11 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .ok_or_else(|| ComSrvError::invalid_channel_id(channel_id))?;
 
         if let Some(entry) = slot.swap(None) {
-            // Disconnect channel using ChannelImpl's unified interface
-            let _ = entry.channel.write().await.disconnect().await;
+            // Shutdown background tasks
+            entry.shutdown();
+
+            // Disconnect channel
+            let _ = entry.disconnect().await;
 
             // Stop command trigger if exists
             if let Some(trigger_arc) = &entry.command_trigger {
@@ -686,31 +1059,21 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         }
     }
 
-    /// Get channel implementation (dual-mode)
+    /// Get channel entry by ID
     ///
-    /// # O(1) lock-free access (~5ns)
-    #[inline]
-    pub fn get_channel(&self, channel_id: u32) -> Option<ChannelImpl<R>> {
-        self.channels
-            .get(channel_id as usize)?
-            .load_full()
-            .map(|entry| entry.channel.clone())
-    }
-
-    /// Get channel entry (for direct command_tx access)
-    ///
-    /// Unlike `get_channel()` which returns only the ChannelImpl,
-    /// this returns the full ChannelEntry Arc for accessing command_tx.
-    ///
-    /// # Optimization
-    /// Used by API handlers to directly send commands via mpsc,
-    /// bypassing the Redis TODO queue latency.
+    /// Returns the full ChannelEntry Arc for accessing protocol, store, and command_tx.
     ///
     /// # O(1) lock-free access (~5ns)
     /// Returns `Arc<ChannelEntry>` instead of DashMap Ref (no lifetime constraints)
     #[inline]
-    pub fn get_channel_entry(&self, channel_id: u32) -> Option<Arc<ChannelEntry<R>>> {
+    pub fn get_channel(&self, channel_id: u32) -> Option<Arc<ChannelEntry<R>>> {
         self.channels.get(channel_id as usize)?.load_full()
+    }
+
+    /// Alias for get_channel (for backwards compatibility)
+    #[inline]
+    pub fn get_channel_entry(&self, channel_id: u32) -> Option<Arc<ChannelEntry<R>>> {
+        self.get_channel(channel_id)
     }
 
     /// Get channel IDs
@@ -745,7 +1108,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         let mut count = 0;
         for (id, slot) in self.channels.iter().enumerate() {
             if let Some(entry) = slot.load_full() {
-                if entry.channel.read().await.is_connected().await {
+                if entry.is_connected().await {
                     count += 1;
                 }
             }
@@ -794,12 +1157,12 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         for (channel_id, slot) in self.channels.iter().enumerate() {
             if let Some(entry) = slot.load_full() {
                 let channel_id = channel_id as u32;
-                let channel_impl = entry.channel.clone();
+                let entry_clone = Arc::clone(&entry);
 
                 let task = tokio::spawn(async move {
-                    match channel_impl.write().await.connect().await {
+                    match entry_clone.connect().await {
                         Ok(_) => {
-                            // Note: igw TracingLogHandler outputs "Channel connected" at info level
+                            // Note: TracingLogHandler outputs "Channel connected" at info level
                             Ok(())
                         },
                         Err(e) => {

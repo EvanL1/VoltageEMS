@@ -61,7 +61,7 @@ bb8-redis = "0.16"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2"
 
 # Logging
 tracing = "0.1"
@@ -100,7 +100,7 @@ rand = "0.8"
 regex = "1.10"
 
 # Data structures and algorithms
-dashmap = { version = "5.5", features = ["serde"] }
+dashmap = { version = "6", features = ["serde"] }
 ahash = "0.8"
 rustc-hash = "2.1"
 parking_lot = "0.12"

@@ -742,7 +742,7 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
             // Trigger channel reload by calling reload handler internally
             tracing::debug!("Ch{} auto-reload", channel_id);
 
-            // Simple reload: disconnect and reconnect using ChannelImpl's unified interface
+            // Simple reload: disconnect and reconnect using ChannelEntry's interface
             let factory = state.factory.read().await;
             if let Some(channel_impl) = factory.get_channel(channel_id) {
                 if let Err(e) = channel_impl.disconnect().await {

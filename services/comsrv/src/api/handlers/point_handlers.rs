@@ -2706,15 +2706,15 @@ async fn perform_channel_reload<R: Rtdb>(
     }
 
     // 3. Create new channel with updated config
-    let channel_impl = manager
+    let entry = manager
         .create_channel(std::sync::Arc::new(config))
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create channel: {}", e))?;
 
     // 4. Connect in background (non-blocking)
     tokio::spawn(async move {
-        // Use ChannelImpl's unified connect interface
-        match channel_impl.write().await.connect().await {
+        // Use ChannelEntry's direct connect method
+        match entry.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", channel_id),
             Err(e) => tracing::warn!("Ch{} connect: {}", channel_id, e),
         }
