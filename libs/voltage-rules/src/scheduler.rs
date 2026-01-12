@@ -43,7 +43,8 @@ impl Default for TriggerConfig {
 
 /// Runtime state for a scheduled rule
 struct ScheduledRule {
-    rule: Rule,
+    /// Rule wrapped in Arc to avoid cloning during execution
+    rule: Arc<Rule>,
     trigger: TriggerConfig,
     last_execution: Option<Instant>,
     /// Track last cooldown trigger time
@@ -147,7 +148,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
                 };
 
                 ScheduledRule {
-                    rule,
+                    rule: Arc::new(rule),
                     trigger: TriggerConfig::Interval { interval_ms },
                     last_execution: None,
                     last_cooldown_start: None,
@@ -223,7 +224,8 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         let now = Instant::now();
 
         // Phase 1: Read lock to collect rules that need execution (fast)
-        let rules_to_execute: Vec<(usize, Rule)> = {
+        // Use Arc<Rule> to avoid cloning entire rule structure (~2KB → 8B pointer copy)
+        let rules_to_execute: Vec<(usize, Arc<Rule>)> = {
             let rules = self.rules.read().await;
             rules
                 .iter()
@@ -259,7 +261,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
                     };
 
                     if should_execute && cooldown_ok {
-                        Some((idx, scheduled.rule.clone()))
+                        Some((idx, Arc::clone(&scheduled.rule)))
                     } else {
                         None
                     }
@@ -271,27 +273,60 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
             return Ok(());
         }
 
-        // Phase 2: Execute rules without holding any lock (bulk of time)
-        // Track execution outcomes for Phase 3 timestamp updates
+        // Phase 2: Execute rules in parallel without holding any lock
+        // Use buffer_unordered for concurrent execution with bounded parallelism
+        use futures::stream::{self, StreamExt};
+
         struct ExecutionOutcome {
+            idx: usize,
+            rule_id: i64,
+            rule_name: String,
+            result: Result<RuleExecutionResult>,
+        }
+
+        // Execute rules concurrently (max 4 parallel)
+        let executor = Arc::clone(&self.executor);
+        let execution_futures = rules_to_execute.into_iter().map(|(idx, rule)| {
+            let executor = Arc::clone(&executor);
+            async move {
+                debug!("Executing rule: {}", rule.id);
+                let rule_id = rule.id;
+                let rule_name = rule.name.clone();
+                let result = executor.execute(&rule).await;
+                ExecutionOutcome {
+                    idx,
+                    rule_id,
+                    rule_name,
+                    result,
+                }
+            }
+        });
+
+        let execution_results: Vec<ExecutionOutcome> = stream::iter(execution_futures)
+            .buffer_unordered(4)
+            .collect()
+            .await;
+
+        // Process results sequentially (logging and Redis writes)
+        struct TimestampUpdate {
             idx: usize,
             rule_id: i64,
             start_cooldown: bool,
         }
-        let mut outcomes: Vec<ExecutionOutcome> = Vec::with_capacity(rules_to_execute.len());
+        let mut updates: Vec<TimestampUpdate> = Vec::with_capacity(execution_results.len());
 
-        for (idx, rule) in rules_to_execute {
-            debug!("Executing rule: {}", rule.id);
-            let rule_id = rule.id;
-
-            match self.executor.execute(&rule).await {
+        for outcome in execution_results {
+            match outcome.result {
                 Ok(result) => {
                     // Log rule execution to independent rule log file
-                    let logger = self.logger_manager.get_logger(rule.id, &rule.name);
+                    let logger = self
+                        .logger_manager
+                        .get_logger(outcome.rule_id, &outcome.rule_name);
                     logger.log_execution(&result, &result.variable_values);
 
                     // Write rule execution result to Redis for WebSocket monitoring
-                    self.write_rule_exec_to_redis(rule.id, &result).await;
+                    self.write_rule_exec_to_redis(outcome.rule_id, &result)
+                        .await;
 
                     let start_cooldown = result.success && !result.actions_executed.is_empty();
 
@@ -305,18 +340,18 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
                         warn!("Rule {} fail: {:?}", result.rule_id, result.error);
                     }
 
-                    outcomes.push(ExecutionOutcome {
-                        idx,
-                        rule_id,
+                    updates.push(TimestampUpdate {
+                        idx: outcome.idx,
+                        rule_id: outcome.rule_id,
                         start_cooldown,
                     });
                 },
                 Err(e) => {
-                    error!("Rule {} err: {}", rule_id, e);
+                    error!("Rule {} err: {}", outcome.rule_id, e);
                     // Still update last_execution to prevent retry spam
-                    outcomes.push(ExecutionOutcome {
-                        idx,
-                        rule_id,
+                    updates.push(TimestampUpdate {
+                        idx: outcome.idx,
+                        rule_id: outcome.rule_id,
                         start_cooldown: false,
                     });
                 },
@@ -324,14 +359,14 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         }
 
         // Phase 3: Write lock to update timestamps (fast)
-        if !outcomes.is_empty() {
+        if !updates.is_empty() {
             let mut rules = self.rules.write().await;
-            for outcome in outcomes {
-                if let Some(scheduled) = rules.get_mut(outcome.idx) {
+            for update in updates {
+                if let Some(scheduled) = rules.get_mut(update.idx) {
                     // Verify rule ID matches (safety check against concurrent modifications)
-                    if scheduled.rule.id == outcome.rule_id {
+                    if scheduled.rule.id == update.rule_id {
                         scheduled.last_execution = Some(now);
-                        if outcome.start_cooldown {
+                        if update.start_cooldown {
                             scheduled.last_cooldown_start = Some(now);
                         }
                     }
@@ -455,11 +490,157 @@ pub struct SchedulerStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{RuleFlow, RuleNode, RuleWires};
+    use std::collections::HashMap;
 
     #[test]
     fn test_trigger_config_default() {
         let config = TriggerConfig::default();
         let TriggerConfig::Interval { interval_ms } = config;
         assert_eq!(interval_ms, 1000);
+    }
+
+    /// Helper to create a minimal test rule
+    fn create_test_rule(id: i64, name: &str, cooldown_ms: u64) -> Rule {
+        let mut nodes = HashMap::new();
+        nodes.insert(
+            "start".to_string(),
+            RuleNode::Start {
+                wires: RuleWires {
+                    default: vec!["end".to_string()],
+                },
+            },
+        );
+        nodes.insert("end".to_string(), RuleNode::End);
+
+        Rule {
+            id,
+            name: name.to_string(),
+            description: None,
+            enabled: true,
+            priority: 100,
+            cooldown_ms,
+            flow: RuleFlow {
+                start_node: "start".to_string(),
+                nodes,
+            },
+        }
+    }
+
+    #[test]
+    fn test_scheduled_rule_uses_arc() {
+        // Create a rule and wrap it in Arc
+        let rule = create_test_rule(1, "Test Rule", 1000);
+        let arc_rule = Arc::new(rule);
+
+        // Create ScheduledRule with Arc<Rule>
+        let scheduled = ScheduledRule {
+            rule: Arc::clone(&arc_rule),
+            trigger: TriggerConfig::default(),
+            last_execution: None,
+            last_cooldown_start: None,
+        };
+
+        // Verify Arc works correctly
+        assert_eq!(scheduled.rule.id, 1);
+        assert_eq!(scheduled.rule.name, "Test Rule");
+        assert_eq!(scheduled.rule.cooldown_ms, 1000);
+
+        // Verify Arc::clone is cheap (same underlying data)
+        let cloned_arc = Arc::clone(&scheduled.rule);
+        assert!(Arc::ptr_eq(&scheduled.rule, &cloned_arc));
+    }
+
+    #[test]
+    fn test_arc_clone_is_pointer_copy() {
+        let rule = create_test_rule(42, "Arc Test", 5000);
+        let arc1 = Arc::new(rule);
+
+        // Clone multiple times
+        let arc2 = Arc::clone(&arc1);
+        let arc3 = Arc::clone(&arc1);
+        let arc4 = Arc::clone(&arc2);
+
+        // All point to the same data
+        assert!(Arc::ptr_eq(&arc1, &arc2));
+        assert!(Arc::ptr_eq(&arc2, &arc3));
+        assert!(Arc::ptr_eq(&arc3, &arc4));
+
+        // Strong count should be 4
+        assert_eq!(Arc::strong_count(&arc1), 4);
+
+        // Data is shared, not copied
+        assert_eq!(arc1.id, arc4.id);
+        assert_eq!(arc1.name, arc4.name);
+    }
+
+    #[test]
+    fn test_scheduled_rule_trigger_interval() {
+        let rule = Arc::new(create_test_rule(1, "Interval Test", 0));
+
+        let scheduled = ScheduledRule {
+            rule,
+            trigger: TriggerConfig::Interval { interval_ms: 500 },
+            last_execution: None,
+            last_cooldown_start: None,
+        };
+
+        // Verify trigger config
+        match scheduled.trigger {
+            TriggerConfig::Interval { interval_ms } => {
+                assert_eq!(interval_ms, 500);
+            },
+        }
+    }
+
+    #[test]
+    fn test_multiple_scheduled_rules_share_nothing() {
+        // Create two independent rules
+        let rule1 = Arc::new(create_test_rule(1, "Rule 1", 1000));
+        let rule2 = Arc::new(create_test_rule(2, "Rule 2", 2000));
+
+        let scheduled1 = ScheduledRule {
+            rule: Arc::clone(&rule1),
+            trigger: TriggerConfig::Interval { interval_ms: 100 },
+            last_execution: None,
+            last_cooldown_start: None,
+        };
+
+        let scheduled2 = ScheduledRule {
+            rule: Arc::clone(&rule2),
+            trigger: TriggerConfig::Interval { interval_ms: 200 },
+            last_execution: None,
+            last_cooldown_start: None,
+        };
+
+        // Verify they are independent
+        assert!(!Arc::ptr_eq(&scheduled1.rule, &scheduled2.rule));
+        assert_eq!(scheduled1.rule.id, 1);
+        assert_eq!(scheduled2.rule.id, 2);
+    }
+
+    #[tokio::test]
+    async fn test_parallel_execution_collects_all_results() {
+        use futures::stream::{self, StreamExt};
+
+        // Simulate parallel execution pattern used in tick()
+        let items = vec![(0, 10), (1, 20), (2, 30), (3, 40)];
+
+        let results: Vec<(usize, i32)> =
+            stream::iter(items.into_iter().map(|(idx, val)| async move {
+                // Simulate async work
+                tokio::time::sleep(tokio::time::Duration::from_micros(10)).await;
+                (idx, val * 2)
+            }))
+            .buffer_unordered(4)
+            .collect()
+            .await;
+
+        // All results should be collected (order may vary due to unordered)
+        assert_eq!(results.len(), 4);
+
+        // Verify all values are processed correctly
+        let sum: i32 = results.iter().map(|(_, v)| v).sum();
+        assert_eq!(sum, 200); // (10+20+30+40) * 2 = 200
     }
 }

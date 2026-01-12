@@ -12,6 +12,7 @@ voltage-routing = { path = "../voltage-routing" }
 
 # Async runtime
 tokio = { workspace = true }
+futures = { workspace = true }
 
 # Database
 sqlx = { workspace = true }
