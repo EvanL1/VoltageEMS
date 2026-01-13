@@ -70,7 +70,7 @@ VoltageEMS 是一个基于 Rust 微服务架构构建的高性能工业物联网
 
 - **编程语言**: Rust 1.90+
 - **Web 框架**: Axum 0.8
-- **数据库**: Redis 8+, InfluxDB 2.x
+- **数据库**: Redis 8+, InfluxDB 3.x
 - **容器技术**: Docker, Docker Compose
 - **消息格式**: JSON, Protocol Buffers
 - **构建工具**: Cargo

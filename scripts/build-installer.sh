@@ -270,7 +270,7 @@ fi
 # Pull official images
 echo -e "${BLUE}Pulling official images...${NC}"
 pull_and_save_image "redis:8-alpine" "voltage-redis.tar.gz"
-pull_and_save_image "influxdb:2-alpine" "voltage-influxdb.tar.gz"
+pull_and_save_image "influxdb:3-core" "voltage-influxdb.tar.gz"
 
 # Verify images
 echo -e "${YELLOW}Verifying Docker images...${NC}"

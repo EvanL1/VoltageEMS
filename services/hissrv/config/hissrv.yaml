@@ -9,9 +9,14 @@ service:
 
 # InfluxDB连接配置
 influxdb:
-  # InfluxDB 2.7配置
-  url: "http://localhost:8086"
-  token: "dyD_V9vxMvtTdaoWNArhzyNuZGHrTzI0rnI20PFiZkB9ss4LAphmAqBcLvpaQaN1D3eooPVfuTeKG39JFcbtgA=="
+  # InfluxDB 3.x配置
+  url: "http://127.0.0.1:8181"
+  token: "apiv3_ureLplELJaYvOZjBEWCwMDXERyhMSIgm5hJo_lXLUpI02yNyx-x8MPv7XqtmIpYXH0zDXdz-dCEojm5G_rIjTQ"
+  
+  # InfluxDB 3使用database替代bucket/org概念
+  database: "history_data"
+  
+  # 保留以下字段用于向后兼容（已不再使用）
   org: "voltage"
   bucket: "history_data"
   
@@ -22,7 +27,6 @@ influxdb:
   
   # 数据保留策略
   retention_policy:
-    enabled: true
     default_retention: "30d"  # 默认保留30天
     measurement_retention:
       telemetry: "90d"  # 遥测数据保留90天
@@ -78,7 +82,7 @@ redis_source:
   # 数据订阅模式，支持通配符
   subscribe_patterns:
     - "inst:*:M"      
-    - "inst:*:A"      
+    - "inst:*:A"  
   
   # 数据过滤规则
   filters:

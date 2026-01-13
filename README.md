@@ -48,7 +48,7 @@ VoltageEMS is a high-performance industrial IoT energy management system built w
            │                              └──────────────────┘
            ▼
 ┌───────────────────────────────┐
-│ InfluxDB(:8086)               │
+│ InfluxDB(:8181)               │
 └───────────────────────────────┘
 ```
 
@@ -86,7 +86,7 @@ Downstream (Control → Device):
 | Service | Port | Description |
 |---------|------|-------------|
 | **voltage-redis** | 6379 | Redis in-memory data store |
-| **influxdb** | 8086 | InfluxDB time-series database |
+| **influxdb** | 8181 | InfluxDB 3.x time-series database |
 
 ### Frontend
 
@@ -100,7 +100,7 @@ Note: All services are defined in docker-compose.yml and can be started with `do
 
 - **Language**: Rust 1.90+
 - **Web Framework**: Axum
-- **Database**: Redis 8+, InfluxDB 2.x
+- **Database**: Redis 8+, InfluxDB 3.x
 - **Container**: Docker, Docker Compose
 - **Message Format**: JSON, Protocol Buffers
 - **Build Tool**: Cargo

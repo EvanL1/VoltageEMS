@@ -740,7 +740,7 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
     let image_name = if container_name == "voltage-redis" {
         "voltage-redis:latest".to_string()
     } else if container_name == "voltage-influxdb" {
-        "influxdb:2-alpine".to_string()
+        "influxdb:3-core".to_string()
     } else if container_name.starts_with("voltageems-") {
         // Rust services: voltageems-comsrv, voltageems-modsrv
         "voltageems:latest".to_string()

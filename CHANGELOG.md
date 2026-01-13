@@ -68,7 +68,7 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
 ### Python Services
 
 #### hissrv (History Service) - Port 6004
-- Historical data storage with InfluxDB 2.x
+- Historical data storage with InfluxDB 3.x
 - Time-series data aggregation and queries
 - REST API for data retrieval
 
@@ -102,7 +102,7 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
   - Routing tables (Hash)
   - Control command queues (List)
   - Unix socket support for better performance
-- **InfluxDB 2** - Time-series database
+- **InfluxDB 3** - Time-series database
   - Historical data storage
   - Configurable retention policies
 - **Docker Compose** - Unified orchestration

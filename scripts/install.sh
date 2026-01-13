@@ -94,7 +94,7 @@ run_docker_compose() {
 declare -A TARBALL_TO_IMAGE=(
     ["voltageems.tar.gz"]="voltageems:latest"
     ["voltage-redis.tar.gz"]="redis:8-alpine"
-    ["voltage-influxdb.tar.gz"]="influxdb:2-alpine"
+    ["voltage-influxdb.tar.gz"]="influxdb:3-core"
     ["python-services.tar.gz"]="voltageems-ss:latest"
     ["apps.tar.gz"]="voltage-apps:latest"
 )
@@ -102,7 +102,7 @@ declare -A TARBALL_TO_IMAGE=(
 # Image to container mapping
 declare -A IMAGE_TO_CONTAINERS=(
     ["redis:8-alpine"]="voltage-redis"
-    ["influxdb:2-alpine"]="voltage-influxdb"
+    ["influxdb:3-core"]="voltage-influxdb"
     ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv"
     ["voltageems-ss:latest"]="voltageems-hissrv voltageems-apigateway voltageems-netsrv voltageems-alarmsrv"
     ["voltage-apps:latest"]="voltage-apps"
@@ -863,7 +863,7 @@ if command -v docker &> /dev/null; then
         # Verify loaded images
         echo "Verifying loaded images..."
         # NOTE: voltage-apps:latest is optional
-        for image_name in voltageems:latest redis:8-alpine influxdb:2-alpine voltageems-ss:latest voltage-apps:latest; do
+        for image_name in voltageems:latest redis:8-alpine influxdb:3-core voltageems-ss:latest voltage-apps:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
@@ -1207,7 +1207,7 @@ echo "Network Configuration:"
 echo -e "${YELLOW}  • Using host network mode for optimal performance${NC}"
 echo "  • Services available on localhost:"
 echo "    - Redis: 6379          (data store)"
-echo "    - InfluxDB: 8086       (time-series database)"
+echo "    - InfluxDB: 8181       (time-series database - InfluxDB 3.x)"
 echo "    - ComSrv: 6001         (communication - Rust)"
 echo "    - ModSrv: 6002         (model + rules - Rust)"
 echo "    - HisSrv: 6004         (history - Python)"
