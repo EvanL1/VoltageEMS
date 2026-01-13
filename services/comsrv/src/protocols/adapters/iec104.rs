@@ -30,16 +30,18 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 use voltage_iec104::{ClientConfig, Cp56Time2a, Iec104Client, Iec104Event};
 
 use async_trait::async_trait;
 
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
+use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::quality::Quality;
@@ -245,22 +247,15 @@ pub struct Iec104Channel {
     config: Iec104ChannelConfig,
     client: Iec104Client,
     state: Arc<std::sync::RwLock<ConnectionState>>,
-    diagnostics: Arc<RwLock<ChannelDiagnostics>>,
+    diagnostics: Arc<AtomicDiagnostics>,
+    /// Last interrogation timestamp (Unix millis, 0 = never)
+    last_interrogation_ms: AtomicU64,
     /// Broadcast sender for event-driven subscribers (multiple subscribers supported).
     event_tx: DataEventSender,
     event_handler: Option<Arc<dyn DataEventHandler>>,
     poll_task: Option<tokio::task::JoinHandle<()>>,
     /// Point ID -> index lookup for O(1) access
     point_index: HashMap<u32, usize>,
-}
-
-#[derive(Debug, Default)]
-struct ChannelDiagnostics {
-    recv_count: u64,
-    send_count: u64,
-    error_count: u64,
-    last_error: Option<String>,
-    last_interrogation: Option<std::time::Instant>,
 }
 
 impl Iec104Channel {
@@ -285,7 +280,8 @@ impl Iec104Channel {
             config,
             client,
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Disconnected)),
-            diagnostics: Arc::new(RwLock::new(ChannelDiagnostics::default())),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
+            last_interrogation_ms: AtomicU64::new(0),
             event_tx,
             event_handler: None,
             poll_task: None,
@@ -331,8 +327,12 @@ impl Iec104Channel {
             .await
             .map_err(|e| GatewayError::Protocol(e.to_string()))?;
 
-        let mut diag = self.diagnostics.write().await;
-        diag.last_interrogation = Some(std::time::Instant::now());
+        // Record interrogation timestamp (lock-free)
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.last_interrogation_ms.store(now_ms, Ordering::Relaxed);
         Ok(())
     }
 
@@ -365,7 +365,7 @@ impl Iec104Channel {
             Ok(None) => Ok(()),
             Err(e) => {
                 let err_msg = e.to_string();
-                self.record_error(err_msg.clone()).await;
+                self.record_error(err_msg.clone());
                 Err(GatewayError::Protocol(err_msg))
             },
         }
@@ -399,29 +399,27 @@ impl Iec104Channel {
                     // Arc wrap for O(1) broadcast clone
                     let _ = self.event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
 
-                    // Update diagnostics
-                    let mut diag = self.diagnostics.write().await;
-                    diag.recv_count += 1;
+                    // Update diagnostics (lock-free)
+                    self.diagnostics.inc_read();
                 }
             },
             Iec104Event::AsduReceived(_asdu) => {
                 // Raw ASDU - usually for command responses
             },
             Iec104Event::CommandConfirm { ioa, success } => {
-                // Command confirmation
-                let mut diag = self.diagnostics.write().await;
+                // Command confirmation (lock-free)
                 if success {
-                    diag.send_count += 1;
+                    self.diagnostics.inc_write();
                 } else {
-                    diag.error_count += 1;
-                    diag.last_error = Some(format!("Command failed for IOA {}", ioa));
+                    self.diagnostics
+                        .record_error(format!("Command failed for IOA {}", ioa));
                 }
             },
             Iec104Event::InterrogationComplete { common_address: _ } => {
                 // Interrogation finished
             },
             Iec104Event::Error(msg) => {
-                self.record_error(msg.clone()).await;
+                self.record_error(msg.clone());
                 let _ = self.event_tx.send(DataEvent::Error(msg));
             },
         }
@@ -463,11 +461,9 @@ impl Iec104Channel {
         batch
     }
 
-    /// Record an error.
-    async fn record_error(&self, error: String) {
-        let mut diag = self.diagnostics.write().await;
-        diag.error_count += 1;
-        diag.last_error = Some(error);
+    /// Record an error (lock-free).
+    fn record_error(&self, error: String) {
+        self.diagnostics.record_error(error);
     }
 
     /// Find point config by ID (O(1) lookup).
@@ -500,20 +496,33 @@ impl Protocol for Iec104Channel {
     #[allow(clippy::disallowed_methods)] // json! macro
     async fn diagnostics(&self) -> Result<Diagnostics> {
         let state = self.get_state();
-        let diag = self.diagnostics.read().await;
+
+        // Calculate seconds since last interrogation (lock-free)
+        let last_interrogation_secs = {
+            let ms = self.last_interrogation_ms.load(Ordering::Relaxed);
+            if ms == 0 {
+                None
+            } else {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                Some((now_ms.saturating_sub(ms)) / 1000)
+            }
+        };
 
         Ok(Diagnostics {
             protocol: ProtocolCapabilities::name(self).to_string(),
             connection_state: state,
-            read_count: diag.recv_count,
-            write_count: diag.send_count,
-            error_count: diag.error_count,
-            last_error: diag.last_error.clone(),
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
             extra: serde_json::json!({
                 "address": self.config.address,
                 "common_address": self.config.common_address,
                 "points": self.config.points.len(),
-                "last_interrogation": diag.last_interrogation.map(|t| t.elapsed().as_secs()),
+                "last_interrogation": last_interrogation_secs,
             }),
         })
     }
@@ -531,7 +540,7 @@ impl ProtocolClient for Iec104Channel {
             Err(e) => {
                 self.set_state(ConnectionState::Error);
                 let err_msg = e.to_string();
-                self.record_error(err_msg.clone()).await;
+                self.record_error(err_msg.clone());
                 Err(GatewayError::Connection(err_msg))
             },
         }
@@ -562,7 +571,8 @@ impl ProtocolClient for Iec104Channel {
         let event = match self.client.poll().await {
             Ok(ev) => ev,
             Err(_e) => {
-                self.diagnostics.blocking_write().error_count += 1;
+                // Lock-free error recording
+                self.diagnostics.inc_error();
                 // Return empty result with no failure tracking (connection-level error)
                 return PollResult::success(DataBatch::new());
             },
@@ -575,8 +585,8 @@ impl ProtocolClient for Iec104Channel {
         };
 
         if !batch.is_empty() {
-            let mut diag = self.diagnostics.write().await;
-            diag.recv_count += 1;
+            // Lock-free read count increment
+            self.diagnostics.inc_read();
         }
 
         PollResult::success(batch)
@@ -624,10 +634,8 @@ impl ProtocolClient for Iec104Channel {
             }
         }
 
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.send_count += success_count as u64;
-        }
+        // Lock-free write count increment
+        self.diagnostics.add_write(success_count as u64);
 
         Ok(WriteResult {
             success_count,
@@ -686,10 +694,8 @@ impl ProtocolClient for Iec104Channel {
             }
         }
 
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.send_count += success_count as u64;
-        }
+        // Lock-free write count increment
+        self.diagnostics.add_write(success_count as u64);
 
         Ok(WriteResult {
             success_count,

@@ -32,6 +32,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,11 +43,12 @@ use opcua::types::{
     AttributeId, DataValue, Identifier, MessageSecurityMode, MonitoredItemCreateRequest, NodeId,
     StatusCode, TimestampsToReturn, UAString, UserTokenPolicy, Variant, WriteValue,
 };
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 
 use async_trait::async_trait;
 
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
+use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::{PointConfig, ProtocolAddress};
 use crate::protocols::core::quality::Quality;
@@ -568,25 +570,6 @@ fn make_node_id_key(namespace_index: u16, identifier: &str) -> String {
     format!("ns={};{}", namespace_index, identifier)
 }
 
-/// Channel diagnostics information.
-#[derive(Debug, Default)]
-struct ChannelDiagnostics {
-    /// Received data count.
-    recv_count: u64,
-    /// Sent command count.
-    send_count: u64,
-    /// Error count.
-    error_count: u64,
-    /// Last error message.
-    last_error: Option<String>,
-    /// Current subscription ID.
-    subscription_id: Option<u32>,
-    /// Number of monitored items.
-    monitored_items_count: usize,
-    /// Last data received time.
-    last_data_received: Option<std::time::Instant>,
-}
-
 /// OPC UA channel adapter.
 ///
 /// This struct wraps an `async-opcua` client and implements
@@ -605,8 +588,14 @@ pub struct OpcUaChannel {
     session: Option<Arc<Session>>,
     /// Connection state.
     state: Arc<std::sync::RwLock<ConnectionState>>,
-    /// Diagnostics.
-    diagnostics: Arc<RwLock<ChannelDiagnostics>>,
+    /// Diagnostics (lock-free).
+    diagnostics: Arc<AtomicDiagnostics>,
+    /// OPC UA specific: Current subscription ID (0 = none).
+    diag_subscription_id: AtomicU32,
+    /// OPC UA specific: Number of monitored items.
+    diag_monitored_items_count: AtomicUsize,
+    /// OPC UA specific: Last data received timestamp (Unix millis, 0 = never).
+    diag_last_data_received_ms: Arc<AtomicU64>,
     /// Broadcast sender for event-driven subscribers (multiple subscribers supported).
     event_tx: DataEventSender,
     /// Event handler.
@@ -627,7 +616,10 @@ impl OpcUaChannel {
             config,
             session: None,
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Disconnected)),
-            diagnostics: Arc::new(RwLock::new(ChannelDiagnostics::default())),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
+            diag_subscription_id: AtomicU32::new(0),
+            diag_monitored_items_count: AtomicUsize::new(0),
+            diag_last_data_received_ms: Arc::new(AtomicU64::new(0)),
             event_tx,
             event_handler: None,
             subscription_id: None,
@@ -649,12 +641,10 @@ impl OpcUaChannel {
             .unwrap_or(ConnectionState::Error)
     }
 
-    /// Record an error.
+    /// Record an error (lock-free).
     #[allow(dead_code)]
-    async fn record_error(&self, error: &str) {
-        let mut diag = self.diagnostics.write().await;
-        diag.error_count += 1;
-        diag.last_error = Some(error.to_string());
+    fn record_error(&self, error: &str) {
+        self.diagnostics.record_error(error.to_string());
     }
 
     /// Find point config by ID.
@@ -672,6 +662,7 @@ impl OpcUaChannel {
         // Use Arc to avoid cloning the entire config on each callback invocation
         let event_tx = self.event_tx.clone();
         let diagnostics = self.diagnostics.clone();
+        let last_data_received_ms = self.diag_last_data_received_ms.clone();
         let config = Arc::new(self.config.clone()); // Clone once, wrap in Arc
         let event_handler = self.event_handler.clone();
 
@@ -687,6 +678,7 @@ impl OpcUaChannel {
                     // Clone Arc (cheap reference count increment) instead of full config
                     let event_tx = event_tx.clone();
                     let diagnostics = diagnostics.clone();
+                    let last_data_received_ms = last_data_received_ms.clone();
                     let config = Arc::clone(&config);
                     let event_handler = event_handler.clone();
 
@@ -701,6 +693,7 @@ impl OpcUaChannel {
                             &item_data,
                             &event_tx,
                             &diagnostics,
+                            &last_data_received_ms,
                             event_handler.as_ref(),
                         )
                         .await;
@@ -712,11 +705,9 @@ impl OpcUaChannel {
 
         self.subscription_id = Some(subscription_id);
 
-        // Update diagnostics
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.subscription_id = Some(subscription_id);
-        }
+        // Update diagnostics (lock-free)
+        self.diag_subscription_id
+            .store(subscription_id, Ordering::Relaxed);
 
         Ok(subscription_id)
     }
@@ -753,11 +744,9 @@ impl OpcUaChannel {
                 GatewayError::Protocol(format!("Failed to create monitored items: {}", e))
             })?;
 
-        // Update diagnostics
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.monitored_items_count = count;
-        }
+        // Update diagnostics (lock-free)
+        self.diag_monitored_items_count
+            .store(count, Ordering::Relaxed);
 
         Ok(count)
     }
@@ -795,23 +784,42 @@ impl Protocol for OpcUaChannel {
     #[allow(clippy::disallowed_methods)] // json! macro
     async fn diagnostics(&self) -> Result<Diagnostics> {
         let state = self.get_state();
-        let diag = self.diagnostics.read().await;
+
+        // Calculate last data received time (lock-free)
+        let last_data_received_secs = {
+            let ms = self.diag_last_data_received_ms.load(Ordering::Relaxed);
+            if ms == 0 {
+                None
+            } else {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                Some((now_ms.saturating_sub(ms)) / 1000)
+            }
+        };
+
+        // Get subscription ID (0 = none)
+        let subscription_id = match self.diag_subscription_id.load(Ordering::Relaxed) {
+            0 => None,
+            id => Some(id),
+        };
 
         Ok(Diagnostics {
             protocol: ProtocolCapabilities::name(self).to_string(),
             connection_state: state,
-            read_count: diag.recv_count,
-            write_count: diag.send_count,
-            error_count: diag.error_count,
-            last_error: diag.last_error.clone(),
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
             extra: serde_json::json!({
                 "endpoint_url": self.config.endpoint_url,
                 "application_name": self.config.application_name,
                 "security_policy": format!("{:?}", self.config.security_policy),
-                "subscription_id": diag.subscription_id,
-                "monitored_items_count": diag.monitored_items_count,
+                "subscription_id": subscription_id,
+                "monitored_items_count": self.diag_monitored_items_count.load(Ordering::Relaxed),
                 "points_configured": self.config.points.len(),
-                "last_data_received_secs_ago": diag.last_data_received.map(|t| t.elapsed().as_secs()),
+                "last_data_received_secs_ago": last_data_received_secs,
             }),
         })
     }
@@ -962,11 +970,8 @@ impl ProtocolClient for OpcUaChannel {
             }
         }
 
-        // Update diagnostics
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.send_count += success_count as u64;
-        }
+        // Update diagnostics (lock-free)
+        self.diagnostics.add_write(success_count as u64);
 
         Ok(WriteResult {
             success_count,
@@ -1030,11 +1035,8 @@ impl ProtocolClient for OpcUaChannel {
             }
         }
 
-        // Update diagnostics
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.send_count += success_count as u64;
-        }
+        // Update diagnostics (lock-free)
+        self.diagnostics.add_write(success_count as u64);
 
         Ok(WriteResult {
             success_count,
@@ -1088,12 +1090,9 @@ impl EventDrivenProtocol for OpcUaChannel {
                 .map_err(|e| GatewayError::Protocol(e.to_string()))?;
         }
 
-        // Clear diagnostics
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.subscription_id = None;
-            diag.monitored_items_count = 0;
-        }
+        // Clear diagnostics (lock-free)
+        self.diag_subscription_id.store(0, Ordering::Relaxed);
+        self.diag_monitored_items_count.store(0, Ordering::Relaxed);
 
         Ok(())
     }
@@ -1128,7 +1127,8 @@ async fn handle_data_change(
     config: &OpcUaChannelConfig,
     items: &[(NodeId, DataValue)],
     event_tx: &DataEventSender,
-    diagnostics: &Arc<RwLock<ChannelDiagnostics>>,
+    diagnostics: &Arc<AtomicDiagnostics>,
+    last_data_received_ms: &Arc<AtomicU64>,
     event_handler: Option<&Arc<dyn DataEventHandler>>,
 ) {
     let mut batch = DataBatch::new();
@@ -1153,18 +1153,22 @@ async fn handle_data_change(
     }
 
     // Send event (service layer handles storage)
-    // Arc wrap for O(1) broadcast clone, original batch goes to handler
-    let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch.clone())));
+    // Arc wrap for zero-copy sharing between event_tx and handler
+    let batch_arc = Arc::new(batch);
+    let _ = event_tx.send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
 
     // Call event handler
     if let Some(handler) = event_handler {
-        handler.on_data_update(batch).await;
+        handler.on_data_update(batch_arc).await;
     }
 
-    // Update diagnostics
-    let mut diag = diagnostics.write().await;
-    diag.recv_count += 1;
-    diag.last_data_received = Some(std::time::Instant::now());
+    // Update diagnostics (lock-free)
+    diagnostics.inc_read();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    last_data_received_ms.store(now_ms, Ordering::Relaxed);
 }
 
 /// Convert DataValue to DataPoint with explicit ID.

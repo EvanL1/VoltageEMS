@@ -2,9 +2,10 @@
 //!
 //! Implements the igw Protocol traits for LYNK CAN communication.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
+use arc_swap::ArcSwapOption;
 use socketcan::{CanSocket, EmbeddedFrame, Frame, Socket};
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
@@ -42,14 +43,14 @@ pub struct CanClient {
     name: String,
     config: CanConfig,
 
-    // Connection state
-    connection_state: Arc<RwLock<ConnectionState>>,
+    // Connection state (lock-free)
+    connection_state: AtomicU8,
     is_connected: Arc<AtomicBool>,
 
-    // Statistics
+    // Statistics (lock-free)
     read_count: Arc<AtomicU64>,
     error_count: Arc<AtomicU64>,
-    last_error: Arc<RwLock<Option<String>>>,
+    last_error: Arc<ArcSwapOption<String>>,
 
     // Tasks
     receive_handle: Option<JoinHandle<()>>,
@@ -80,11 +81,11 @@ impl CanClient {
             channel_id,
             name,
             config,
-            connection_state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            connection_state: AtomicU8::new(ConnectionState::Disconnected.into()),
             is_connected: Arc::new(AtomicBool::new(false)),
             read_count: Arc::new(AtomicU64::new(0)),
             error_count: Arc::new(AtomicU64::new(0)),
-            last_error: Arc::new(RwLock::new(None)),
+            last_error: Arc::new(ArcSwapOption::empty()),
             receive_handle: None,
             read_handle: None,
             event_tx,
@@ -146,7 +147,7 @@ impl CanClient {
                     #[cfg(feature = "tracing-support")]
                     tracing::error!("Failed to open CAN socket on {}: {}", can_interface, e);
 
-                    *last_error.write().await = Some(format!("Failed to open CAN socket: {}", e));
+                    last_error.store(Some(Arc::new(format!("Failed to open CAN socket: {}", e))));
                     error_count.fetch_add(1, Ordering::Relaxed);
                     return;
                 },
@@ -157,7 +158,10 @@ impl CanClient {
                 #[cfg(feature = "tracing-support")]
                 tracing::error!("Failed to set non-blocking mode: {}", e);
 
-                *last_error.write().await = Some(format!("Failed to set non-blocking mode: {}", e));
+                last_error.store(Some(Arc::new(format!(
+                    "Failed to set non-blocking mode: {}",
+                    e
+                ))));
                 error_count.fetch_add(1, Ordering::Relaxed);
                 return;
             }
@@ -252,7 +256,7 @@ impl CanClient {
                         #[cfg(feature = "tracing-support")]
                         tracing::error!("CAN read error: {:?}", e);
 
-                        *last_error.write().await = Some(format!("CAN read error: {}", e));
+                        last_error.store(Some(Arc::new(format!("CAN read error: {}", e))));
                         error_count.fetch_add(1, Ordering::Relaxed);
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     },
@@ -345,16 +349,17 @@ impl CanClient {
                             );
 
                             // Send event (broadcast is sync, not async)
-                            // Arc wrap for O(1) broadcast clone
+                            // Arc wrap for zero-copy sharing between event_tx and handler
                             #[cfg(feature = "tracing-support")]
                             tracing::debug!("Sending DataUpdate event via event_tx");
-                            let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch.clone())));
+                            let batch_arc = Arc::new(batch);
+                            let _ = event_tx.send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
 
                             // Call handler
                             if let Some(ref handler) = event_handler {
                                 #[cfg(feature = "tracing-support")]
                                 tracing::debug!("Calling on_data_update handler");
-                                handler.on_data_update(batch).await;
+                                handler.on_data_update(batch_arc).await;
                             } else {
                                 #[cfg(feature = "tracing-support")]
                                 tracing::warn!("No event_handler available");
@@ -364,8 +369,8 @@ impl CanClient {
                     Err(e) => {
                         #[cfg(feature = "tracing-support")]
                         tracing::error!("Failed to apply mappings: {}", e);
-                        *last_error.write().await =
-                            Some(format!("Failed to apply mappings: {}", e));
+                        last_error
+                            .store(Some(Arc::new(format!("Failed to apply mappings: {}", e))));
                         error_count.fetch_add(1, Ordering::Relaxed);
                     },
                 }
@@ -408,17 +413,17 @@ impl ProtocolCapabilities for CanClient {
 
 impl Protocol for CanClient {
     fn connection_state(&self) -> ConnectionState {
-        *futures::executor::block_on(self.connection_state.read())
+        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
         Ok(Diagnostics {
             protocol: "CAN".to_string(),
-            connection_state: *self.connection_state.read().await,
+            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
             read_count: self.read_count.load(Ordering::Relaxed),
             write_count: 0,
             error_count: self.error_count.load(Ordering::Relaxed),
-            last_error: self.last_error.read().await.clone(),
+            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
             extra: serde_json::json!({
                 "can_interface": self.config.can_interface,
                 "bitrate": self.config.bitrate,
@@ -429,7 +434,8 @@ impl Protocol for CanClient {
 
 impl ProtocolClient for CanClient {
     async fn connect(&mut self) -> Result<()> {
-        *self.connection_state.write().await = ConnectionState::Connecting;
+        self.connection_state
+            .store(ConnectionState::Connecting.into(), Ordering::Release);
 
         // Verify CAN interface exists
         let _socket = CanSocket::open(&self.config.can_interface).map_err(|e| {
@@ -446,7 +452,8 @@ impl ProtocolClient for CanClient {
         );
 
         self.is_connected.store(true, Ordering::SeqCst);
-        *self.connection_state.write().await = ConnectionState::Connected;
+        self.connection_state
+            .store(ConnectionState::Connected.into(), Ordering::Release);
 
         // Start receive and read tasks
         self.start_receive_task()?;
@@ -468,7 +475,8 @@ impl ProtocolClient for CanClient {
             handle.abort();
         }
 
-        *self.connection_state.write().await = ConnectionState::Disconnected;
+        self.connection_state
+            .store(ConnectionState::Disconnected.into(), Ordering::Release);
 
         #[cfg(feature = "tracing-support")]
         tracing::info!("CAN client disconnected");

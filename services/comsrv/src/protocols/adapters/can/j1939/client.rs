@@ -2,13 +2,14 @@
 //!
 //! Implements the igw Protocol traits for J1939/CAN communication.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
-use socketcan::{CanSocket, EmbeddedFrame, Frame, Socket};
-use tokio::sync::{broadcast, RwLock};
+use arc_swap::ArcSwapOption;
+use socketcan::{CanSocket, EmbeddedFrame, Id, Socket};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
-use voltage_j1939::{build_spn_database, database_stats, decode_frame, extract_source_address};
+use voltage_j1939::{database_stats, decode_frame, extract_source_address, list_supported_pgns};
 
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::error::{GatewayError, Result};
@@ -62,14 +63,14 @@ impl Default for J1939Config {
 pub struct J1939Client {
     config: J1939Config,
 
-    // Connection state
-    connection_state: Arc<RwLock<ConnectionState>>,
+    // Connection state (lock-free)
+    connection_state: AtomicU8,
     is_connected: Arc<AtomicBool>,
 
-    // Statistics
+    // Statistics (lock-free)
     read_count: Arc<AtomicU64>,
     error_count: Arc<AtomicU64>,
-    last_error: Arc<RwLock<Option<String>>>,
+    last_error: Arc<ArcSwapOption<String>>,
 
     // Tasks
     receive_handle: Option<JoinHandle<()>>,
@@ -88,18 +89,18 @@ impl J1939Client {
         // Use broadcast channel for multiple subscribers
         let (event_tx, _) = broadcast::channel(1024);
 
-        // Build SlotStore from J1939 SPN database - all known SPNs pre-indexed
-        let spn_db = build_spn_database();
-        let spn_ids: Vec<u32> = spn_db.keys().copied().collect();
-        let slot_store = Arc::new(SlotStore::from_points(&spn_ids));
+        // Build SlotStore from J1939 SPN database - all known PGNs pre-indexed
+        // Note: SPNs are dynamically decoded from frames, we pre-allocate for common PGNs
+        let pgn_list = list_supported_pgns();
+        let slot_store = Arc::new(SlotStore::from_points(&pgn_list));
 
         Self {
             config,
-            connection_state: Arc::new(RwLock::new(ConnectionState::Disconnected)),
+            connection_state: AtomicU8::new(ConnectionState::Disconnected.into()),
             is_connected: Arc::new(AtomicBool::new(false)),
             read_count: Arc::new(AtomicU64::new(0)),
             error_count: Arc::new(AtomicU64::new(0)),
-            last_error: Arc::new(RwLock::new(None)),
+            last_error: Arc::new(ArcSwapOption::empty()),
             receive_handle: None,
             event_tx,
             event_handler: None,
@@ -123,7 +124,7 @@ impl J1939Client {
             let socket = match CanSocket::open(&can_interface) {
                 Ok(s) => s,
                 Err(e) => {
-                    *last_error.write().await = Some(format!("Failed to open CAN socket: {}", e));
+                    last_error.store(Some(Arc::new(format!("Failed to open CAN socket: {}", e))));
                     error_count.fetch_add(1, Ordering::Relaxed);
                     return;
                 },
@@ -136,52 +137,54 @@ impl J1939Client {
 
                 match socket.read_frame() {
                     Ok(frame) => {
-                        if let Some(id) = frame.id().as_extended() {
-                            let can_id = id.as_raw();
-                            let sa = extract_source_address(can_id);
+                        // J1939 uses extended CAN IDs (29-bit)
+                        let can_id = match frame.id() {
+                            Id::Extended(ext_id) => ext_id.as_raw(),
+                            Id::Standard(_) => continue, // Skip standard frames
+                        };
+                        let sa = extract_source_address(can_id);
 
-                            // Filter by source address
-                            if sa != source_address {
-                                continue;
-                            }
+                        // Filter by source address
+                        if sa != source_address {
+                            continue;
+                        }
 
-                            // Use voltage_j1939 to decode the frame
-                            let decoded_spns = decode_frame(can_id, frame.data());
-                            if decoded_spns.is_empty() {
-                                continue;
-                            }
+                        // Use voltage_j1939 to decode the frame
+                        let decoded_spns = decode_frame(can_id, frame.data());
+                        if decoded_spns.is_empty() {
+                            continue;
+                        }
 
-                            // Pre-allocate batch and update slot store (lock-free)
-                            let mut batch = DataBatch::with_capacity(decoded_spns.len());
+                        // Pre-allocate batch and update slot store (lock-free)
+                        let mut batch = DataBatch::with_capacity(decoded_spns.len());
 
-                            for d in decoded_spns {
-                                let value = Value::Float(d.value);
+                        for d in decoded_spns {
+                            let value = Value::Float(d.value);
 
-                                // Update slot store (lock-free atomic operation)
-                                slot_store.update(d.spn, value.clone(), Quality::Good);
+                            // Update slot store (lock-free atomic operation)
+                            slot_store.update(d.spn, value.clone(), Quality::Good);
 
-                                // Add to batch for event dispatch
-                                let data_point = DataPoint::new(d.spn, value);
-                                batch.add(data_point);
-                            }
+                            // Add to batch for event dispatch
+                            let data_point = DataPoint::new(d.spn, value);
+                            batch.add(data_point);
+                        }
 
-                            if !batch.is_empty() {
-                                read_count.fetch_add(1, Ordering::Relaxed);
+                        if !batch.is_empty() {
+                            read_count.fetch_add(1, Ordering::Relaxed);
 
-                                // Send event (broadcast is sync)
-                                // Arc wrap for O(1) broadcast clone
-                                let _ =
-                                    event_tx.send(DataEvent::DataUpdate(Arc::new(batch.clone())));
+                            // Send event (broadcast is sync)
+                            // Arc wrap for zero-copy sharing between event_tx and handler
+                            let batch_arc = Arc::new(batch);
+                            let _ = event_tx.send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
 
-                                // Call handler
-                                if let Some(ref handler) = event_handler {
-                                    handler.on_data_update(batch).await;
-                                }
+                            // Call handler
+                            if let Some(ref handler) = event_handler {
+                                handler.on_data_update(batch_arc).await;
                             }
                         }
                     },
                     Err(e) => {
-                        *last_error.write().await = Some(format!("CAN read error: {}", e));
+                        last_error.store(Some(Arc::new(format!("CAN read error: {}", e))));
                         error_count.fetch_add(1, Ordering::Relaxed);
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     },
@@ -222,7 +225,7 @@ impl ProtocolCapabilities for J1939Client {
 
 impl Protocol for J1939Client {
     fn connection_state(&self) -> ConnectionState {
-        *futures::executor::block_on(self.connection_state.read())
+        ConnectionState::from(self.connection_state.load(Ordering::Acquire))
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
@@ -230,11 +233,11 @@ impl Protocol for J1939Client {
 
         Ok(Diagnostics {
             protocol: "J1939".to_string(),
-            connection_state: *self.connection_state.read().await,
+            connection_state: ConnectionState::from(self.connection_state.load(Ordering::Acquire)),
             read_count: self.read_count.load(Ordering::Relaxed),
             write_count: 0,
             error_count: self.error_count.load(Ordering::Relaxed),
-            last_error: self.last_error.read().await.clone(),
+            last_error: self.last_error.load().as_ref().map(|s| (**s).clone()),
             extra: serde_json::json!({
                 "can_interface": self.config.can_interface,
                 "source_address": format!("0x{:02X}", self.config.source_address),
@@ -247,7 +250,8 @@ impl Protocol for J1939Client {
 
 impl ProtocolClient for J1939Client {
     async fn connect(&mut self) -> Result<()> {
-        *self.connection_state.write().await = ConnectionState::Connecting;
+        self.connection_state
+            .store(ConnectionState::Connecting.into(), Ordering::Release);
 
         // Verify CAN interface exists
         let _socket = CanSocket::open(&self.config.can_interface).map_err(|e| {
@@ -258,7 +262,8 @@ impl ProtocolClient for J1939Client {
         })?;
 
         self.is_connected.store(true, Ordering::SeqCst);
-        *self.connection_state.write().await = ConnectionState::Connected;
+        self.connection_state
+            .store(ConnectionState::Connected.into(), Ordering::Release);
 
         // Start receive task
         self.start_receive_task()?;
@@ -283,7 +288,8 @@ impl ProtocolClient for J1939Client {
             handle.abort();
         }
 
-        *self.connection_state.write().await = ConnectionState::Disconnected;
+        self.connection_state
+            .store(ConnectionState::Disconnected.into(), Ordering::Release);
 
         // Notify connection change (broadcast is sync)
         let _ = self

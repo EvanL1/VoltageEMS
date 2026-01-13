@@ -59,13 +59,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use tokio::sync::RwLock;
 
 use tokio_gpiod::{Chip, Options};
 
 use serde::Deserialize;
 
 use crate::protocols::core::data::{DataBatch, DataPoint};
+use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
@@ -932,15 +932,6 @@ impl GpioChannelConfig {
     }
 }
 
-/// GPIO channel diagnostics.
-#[derive(Debug, Default)]
-struct GpioDiagnostics {
-    read_count: u64,
-    write_count: u64,
-    error_count: u64,
-    last_error: Option<String>,
-}
-
 /// GPIO channel adapter.
 ///
 /// Provides digital input/output control via pluggable GPIO drivers.
@@ -956,7 +947,7 @@ pub struct GpioChannel {
     /// Pluggable GPIO driver (trait object for extensibility)
     driver: Box<dyn GpioDriver>,
     state: Arc<std::sync::RwLock<ConnectionState>>,
-    diagnostics: Arc<RwLock<GpioDiagnostics>>,
+    diagnostics: Arc<AtomicDiagnostics>,
     poll_task: Option<tokio::task::JoinHandle<()>>,
     /// Output states cache (for read-back) - lock-free atomic storage
     output_states: AtomicBoolStore,
@@ -985,7 +976,7 @@ impl GpioChannel {
             driver,
             // GPIO is always "connected" - it's local hardware, no external connection needed
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
-            diagnostics: Arc::new(RwLock::new(GpioDiagnostics::default())),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
             poll_task: None,
             output_states: AtomicBoolStore::from_pins(&output_pin_ids),
             log_ctx: LogContext::new(channel_id),
@@ -1012,7 +1003,7 @@ impl GpioChannel {
             driver,
             // GPIO is always "connected" - it's local hardware, no external connection needed
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
-            diagnostics: Arc::new(RwLock::new(GpioDiagnostics::default())),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
             poll_task: None,
             output_states: AtomicBoolStore::from_pins(&output_pin_ids),
             log_ctx: LogContext::new(channel_id),
@@ -1110,9 +1101,7 @@ impl GpioChannel {
                 Ok(point) => batch.add(point),
                 Err(e) => {
                     failures.push(PointFailure::with_error(pin.point_id, e.to_string()));
-                    let mut diag = self.diagnostics.write().await;
-                    diag.error_count += 1;
-                    diag.last_error = Some(e.to_string());
+                    self.diagnostics.record_error(e.to_string());
                 },
             }
         }
@@ -1124,10 +1113,8 @@ impl GpioChannel {
             }
         }
 
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.read_count += 1;
-        }
+        // Update read count (lock-free)
+        self.diagnostics.inc_read();
 
         (batch, failures)
     }
@@ -1140,17 +1127,16 @@ impl Protocol for GpioChannel {
 
     #[allow(clippy::disallowed_methods)] // json! macro
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        let diag = self.diagnostics.read().await;
         let input_count = self.config.input_pins().count();
         let output_count = self.config.output_pins().count();
 
         Ok(Diagnostics {
-            protocol: self.name().to_string(),
+            protocol: ProtocolCapabilities::name(self).to_string(),
             connection_state: self.get_state(),
-            read_count: diag.read_count,
-            write_count: diag.write_count,
-            error_count: diag.error_count,
-            last_error: diag.last_error.clone(),
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
             extra: serde_json::json!({
                 "input_pins": input_count,
                 "output_pins": output_count,
@@ -1265,10 +1251,8 @@ impl ProtocolClient for GpioChannel {
             }
         }
 
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.write_count += success_count as u64;
-        }
+        // Update write count (lock-free)
+        self.diagnostics.add_write(success_count as u64);
 
         let result = WriteResult {
             success_count,
@@ -1377,17 +1361,17 @@ mod tests {
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1))
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
-        let mut gpio = GpioChannel::new(config);
+        let mut gpio = GpioChannel::new(config, 1, "test_gpio".to_string());
 
         // GPIO is always connected on creation (local hardware, no external connection)
         assert_eq!(gpio.connection_state(), ConnectionState::Connected);
 
         // connect() is idempotent for GPIO
-        gpio.connect().await.unwrap();
+        ProtocolClient::connect(&mut gpio).await.unwrap();
         assert_eq!(gpio.connection_state(), ConnectionState::Connected);
 
         // disconnect() still works for explicit shutdown
-        gpio.disconnect().await.unwrap();
+        ProtocolClient::disconnect(&mut gpio).await.unwrap();
         assert_eq!(gpio.connection_state(), ConnectionState::Disconnected);
     }
 
@@ -1396,13 +1380,13 @@ mod tests {
         let config =
             GpioChannelConfig::new().add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
-        let mut gpio = GpioChannel::new(config);
-        gpio.connect().await.unwrap();
+        let mut gpio = GpioChannel::new(config, 1, "test_gpio".to_string());
+        ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        let result = gpio
-            .write_control(&[ControlCommand::latching(101, true)])
-            .await
-            .unwrap();
+        let result =
+            ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, true)])
+                .await
+                .unwrap();
 
         assert_eq!(result.success_count, 1);
         assert!(result.failures.is_empty());
@@ -1418,8 +1402,8 @@ mod tests {
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1))
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
-        let gpio = GpioChannel::new(config);
-        let diag = gpio.diagnostics().await.unwrap();
+        let gpio = GpioChannel::new(config, 1, "test_gpio".to_string());
+        let diag = Protocol::diagnostics(&gpio).await.unwrap();
 
         assert_eq!(diag.protocol, "GPIO");
         assert_eq!(diag.extra["input_pins"], 1);

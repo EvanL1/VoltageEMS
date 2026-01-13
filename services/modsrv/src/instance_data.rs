@@ -238,13 +238,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 let mut result = serde_json::Map::new();
                 for (signal_name, data_type, scale, offset, unit) in measurements {
                     let point = serde_json::json!({
-                        "signal_name": signal_name,
+                        "signal_name": &signal_name,
                         "data_type": data_type,
                         "scale": scale,
                         "offset": offset,
                         "unit": unit
                     });
-                    result.insert(signal_name.clone(), point);
+                    result.insert(signal_name, point);
                 }
 
                 Ok(serde_json::Value::Object(result))
@@ -262,13 +262,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 let mut result = serde_json::Map::new();
                 for (signal_name, data_type, scale, offset, unit) in actions {
                     let point = serde_json::json!({
-                        "signal_name": signal_name,
+                        "signal_name": &signal_name,
                         "data_type": data_type,
                         "scale": scale,
                         "offset": offset,
                         "unit": unit
                     });
-                    result.insert(signal_name.clone(), point);
+                    result.insert(signal_name, point);
                 }
 
                 Ok(serde_json::Value::Object(result))
@@ -307,25 +307,25 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 let mut m_map = serde_json::Map::new();
                 for (signal_name, data_type, scale, offset, unit) in measurements {
                     let point = serde_json::json!({
-                        "signal_name": signal_name,
+                        "signal_name": &signal_name,
                         "data_type": data_type,
                         "scale": scale,
                         "offset": offset,
                         "unit": unit
                     });
-                    m_map.insert(signal_name.clone(), point);
+                    m_map.insert(signal_name, point);
                 }
 
                 let mut a_map = serde_json::Map::new();
                 for (signal_name, data_type, scale, offset, unit) in actions {
                     let point = serde_json::json!({
-                        "signal_name": signal_name,
+                        "signal_name": &signal_name,
                         "data_type": data_type,
                         "scale": scale,
                         "offset": offset,
                         "unit": unit
                     });
-                    a_map.insert(signal_name.clone(), point);
+                    a_map.insert(signal_name, point);
                 }
 
                 let properties: serde_json::Value = serde_json::from_str(&properties_json)

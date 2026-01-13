@@ -28,9 +28,10 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 
 use crate::protocols::core::data::{DataBatch, DataPoint};
+use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::Result;
 use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
@@ -131,14 +132,6 @@ impl VirtualChannelParamsConfig {
     }
 }
 
-/// Virtual channel diagnostics.
-#[derive(Debug, Default)]
-struct VirtualDiagnostics {
-    write_count: u64,
-    read_count: u64,
-    points_stored: usize,
-}
-
 /// Virtual channel implementation.
 ///
 /// This channel type:
@@ -152,7 +145,7 @@ pub struct VirtualChannel {
     config: VirtualChannelConfig,
     /// Internal data buffer: point_id -> DataPoint
     data_buffer: DashMap<u32, DataPoint>,
-    diagnostics: Arc<RwLock<VirtualDiagnostics>>,
+    diagnostics: Arc<AtomicDiagnostics>,
     /// Broadcast sender for event-driven subscribers.
     event_tx: DataEventSender,
     event_handler: Option<Arc<dyn DataEventHandler>>,
@@ -168,7 +161,7 @@ impl VirtualChannel {
             channel_id,
             config,
             data_buffer: DashMap::new(),
-            diagnostics: Arc::new(RwLock::new(VirtualDiagnostics::default())),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
             event_tx,
             event_handler: None,
         }
@@ -194,21 +187,19 @@ impl VirtualChannel {
             self.data_buffer.insert(point.id, point.clone());
         }
 
-        // Emit event to all subscribers - use Arc to avoid clone overhead on broadcast
+        // Emit event to all subscribers - Arc for zero-copy sharing
+        // Note: batch is &DataBatch, so we clone once then share via Arc
+        let batch_arc = Arc::new(batch.clone());
         let _ = self
             .event_tx
-            .send(DataEvent::DataUpdate(Arc::new(batch.clone())));
+            .send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
 
-        // Update diagnostics
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.write_count += 1;
-            diag.points_stored = self.data_buffer.len();
-        }
+        // Update diagnostics (lock-free)
+        self.diagnostics.inc_write();
 
         // Call event handler if set
         if let Some(handler) = &self.event_handler {
-            handler.on_data_update(batch.clone()).await;
+            handler.on_data_update(batch_arc).await;
         }
 
         Ok(())
@@ -288,18 +279,16 @@ impl Protocol for VirtualChannel {
 
     #[allow(clippy::disallowed_methods)] // json! macro
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        let diag = self.diagnostics.read().await;
-
         Ok(Diagnostics {
             protocol: "Virtual".to_string(),
             connection_state: ConnectionState::Connected,
-            read_count: diag.read_count,
-            write_count: diag.write_count,
-            error_count: 0,
-            last_error: None,
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
             extra: serde_json::json!({
                 "name": self.config.name,
-                "points_stored": diag.points_stored,
+                "points_stored": self.data_buffer.len(),
             }),
         })
     }
@@ -323,10 +312,7 @@ impl ProtocolClient for VirtualChannel {
     /// data that was pushed via `write()`.
     async fn poll_once(&mut self) -> PollResult {
         let batch = self.get_all_points();
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.read_count += 1;
-        }
+        self.diagnostics.inc_read();
         PollResult::success(batch)
     }
 

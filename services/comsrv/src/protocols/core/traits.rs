@@ -48,24 +48,46 @@ pub enum CommunicationMode {
 }
 
 /// Connection state of a protocol client.
+///
+/// Uses `#[repr(u8)]` to enable lock-free atomic storage via `AtomicU8`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[repr(u8)]
 pub enum ConnectionState {
     /// Not connected to the target.
     #[default]
-    Disconnected,
+    Disconnected = 0,
 
     /// Attempting to connect.
-    Connecting,
+    Connecting = 1,
 
     /// Connected and operational.
-    Connected,
+    Connected = 2,
 
     /// Attempting to reconnect after failure.
-    Reconnecting,
+    Reconnecting = 3,
 
     /// Connection error state.
-    Error,
+    Error = 4,
+}
+
+impl From<u8> for ConnectionState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Disconnected,
+            1 => Self::Connecting,
+            2 => Self::Connected,
+            3 => Self::Reconnecting,
+            4 => Self::Error,
+            _ => Self::Error, // Fallback for invalid values
+        }
+    }
+}
+
+impl From<ConnectionState> for u8 {
+    fn from(state: ConnectionState) -> Self {
+        state as u8
+    }
 }
 
 impl ConnectionState {
@@ -546,10 +568,11 @@ pub type DataEventSender = broadcast::Sender<DataEvent>;
 /// Event handler trait.
 ///
 /// This trait uses `async_trait` because it needs to be object-safe for `dyn DataEventHandler`.
+/// Uses `Arc<DataBatch>` to enable zero-copy sharing between event_tx and handler.
 #[async_trait]
 pub trait DataEventHandler: Send + Sync {
-    /// Handle data update event.
-    async fn on_data_update(&self, batch: DataBatch);
+    /// Handle data update event (Arc for zero-copy sharing).
+    async fn on_data_update(&self, batch: Arc<DataBatch>);
 
     /// Handle connection state change.
     async fn on_connection_changed(&self, state: ConnectionState);

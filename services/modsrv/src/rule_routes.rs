@@ -676,9 +676,9 @@ pub async fn get_rule_variables<R: Rtdb + Send + Sync + 'static>(
         }
     }
 
-    // Deduplicate by variable name
-    let mut seen = std::collections::HashSet::new();
-    variables.retain(|v| seen.insert(v.name.clone()));
+    // Deduplicate by variable name (sort + dedup to avoid clone)
+    variables.sort_by(|a, b| a.name.cmp(&b.name));
+    variables.dedup_by(|a, b| a.name == b.name);
 
     debug!(
         "Rule {} has {} unique variables: {:?}",

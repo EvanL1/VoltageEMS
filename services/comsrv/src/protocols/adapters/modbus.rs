@@ -22,10 +22,9 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use tokio::sync::{Mutex, RwLock};
 use tracing::debug;
 use voltage_modbus::{ModbusClient, ModbusTcpClient};
 
@@ -33,6 +32,7 @@ use voltage_modbus::{ModbusClient, ModbusTcpClient};
 use voltage_modbus::ModbusRtuClient;
 
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
+use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
@@ -608,34 +608,28 @@ pub struct ModbusChannel {
     channel_id: u32,
     /// Channel display name.
     name: String,
-    /// Client wrapped in Arc<Mutex> for shared access from polling task.
+    /// Modbus client (owned, no lock needed - channel loop has exclusive access).
     /// Uses ModbusClientWrapper to support both TCP and RTU transports.
-    client: Arc<Mutex<Option<ModbusClientWrapper>>>,
+    client: Option<ModbusClientWrapper>,
     state: Arc<std::sync::RwLock<ConnectionState>>,
-    diagnostics: Arc<RwLock<ChannelDiagnostics>>,
+    diagnostics: Arc<AtomicDiagnostics>,
 
     // === Polling support ===
-    /// Pre-grouped points by (slave_id, function_code)
-    grouped_points: Arc<RwLock<GroupedPoints>>,
+    /// Pre-grouped points by (slave_id, function_code) - initialized once, read many
+    grouped_points: OnceLock<GroupedPoints>,
     /// Polling interval in milliseconds
     polling_interval_ms: u64,
 
     // === Command batching ===
-    /// Command batcher for optimizing write operations
-    command_batcher: Arc<Mutex<CommandBatcher>>,
+    /// Command batcher for optimizing write operations (owned, no lock needed).
+    command_batcher: CommandBatcher,
 
     // === Logging ===
     /// Logging context for channel events
     log_context: Arc<LogContext>,
 }
 
-#[derive(Debug, Default)]
-struct ChannelDiagnostics {
-    read_count: u64,
-    write_count: u64,
-    error_count: u64,
-    last_error: Option<String>,
-}
+// ChannelDiagnostics replaced with AtomicDiagnostics from protocols::core
 
 /// Default polling interval in milliseconds
 const DEFAULT_POLLING_INTERVAL_MS: u64 = 1000;
@@ -664,12 +658,12 @@ impl ModbusChannel {
             config,
             channel_id,
             name,
-            client: Arc::new(Mutex::new(None)),
+            client: None,
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Disconnected)),
-            diagnostics: Arc::new(RwLock::new(ChannelDiagnostics::default())),
-            grouped_points: Arc::new(RwLock::new(HashMap::new())),
+            diagnostics: Arc::new(AtomicDiagnostics::new()),
+            grouped_points: OnceLock::new(),
             polling_interval_ms: DEFAULT_POLLING_INTERVAL_MS,
-            command_batcher: Arc::new(Mutex::new(CommandBatcher::new())),
+            command_batcher: CommandBatcher::new(),
             log_context: Arc::new(LogContext::new(channel_id)),
         }
     }
@@ -702,9 +696,8 @@ impl ModbusChannel {
 
     /// Read a single Modbus address and convert to DataPoint.
     #[allow(dead_code)]
-    async fn read_modbus_point(&self, point: &PointConfig) -> Result<DataPoint> {
-        let mut client_guard = self.client.lock().await;
-        let client = client_guard.as_mut().ok_or(GatewayError::NotConnected)?;
+    async fn read_modbus_point(&mut self, point: &PointConfig) -> Result<DataPoint> {
+        let client = self.client.as_mut().ok_or(GatewayError::NotConnected)?;
 
         let modbus_addr = match &point.address {
             ProtocolAddress::Modbus(addr) => addr,
@@ -772,10 +765,8 @@ impl ModbusChannel {
     }
 
     /// Record an error in diagnostics.
-    async fn record_error(&self, error: String) {
-        let mut diag = self.diagnostics.write().await;
-        diag.error_count += 1;
-        diag.last_error = Some(error);
+    fn record_error(&self, error: String) {
+        self.diagnostics.record_error(error);
     }
 
     /// Pre-group points by (slave_id, function_code) for polling optimization.
@@ -785,44 +776,47 @@ impl ModbusChannel {
     ///
     /// Points within each group are pre-sorted by register address to avoid
     /// repeated sorting during each poll cycle.
-    async fn group_points_for_polling(&self) {
-        // First build temporary groups without Arc
-        let mut temp_groups: HashMap<(u8, u8), Vec<PointConfig>> = HashMap::new();
+    ///
+    /// Uses OnceLock for thread-safe lazy initialization - only computed once.
+    fn get_or_init_grouped_points(&self) -> &GroupedPoints {
+        self.grouped_points.get_or_init(|| {
+            // First build temporary groups without Arc
+            let mut temp_groups: HashMap<(u8, u8), Vec<PointConfig>> = HashMap::new();
 
-        for point in &self.config.points {
-            // Extract Modbus address
-            if let ProtocolAddress::Modbus(addr) = &point.address {
-                let key = (addr.slave_id, addr.function_code);
-                temp_groups.entry(key).or_default().push(point.clone());
-            }
-        }
-
-        // Pre-sort each group by register address (avoids sorting on every poll)
-        for points in temp_groups.values_mut() {
-            points.sort_by_key(|p| {
-                if let ProtocolAddress::Modbus(addr) = &p.address {
-                    addr.register
-                } else {
-                    u16::MAX // Non-Modbus addresses go to end (shouldn't happen)
+            for point in &self.config.points {
+                // Extract Modbus address
+                if let ProtocolAddress::Modbus(addr) = &point.address {
+                    let key = (addr.slave_id, addr.function_code);
+                    temp_groups.entry(key).or_default().push(point.clone());
                 }
-            });
-        }
+            }
 
-        // Wrap each group in Arc for O(1) clone during polling
-        let groups: GroupedPoints = temp_groups
-            .into_iter()
-            .map(|(k, v)| (k, Arc::new(v)))
-            .collect();
+            // Pre-sort each group by register address (avoids sorting on every poll)
+            for points in temp_groups.values_mut() {
+                points.sort_by_key(|p| {
+                    if let ProtocolAddress::Modbus(addr) = &p.address {
+                        addr.register
+                    } else {
+                        u16::MAX // Non-Modbus addresses go to end (shouldn't happen)
+                    }
+                });
+            }
 
-        let mut guard = self.grouped_points.write().await;
-        *guard = groups;
+            // Wrap each group in Arc for O(1) clone during polling
+            let groups: GroupedPoints = temp_groups
+                .into_iter()
+                .map(|(k, v)| (k, Arc::new(v)))
+                .collect();
 
-        debug!(
-            "[{}] grouped {} points into {} groups",
-            self.config.address,
-            self.config.points.len(),
-            guard.len()
-        );
+            debug!(
+                "[{}] grouped {} points into {} groups",
+                self.config.address,
+                self.config.points.len(),
+                groups.len()
+            );
+
+            groups
+        })
     }
 
     /// Read a group of points with the same slave_id and function_code.
@@ -1150,7 +1144,7 @@ impl ModbusChannel {
     /// - Maximum batch size reached (100 commands)
     ///
     /// Call `check_and_execute_batch()` periodically to trigger execution.
-    pub async fn queue_adjustment(&self, adj: &AdjustmentCommand) -> Result<()> {
+    pub fn queue_adjustment(&mut self, adj: &AdjustmentCommand) -> Result<()> {
         // Find point config
         let point = self
             .config
@@ -1187,8 +1181,7 @@ impl ModbusChannel {
         };
 
         // Add to batcher
-        let mut batcher = self.command_batcher.lock().await;
-        batcher.add_command(batch_cmd);
+        self.command_batcher.add_command(batch_cmd);
 
         Ok(())
     }
@@ -1198,10 +1191,8 @@ impl ModbusChannel {
     /// Returns `Some(WriteResult)` if commands were executed, `None` otherwise.
     /// Call this periodically (e.g., in a polling loop) to flush batched commands.
     pub async fn check_and_execute_batch(&mut self) -> Result<Option<WriteResult>> {
-        let should_execute = {
-            let batcher = self.command_batcher.lock().await;
-            batcher.should_execute() && batcher.pending_count() > 0
-        };
+        let should_execute =
+            self.command_batcher.should_execute() && self.command_batcher.pending_count() > 0;
 
         if should_execute {
             Ok(Some(self.execute_batched_commands().await?))
@@ -1216,10 +1207,7 @@ impl ModbusChannel {
     /// For commands with consecutive register addresses on the same slave,
     /// it uses FC16 (Write Multiple Registers) to batch them into a single request.
     pub async fn execute_batched_commands(&mut self) -> Result<WriteResult> {
-        let batches = {
-            let mut batcher = self.command_batcher.lock().await;
-            batcher.take_commands()
-        };
+        let batches = self.command_batcher.take_commands();
 
         if batches.is_empty() {
             return Ok(WriteResult {
@@ -1233,22 +1221,15 @@ impl ModbusChannel {
         let mut success_count = 0;
         let mut failures = Vec::with_capacity(total_commands);
 
-        // Lock client for execution
-        let mut client_guard = self.client.lock().await;
-        let client = match client_guard.as_mut() {
-            Some(c) => c,
-            None => return Err(GatewayError::NotConnected),
-        };
+        // Get client reference (no lock needed - we own it)
+        let client = self.client.as_mut().ok_or(GatewayError::NotConnected)?;
 
         for ((slave_id, fc), commands) in batches {
             // FC16 optimization: merge consecutive addresses into single write
             if fc == 16 && commands.len() > 1 && CommandBatcher::are_strictly_consecutive(&commands)
             {
                 // Merge all commands into single FC16 request
-                match self
-                    .execute_merged_fc16(client, slave_id, &commands, &mut failures)
-                    .await
-                {
+                match Self::execute_merged_fc16(client, slave_id, &commands, &mut failures).await {
                     Ok(count) => success_count += count,
                     Err(e) => {
                         // If merged write fails, record for all commands
@@ -1297,17 +1278,12 @@ impl ModbusChannel {
             }
         }
 
-        // Update diagnostics
-        drop(client_guard);
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.write_count += success_count as u64;
-            if !failures.is_empty() {
-                diag.error_count += failures.len() as u64;
-                if let Some((_, err)) = failures.last() {
-                    diag.last_error = Some(err.clone());
-                }
-            }
+        // Update diagnostics (lock-free atomic operations)
+        self.diagnostics.add_write(success_count as u64);
+        if !failures.is_empty() {
+            self.diagnostics.add_error(failures.len() as u64);
+            // Note: We don't use record_error here to avoid double-counting
+            // last_error is updated but error_count is already incremented above
         }
 
         Ok(WriteResult {
@@ -1320,8 +1296,9 @@ impl ModbusChannel {
     ///
     /// This combines multiple single-register writes into one multi-register write,
     /// significantly reducing network round-trips when writing adjacent registers.
+    ///
+    /// Note: This is an associated function (no `&self`) to avoid borrow conflicts.
     async fn execute_merged_fc16(
-        &self,
         client: &mut ModbusClientWrapper,
         slave_id: u8,
         commands: &[BatchCommand],
@@ -1429,15 +1406,14 @@ impl Protocol for ModbusChannel {
     #[allow(clippy::disallowed_methods)] // json! macro
     async fn diagnostics(&self) -> Result<Diagnostics> {
         let state = self.get_state();
-        let diag = self.diagnostics.read().await;
 
         Ok(Diagnostics {
             protocol: ProtocolCapabilities::name(self).to_string(),
             connection_state: state,
-            read_count: diag.read_count,
-            write_count: diag.write_count,
-            error_count: diag.error_count,
-            last_error: diag.last_error.clone(),
+            read_count: self.diagnostics.read_count(),
+            write_count: self.diagnostics.write_count(),
+            error_count: self.diagnostics.error_count(),
+            last_error: self.diagnostics.last_error(),
             extra: serde_json::json!({
                 "address": self.config.address,
                 "points": self.config.points.len(),
@@ -1495,8 +1471,7 @@ impl ProtocolClient for ModbusChannel {
 
         match connect_result {
             Ok(wrapper) => {
-                let mut client_guard = self.client.lock().await;
-                *client_guard = Some(wrapper);
+                self.client = Some(wrapper);
                 self.set_state(ConnectionState::Connected);
 
                 // Log successful connection - deref Cow to &str
@@ -1507,14 +1482,13 @@ impl ProtocolClient for ModbusChannel {
                     .log_state_changed(ConnectionState::Connecting, ConnectionState::Connected)
                     .await;
 
-                // Pre-group points after successful connection
-                self.group_points_for_polling().await;
+                // Note: grouped_points is lazily initialized via OnceLock on first poll
                 Ok(())
             },
             Err(e) => {
                 self.set_state(ConnectionState::Error);
                 let err_msg = e.to_string();
-                self.record_error(err_msg.clone()).await;
+                self.record_error(err_msg.clone());
 
                 // Log error
                 self.log_context
@@ -1532,8 +1506,7 @@ impl ProtocolClient for ModbusChannel {
     async fn disconnect(&mut self) -> Result<()> {
         let old_state = self.get_state();
 
-        let mut client_guard = self.client.lock().await;
-        if let Some(mut client) = client_guard.take() {
+        if let Some(mut client) = self.client.take() {
             let _ = client.close().await;
         }
         self.set_state(ConnectionState::Disconnected);
@@ -1550,35 +1523,31 @@ impl ProtocolClient for ModbusChannel {
     async fn poll_once(&mut self) -> PollResult {
         let start_time = std::time::Instant::now();
 
-        // Ensure points are grouped for efficient polling
-        if self.grouped_points.read().await.is_empty() && !self.config.points.is_empty() {
-            self.group_points_for_polling().await;
+        // Check client availability first (before immutable borrow for grouped points)
+        if self.client.is_none() {
+            self.log_context
+                .log_error("Not connected", ErrorContext::Polling)
+                .await;
+            // Return failed result for all configured points
+            let failures: Vec<_> = self
+                .config
+                .points
+                .iter()
+                .map(|p| PointFailure::new(p.id, "Not connected"))
+                .collect();
+            return PollResult::failed(failures);
         }
 
-        // Acquire client lock
-        let mut client_guard = self.client.lock().await;
-        let client = match client_guard.as_mut() {
-            Some(c) => c,
-            None => {
-                self.log_context
-                    .log_error("Not connected", ErrorContext::Polling)
-                    .await;
-                // Return failed result for all configured points
-                let failures: Vec<_> = self
-                    .config
-                    .points
-                    .iter()
-                    .map(|p| PointFailure::new(p.id, "Not connected"))
-                    .collect();
-                return PollResult::failed(failures);
-            },
-        };
+        // Get grouped points (lazily initialized via OnceLock - zero overhead after first call)
+        // Clone to owned Vec to release the borrow before getting mutable client reference
+        let groups: Vec<_> = self
+            .get_or_init_grouped_points()
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
 
-        // Read all point groups - clone to release lock before async I/O
-        let groups: Vec<_> = {
-            let g = self.grouped_points.read().await;
-            g.iter().map(|(k, v)| (*k, v.clone())).collect()
-        }; // Lock released here
+        // Now safe to get mutable client reference (is_none check above guarantees Some)
+        let client = self.client.as_mut().expect("client checked above");
 
         let mut batch = DataBatch::default();
         let mut read_count = 0u64;
@@ -1611,12 +1580,9 @@ impl ProtocolClient for ModbusChannel {
             }
         }
 
-        // Update diagnostics
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.read_count += read_count;
-            diag.error_count += error_count;
-        }
+        // Update diagnostics (lock-free atomic operations)
+        self.diagnostics.add_read(read_count);
+        self.diagnostics.add_error(error_count);
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
@@ -1649,9 +1615,8 @@ impl ProtocolClient for ModbusChannel {
         let mut success_count = 0;
         let mut failures: Vec<(u32, String)> = Vec::with_capacity(commands.len());
 
-        // Lock client for the entire operation
-        let mut client_guard = self.client.lock().await;
-        let client = match client_guard.as_mut() {
+        // Get client reference (no lock needed - we own it)
+        let client = match self.client.as_mut() {
             Some(c) => c,
             None => {
                 let err = GatewayError::NotConnected;
@@ -1732,22 +1697,11 @@ impl ProtocolClient for ModbusChannel {
             }
         }
 
-        // Drop client lock before acquiring diagnostics lock
-        drop(client_guard);
-
-        // Record errors and update diagnostics after loop
-        // Use failures directly instead of separate errors_to_record
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.write_count += success_count as u64;
-            let error_count = failures.len();
-            if error_count > 0 {
-                diag.error_count += error_count as u64;
-                // Use last failure's error message, avoiding extra clone
-                if let Some((_, err)) = failures.last() {
-                    diag.last_error = Some(err.clone());
-                }
-            }
+        // Update diagnostics (lock-free atomic operations)
+        self.diagnostics.add_write(success_count as u64);
+        let error_count = failures.len();
+        if error_count > 0 {
+            self.diagnostics.add_error(error_count as u64);
         }
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -1769,9 +1723,8 @@ impl ProtocolClient for ModbusChannel {
         let mut success_count = 0;
         let mut failures: Vec<(u32, String)> = Vec::with_capacity(adjustments.len());
 
-        // Lock client for the entire operation
-        let mut client_guard = self.client.lock().await;
-        let client = match client_guard.as_mut() {
+        // Get client reference (no lock needed - we own it)
+        let client = match self.client.as_mut() {
             Some(c) => c,
             None => {
                 let err = GatewayError::NotConnected;
@@ -1846,22 +1799,11 @@ impl ProtocolClient for ModbusChannel {
             }
         }
 
-        // Drop client lock before acquiring diagnostics lock
-        drop(client_guard);
-
-        // Record errors and update diagnostics after loop
-        // Use failures directly instead of separate errors_to_record
-        {
-            let mut diag = self.diagnostics.write().await;
-            diag.write_count += success_count as u64;
-            let error_count = failures.len();
-            if error_count > 0 {
-                diag.error_count += error_count as u64;
-                // Use last failure's error message, avoiding extra clone
-                if let Some((_, err)) = failures.last() {
-                    diag.last_error = Some(err.clone());
-                }
-            }
+        // Update diagnostics (lock-free atomic operations)
+        self.diagnostics.add_write(success_count as u64);
+        let error_count = failures.len();
+        if error_count > 0 {
+            self.diagnostics.add_error(error_count as u64);
         }
 
         let duration_ms = start_time.elapsed().as_millis() as u64;

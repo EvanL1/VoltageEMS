@@ -5,6 +5,7 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use arc_swap::ArcSwapOption;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -45,12 +46,32 @@ use voltage_rtdb::{ChannelToSlotIndex, Rtdb, SharedVecRtdbWriter};
 // ============================================================================
 
 /// Channel metadata
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ChannelMetadata {
     pub name: Arc<str>,
     pub protocol_type: String,
     pub created_at: Instant,
-    pub last_accessed: Arc<RwLock<Instant>>,
+    /// Last accessed timestamp in milliseconds since Unix epoch (lock-free)
+    pub last_accessed_ms: AtomicI64,
+}
+
+impl Clone for ChannelMetadata {
+    fn clone(&self) -> Self {
+        Self {
+            name: Arc::clone(&self.name),
+            protocol_type: self.protocol_type.clone(),
+            created_at: self.created_at,
+            last_accessed_ms: AtomicI64::new(self.last_accessed_ms.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+/// Helper function to get current Unix timestamp in milliseconds
+fn unix_timestamp_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Channel entry with integrated protocol runtime and storage
@@ -100,7 +121,8 @@ pub struct ChannelStats {
     pub protocol_type: String,
     pub is_connected: bool,
     pub created_at: Instant,
-    pub last_accessed: Instant,
+    /// Last accessed timestamp in milliseconds since Unix epoch
+    pub last_accessed_ms: i64,
 }
 
 impl<R: Rtdb + 'static> ChannelEntry<R> {
@@ -123,7 +145,7 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             name: Arc::from(channel_config.name()),
             protocol_type,
             created_at: Instant::now(),
-            last_accessed: Arc::new(RwLock::new(Instant::now())),
+            last_accessed_ms: AtomicI64::new(unix_timestamp_ms()),
         };
 
         let channel_id = channel_config.id();
@@ -163,22 +185,21 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
 
     /// Get channel statistics
     pub async fn get_stats(&self, channel_id: u32) -> ChannelStats {
-        let last_accessed = *self.metadata.last_accessed.read().await;
-
         ChannelStats {
             channel_id,
             name: self.metadata.name.to_string(),
             protocol_type: self.metadata.protocol_type.clone(),
             is_connected: self.is_connected().await,
             created_at: self.metadata.created_at,
-            last_accessed,
+            last_accessed_ms: self.metadata.last_accessed_ms.load(Ordering::Relaxed),
         }
     }
 
-    /// Update last accessed time
-    pub async fn touch(&self) {
-        let mut last_accessed = self.metadata.last_accessed.write().await;
-        *last_accessed = Instant::now();
+    /// Update last accessed time (lock-free)
+    pub fn touch(&self) {
+        self.metadata
+            .last_accessed_ms
+            .store(unix_timestamp_ms(), Ordering::Relaxed);
     }
 
     /// Check if channel is connected.
