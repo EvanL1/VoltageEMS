@@ -1354,6 +1354,50 @@ impl ChannelRuntime for GpioChannel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// Mock GPIO driver for testing without real hardware.
+    struct MockGpioDriver {
+        /// Simulated pin values: pin_id -> value
+        values: Mutex<HashMap<u32, bool>>,
+    }
+
+    impl MockGpioDriver {
+        fn new() -> Self {
+            Self {
+                values: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl GpioDriver for MockGpioDriver {
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+
+        async fn read_pin(&self, pin: &GpioPinConfig) -> Result<bool> {
+            let values = self.values.lock().unwrap();
+            Ok(*values.get(&pin.point_id).unwrap_or(&false))
+        }
+
+        async fn write_pin(&self, pin: &GpioPinConfig, value: bool) -> Result<()> {
+            let mut values = self.values.lock().unwrap();
+            values.insert(pin.point_id, value);
+            Ok(())
+        }
+    }
+
+    /// Create a GpioChannel with MockGpioDriver for testing.
+    fn create_mock_gpio(config: GpioChannelConfig, channel_id: u32, name: &str) -> GpioChannel {
+        GpioChannel::with_driver(
+            config,
+            Box::new(MockGpioDriver::new()),
+            channel_id,
+            name.to_string(),
+        )
+    }
 
     #[tokio::test]
     async fn test_gpio_channel_connect() {
@@ -1361,7 +1405,7 @@ mod tests {
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1))
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
-        let mut gpio = GpioChannel::new(config, 1, "test_gpio".to_string());
+        let mut gpio = create_mock_gpio(config, 1, "test_gpio");
 
         // GPIO is always connected on creation (local hardware, no external connection)
         assert_eq!(gpio.connection_state(), ConnectionState::Connected);
@@ -1380,7 +1424,7 @@ mod tests {
         let config =
             GpioChannelConfig::new().add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
-        let mut gpio = GpioChannel::new(config, 1, "test_gpio".to_string());
+        let mut gpio = create_mock_gpio(config, 1, "test_gpio");
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
         let result =
@@ -1402,7 +1446,7 @@ mod tests {
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1))
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 18, 101));
 
-        let gpio = GpioChannel::new(config, 1, "test_gpio".to_string());
+        let gpio = create_mock_gpio(config, 1, "test_gpio");
         let diag = Protocol::diagnostics(&gpio).await.unwrap();
 
         assert_eq!(diag.protocol, "GPIO");
