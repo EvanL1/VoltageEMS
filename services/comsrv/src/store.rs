@@ -1,11 +1,11 @@
-//! Store module - IGW DataStore implementations
+//! Store module - DataStore implementations
 //!
-//! This module provides the bridge between IGW protocols and VoltageEMS storage.
+//! This module provides the bridge between protocol adapters and VoltageEMS storage.
 //!
 //! # Architecture
 //!
 //! ```text
-//! IGW Protocol Layer (with TransformConfig)
+//! Protocol Layer (with TransformConfig)
 //!       ↓ poll_once() returns already-transformed DataBatch
 //! RedisDataStore
 //!       ↓
@@ -15,7 +15,7 @@
 //! └─────────────────────────────────┘
 //! ```
 //!
-//! Note: Data transformation (scale/offset/reverse) is now handled by IGW's
+//! Note: Data transformation (scale/offset/reverse) is handled by the protocol layer's
 //! TransformConfig in poll_once(), so RedisDataStore receives pre-transformed values.
 
 mod redis_store;

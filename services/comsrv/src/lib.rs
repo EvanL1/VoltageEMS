@@ -38,7 +38,7 @@ pub mod core {
 
 pub mod store;
 
-// Re-export IGW DataStore implementation
+// Re-export DataStore implementation
 pub use store::RedisDataStore;
 
 // Protocol implementations are in crate::protocols:

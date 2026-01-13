@@ -405,9 +405,10 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
     }
 
     /// Get execution results for a rule (if cached)
-    /// Note: This is a placeholder for future implementation
+    ///
+    /// Note: Results are persisted to Redis via `write_rule_exec_to_redis()`.
+    /// In-memory caching is not implemented - read from Redis if needed.
     pub async fn get_last_results(&self, _rule_id: i64) -> Option<RuleExecutionResult> {
-        // TODO: Implement result caching if needed
         None
     }
 

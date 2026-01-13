@@ -30,7 +30,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use igw::protocols::gpio::{GpioChannel, GpioChannelConfig, GpioPinConfig, GpioDriverType};
+//! use crate::protocols::adapters::gpio::{GpioChannel, GpioChannelConfig, GpioPinConfig, GpioDriverType};
 //!
 //! // Using gpiod (chardev) - recommended
 //! let config = GpioChannelConfig::new()
@@ -155,7 +155,7 @@ fn default_gpio_chip() -> String {
 }
 
 impl GpioMappingConfig {
-    /// Convert to igw GpioPinConfig for input (DI).
+    /// Convert to GpioPinConfig for input (DI).
     ///
     /// If `gpio_chip` is "gpiochip0" (default) and `gpio_number` >= 32,
     /// the driver will auto-resolve the global GPIO number to the correct chip.
@@ -166,7 +166,7 @@ impl GpioMappingConfig {
             .with_debounce(self.debounce_us)
     }
 
-    /// Convert to igw GpioPinConfig for output (DO).
+    /// Convert to GpioPinConfig for output (DO).
     ///
     /// If `gpio_chip` is "gpiochip0" (default) and `gpio_number` >= 32,
     /// the driver will auto-resolve the global GPIO number to the correct chip.
@@ -496,7 +496,7 @@ impl GpioDriver for GpiodDriver {
             GatewayError::Protocol(format!("Failed to open GPIO chip '{}': {}", chip_name, e))
         })?;
 
-        let opts = Options::input([line]).consumer("igw");
+        let opts = Options::input([line]).consumer("voltage");
         let lines = chip.request_lines(opts).await.map_err(|e| {
             GatewayError::Protocol(format!(
                 "Failed to request GPIO line {} on chip '{}': {}",
@@ -519,7 +519,7 @@ impl GpioDriver for GpiodDriver {
             GatewayError::Protocol(format!("Failed to open GPIO chip '{}': {}", chip_name, e))
         })?;
 
-        let opts = Options::output([line]).consumer("igw").values([value]);
+        let opts = Options::output([line]).consumer("voltage").values([value]);
         let lines = chip.request_lines(opts).await.map_err(|e| {
             GatewayError::Protocol(format!(
                 "Failed to request GPIO line {} on chip '{}': {}",

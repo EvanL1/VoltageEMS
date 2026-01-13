@@ -1,6 +1,6 @@
 //! Protocol implementations.
 //!
-//! This module contains adapters that integrate protocol crates with igw.
+//! This module contains adapters that integrate protocol crates with the protocol layer.
 
 pub mod virtual_channel;
 

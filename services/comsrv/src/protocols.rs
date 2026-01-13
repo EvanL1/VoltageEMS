@@ -1,4 +1,4 @@
-//! Industrial Gateway (igw) - 工业通信协议层
+//! 工业通信协议层 (Protocol Layer)
 //!
 //! 此模块提供统一的工业协议抽象，支持多种通信协议：
 //! - Modbus TCP/RTU

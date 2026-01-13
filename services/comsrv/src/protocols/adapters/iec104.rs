@@ -1,7 +1,7 @@
 //! IEC 60870-5-104 protocol adapter.
 //!
 //! This module provides the `Iec104Channel` adapter that integrates
-//! `voltage_iec104` with igw's `Protocol` and `EventDrivenProtocol` traits.
+//! `voltage_iec104` with the protocol layer's `Protocol` and `EventDrivenProtocol` traits.
 //!
 //! IEC 104 is an event-driven protocol - data is received via spontaneous
 //! transmissions from the controlled station (RTU/substation).
@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use igw::prelude::*;
-//! use igw::protocols::iec104::{Iec104Channel, Iec104ChannelConfig};
+//! use crate::protocols::prelude::*;
+//! use crate::protocols::adapters::iec104::{Iec104Channel, Iec104ChannelConfig};
 //!
 //! let config = Iec104ChannelConfig::new("192.168.1.100:2404")
 //!     .with_common_address(1);
@@ -237,7 +237,7 @@ impl Iec104ParamsConfig {
 /// IEC 104 channel adapter.
 ///
 /// This struct wraps a `voltage_iec104::Iec104Client` and implements
-/// igw's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+/// the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
 ///
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel returns DataBatch via events; the service layer handles persistence.
@@ -427,7 +427,7 @@ impl Iec104Channel {
         }
     }
 
-    /// Convert IEC 104 data points to igw DataBatch.
+    /// Convert IEC 104 data points to DataBatch.
     async fn convert_data_points(&self, points: Vec<voltage_iec104::DataPoint>) -> DataBatch {
         let mut batch = DataBatch::new();
 
@@ -734,7 +734,7 @@ impl EventDrivenProtocol for Iec104Channel {
     }
 }
 
-/// Convert IEC 104 DataValue to igw Value.
+/// Convert IEC 104 DataValue to Value.
 fn convert_iec104_value(value: &voltage_iec104::DataValue) -> Value {
     match value {
         voltage_iec104::DataValue::Single(v) => Value::Bool(*v),
@@ -798,7 +798,7 @@ fn cp56time2a_now() -> Cp56Time2a {
     }
 }
 
-/// Convert IEC 104 Quality to igw Quality.
+/// Convert IEC 104 Quality to Quality.
 fn convert_iec104_quality(quality: &voltage_iec104::Quality) -> Quality {
     if quality.is_good() {
         Quality::Good

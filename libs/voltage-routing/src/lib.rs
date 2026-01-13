@@ -189,6 +189,295 @@ pub const MAX_C2C_CASCADE_DEPTH: u8 = 2;
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use voltage_model::PointType;
+    use voltage_rtdb::{helpers::create_test_rtdb, RoutingCache};
+
+    // ========================================================================
+    // Helper functions
+    // ========================================================================
+
+    fn create_test_routing_cache() -> Arc<RoutingCache> {
+        Arc::new(RoutingCache::new())
+    }
+
+    /// Create a routing cache with M2C routing pre-configured
+    fn create_routing_cache_with_m2c() -> Arc<RoutingCache> {
+        let mut m2c_data = HashMap::new();
+        // M2C route: instance 1001:A:1 -> channel 2001:C:10
+        m2c_data.insert("1001:A:1".to_string(), "2001:C:10".to_string());
+        Arc::new(RoutingCache::from_maps(
+            HashMap::new(),
+            m2c_data,
+            HashMap::new(),
+        ))
+    }
+
+    /// Create a routing cache with C2M routing pre-configured
+    fn create_routing_cache_with_c2m() -> Arc<RoutingCache> {
+        let mut c2m_data = HashMap::new();
+        // C2M route: channel 1001:T:1 -> instance 5001:M:100
+        c2m_data.insert("1001:T:1".to_string(), "5001:M:100".to_string());
+        Arc::new(RoutingCache::from_maps(
+            c2m_data,
+            HashMap::new(),
+            HashMap::new(),
+        ))
+    }
+
+    /// Create a routing cache with C2C routing pre-configured
+    fn create_routing_cache_with_c2c() -> Arc<RoutingCache> {
+        let mut c2c_data = HashMap::new();
+        // C2C route: channel 1001:T:1 -> channel 2001:T:1
+        c2c_data.insert("1001:T:1".to_string(), "2001:T:1".to_string());
+        Arc::new(RoutingCache::from_maps(
+            HashMap::new(),
+            HashMap::new(),
+            c2c_data,
+        ))
+    }
+
+    // ========================================================================
+    // set_action_point() Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_set_action_point_no_route() {
+        // Without M2C routing configured, should write to instance hash only
+        let rtdb = create_test_rtdb();
+        let routing_cache = create_test_routing_cache();
+
+        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 42.5).await;
+
+        assert!(result.is_ok(), "set_action_point should succeed");
+        let outcome = result.unwrap();
+        assert!(outcome.is_success(), "Status should be success");
+        assert_eq!(outcome.instance_id, 1001);
+        assert_eq!(outcome.point_id, "1");
+        assert_eq!(outcome.value, "42.5");
+        assert!(!outcome.routed, "Should not be routed without M2C config");
+        assert_eq!(outcome.route_result, Some("no_route".to_string()));
+        assert!(outcome.route_context.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_set_action_point_with_route() {
+        // Configure M2C routing and verify full routing path
+        let rtdb = create_test_rtdb();
+        let routing_cache = create_routing_cache_with_m2c();
+
+        // M2C route: instance 1001:A:1 -> channel 2001:C:10
+        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 100.0).await;
+
+        assert!(result.is_ok(), "set_action_point should succeed");
+        let outcome = result.unwrap();
+        assert!(outcome.is_success());
+        assert!(outcome.routed, "Should be routed with M2C config");
+        assert_eq!(outcome.route_result, Some("2001".to_string()));
+
+        // Verify route context
+        let ctx = outcome.route_context.expect("Should have route context");
+        assert_eq!(ctx.channel_id, "2001");
+        assert_eq!(ctx.point_type, "C");
+        assert_eq!(ctx.comsrv_point_id, "10");
+    }
+
+    #[tokio::test]
+    async fn test_set_action_point_writes_to_instance_hash() {
+        let rtdb = create_test_rtdb();
+        let routing_cache = create_test_routing_cache();
+
+        // Write action point
+        set_action_point(&*rtdb, &routing_cache, 5001, "42", 123.456)
+            .await
+            .unwrap();
+
+        // Verify instance action hash was written
+        let config = voltage_rtdb::KeySpaceConfig::production_cached();
+        let instance_key = config.instance_action_key(5001);
+        let stored_value = rtdb.hash_get(&instance_key, "42").await.unwrap();
+
+        assert!(stored_value.is_some(), "Instance hash should have value");
+        let value_str = String::from_utf8(stored_value.unwrap().to_vec()).unwrap();
+        assert_eq!(value_str, "123.456");
+    }
+
+    // ========================================================================
+    // write_channel_batch() Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_write_channel_batch_empty() {
+        let rtdb = create_test_rtdb();
+        let routing_cache = create_test_routing_cache();
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, vec![]).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.channel_writes, 0);
+        assert_eq!(stats.c2m_writes, 0);
+        assert_eq!(stats.c2c_forwards, 0);
+    }
+
+    #[tokio::test]
+    async fn test_write_channel_batch_single_point() {
+        let rtdb = create_test_rtdb();
+        let routing_cache = create_test_routing_cache();
+
+        let updates = vec![ChannelPointUpdate::new(
+            1001,
+            PointType::Telemetry,
+            1,
+            220.5,
+        )];
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.channel_writes, 1, "Should write 1 channel point");
+    }
+
+    #[tokio::test]
+    async fn test_write_channel_batch_multiple_points() {
+        let rtdb = create_test_rtdb();
+        let routing_cache = create_test_routing_cache();
+
+        let updates = vec![
+            ChannelPointUpdate::new(1001, PointType::Telemetry, 1, 220.0),
+            ChannelPointUpdate::new(1001, PointType::Telemetry, 2, 380.0),
+            ChannelPointUpdate::new(1001, PointType::Signal, 1, 1.0),
+        ];
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.channel_writes, 3, "Should write 3 channel points");
+    }
+
+    #[tokio::test]
+    async fn test_write_channel_batch_with_c2m_routing() {
+        let rtdb = create_test_rtdb();
+        // C2M route: channel 1001:T:1 -> instance 5001:M:100
+        let routing_cache = create_routing_cache_with_c2m();
+
+        let updates = vec![ChannelPointUpdate::new(1001, PointType::Telemetry, 1, 42.0)];
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.channel_writes, 1);
+        assert_eq!(stats.c2m_writes, 1, "Should have 1 C2M write");
+    }
+
+    // ========================================================================
+    // C2C Cascade Depth Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_c2c_cascade_depth_limit() {
+        let rtdb = create_test_rtdb();
+        // C2C route: channel 1001:T:1 -> channel 2001:T:1
+        let routing_cache = create_routing_cache_with_c2c();
+
+        // Create update at max cascade depth - should NOT forward
+        let updates = vec![ChannelPointUpdate {
+            channel_id: 1001,
+            point_type: PointType::Telemetry,
+            point_id: 1,
+            value: 100.0,
+            raw_value: None,
+            cascade_depth: MAX_C2C_CASCADE_DEPTH, // At limit
+        }];
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.c2c_forwards, 0, "Should NOT forward at max depth");
+    }
+
+    #[tokio::test]
+    async fn test_c2c_cascade_depth_allows_forward() {
+        let rtdb = create_test_rtdb();
+        // C2C route: channel 1001:T:1 -> channel 2001:T:1
+        let routing_cache = create_routing_cache_with_c2c();
+
+        // Create update below max cascade depth - should forward
+        let updates = vec![ChannelPointUpdate {
+            channel_id: 1001,
+            point_type: PointType::Telemetry,
+            point_id: 1,
+            value: 100.0,
+            raw_value: None,
+            cascade_depth: 0, // Below limit
+        }];
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert!(stats.c2c_forwards > 0, "Should forward below max depth");
+    }
+
+    // ========================================================================
+    // ChannelPointUpdate Tests
+    // ========================================================================
+
+    #[test]
+    fn test_channel_point_update_new() {
+        let update = ChannelPointUpdate::new(1001, PointType::Telemetry, 42, 123.456);
+
+        assert_eq!(update.channel_id, 1001);
+        assert_eq!(update.point_type, PointType::Telemetry);
+        assert_eq!(update.point_id, 42);
+        assert_eq!(update.value, 123.456);
+        assert!(update.raw_value.is_none());
+        assert_eq!(update.cascade_depth, 0);
+    }
+
+    #[test]
+    fn test_channel_point_update_with_raw() {
+        let update = ChannelPointUpdate::new(1001, PointType::Telemetry, 1, 220.0).with_raw(2200.0);
+
+        assert_eq!(update.value, 220.0);
+        assert_eq!(update.raw_value, Some(2200.0));
+    }
+
+    // ========================================================================
+    // BatchRoutingResult Tests
+    // ========================================================================
+
+    #[test]
+    fn test_batch_routing_result_merge() {
+        let mut result1 = BatchRoutingResult {
+            channel_writes: 10,
+            c2m_writes: 5,
+            c2c_forwards: 2,
+        };
+
+        let result2 = BatchRoutingResult {
+            channel_writes: 3,
+            c2m_writes: 1,
+            c2c_forwards: 1,
+        };
+
+        result1.merge(result2);
+
+        assert_eq!(result1.channel_writes, 13);
+        assert_eq!(result1.c2m_writes, 6);
+        assert_eq!(result1.c2c_forwards, 3);
+    }
+
+    // ========================================================================
+    // Configuration Tests (existing)
+    // ========================================================================
+
     #[test]
     fn test_m2c_config_has_required_fields() {
         // M2C routing requires specific configuration fields

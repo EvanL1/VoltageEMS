@@ -14,9 +14,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use igw::protocols::command_batcher::{CommandBatcher, BatchCommand};
-//! use igw::core::point::{DataFormat, ByteOrder};
-//! use igw::core::data::Value;
+//! use crate::protocols::adapters::command_batcher::{CommandBatcher, BatchCommand};
+//! use crate::protocols::core::point::{DataFormat, ByteOrder};
+//! use crate::protocols::core::data::Value;
 //!
 //! let mut batcher = CommandBatcher::new();
 //!

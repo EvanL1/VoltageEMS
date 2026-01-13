@@ -21,7 +21,7 @@ voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 
-# Protocol libraries (previously from igw)
+# Protocol libraries
 voltage_modbus = { version = "0.4", optional = true, features = ["rtu"] }
 voltage_iec104 = { version = "0.1", optional = true }
 voltage_j1939 = { version = "0.1", optional = true }

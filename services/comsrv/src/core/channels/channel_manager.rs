@@ -101,6 +101,8 @@ pub struct ChannelEntry<R: Rtdb> {
     /// Channel metadata (name, protocol type, etc.)
     pub metadata: ChannelMetadata,
     /// Command trigger for TODO queue integration
+    /// NOTE: RwLock is only used during channel removal (non-hot path),
+    /// so lock contention is not a concern here.
     pub command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
     /// Channel configuration
     pub channel_config: Arc<ChannelConfig>,
@@ -1001,13 +1003,13 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
         // 2. Convert CAN mappings to formats
         let can_point_configs = convert_to_can_point_configs(runtime_config);
-        let igw_point_configs = convert_can_to_point_configs(runtime_config);
+        let point_configs = convert_can_to_point_configs(runtime_config);
 
         if can_point_configs.is_empty() {
             warn!("Ch{} has no CAN point mappings configured", channel_id);
         }
 
-        store.set_point_configs(channel_id, igw_point_configs);
+        store.set_point_configs(channel_id, point_configs);
 
         // 3. Start background flush task for write buffer
         store.start_flush_task().await;

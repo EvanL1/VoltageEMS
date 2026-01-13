@@ -191,10 +191,8 @@ impl<'a> ChannelsService<'a> {
     /// Triggers a hot reload of all channel configurations from the database.
     /// This is equivalent to calling the /api/channels/reload HTTP endpoint.
     pub async fn reload(&self) -> Result<String> {
-        // TODO: Call comsrv's reload functionality
-        // For now, return a simple message
-        // In full implementation, this would call the ReloadableService trait
-        Ok("Channel reload not yet implemented in lib mode".to_string())
+        // Note: Lib mode does not support hot reload - use HTTP API /api/channels/reload instead
+        Ok("Channel reload not supported in lib mode".to_string())
     }
 
     /// Get telemetry points (T)

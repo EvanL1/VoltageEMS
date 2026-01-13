@@ -1,10 +1,11 @@
 //! Protocol client factory
 //!
-//! Create IGW ChannelRuntime implementations from configuration.
+//! Create ChannelRuntime implementations from configuration.
 //!
 //! This module provides factory functions that create protocol client instances
 //! (VirtualChannel, ModbusChannel, GpioChannel, CanClient) from comsrv configuration.
 
+#[cfg(feature = "modbus")]
 use std::sync::Arc;
 
 use crate::protocols::adapters::virtual_channel::{VirtualChannel, VirtualChannelConfig};
@@ -47,14 +48,14 @@ pub fn create_virtual_channel(
 // Modbus Channel Factory
 // ============================================================================
 
-/// Create an IGW ModbusChannel for TCP mode wrapped as ChannelRuntime.
+/// Create a ModbusChannel for TCP mode wrapped as ChannelRuntime.
 ///
 /// Note: The channel no longer holds a store reference. Storage is handled
 /// by the service layer (ChannelManager) after polling.
 ///
 /// # Arguments
 ///
-/// * `channel_id` - Unique channel identifier (used for logging in igw 0.2.2+)
+/// * `channel_id` - Unique channel identifier (used for logging)
 /// * `host` - Modbus TCP server host address
 /// * `port` - Modbus TCP server port
 /// * `point_configs` - Point configurations with Modbus addresses
@@ -83,14 +84,14 @@ pub fn create_modbus_channel(
     Box::new(channel)
 }
 
-/// Create an IGW ModbusChannel for RTU (serial) mode wrapped as ChannelRuntime.
+/// Create a ModbusChannel for RTU (serial) mode wrapped as ChannelRuntime.
 ///
 /// Note: The channel no longer holds a store reference. Storage is handled
 /// by the service layer (ChannelManager) after polling.
 ///
 /// # Arguments
 ///
-/// * `channel_id` - Unique channel identifier (used for logging in igw 0.2.2+)
+/// * `channel_id` - Unique channel identifier (used for logging)
 /// * `device` - Serial device path (e.g., "/dev/ttyUSB0" on Linux)
 /// * `baud_rate` - Serial baud rate (e.g., 9600, 19200, 115200)
 /// * `point_configs` - Point configurations with Modbus addresses
@@ -121,7 +122,7 @@ pub fn create_modbus_rtu_channel(
 // GPIO Channel Factory
 // ============================================================================
 
-/// Create an IGW GpioChannel for digital I/O wrapped as ChannelRuntime.
+/// Create a GpioChannel for digital I/O wrapped as ChannelRuntime.
 ///
 /// Note: Only available on Linux with `gpio` feature enabled.
 /// Storage is handled by the service layer (ChannelManager) after polling.
@@ -194,9 +195,9 @@ pub fn create_gpio_channel(
 // CAN Channel Factory
 // ============================================================================
 
-/// Create an IGW CAN channel with the given configuration wrapped as ChannelRuntime.
+/// Create a CAN channel with the given configuration wrapped as ChannelRuntime.
 ///
-/// This function creates a CanClient from igw library with the specified
+/// This function creates a CanClient with the specified
 /// CAN interface and point configurations.
 #[cfg(all(feature = "can", target_os = "linux"))]
 pub fn create_can_channel(

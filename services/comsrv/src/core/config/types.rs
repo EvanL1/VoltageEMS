@@ -1347,7 +1347,7 @@ impl<'a> From<&'a AdjustmentPoint> for PointView<'a> {
 }
 
 impl RuntimeChannelConfig {
-    /// Get parameters as JSON string (for igw RuntimeChannelView compatibility).
+    /// Get parameters as JSON string.
     ///
     /// This method serializes the parameters HashMap to a JSON string.
     /// Returns None if serialization fails.

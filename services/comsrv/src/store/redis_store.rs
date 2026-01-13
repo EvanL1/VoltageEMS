@@ -1,11 +1,11 @@
-//! Redis-backed data store for IGW integration
+//! Redis-backed data store for protocol integration
 //!
 //! This module provides Redis storage for protocol data, with C2M routing
 //! support through voltage-routing.
 //!
 //! # Architecture
 //!
-//! The protocol layer (igw) is now separated from storage. Protocols return
+//! The protocol layer is separated from storage. Protocols return
 //! `DataBatch` directly, and the service layer (comsrv) handles persistence:
 //!
 //! ```text
@@ -26,7 +26,7 @@ use tokio::sync::{Notify, RwLock};
 use tracing::{debug, warn};
 
 use crate::protocols::core::data::{DataBatch, DataPoint};
-use crate::protocols::core::error::Result as IgwResult;
+use crate::protocols::core::error::Result as ProtocolResult;
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
@@ -226,7 +226,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// Write a batch of data points to Redis and route to model instances.
     ///
     /// Takes ownership of `batch` to avoid cloning when notifying subscribers.
-    /// Note: Data is already transformed by IGW in poll_once().
+    /// Note: Data is already transformed by the protocol layer in poll_once().
     ///
     /// # Write Path Selection
     ///
@@ -235,12 +235,12 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// 2. **Buffered Path** (fallback): Uses `write_channel_batch_buffered()` for Redis writes.
     ///
     /// Note: Removed VecRtdb - using SharedMemory + Redis two-tier architecture
-    pub async fn write_batch(&self, channel_id: u32, batch: DataBatch) -> IgwResult<()> {
+    pub async fn write_batch(&self, channel_id: u32, batch: DataBatch) -> ProtocolResult<()> {
         if batch.is_empty() {
             return Ok(());
         }
 
-        // Convert to ChannelPointUpdates (values already transformed by IGW)
+        // Convert to ChannelPointUpdates (values already transformed by protocol layer)
         let updates = self.batch_to_updates(channel_id, &batch);
 
         // Select write path: prefer shared memory direct write for best performance
@@ -272,7 +272,11 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// Read a single point from Redis.
     ///
     /// Tries all point types until a value is found.
-    pub async fn read_point(&self, channel_id: u32, point_id: u32) -> IgwResult<Option<DataPoint>> {
+    pub async fn read_point(
+        &self,
+        channel_id: u32,
+        point_id: u32,
+    ) -> ProtocolResult<Option<DataPoint>> {
         // Convert point_id to string once outside the loop (avoids 4 allocations)
         let point_id_str = point_id.to_string();
 
@@ -297,7 +301,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     }
 
     /// Read all points for a channel from Redis.
-    pub async fn read_all(&self, channel_id: u32) -> IgwResult<DataBatch> {
+    pub async fn read_all(&self, channel_id: u32) -> ProtocolResult<DataBatch> {
         let mut batch = DataBatch::default();
 
         for point_type in [
@@ -353,7 +357,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     }
 
     /// Clear all data for a channel.
-    pub async fn clear_channel(&self, channel_id: u32) -> IgwResult<()> {
+    pub async fn clear_channel(&self, channel_id: u32) -> ProtocolResult<()> {
         // Clear all point types for this channel
         for point_type in [
             PointType::Telemetry,

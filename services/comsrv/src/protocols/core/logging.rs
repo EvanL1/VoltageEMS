@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use igw::core::logging::{ChannelLogConfig, ChannelLogHandler, ChannelLogEvent};
+//! use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler, ChannelLogEvent};
 //!
 //! struct MyLogHandler;
 //!

@@ -5,7 +5,7 @@
 //!
 //! # Design Principle
 //!
-//! igw is a pure protocol library. It knows about:
+//! The protocol layer is a pure protocol library. It knows about:
 //! - Protocol addresses (Modbus registers, GPIO pins, CAN IDs)
 //! - Protocol-specific configuration parsing
 //! - Point configuration with transforms
@@ -16,7 +16,7 @@
 //!
 //! The application layer (e.g., comsrv) is responsible for:
 //! - Iterating over its own point categories
-//! - Calling igw's protocol parsers
+//! - Calling the protocol parsers
 //! - Building PointConfig lists
 
 use crate::protocols::core::point::PointConfig;

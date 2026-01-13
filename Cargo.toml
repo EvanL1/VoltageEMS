@@ -7,7 +7,7 @@ members = [
     # libs/voltage-comlink removed - types moved to comsrv
     "libs/voltage-infra",
     "libs/voltage-model",
-    # libs/voltage-protocols removed - all protocols now use igw
+    # libs/voltage-protocols removed - protocols are now in comsrv
     "libs/voltage-rtdb",
     "libs/voltage-routing",
     "libs/voltage-rules",

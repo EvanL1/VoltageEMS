@@ -1,12 +1,11 @@
-//! Channel-Instance Point Routing Loader
-//! Loads routing configurations from CSV files
+//! Channel-Instance Point Routing Types and Loader
 //!
-//! CSV source uses a single file: `channel_mappings.csv` (defines both T/S → M and A → C/A)
+//! This module provides:
+//! - **Data types** (actively used): `MeasurementRoutingRow`, `ActionRoutingRow`,
+//!   `MeasurementRouting`, `ActionRouting` - used by API handlers and instance routing.
+//! - **RoutingLoader** (deprecated): CSV-based routing loader, functionality migrated to InstanceManager.
 //!
-//! **DEPRECATED**: RoutingLoader functionality has been migrated to InstanceManager.
-//! This module is kept for reference during migration and will be removed in a future version.
-
-#![allow(dead_code)]
+//! Note: The data types are core API structures. Only the `RoutingLoader` struct is deprecated.
 
 use anyhow::{Context, Result};
 use common::{FourRemote, PointType, ValidationLevel, ValidationResult};

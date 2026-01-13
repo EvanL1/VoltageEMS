@@ -1,6 +1,6 @@
 //! CAN Protocol Client Implementation
 //!
-//! Implements the igw Protocol traits for LYNK CAN communication.
+//! Implements the protocol layer's Protocol traits for LYNK CAN communication.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;

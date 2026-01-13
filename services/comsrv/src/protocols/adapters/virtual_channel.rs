@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use igw::protocols::virtual_channel::{VirtualChannel, VirtualChannelConfig};
+//! use crate::protocols::adapters::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 //!
 //! let config = VirtualChannelConfig::new("data_hub");
 //! let mut channel = VirtualChannel::new(config);

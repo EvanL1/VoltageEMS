@@ -311,9 +311,9 @@ pub fn create_api_routes_generic<R: Rtdb>(
         .with_state(state)
 }
 
-// NOTE: These tests are temporarily disabled during AFIT migration.
-// The handlers use ProductionAppState (hardcoded to RedisRtdb), but tests use MemoryRtdb.
-// TODO: Either genericize handlers or convert these to integration tests with Redis.
+// NOTE: Tests use create_api_routes_generic with MemoryRtdb for unit testing.
+// The public API (create_api_routes) is hardcoded to RedisRtdb for production simplicity.
+// Generic handlers enable unit testing without Redis dependency.
 #[cfg(test)]
 #[path = "routes_tests.rs"]
 mod tests;

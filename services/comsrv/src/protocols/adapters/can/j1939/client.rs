@@ -1,6 +1,6 @@
 //! J1939 Protocol Client Implementation
 //!
-//! Implements the igw Protocol traits for J1939/CAN communication.
+//! Implements the protocol layer's Protocol traits for J1939/CAN communication.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;

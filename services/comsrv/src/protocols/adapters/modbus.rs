@@ -1,13 +1,13 @@
 //! Modbus protocol adapter.
 //!
 //! This module provides the `ModbusChannel` adapter that integrates
-//! `voltage_modbus` with igw's `Protocol` and `ProtocolClient` traits.
+//! `voltage_modbus` with the protocol layer's `Protocol` and `ProtocolClient` traits.
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use igw::prelude::*;
-//! use igw::protocols::modbus::{ModbusChannel, ModbusChannelConfig};
+//! use crate::protocols::prelude::*;
+//! use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig};
 //!
 //! // Create channel without DataStore dependency
 //! let config = ModbusChannelConfig::tcp("192.168.1.100:502")
@@ -123,7 +123,7 @@ fn default_function_code() -> u8 {
 }
 
 impl ModbusMappingConfig {
-    /// Convert to igw ModbusAddress.
+    /// Convert to ModbusAddress.
     pub fn to_modbus_address(&self) -> ModbusAddress {
         ModbusAddress {
             slave_id: self.slave_id,
@@ -583,7 +583,7 @@ impl ModbusChannelConfig {
 /// Modbus channel adapter.
 ///
 /// This struct wraps a `voltage_modbus::ModbusTcpClient` and implements
-/// igw's `Protocol` and `ProtocolClient` traits.
+/// the protocol layer's `Protocol` and `ProtocolClient` traits.
 ///
 /// # Architecture (Protocol Layer Only)
 ///

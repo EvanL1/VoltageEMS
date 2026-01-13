@@ -593,12 +593,10 @@ pub(crate) async fn shutdown_services_generic<R: Rtdb + 'static>(
     info!("Service shutdown complete");
 }
 
-// NOTE: These tests are temporarily disabled during AFIT migration.
-// The production functions (start_communication_service, start_cleanup_task) are hardcoded to RedisRtdb,
-// but tests create ChannelManager<MemoryRtdb>. This type mismatch cannot be resolved without either:
-// 1. Genericizing the production functions (significant refactor)
-// 2. Converting to integration tests with real Redis
-// TODO: Genericize lifecycle functions to accept any Rtdb implementation.
+// NOTE: Tests use the generic versions (*_generic functions) with MemoryRtdb.
+// The public API functions (start_communication_service, start_cleanup_task) are
+// intentionally hardcoded to RedisRtdb for simplicity - production only uses Redis.
+// Internal generic versions enable unit testing without Redis dependency.
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {

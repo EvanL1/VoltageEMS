@@ -1,7 +1,7 @@
 //! OPC UA protocol adapter.
 //!
 //! This module provides the `OpcUaChannel` adapter that integrates
-//! `async-opcua` with igw's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+//! `async-opcua` with the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
 //!
 //! OPC UA supports both polling and subscription (event-driven) modes.
 //! This adapter primarily uses the subscription mode for real-time data updates.
@@ -9,8 +9,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use igw::prelude::*;
-//! use igw::protocols::opcua::{OpcUaChannel, OpcUaChannelConfig, SubscriptionConfig};
+//! use crate::protocols::prelude::*;
+//! use crate::protocols::adapters::opcua::{OpcUaChannel, OpcUaChannelConfig, SubscriptionConfig};
 //!
 //! let config = OpcUaChannelConfig::new("opc.tcp://192.168.1.100:4840")
 //!     .with_user_identity("admin", "password")
@@ -280,8 +280,8 @@ impl OpcUaChannelConfig {
     pub fn new(endpoint_url: impl Into<String>) -> Self {
         Self {
             endpoint_url: endpoint_url.into(),
-            application_name: "igw OPC UA Client".to_string(),
-            application_uri: "urn:igw:opcua:client".to_string(),
+            application_name: "Voltage OPC UA Client".to_string(),
+            application_uri: "urn:voltage:opcua:client".to_string(),
             security_policy: OpcUaSecurityPolicy::None,
             message_security_mode: OpcUaMessageSecurityMode::None,
             identity: OpcUaIdentity::Anonymous,
@@ -515,7 +515,7 @@ pub struct OpcUaParamsConfig {
 }
 
 fn default_app_name() -> String {
-    "igw OPC UA Client".to_string()
+    "Voltage OPC UA Client".to_string()
 }
 
 fn default_opcua_connect_timeout() -> u64 {
@@ -574,7 +574,7 @@ fn make_node_id_key(namespace_index: u16, identifier: &str) -> String {
 /// OPC UA channel adapter.
 ///
 /// This struct wraps an `async-opcua` client and implements
-/// igw's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
+/// the protocol layer's `Protocol`, `ProtocolClient`, and `EventDrivenProtocol` traits.
 ///
 /// Note: This adapter follows the "protocol layer separated from storage" design.
 /// The channel emits DataEvent::DataUpdate events; the service layer handles persistence.
@@ -1180,7 +1180,7 @@ fn convert_data_value_with_id(
 ) -> Option<DataPoint> {
     // Get value
     let value = dv.value.as_ref()?;
-    let igw_value = convert_variant_to_value(value);
+    let converted_value = convert_variant_to_value(value);
 
     // Convert quality
     let quality = dv
@@ -1202,15 +1202,15 @@ fn convert_data_value_with_id(
 
     // Apply transform if config is available
     let final_value = if let Some(cfg) = config {
-        if let Some(f) = igw_value.as_f64() {
+        if let Some(f) = converted_value.as_f64() {
             Value::Float(cfg.transform.apply(f))
-        } else if let Some(b) = igw_value.as_bool() {
+        } else if let Some(b) = converted_value.as_bool() {
             Value::Bool(cfg.transform.apply_bool(b))
         } else {
-            igw_value
+            converted_value
         }
     } else {
-        igw_value
+        converted_value
     };
 
     Some(DataPoint {
@@ -1223,7 +1223,7 @@ fn convert_data_value_with_id(
     })
 }
 
-/// Convert OPC UA Variant to igw Value.
+/// Convert OPC UA Variant to Value.
 fn convert_variant_to_value(variant: &Variant) -> Value {
     match variant {
         Variant::Boolean(v) => Value::Bool(*v),
@@ -1242,7 +1242,7 @@ fn convert_variant_to_value(variant: &Variant) -> Value {
     }
 }
 
-/// Convert OPC UA StatusCode to igw Quality.
+/// Convert OPC UA StatusCode to Quality.
 fn convert_status_code_to_quality(status: StatusCode) -> Quality {
     if status.is_good() {
         Quality::Good
@@ -1276,7 +1276,7 @@ impl HasMetadata for OpcUaChannel {
             is_recommended: true,
             example_config: serde_json::json!({
                 "endpoint_url": "opc.tcp://192.168.1.100:4840",
-                "application_name": "IGW OPC UA Client",
+                "application_name": "Voltage OPC UA Client",
                 "username": "user",
                 "password": "password",
                 "trust_server_certs": true,
@@ -1295,7 +1295,7 @@ impl HasMetadata for OpcUaChannel {
                     "Application Name",
                     "Client application name for identification",
                     ParameterType::String,
-                    serde_json::json!("IGW OPC UA Client"),
+                    serde_json::json!("Voltage OPC UA Client"),
                 ),
                 ParameterMetadata::optional(
                     "username",

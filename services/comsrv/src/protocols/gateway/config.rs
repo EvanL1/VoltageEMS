@@ -71,7 +71,7 @@ fn default_diagnostics_interval() -> u64 {
 impl Default for GatewayGlobalConfig {
     fn default() -> Self {
         Self {
-            name: "IGW".to_string(),
+            name: "Voltage".to_string(),
             default_poll_interval_ms: default_poll_interval(),
             diagnostics_interval_ms: default_diagnostics_interval(),
             jsonl_output: false,

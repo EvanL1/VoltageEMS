@@ -159,7 +159,7 @@ impl PointType {
 
     /// Convert an original point_id to an internal_id that encodes the type.
     ///
-    /// Used when building protocol configurations (igw_bridge.rs).
+    /// Used when building protocol configurations.
     ///
     /// # Examples
     /// ```

@@ -189,8 +189,7 @@ impl<'a> ModelsService<'a> {
             .hash_set(&key, &point_id.to_string(), value.to_string().into())
             .await?;
 
-        // TODO: Trigger routing via application layer
-        // For now, just write to hash (routing should be handled by modsrv)
+        // Note: Routing is handled asynchronously by modsrv via TODO queue
 
         Ok(())
     }

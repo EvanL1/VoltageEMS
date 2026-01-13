@@ -1,10 +1,11 @@
 //! Point configuration converters
 //!
-//! Convert comsrv RuntimeChannelConfig to IGW PointConfig/CanPoint.
+//! Convert comsrv RuntimeChannelConfig to PointConfig/CanPoint.
 //!
 //! This module handles the "translation" between comsrv's configuration format
-//! and the IGW protocol library's point configuration format.
+//! and the protocol layer's point configuration format.
 
+#[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 use tracing::warn;
 
 use crate::core::config::RuntimeChannelConfig;
@@ -22,7 +23,7 @@ use crate::protocols::adapters::can::{CanDataType, CanPoint};
 // Virtual Channel Point Conversion
 // ============================================================================
 
-/// Convert RuntimeChannelConfig to IGW PointConfig list.
+/// Convert RuntimeChannelConfig to PointConfig list.
 ///
 /// This function sets up TransformConfig for each point type:
 /// - Telemetry: scale/offset transformation
@@ -105,7 +106,7 @@ pub fn convert_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<Po
 // Modbus Point Conversion
 // ============================================================================
 
-/// Convert RuntimeChannelConfig to IGW PointConfig list for Modbus.
+/// Convert RuntimeChannelConfig to PointConfig list for Modbus.
 ///
 /// Extracts Modbus mapping information from each point's embedded protocol_mappings JSON field.
 /// This replaces the old approach of using separate modbus_mappings collection.
@@ -391,7 +392,7 @@ fn default_scale() -> f64 {
     1.0
 }
 
-/// Convert RuntimeChannelConfig to IGW CanPoint list for CAN protocol.
+/// Convert RuntimeChannelConfig to CanPoint list for CAN protocol.
 ///
 /// Parses CAN configuration from each point's protocol_mappings JSON field.
 /// Scale and offset are applied during decoding in the protocol layer.
@@ -473,7 +474,7 @@ pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
     configs
 }
 
-/// Convert runtime CAN mappings to IGW PointConfig format (for RedisDataStore).
+/// Convert runtime CAN mappings to PointConfig format (for RedisDataStore).
 ///
 /// This conversion is used to register points with the data store for proper
 /// data transformation and storage.

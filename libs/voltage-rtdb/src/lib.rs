@@ -46,15 +46,17 @@ pub use redis_impl::RedisRtdb;
 pub use memory_impl::{MemoryRtdb, MemoryStats};
 
 // VecRtdb removed from public API - using SharedMemory + Redis two-tier architecture
-// PointSlot and ChannelVecStore are still used internally by SharedMemory
-pub use vec_impl::{instance_point_type, ChannelVecStore, PointSlot};
+// PointSlot, ChannelVecStore, and instance_point_type are internal implementation details
+// accessible via crate::vec_impl::{...} where needed
 
-// Shared memory exports (123, 145)
+// Shared memory public API (only types needed by external crates)
 pub use shared_impl::{
-    default_shm_path, is_shm_available, try_open_reader, ChannelIndex, ChannelToSlotIndex,
-    SharedConfig, SharedHeader, SharedReaderStats, SharedVecRtdbReader, SharedVecRtdbWriter,
-    SharedWriterStats, SHARED_MAGIC,
+    default_shm_path, is_shm_available, try_open_reader, ChannelToSlotIndex, SharedConfig,
+    SharedReaderStats, SharedVecRtdbReader, SharedVecRtdbWriter, SharedWriterStats,
 };
+
+// Internal shared memory types (ChannelIndex, SharedHeader, SHARED_MAGIC) are
+// accessible via crate::shared_impl::{...} where needed - not re-exported here
 
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
 

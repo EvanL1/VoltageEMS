@@ -10,7 +10,7 @@ pub mod trigger; // Command trigger for storage and synchronization
 pub mod types; // Channel communication types (owned by comsrv)
 
 // Configuration conversion and protocol factory (split from former bridge.rs)
-pub mod converters; // Config converters: comsrv config → IGW PointConfig
+pub mod converters; // Config converters: comsrv config → PointConfig
 pub mod factory; // Protocol client factory: create_*_channel() functions
 
 // Re-export data types from local types module

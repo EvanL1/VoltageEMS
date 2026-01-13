@@ -332,6 +332,8 @@ pub async fn update_rule<R: Rtdb + Send + Sync + 'static>(
     }
 
     // Build dynamic UPDATE query for provided fields only (partial update)
+    // SAFETY: All field names are hardcoded strings, not user input.
+    // Values are bound via .bind() which prevents SQL injection.
     let mut updates = Vec::new();
 
     if req.name.is_some() {
