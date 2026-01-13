@@ -202,7 +202,7 @@ impl CanClient {
                     if poll_count == 1 {
                         tracing::info!("First tick completed! Loop is working.");
                     }
-                    if poll_count % 20 == 0 {
+                    if poll_count.is_multiple_of(20) {
                         tracing::debug!(
                             "CAN receive loop: {} polls, checking for frames...",
                             poll_count
