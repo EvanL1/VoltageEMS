@@ -1,21 +1,27 @@
 //! Point configuration model.
 //!
-//! This module defines protocol-agnostic point configuration,
-//! with protocol-specific address types for each supported protocol.
+//! This module defines point configuration with both protocol-specific
+//! address types and SCADA-level categorization (point type).
 
 use serde::{Deserialize, Serialize};
+use voltage_model::PointType;
 
 use crate::protocols::core::error::GatewayError;
 
-/// Protocol-agnostic point configuration.
+/// Point configuration with protocol address and SCADA type.
 ///
-/// This is a pure protocol-layer type. It does NOT contain SCADA-level
-/// categorization (Telemetry/Signal/Control/Adjustment). The application
-/// layer determines point type based on its own configuration.
+/// Each point carries:
+/// - A unique numeric ID
+/// - A SCADA point type (Telemetry/Signal/Control/Adjustment)
+/// - Protocol-specific address information
+/// - Optional transformation and grouping configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointConfig {
     /// Unique point identifier (numeric).
     pub id: u32,
+
+    /// SCADA point type (T/S/C/A).
+    pub point_type: PointType,
 
     /// Human-readable name (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -42,16 +48,37 @@ fn default_true() -> bool {
 }
 
 impl PointConfig {
-    /// Create a new point configuration.
-    pub fn new(id: u32, address: ProtocolAddress) -> Self {
+    /// Create a new point configuration with explicit point type.
+    pub fn new(id: u32, point_type: PointType, address: ProtocolAddress) -> Self {
         Self {
             id,
+            point_type,
             name: None,
             address,
             transform: TransformConfig::default(),
             poll_group: None,
             enabled: true,
         }
+    }
+
+    /// Create a Telemetry point (convenience constructor).
+    pub fn telemetry(id: u32, address: ProtocolAddress) -> Self {
+        Self::new(id, PointType::Telemetry, address)
+    }
+
+    /// Create a Signal point (convenience constructor).
+    pub fn signal(id: u32, address: ProtocolAddress) -> Self {
+        Self::new(id, PointType::Signal, address)
+    }
+
+    /// Create a Control point (convenience constructor).
+    pub fn control(id: u32, address: ProtocolAddress) -> Self {
+        Self::new(id, PointType::Control, address)
+    }
+
+    /// Create an Adjustment point (convenience constructor).
+    pub fn adjustment(id: u32, address: ProtocolAddress) -> Self {
+        Self::new(id, PointType::Adjustment, address)
     }
 
     /// Set the point name.

@@ -63,6 +63,7 @@ fn build_point_configs(config: &ChannelConfig) -> Result<Vec<PointConfig>> {
 
         points.push(PointConfig {
             id: point_def.id,
+            point_type: point_def.point_type,
             name: Some(point_def.name.clone()),
             address,
             transform: point_def.transform.clone(),

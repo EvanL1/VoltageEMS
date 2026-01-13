@@ -284,6 +284,7 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                 })?;
             } else {
                 // Fallback: use full write path (includes TODO queue)
+                // Pass the pre-computed timestamp for consistency with Direct Path
                 voltage_rtdb::helpers::write_point_auto_trigger(
                     rtdb.as_ref(),
                     config,
@@ -291,6 +292,7 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                     point_type,
                     point_id,
                     *value,
+                    Some(timestamp_ms), // Use same timestamp as Direct Path would use
                 )
                 .await
                 .map_err(|e| {
@@ -340,6 +342,7 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                 };
 
                 // Write point using voltage-rtdb helper
+                // Batch writes: let the function compute timestamp for each point
                 match voltage_rtdb::helpers::write_point_auto_trigger(
                     rtdb.as_ref(),
                     config,
@@ -347,6 +350,7 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                     point_type,
                     point_id,
                     point.value,
+                    None, // Each batch point gets its own timestamp
                 )
                 .await
                 {

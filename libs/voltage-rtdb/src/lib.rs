@@ -300,9 +300,10 @@ pub mod helpers {
     /// * `point_type` - Point type (determines TODO trigger behavior)
     /// * `point_id` - Point ID
     /// * `value` - Point value
+    /// * `timestamp_ms` - Optional timestamp in milliseconds. If None, uses current system time.
     ///
     /// # Returns
-    /// * `Ok(i64)` - Timestamp in milliseconds
+    /// * `Ok(i64)` - Timestamp in milliseconds (either passed in or computed)
     /// * `Err(anyhow::Error)` - Write error
     pub async fn write_point_auto_trigger<R>(
         rtdb: &R,
@@ -311,15 +312,18 @@ pub mod helpers {
         point_type: PointType,
         point_id: u32,
         value: f64,
+        timestamp_ms: Option<i64>,
     ) -> Result<i64>
     where
         R: Rtdb,
     {
-        // Get current timestamp (milliseconds since epoch)
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .context("Failed to get system time")?
-            .as_millis() as i64;
+        // Use provided timestamp or compute current time
+        let timestamp_ms = timestamp_ms.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("System time before UNIX epoch")
+                .as_millis() as i64
+        });
 
         match point_type {
             PointType::Control | PointType::Adjustment => {

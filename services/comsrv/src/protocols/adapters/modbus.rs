@@ -711,7 +711,12 @@ impl ModbusChannel {
                 let coils = client
                     .read_01(modbus_addr.slave_id, modbus_addr.register, 1)
                     .await
-                    .map_err(|e| GatewayError::Protocol(e.to_string()))?;
+                    .map_err(|e| {
+                        GatewayError::Protocol(format!(
+                            "FC01 slave {} reg {}: {}",
+                            modbus_addr.slave_id, modbus_addr.register, e
+                        ))
+                    })?;
                 Value::Bool(coils.first().copied().unwrap_or(false))
             },
             2 => {
@@ -719,7 +724,12 @@ impl ModbusChannel {
                 let inputs = client
                     .read_02(modbus_addr.slave_id, modbus_addr.register, 1)
                     .await
-                    .map_err(|e| GatewayError::Protocol(e.to_string()))?;
+                    .map_err(|e| {
+                        GatewayError::Protocol(format!(
+                            "FC02 slave {} reg {}: {}",
+                            modbus_addr.slave_id, modbus_addr.register, e
+                        ))
+                    })?;
                 Value::Bool(inputs.first().copied().unwrap_or(false))
             },
             3 => {
@@ -728,7 +738,12 @@ impl ModbusChannel {
                 let regs = client
                     .read_03(modbus_addr.slave_id, modbus_addr.register, count)
                     .await
-                    .map_err(|e| GatewayError::Protocol(e.to_string()))?;
+                    .map_err(|e| {
+                        GatewayError::Protocol(format!(
+                            "FC03 slave {} reg {}: {}",
+                            modbus_addr.slave_id, modbus_addr.register, e
+                        ))
+                    })?;
                 decode_registers(
                     &regs,
                     modbus_addr.format,
@@ -742,7 +757,12 @@ impl ModbusChannel {
                 let regs = client
                     .read_04(modbus_addr.slave_id, modbus_addr.register, count)
                     .await
-                    .map_err(|e| GatewayError::Protocol(e.to_string()))?;
+                    .map_err(|e| {
+                        GatewayError::Protocol(format!(
+                            "FC04 slave {} reg {}: {}",
+                            modbus_addr.slave_id, modbus_addr.register, e
+                        ))
+                    })?;
                 decode_registers(
                     &regs,
                     modbus_addr.format,
@@ -761,7 +781,11 @@ impl ModbusChannel {
         // Apply transform
         let transformed_value = apply_transform(value, &point.transform);
 
-        Ok(DataPoint::new(point.id, transformed_value))
+        Ok(DataPoint::new(
+            point.id,
+            point.point_type,
+            transformed_value,
+        ))
     }
 
     /// Record an error in diagnostics.
@@ -885,7 +909,10 @@ impl ModbusChannel {
 
             if let Ok(value) = value_result {
                 let transformed = apply_transform(value, &point.transform);
-                results.push((point.id, DataPoint::new(point.id, transformed)));
+                results.push((
+                    point.id,
+                    DataPoint::new(point.id, point.point_type, transformed),
+                ));
             }
         }
 
@@ -934,8 +961,12 @@ impl ModbusChannel {
                 Ok(batch_results) => results.extend(batch_results),
                 Err(e) => {
                     debug!(
-                        "Batch read failed for segment @{}: {}",
-                        segment.start_address, e
+                        "FC{:02} slave {} batch read @{}-{} failed: {}",
+                        function_code,
+                        slave_id,
+                        segment.start_address,
+                        segment.end_address.saturating_sub(1),
+                        e
                     );
                 },
             }
@@ -1036,7 +1067,10 @@ impl ModbusChannel {
                         modbus_addr.bit_position,
                     ) {
                         let transformed = apply_transform(value, &point.transform);
-                        results.push((point.id, DataPoint::new(point.id, transformed)));
+                        results.push((
+                            point.id,
+                            DataPoint::new(point.id, point.point_type, transformed),
+                        ));
                     }
                 }
             }
@@ -1233,8 +1267,13 @@ impl ModbusChannel {
                     Ok(count) => success_count += count,
                     Err(e) => {
                         // If merged write fails, record for all commands
-                        // Share error string to avoid N allocations
-                        let err_msg = e.to_string();
+                        let err_msg = format!(
+                            "FC16 slave {} regs [{}-{}]: {}",
+                            slave_id,
+                            commands[0].register_address,
+                            commands.last().map(|c| c.register_address).unwrap_or(0),
+                            e
+                        );
                         for cmd in &commands {
                             failures.push((cmd.point_id, err_msg.clone()));
                         }
@@ -1259,7 +1298,13 @@ impl ModbusChannel {
                                         .await
                                 },
                                 Err(e) => {
-                                    failures.push((cmd.point_id, e.to_string()));
+                                    failures.push((
+                                        cmd.point_id,
+                                        format!(
+                                            "Encode error for slave {} reg {}: {}",
+                                            cmd.slave_id, cmd.register_address, e
+                                        ),
+                                    ));
                                     continue;
                                 },
                             }
@@ -1272,7 +1317,13 @@ impl ModbusChannel {
 
                     match result {
                         Ok(_) => success_count += 1,
-                        Err(e) => failures.push((cmd.point_id, e.to_string())),
+                        Err(e) => failures.push((
+                            cmd.point_id,
+                            format!(
+                                "Write slave {} reg {}: {}",
+                                cmd.slave_id, cmd.register_address, e
+                            ),
+                        )),
                     }
                 }
             }
@@ -1546,8 +1597,21 @@ impl ProtocolClient for ModbusChannel {
             .map(|(k, v)| (*k, v.clone()))
             .collect();
 
-        // Now safe to get mutable client reference (is_none check above guarantees Some)
-        let client = self.client.as_mut().expect("client checked above");
+        // Get mutable client reference using if-let to avoid expect()
+        // This is safer than expect() as it handles the edge case gracefully
+        let Some(client) = self.client.as_mut() else {
+            // This should not happen due to the check above, but handle it gracefully
+            self.log_context
+                .log_error("Client unavailable after check", ErrorContext::Polling)
+                .await;
+            let failures: Vec<_> = self
+                .config
+                .points
+                .iter()
+                .map(|p| PointFailure::new(p.id, "Client unavailable"))
+                .collect();
+            return PollResult::failed(failures);
+        };
 
         let mut batch = DataBatch::default();
         let mut read_count = 0u64;
@@ -1692,7 +1756,13 @@ impl ProtocolClient for ModbusChannel {
                 },
                 Err(e) => {
                     // Store error directly in failures, no separate Vec needed
-                    failures.push((cmd.id, e.to_string()));
+                    failures.push((
+                        cmd.id,
+                        format!(
+                            "Control write slave {} reg {}: {}",
+                            modbus_addr.slave_id, modbus_addr.register, e
+                        ),
+                    ));
                 },
             }
         }
@@ -1794,7 +1864,13 @@ impl ProtocolClient for ModbusChannel {
                 },
                 Err(e) => {
                     // Store error directly in failures, no separate Vec needed
-                    failures.push((adj.id, e.to_string()));
+                    failures.push((
+                        adj.id,
+                        format!(
+                            "Adjust write slave {} reg {}: {}",
+                            modbus_addr.slave_id, modbus_addr.register, e
+                        ),
+                    ));
                 },
             }
         }

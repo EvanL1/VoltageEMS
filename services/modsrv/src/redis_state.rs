@@ -11,6 +11,7 @@ use common::RedisRoutingKeys;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::fmt;
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::{Rtdb, SystemTimeProvider, TimeProvider};
 
 use crate::product_loader::{ActionPoint, MeasurementPoint, Product};
@@ -118,7 +119,11 @@ where
     R: Rtdb,
 {
     // 1. Query instance_id by name using O(1) reverse index (inst:name:index Hash)
-    let instance_id = match redis.hash_get("inst:name:index", instance_name).await? {
+    let keyspace = KeySpaceConfig::production_cached();
+    let instance_id = match redis
+        .hash_get(&keyspace.instance_name_index_key(), instance_name)
+        .await?
+    {
         Some(id_bytes) => {
             let id_str = String::from_utf8_lossy(&id_bytes);
             id_str
@@ -129,7 +134,7 @@ where
     };
 
     // 2. Collect fields to delete from M2C routing (using instance_id format)
-    let prefix_m2c = format!("{}:A:", instance_id);
+    let prefix_m2c = KeySpaceConfig::route_action_prefix(instance_id);
     let m2c_mappings_bytes = redis
         .hash_get_all(RedisRoutingKeys::MODEL_TO_CHANNEL)
         .await?;
@@ -145,7 +150,7 @@ where
     }
 
     // 3. Collect fields to delete from C2M routing (value contains instance_id)
-    let prefix_c2m_value = format!("{}:M:", instance_id);
+    let prefix_c2m_value = KeySpaceConfig::route_measurement_prefix(instance_id);
     let c2m_mappings_bytes = redis
         .hash_get_all(RedisRoutingKeys::CHANNEL_TO_MODEL)
         .await?;
@@ -414,9 +419,10 @@ where
         .await?;
 
     // 3. Add reverse index: inst:name:index Hash for O(1) name→ID lookup
+    let keyspace = KeySpaceConfig::production_cached();
     redis
         .hash_set(
-            "inst:name:index",
+            &keyspace.instance_name_index_key(),
             instance_name,
             Bytes::from(instance_id.to_string()),
         )
@@ -443,14 +449,17 @@ where
     }
 
     // Safety: SCAN and delete any remaining inst:{id}:* keys (for cleanup)
-    let pattern = format!("inst:{}:*", instance_id);
+    let keyspace = KeySpaceConfig::production_cached();
+    let pattern = keyspace.instance_pattern(instance_id);
     let extra_keys = redis.scan_match(&pattern).await?;
     for key in &extra_keys {
         redis.del(key).await?;
     }
 
     // Remove from reverse index: inst:name:index
-    redis.hash_del("inst:name:index", instance_name).await?;
+    redis
+        .hash_del(&keyspace.instance_name_index_key(), instance_name)
+        .await?;
 
     // Clean up routing mappings (route:c2m and route:m2c)
     cleanup_routing(redis, instance_id, instance_name).await?;
@@ -477,13 +486,17 @@ pub async fn rename_instance_in_redis<R>(
 where
     R: Rtdb,
 {
+    let keyspace = KeySpaceConfig::production_cached();
+
     // 1. Remove old name from reverse index
-    redis.hash_del("inst:name:index", old_name).await?;
+    redis
+        .hash_del(&keyspace.instance_name_index_key(), old_name)
+        .await?;
 
     // 2. Add new name to reverse index
     redis
         .hash_set(
-            "inst:name:index",
+            &keyspace.instance_name_index_key(),
             new_name,
             Bytes::from(instance_id.to_string()),
         )
@@ -771,8 +784,9 @@ mod tests {
     /// Helper to setup instance name index for tests
     async fn setup_test_instance_index(rtdb: &MemoryRtdb, instance_id: u32, instance_name: &str) {
         use bytes::Bytes;
+        let keyspace = KeySpaceConfig::production();
         rtdb.hash_set(
-            "inst:name:index",
+            &keyspace.instance_name_index_key(),
             instance_name,
             Bytes::from(instance_id.to_string()),
         )

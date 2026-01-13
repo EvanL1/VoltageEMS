@@ -38,15 +38,14 @@ use voltage_rtdb::{
 
 /// Redis-backed data store for VoltageEMS.
 ///
-/// This is the bridge between IGW protocols and the VoltageEMS Redis storage.
+/// This is the bridge between protocol adapters and the VoltageEMS Redis storage.
 /// Called by run_polling_task after protocol.poll_once() to persist data.
 ///
-/// IGW handles all data transformations (scale/offset/reverse) in poll_once(),
+/// Protocol adapters handle all data transformations (scale/offset/reverse) in poll_once(),
 /// so this store receives already-transformed data and writes it directly.
 ///
-/// Point type is encoded in the internal_id using `PointType::to_internal_id()`,
-/// and decoded using `PointType::from_internal_id()` when writing to Redis.
-/// This avoids point_id collisions when different types share the same original ID.
+/// Each DataPoint carries an explicit `point_type` field to identify its SCADA category
+/// (Telemetry/Signal/Control/Adjustment), used for routing to the correct Redis key.
 ///
 /// It handles:
 /// - Redis Hash writes via WriteBuffer (high-performance buffered writes)
@@ -121,7 +120,19 @@ impl<R: Rtdb> RedisDataStore<R> {
     ///
     /// The task runs until `shutdown()` is called or the store is dropped.
     /// Uses interior mutability so this can be called on Arc<RedisDataStore>.
+    /// Idempotent: if a task is already running, this is a no-op.
     pub async fn start_flush_task(&self) {
+        // Check if task already running (prevent concurrent start race)
+        {
+            let guard = self.flush_handle.read().await;
+            if let Some(ref handle) = *guard {
+                if !handle.is_finished() {
+                    debug!("Flush task already running, skipping start");
+                    return;
+                }
+            }
+        }
+
         let buffer = Arc::clone(&self.write_buffer);
         let rtdb = Arc::clone(&self.rtdb);
         let shutdown = Arc::clone(&self.shutdown_notify);
@@ -136,6 +147,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// Shutdown the flush task gracefully.
     ///
     /// Sends shutdown signal and waits for the task to complete (with timeout).
+    /// If timeout occurs, performs a final flush before aborting to prevent data loss.
     pub async fn shutdown(&self) {
         // Signal shutdown
         self.shutdown_notify.notify_one();
@@ -151,7 +163,16 @@ impl<R: Rtdb> RedisDataStore<R> {
                 Ok(Ok(())) => debug!("RedisDataStore flush task stopped gracefully"),
                 Ok(Err(e)) => warn!("RedisDataStore flush task panicked: {}", e),
                 Err(_) => {
-                    warn!("RedisDataStore flush task did not stop in time, aborting");
+                    warn!("RedisDataStore flush task did not stop in time, performing final flush before abort");
+                    // Flush any remaining buffered data before aborting to prevent data loss
+                    match self.write_buffer.flush_now(&*self.rtdb).await {
+                        Ok(count) => {
+                            if count > 0 {
+                                debug!("Final flush saved {} keys before abort", count);
+                            }
+                        },
+                        Err(e) => warn!("Final flush failed: {}", e),
+                    }
                     abort_handle.abort();
                 },
             }
@@ -160,33 +181,28 @@ impl<R: Rtdb> RedisDataStore<R> {
 
     /// Convert DataBatch to ChannelPointUpdates for voltage-routing.
     ///
-    /// The internal_id from IGW encodes both point type and original point_id.
-    /// We decode it using `PointType::from_internal_id()` to get the correct
-    /// Redis key (type) and field (original point_id).
+    /// Each DataPoint carries explicit `id` and `point_type` fields.
     ///
-    /// Note: IGW has already applied transformations (scale/offset/reverse) in poll_once(),
+    /// Note: Protocol adapters have already applied transformations (scale/offset/reverse),
     /// so point.value is already the final transformed value.
     fn batch_to_updates(&self, channel_id: u32, batch: &DataBatch) -> Vec<ChannelPointUpdate> {
         let mut updates = Vec::with_capacity(batch.len());
 
         for point in batch.iter() {
-            // Decode internal_id to get point_type and original point_id
-            let (point_type, original_point_id) = PointType::from_internal_id(point.id);
-
-            // IGW returns already-transformed values
+            // Use explicit point_type and id (no decoding needed)
             let value = point.value.as_f64().unwrap_or(0.0);
 
             debug!(
-                "[{:?}] Point {} (internal_id={}): value={:.2}",
-                point_type, original_point_id, point.id, value
+                "[{:?}] Point {}: value={:.2}",
+                point.point_type, point.id, value
             );
 
             updates.push(ChannelPointUpdate {
                 channel_id,
-                point_type,
-                point_id: original_point_id, // Use original point_id for Redis field
+                point_type: point.point_type,
+                point_id: point.id,
                 value,
-                raw_value: None, // IGW doesn't expose pre-transform values
+                raw_value: None, // Protocol adapters don't expose pre-transform values
                 cascade_depth: 0,
             });
         }
@@ -272,7 +288,7 @@ impl<R: Rtdb> RedisDataStore<R> {
             if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, &point_id_str).await {
                 let value_str = String::from_utf8_lossy(&value_bytes);
                 if let Ok(value) = value_str.parse::<f64>() {
-                    return Ok(Some(DataPoint::new(point_id, value)));
+                    return Ok(Some(DataPoint::new(point_id, point_type, value)));
                 }
             }
         }
@@ -298,7 +314,7 @@ impl<R: Rtdb> RedisDataStore<R> {
                     if let (Ok(point_id), Ok(value)) =
                         (point_id_str.parse::<u32>(), value_str.parse::<f64>())
                     {
-                        batch.add(DataPoint::new(point_id, value));
+                        batch.add(DataPoint::new(point_id, point_type, value));
                     }
                 }
             }
@@ -387,22 +403,19 @@ mod tests {
     use voltage_rtdb::helpers::create_test_rtdb;
 
     #[tokio::test]
-    async fn test_redis_store_write_with_internal_id() {
+    async fn test_redis_store_write_with_point_type() {
         let rtdb = create_test_rtdb();
         let routing_cache = Arc::new(RoutingCache::new());
 
         let store = RedisDataStore::new(rtdb, routing_cache);
 
-        // Create a batch with internal_ids (simulating what igw returns)
-        // Signal point_id=1 and Control point_id=1 should have different internal_ids
-        let signal_internal = PointType::Signal.to_internal_id(1);
-        let control_internal = PointType::Control.to_internal_id(1);
-
+        // Create a batch with explicit point types
+        // Signal point_id=1 and Control point_id=1 are different points
         let mut batch = DataBatch::default();
-        batch.add(DataPoint::new(signal_internal, true)); // DI
-        batch.add(DataPoint::new(control_internal, false)); // DO
+        batch.add(DataPoint::signal(1, true)); // DI
+        batch.add(DataPoint::control(1, false)); // DO
 
-        // Write - this should decode internal_ids correctly and write to different Redis keys
+        // Write - uses point.point_type to route to different Redis keys
         store.write_batch(9901, batch).await.unwrap();
 
         // Note: In-memory test rtdb doesn't persist, so we can't verify reads
@@ -410,30 +423,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_batch_to_updates_decodes_internal_id() {
+    async fn test_batch_to_updates_uses_point_type() {
         let rtdb = create_test_rtdb();
         let routing_cache = Arc::new(RoutingCache::new());
 
         let store = RedisDataStore::new(rtdb, routing_cache);
 
-        // Simulate GPIO data with Signal point_id=1 and Control point_id=1
-        let signal_internal = PointType::Signal.to_internal_id(1);
-        let control_internal = PointType::Control.to_internal_id(1);
-
+        // GPIO data with explicit point types - same point_id, different types
         let mut batch = DataBatch::default();
-        batch.add(DataPoint::new(signal_internal, 1.0)); // DI value
-        batch.add(DataPoint::new(control_internal, 0.0)); // DO value
+        batch.add(DataPoint::signal(1, 1.0)); // DI value
+        batch.add(DataPoint::control(1, 0.0)); // DO value
 
         let updates = store.batch_to_updates(5, &batch);
 
         assert_eq!(updates.len(), 2);
 
-        // First update should be Signal with original point_id=1
+        // First update should be Signal with point_id=1
         assert_eq!(updates[0].point_type, PointType::Signal);
         assert_eq!(updates[0].point_id, 1);
         assert_eq!(updates[0].value, 1.0);
 
-        // Second update should be Control with original point_id=1
+        // Second update should be Control with point_id=1
         assert_eq!(updates[1].point_type, PointType::Control);
         assert_eq!(updates[1].point_id, 1);
         assert_eq!(updates[1].value, 0.0);
@@ -446,18 +456,19 @@ mod tests {
 
         let store = RedisDataStore::new(rtdb, routing_cache);
 
-        // Set configs using new API (with internal_id)
-        let internal_id = PointType::Telemetry.to_internal_id(1);
-        let configs = vec![PointConfig::new(
-            internal_id,
+        // Set configs using explicit point_type
+        let configs = vec![PointConfig::telemetry(
+            1,
             crate::protocols::core::point::ProtocolAddress::Generic("test".to_string()),
         )];
         store.set_point_configs(9902, configs);
 
-        // Get config by internal_id
-        let config = store.get_point_config(9902, internal_id);
+        // Get config by point_id
+        let config = store.get_point_config(9902, 1);
         assert!(config.is_some());
-        assert_eq!(config.unwrap().id, internal_id);
+        let cfg = config.unwrap();
+        assert_eq!(cfg.id, 1);
+        assert_eq!(cfg.point_type, PointType::Telemetry);
 
         // Get all configs
         let all = store.get_all_point_configs(9902);

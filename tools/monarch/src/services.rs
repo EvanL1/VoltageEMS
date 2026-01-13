@@ -5,6 +5,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 use std::process::Command;
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
 
 #[derive(Subcommand)]
@@ -473,9 +474,10 @@ pub async fn handle_command(
                 .modsrv()?;
 
             // Resolve instance name to ID
+            let keyspace = KeySpaceConfig::production_cached();
             let instance_id_bytes = ctx
                 .rtdb
-                .hash_get("inst:name:index", &instance_name)
+                .hash_get(&keyspace.instance_name_index_key(), &instance_name)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Instance '{}' not found", instance_name))?;
             let instance_id = String::from_utf8_lossy(&instance_id_bytes)

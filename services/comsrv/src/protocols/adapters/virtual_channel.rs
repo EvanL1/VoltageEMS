@@ -320,7 +320,7 @@ impl ProtocolClient for VirtualChannel {
         // For virtual channels, control commands are stored as data points
         let mut batch = DataBatch::new();
         for cmd in commands {
-            batch.add(DataPoint::new(cmd.id, cmd.value));
+            batch.add(DataPoint::control(cmd.id, cmd.value));
         }
         self.write(&batch).await?;
         Ok(WriteResult::success(commands.len()))
@@ -330,7 +330,7 @@ impl ProtocolClient for VirtualChannel {
         // For virtual channels, adjustments are stored as data points
         let mut batch = DataBatch::new();
         for adj in adjustments {
-            batch.add(DataPoint::new(adj.id, adj.value));
+            batch.add(DataPoint::adjustment(adj.id, adj.value));
         }
         self.write(&batch).await?;
         Ok(WriteResult::success(adjustments.len()))
@@ -439,7 +439,10 @@ mod tests {
         let mut channel = VirtualChannel::new(config, 1);
 
         // Write a point
-        channel.write_point(DataPoint::new(1, 25.5)).await.unwrap();
+        channel
+            .write_point(DataPoint::telemetry(1, 25.5))
+            .await
+            .unwrap();
 
         // Poll it back (use UFCS to disambiguate)
         let result = ProtocolClient::poll_once(&mut channel).await;
@@ -464,8 +467,14 @@ mod tests {
         let mut channel = VirtualChannel::new(config, 1);
 
         // Write some data
-        channel.write_point(DataPoint::new(1, 1.0)).await.unwrap();
-        channel.write_point(DataPoint::new(2, 2.0)).await.unwrap();
+        channel
+            .write_point(DataPoint::telemetry(1, 1.0))
+            .await
+            .unwrap();
+        channel
+            .write_point(DataPoint::telemetry(2, 2.0))
+            .await
+            .unwrap();
 
         // Poll returns accumulated data as PollResult (use UFCS)
         let result = ProtocolClient::poll_once(&mut channel).await;
@@ -478,8 +487,14 @@ mod tests {
         let config = VirtualChannelConfig::new("diag_test");
         let channel = VirtualChannel::new(config, 1);
 
-        channel.write_point(DataPoint::new(1, 1.0)).await.unwrap();
-        channel.write_point(DataPoint::new(2, 2.0)).await.unwrap();
+        channel
+            .write_point(DataPoint::telemetry(1, 1.0))
+            .await
+            .unwrap();
+        channel
+            .write_point(DataPoint::telemetry(2, 2.0))
+            .await
+            .unwrap();
 
         // Use UFCS to disambiguate
         let diag = Protocol::diagnostics(&channel).await.unwrap();
@@ -497,7 +512,10 @@ mod tests {
         let mut rx2 = EventDrivenProtocol::subscribe(&channel);
 
         // Write data
-        channel.write_point(DataPoint::new(1, 42.0)).await.unwrap();
+        channel
+            .write_point(DataPoint::telemetry(1, 42.0))
+            .await
+            .unwrap();
 
         // Both subscribers should receive the event
         let event1 = rx1.recv().await.unwrap();

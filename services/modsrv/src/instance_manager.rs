@@ -137,7 +137,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         {
             error!("Failed to insert instance {}: {}", req.instance_name, e);
-            let _ = tx.rollback().await;
+            if let Err(rb_err) = tx.rollback().await {
+                error!("Transaction rollback failed: {}", rb_err);
+            }
             return Err(anyhow!("Failed to create instance: {}", e));
         }
 
@@ -606,7 +608,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             Ok(res) => {
                 if res.rows_affected() == 0 {
                     // Rollback transaction
-                    let _ = tx.rollback().await;
+                    if let Err(rb_err) = tx.rollback().await {
+                        error!("Transaction rollback failed: {}", rb_err);
+                    }
                     return Err(anyhow!("Instance not found: {}", instance_id));
                 }
             },
@@ -615,7 +619,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     "Failed to delete instance {} ({}) from SQLite: {}",
                     instance_id, instance_name, e
                 );
-                let _ = tx.rollback().await;
+                if let Err(rb_err) = tx.rollback().await {
+                    error!("Transaction rollback failed: {}", rb_err);
+                }
                 return Err(anyhow!("Failed to delete instance: {}", e));
             },
         }

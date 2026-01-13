@@ -3,6 +3,7 @@
 //! Defines the TOML-friendly configuration format for the gateway.
 
 use serde::{Deserialize, Serialize};
+use voltage_model::PointType;
 
 use crate::protocols::core::point::TransformConfig;
 
@@ -141,6 +142,10 @@ pub struct PointDef {
     /// Point unique identifier.
     pub id: u32,
 
+    /// SCADA point type (T/S/C/A). Defaults to Telemetry.
+    #[serde(default = "default_point_type")]
+    pub point_type: PointType,
+
     /// Point display name.
     pub name: String,
 
@@ -154,6 +159,10 @@ pub struct PointDef {
     /// Whether this point is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+fn default_point_type() -> PointType {
+    PointType::Telemetry
 }
 
 impl GatewayConfig {

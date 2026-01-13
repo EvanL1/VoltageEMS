@@ -249,12 +249,13 @@ async fn perform_hot_reload<R: Rtdb + 'static>(
         .map_err(|e| format!("Failed to create channel: {}", e))?;
 
     // 3. Async connection (don't wait) using ChannelEntry's connect method
-    tokio::spawn(async move {
+    // Fire-and-forget: connection is best-effort, errors are logged
+    drop(tokio::spawn(async move {
         match entry.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", id),
             Err(e) => tracing::warn!("Ch{} connect: {}", id, e),
         }
-    });
+    }));
 
     tracing::debug!("Ch{} reloaded", id);
     Ok("reloaded".to_string())
@@ -470,14 +471,15 @@ pub async fn create_channel_handler<R: Rtdb>(
         match manager.create_channel(Arc::new(channel_config)).await {
             Ok(entry) => {
                 // Spawn background connection to avoid failing API on initial connect error
+                // Fire-and-forget: connection is best-effort, errors are logged
                 let channel_id_for_log = channel_id;
-                tokio::spawn(async move {
+                drop(tokio::spawn(async move {
                     if let Err(e) = entry.connect().await {
                         tracing::warn!("Ch{} connect: {}", channel_id_for_log, e);
                     } else {
                         tracing::debug!("Ch{} connected", channel_id_for_log);
                     }
-                });
+                }));
                 "connecting".to_string()
             },
             Err(e) => {
@@ -736,12 +738,13 @@ pub async fn update_channel_handler<R: Rtdb>(
                 };
 
                 // Spawn background hot reload
+                // Fire-and-forget: hot reload is best-effort, errors are logged
                 let state_clone = state.clone();
-                tokio::spawn(async move {
+                drop(tokio::spawn(async move {
                     if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
                         tracing::error!("Ch{} hot reload: {}", id, e);
                     }
-                });
+                }));
 
                 "updated".to_string()
             },
@@ -768,12 +771,13 @@ pub async fn update_channel_handler<R: Rtdb>(
                 };
 
                 // Spawn background hot reload
+                // Fire-and-forget: hot reload is best-effort, errors are logged
                 let state_clone = state.clone();
-                tokio::spawn(async move {
+                drop(tokio::spawn(async move {
                     if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
                         tracing::error!("Ch{} hot reload: {}", id, e);
                     }
-                });
+                }));
 
                 "updated".to_string()
             },
@@ -902,14 +906,14 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
         match manager.create_channel(Arc::new(config)).await {
             Ok(entry) => {
                 // Trigger asynchronous connection in background
-                // Don't wait for connection result - let reconnection mechanism handle failures
+                // Fire-and-forget: connection is best-effort, errors are logged
                 let channel_id_for_log = id;
-                tokio::spawn(async move {
+                drop(tokio::spawn(async move {
                     match entry.connect().await {
                         Ok(_) => tracing::debug!("Ch{} connected", channel_id_for_log),
                         Err(e) => tracing::warn!("Ch{} connect: {}", channel_id_for_log, e),
                     }
-                });
+                }));
 
                 // Update database
                 if let Err(e) = sqlx::query("UPDATE channels SET enabled = ? WHERE channel_id = ?")
@@ -1041,7 +1045,9 @@ pub async fn delete_channel_handler<R: Rtdb>(
         })?;
 
     if result.rows_affected() == 0 {
-        let _ = tx.rollback().await;
+        if let Err(rb_err) = tx.rollback().await {
+            tracing::error!("Ch{} delete rollback failed: {}", id, rb_err);
+        }
         return Err(AppError::not_found(format!(
             "Channel {} not found in database",
             id

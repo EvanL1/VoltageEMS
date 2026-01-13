@@ -21,6 +21,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::RwLock;
 
 use chrono::{DateTime, Utc};
+use tracing::warn;
+use voltage_model::PointType;
 
 use super::data::{DataBatch, DataPoint, Value};
 use super::quality::Quality;
@@ -151,7 +153,10 @@ impl DataSlot {
 
         // Update value under write lock
         {
-            let mut guard = self.value.write().expect("RwLock poisoned");
+            let mut guard = self.value.write().unwrap_or_else(|e| {
+                warn!("DataSlot RwLock poisoned, recovering");
+                e.into_inner()
+            });
             *guard = Some(value);
         }
 
@@ -163,7 +168,10 @@ impl DataSlot {
     ///
     /// Returns `None` if the slot has never been written to.
     pub fn read(&self) -> Option<(Value, Quality, i64, u64)> {
-        let guard = self.value.read().expect("RwLock poisoned");
+        let guard = self.value.read().unwrap_or_else(|e| {
+            warn!("DataSlot RwLock poisoned on read, recovering");
+            e.into_inner()
+        });
         guard.as_ref().map(|v| {
             (
                 v.clone(),
@@ -176,7 +184,13 @@ impl DataSlot {
 
     /// Read only the value (clones the value).
     pub fn read_value(&self) -> Option<Value> {
-        self.value.read().expect("RwLock poisoned").clone()
+        self.value
+            .read()
+            .unwrap_or_else(|e| {
+                warn!("DataSlot RwLock poisoned on read_value, recovering");
+                e.into_inner()
+            })
+            .clone()
     }
 
     /// Get the current version counter.
@@ -190,7 +204,13 @@ impl DataSlot {
     /// Check if the slot has been written to.
     #[inline]
     pub fn has_value(&self) -> bool {
-        self.value.read().expect("RwLock poisoned").is_some()
+        self.value
+            .read()
+            .unwrap_or_else(|e| {
+                warn!("DataSlot RwLock poisoned on has_value, recovering");
+                e.into_inner()
+            })
+            .is_some()
     }
 }
 
@@ -222,6 +242,8 @@ pub struct SlotStore {
     index: HashMap<u32, usize>,
     /// Reverse mapping: slot index -> point_id
     point_ids: Vec<u32>,
+    /// SCADA point type for all points in this store
+    point_type: PointType,
 }
 
 impl SlotStore {
@@ -234,11 +256,12 @@ impl SlotStore {
             slots: Vec::new(),
             index: HashMap::new(),
             point_ids: Vec::new(),
+            point_type: PointType::Telemetry, // Default type
         }
     }
 
-    /// Create a new store from a list of point IDs.
-    pub fn from_points(point_ids: &[u32]) -> Self {
+    /// Create a new store from a list of point IDs with specified point type.
+    pub fn from_points(point_ids: &[u32], point_type: PointType) -> Self {
         let mut index = HashMap::with_capacity(point_ids.len());
         let mut slots = Vec::with_capacity(point_ids.len());
         let mut ids = Vec::with_capacity(point_ids.len());
@@ -253,7 +276,18 @@ impl SlotStore {
             slots,
             index,
             point_ids: ids,
+            point_type,
         }
+    }
+
+    /// Create a new store for Telemetry points (convenience).
+    pub fn telemetry(point_ids: &[u32]) -> Self {
+        Self::from_points(point_ids, PointType::Telemetry)
+    }
+
+    /// Create a new store for Signal points (convenience).
+    pub fn signal(point_ids: &[u32]) -> Self {
+        Self::from_points(point_ids, PointType::Signal)
     }
 
     /// Get a reference to a data slot by point ID.
@@ -295,6 +329,7 @@ impl SlotStore {
                     DateTime::from_timestamp_millis(ts_ms).unwrap_or(now);
                 let point = DataPoint {
                     id: point_id,
+                    point_type: self.point_type,
                     value,
                     quality,
                     timestamp,
@@ -355,16 +390,19 @@ pub struct ShardedSlotStore {
     shard_point_ids: Vec<Vec<u32>>,
     /// Number of shards
     shard_count: usize,
+    /// SCADA point type for all points in this store
+    point_type: PointType,
 }
 
 impl ShardedSlotStore {
-    /// Create a new sharded store.
+    /// Create a new sharded store with specified point type.
     ///
     /// # Arguments
     ///
     /// * `point_ids` - List of all point IDs
     /// * `shard_count` - Number of shards (typically CPU core count or fixed like 16)
-    pub fn new(point_ids: &[u32], shard_count: usize) -> Self {
+    /// * `point_type` - SCADA point type for all points
+    pub fn new(point_ids: &[u32], shard_count: usize, point_type: PointType) -> Self {
         let shard_count = shard_count.max(1);
 
         // Pre-calculate shard assignments
@@ -398,7 +436,13 @@ impl ShardedSlotStore {
             index,
             shard_point_ids,
             shard_count,
+            point_type,
         }
+    }
+
+    /// Create a new sharded store for Telemetry points (convenience).
+    pub fn telemetry(point_ids: &[u32], shard_count: usize) -> Self {
+        Self::new(point_ids, shard_count, PointType::Telemetry)
     }
 
     /// Update a single point's value.
@@ -436,6 +480,7 @@ impl ShardedSlotStore {
                         DateTime::from_timestamp_millis(ts_ms).unwrap_or(now);
                     let point = DataPoint {
                         id: point_id,
+                        point_type: self.point_type,
                         value,
                         quality,
                         timestamp,
@@ -564,7 +609,7 @@ mod tests {
 
     #[test]
     fn test_slot_store() {
-        let store = SlotStore::from_points(&[10, 20, 30]);
+        let store = SlotStore::from_points(&[10, 20, 30], PointType::Telemetry);
 
         assert_eq!(store.len(), 3);
         assert!(store.contains(10));
@@ -591,11 +636,15 @@ mod tests {
         // Export
         let batch = store.export_all();
         assert_eq!(batch.len(), 3);
+        // Verify point_type is set correctly
+        for point in batch.iter() {
+            assert_eq!(point.point_type, PointType::Telemetry);
+        }
     }
 
     #[test]
     fn test_sharded_slot_store() {
-        let store = ShardedSlotStore::new(&[1, 2, 3, 4, 5, 6, 7, 8], 4);
+        let store = ShardedSlotStore::new(&[1, 2, 3, 4, 5, 6, 7, 8], 4, PointType::Signal);
 
         assert_eq!(store.len(), 8);
         assert_eq!(store.shard_count(), 4);

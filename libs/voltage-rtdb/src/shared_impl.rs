@@ -548,11 +548,23 @@ impl SharedVecRtdbWriter {
 
     /// Get mutable reference to header
     fn header_mut(&mut self) -> &mut SharedHeader {
+        debug_assert!(
+            self.mmap.len() >= std::mem::size_of::<SharedHeader>(),
+            "mmap too small for SharedHeader: {} < {}",
+            self.mmap.len(),
+            std::mem::size_of::<SharedHeader>()
+        );
         unsafe { &mut *(self.mmap.as_mut_ptr() as *mut SharedHeader) }
     }
 
     /// Get reference to header
     fn header(&self) -> &SharedHeader {
+        debug_assert!(
+            self.mmap.len() >= std::mem::size_of::<SharedHeader>(),
+            "mmap too small for SharedHeader: {} < {}",
+            self.mmap.len(),
+            std::mem::size_of::<SharedHeader>()
+        );
         unsafe { &*(self.mmap.as_ptr() as *const SharedHeader) }
     }
 
@@ -560,6 +572,15 @@ impl SharedVecRtdbWriter {
     fn instance_index_mut(&mut self, idx: usize) -> &mut InstanceIndex {
         let header = self.header();
         let offset = header.index_offset as usize + idx * std::mem::size_of::<InstanceIndex>();
+        let end_offset = offset + std::mem::size_of::<InstanceIndex>();
+        debug_assert!(
+            end_offset <= self.mmap.len(),
+            "InstanceIndex offset out of bounds: idx={}, offset={}, end={}, mmap_len={}",
+            idx,
+            offset,
+            end_offset,
+            self.mmap.len()
+        );
         unsafe { &mut *(self.mmap.as_mut_ptr().add(offset) as *mut InstanceIndex) }
     }
 
@@ -567,6 +588,15 @@ impl SharedVecRtdbWriter {
     fn slot_at(&self, slot_offset: usize) -> &PointSlot {
         let header = self.header();
         let offset = header.data_offset as usize + slot_offset;
+        let end_offset = offset + std::mem::size_of::<PointSlot>();
+        debug_assert!(
+            end_offset <= self.mmap.len(),
+            "PointSlot offset out of bounds: slot_offset={}, offset={}, end={}, mmap_len={}",
+            slot_offset,
+            offset,
+            end_offset,
+            self.mmap.len()
+        );
         unsafe { &*(self.mmap.as_ptr().add(offset) as *const PointSlot) }
     }
 

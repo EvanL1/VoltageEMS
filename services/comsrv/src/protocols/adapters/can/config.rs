@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use voltage_model::PointType;
 
 /// CAN client configuration.
 #[derive(Debug, Clone)]
@@ -59,6 +60,8 @@ pub enum CanDataType {
 pub struct CanPoint {
     /// Unique point identifier (numeric)
     pub point_id: u32,
+    /// Point type (T/S/C/A)
+    pub point_type: PointType,
     /// CAN-ID (e.g., 0x351)
     pub can_id: u32,
     /// Byte offset in CAN data field (0-7)

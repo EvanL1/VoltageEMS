@@ -5,6 +5,7 @@
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
 use arc_swap::ArcSwapOption;
+use dashmap::DashSet;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -68,10 +69,13 @@ impl Clone for ChannelMetadata {
 
 /// Helper function to get current Unix timestamp in milliseconds
 fn unix_timestamp_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_millis() as i64,
+        Err(e) => {
+            warn!("System time error (clock before UNIX epoch?): {}", e);
+            0
+        },
+    }
 }
 
 /// Channel entry with integrated protocol runtime and storage
@@ -271,6 +275,7 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
     /// Sends a Connect command to the unified channel task.
     pub async fn connect(&self) -> crate::error::Result<()> {
         use crate::core::channels::types::ProtocolCommand;
+        use std::time::Duration;
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         self.protocol_tx
@@ -278,8 +283,15 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             .await
             .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
 
-        response_rx
+        // Add 30s timeout to prevent indefinite blocking on connect
+        tokio::time::timeout(Duration::from_secs(30), response_rx)
             .await
+            .map_err(|_| {
+                crate::error::ComSrvError::timeout(format!(
+                    "Ch{} connect timeout (30s)",
+                    self.channel_config.id()
+                ))
+            })?
             .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?
             .map_err(crate::error::ComSrvError::from)
     }
@@ -333,7 +345,6 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
 use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ProtocolCommand;
 use crate::protocols::core::traits::PollResult;
-use voltage_model::PointType;
 
 /// Run the unified channel task that handles both polling and commands.
 ///
@@ -418,8 +429,8 @@ async fn run_unified_channel_task<R: Rtdb>(
             Some(cmd) = business_rx.recv() => {
                 match cmd {
                     ChannelCommand::Control { point_id, value, .. } => {
-                        let internal_id = PointType::Control.to_internal_id(point_id);
-                        match protocol.write_control(&[(internal_id, value)]).await {
+                        // Use original point_id - protocol filters by point_type
+                        match protocol.write_control(&[(point_id, value)]).await {
                             Ok(success_count) => {
                                 if success_count > 0 {
                                     debug!("Ch{} control pt{} = {} ok", channel_id, point_id, value);
@@ -433,8 +444,8 @@ async fn run_unified_channel_task<R: Rtdb>(
                         }
                     }
                     ChannelCommand::Adjustment { point_id, value, .. } => {
-                        let internal_id = PointType::Adjustment.to_internal_id(point_id);
-                        match protocol.write_adjustment(&[(internal_id, value)]).await {
+                        // Use original point_id - protocol filters by point_type
+                        match protocol.write_adjustment(&[(point_id, value)]).await {
                             Ok(success_count) => {
                                 if success_count > 0 {
                                     debug!("Ch{} adjustment pt{} = {} ok", channel_id, point_id, value);
@@ -505,6 +516,9 @@ pub struct ChannelManager<R: Rtdb> {
     /// Pre-allocated channel slots for O(1) direct index access
     /// Index = channel_id, value = Option<Arc<ChannelEntry>>
     channels: Vec<ArcSwapOption<ChannelEntry<R>>>,
+    /// Active channel ID index for O(1) iteration (avoids O(10000) full scan)
+    /// Synchronized with channels: insert on create_channel, remove on remove_channel
+    active_channel_ids: DashSet<u32>,
     /// Shared RTDB (Redis or Memory for testing)
     rtdb: Arc<R>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
@@ -539,6 +553,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<voltage_rtdb::RoutingCache>) -> Self {
         Self {
             channels: Self::create_channel_slots(),
+            active_channel_ids: DashSet::new(),
             rtdb,
             routing_cache,
             sqlite_pool: None,
@@ -556,6 +571,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ) -> Self {
         Self {
             channels: Self::create_channel_slots(),
+            active_channel_ids: DashSet::new(),
             rtdb,
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
@@ -586,6 +602,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     ) -> Self {
         Self {
             channels: Self::create_channel_slots(),
+            active_channel_ids: DashSet::new(),
             rtdb,
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
@@ -693,15 +710,20 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             },
         };
 
-        // Register command_tx with cache for O(1) hot path access
+        let entry = Arc::new(entry);
+
+        // IMPORTANT: Order matters for cache consistency!
+        // 1. First: atomic store (publish channel to be visible)
+        slot.store(Some(Arc::clone(&entry)));
+
+        // 2. Then: register command_tx with cache (channel is now visible)
+        // This order prevents a race where cache lookup succeeds but slot is empty
         if let (Some(ref cache), Some(ref tx)) = (&self.command_tx_cache, &entry.command_tx) {
             cache.register(channel_id, tx.clone());
         }
 
-        let entry = Arc::new(entry);
-
-        // O(1) atomic store (slot already validated above)
-        slot.store(Some(Arc::clone(&entry)));
+        // 3. Finally: register in active channel index for O(1) iteration
+        self.active_channel_ids.insert(channel_id);
 
         info!("Ch{} created ({})", channel_id, protocol_name);
         Ok(entry)
@@ -787,12 +809,21 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         let host = params
             .get("host")
             .and_then(|v| v.as_str())
-            .unwrap_or("127.0.0.1");
+            .unwrap_or_else(|| {
+                info!(
+                    "Ch{} host not configured, using default: 127.0.0.1",
+                    channel_id
+                );
+                "127.0.0.1"
+            });
         let port = params
             .get("port")
             .and_then(|v| v.as_u64())
             .map(|n| n as u16)
-            .unwrap_or(502);
+            .unwrap_or_else(|| {
+                info!("Ch{} port not configured, using default: 502", channel_id);
+                502
+            });
 
         // 5. Create ModbusChannel protocol
         let protocol = create_modbus_channel(channel_id, host, port, point_configs);
@@ -850,12 +881,24 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         let device = params
             .get("device")
             .and_then(|v| v.as_str())
-            .unwrap_or("/dev/ttyUSB0");
+            .unwrap_or_else(|| {
+                info!(
+                    "Ch{} device not configured, using default: /dev/ttyUSB0",
+                    channel_id
+                );
+                "/dev/ttyUSB0"
+            });
         let baud_rate = params
             .get("baud_rate")
             .and_then(|v| v.as_u64())
             .map(|n| n as u32)
-            .unwrap_or(9600);
+            .unwrap_or_else(|| {
+                info!(
+                    "Ch{} baud_rate not configured, using default: 9600",
+                    channel_id
+                );
+                9600
+            });
 
         // 5. Create ModbusChannel (RTU) protocol
         let protocol = create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs);
@@ -974,7 +1017,13 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         let can_interface = params
             .get("device")
             .and_then(|v| v.as_str())
-            .unwrap_or("can0");
+            .unwrap_or_else(|| {
+                info!(
+                    "Ch{} CAN device not configured, using default: can0",
+                    channel_id
+                );
+                "can0"
+            });
 
         // 5. Create CanClient protocol
         let protocol = create_can_channel(channel_id, can_interface, can_point_configs);
@@ -1054,6 +1103,9 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             cache.unregister(channel_id);
         }
 
+        // Remove from active channel index
+        self.active_channel_ids.remove(&channel_id);
+
         // O(1) atomic swap
         let slot = self
             .channels
@@ -1099,43 +1151,34 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
     /// Get channel IDs
     ///
-    /// # Iterate over pre-allocated Vec
+    /// # O(n) where n = active channels (not 10000 slots)
+    /// Uses active_channel_ids index for efficient iteration
     pub fn get_channel_ids(&self) -> Vec<u32> {
-        self.channels
-            .iter()
-            .enumerate()
-            .filter_map(|(id, slot)| {
-                if slot.load().is_some() {
-                    Some(id as u32)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        self.active_channel_ids.iter().map(|id| *id).collect()
     }
 
     /// Get channel count
     ///
-    /// # Count non-empty slots
+    /// # O(1) using active_channel_ids index
     pub fn channel_count(&self) -> usize {
-        self.channels
-            .iter()
-            .filter(|slot| slot.load().is_some())
-            .count()
+        self.active_channel_ids.len()
     }
 
     /// Get running channel count
+    ///
+    /// # O(n) where n = active channels (not 10000 slots)
+    /// Uses active_channel_ids index for efficient iteration
     pub async fn running_channel_count(&self) -> usize {
         let mut count = 0;
-        for (id, slot) in self.channels.iter().enumerate() {
-            if let Some(entry) = slot.load_full() {
+        for channel_id in self.active_channel_ids.iter() {
+            if let Some(entry) = self
+                .channels
+                .get(*channel_id as usize)
+                .and_then(|s| s.load_full())
+            {
                 if entry.is_connected().await {
                     count += 1;
                 }
-            }
-            // Skip slots beyond reasonable range to avoid unnecessary checks
-            if id > 10000 {
-                break;
             }
         }
         count
@@ -1161,23 +1204,34 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     }
 
     /// Get all channel stats
+    ///
+    /// # O(n) where n = active channels (not 10000 slots)
+    /// Uses active_channel_ids index for efficient iteration
     pub async fn get_all_channel_stats(&self) -> Vec<ChannelStats> {
-        let mut stats = Vec::new();
-        for (channel_id, slot) in self.channels.iter().enumerate() {
-            if let Some(entry) = slot.load_full() {
-                stats.push(entry.get_stats(channel_id as u32).await);
+        let mut stats = Vec::with_capacity(self.active_channel_ids.len());
+        for channel_id in self.active_channel_ids.iter() {
+            let id = *channel_id;
+            if let Some(entry) = self.channels.get(id as usize).and_then(|s| s.load_full()) {
+                stats.push(entry.get_stats(id).await);
             }
         }
         stats
     }
 
     /// Connect all channels
+    ///
+    /// # O(n) where n = active channels (not 10000 slots)
+    /// Uses active_channel_ids index for efficient iteration
     pub async fn connect_all_channels(&self) -> Result<()> {
-        let mut connect_tasks = Vec::new();
+        let mut connect_tasks = Vec::with_capacity(self.active_channel_ids.len());
 
-        for (channel_id, slot) in self.channels.iter().enumerate() {
-            if let Some(entry) = slot.load_full() {
-                let channel_id = channel_id as u32;
+        for channel_id_ref in self.active_channel_ids.iter() {
+            let channel_id = *channel_id_ref;
+            if let Some(entry) = self
+                .channels
+                .get(channel_id as usize)
+                .and_then(|s| s.load_full())
+            {
                 let entry_clone = Arc::clone(&entry);
 
                 let task = tokio::spawn(async move {
@@ -1310,7 +1364,16 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             let channel_key = config.channel_key(channel_id, point_type);
 
             // Check if Redis key exists (defensive verification)
-            let key_exists = rtdb.exists(&channel_key).await.unwrap_or(false);
+            let key_exists = match rtdb.exists(&channel_key).await {
+                Ok(exists) => exists,
+                Err(e) => {
+                    warn!(
+                        "Ch{} Redis exists check failed for {}: {}",
+                        channel_id, channel_key, e
+                    );
+                    false
+                },
+            };
             debug!(
                 "Channel {} {} - Redis key '{}' exists: {}",
                 channel_id, telemetry_name, channel_key, key_exists

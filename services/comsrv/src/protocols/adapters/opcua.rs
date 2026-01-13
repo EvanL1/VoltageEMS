@@ -58,6 +58,7 @@ use crate::protocols::core::traits::{
     PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
+use voltage_model::PointType;
 
 /// OPC UA security policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1194,6 +1195,11 @@ fn convert_data_value_with_id(
         .as_ref()
         .and_then(opcua_datetime_to_chrono);
 
+    // Get point_type from config or default to Telemetry
+    let point_type = config
+        .map(|cfg| cfg.point_type)
+        .unwrap_or(PointType::Telemetry);
+
     // Apply transform if config is available
     let final_value = if let Some(cfg) = config {
         if let Some(f) = igw_value.as_f64() {
@@ -1209,6 +1215,7 @@ fn convert_data_value_with_id(
 
     Some(DataPoint {
         id: point_id,
+        point_type,
         value: final_value,
         quality,
         timestamp,

@@ -275,6 +275,25 @@ impl KeySpaceConfig {
         format!("{}:{}:*", self.inst_prefix, instance_id)
     }
 
+    /// Build instance name index key: inst:name:index
+    ///
+    /// This is a global hash table for O(1) instance name → ID lookup.
+    /// Unlike other instance keys, this is NOT per-instance but a global index.
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// let config = KeySpaceConfig::production();
+    /// assert_eq!(config.instance_name_index_key(), "inst:name:index");
+    ///
+    /// let test_config = KeySpaceConfig::test();
+    /// assert_eq!(test_config.instance_name_index_key(), "test:inst:name:index");
+    /// ```
+    pub fn instance_name_index_key(&self) -> String {
+        format!("{}:name:index", self.inst_prefix)
+    }
+
     /// Build C2M route key: {channel_id}:{type}:{point_id}
     ///
     /// Used as hash field in route:c2m routing table
@@ -287,6 +306,46 @@ impl KeySpaceConfig {
     /// Used as hash field in route:m2c routing table
     pub fn m2c_route_key(&self, instance_id: u32, point_type: PointType, point_id: &str) -> String {
         format!("{}:{}:{}", instance_id, point_type.as_str(), point_id)
+    }
+
+    // ============================================================
+    // Route key prefix methods (for pattern matching in routing tables)
+    // ============================================================
+
+    /// Build measurement route prefix: {instance_id}:M:
+    ///
+    /// Used for `starts_with` matching in C2M routing table values.
+    /// This is an associated function (no `&self`) because route key format
+    /// is independent of keyspace configuration.
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// let prefix = KeySpaceConfig::route_measurement_prefix(10);
+    /// assert_eq!(prefix, "10:M:");
+    /// assert!("10:M:101".starts_with(&prefix));
+    /// ```
+    pub fn route_measurement_prefix(instance_id: u32) -> String {
+        format!("{}:M:", instance_id)
+    }
+
+    /// Build action route prefix: {instance_id}:A:
+    ///
+    /// Used for `starts_with` matching in M2C routing table keys.
+    /// This is an associated function (no `&self`) because route key format
+    /// is independent of keyspace configuration.
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// let prefix = KeySpaceConfig::route_action_prefix(10);
+    /// assert_eq!(prefix, "10:A:");
+    /// assert!("10:A:1".starts_with(&prefix));
+    /// ```
+    pub fn route_action_prefix(instance_id: u32) -> String {
+        format!("{}:A:", instance_id)
     }
 }
 
@@ -419,6 +478,14 @@ mod tests {
         );
         assert_eq!(config.instance_action_points_key(1), "inst:1:action_points");
         assert_eq!(config.instance_pattern(1), "inst:1:*");
+        assert_eq!(config.instance_name_index_key(), "inst:name:index");
+
+        // Test environment
+        let test_config = KeySpaceConfig::test();
+        assert_eq!(
+            test_config.instance_name_index_key(),
+            "test:inst:name:index"
+        );
     }
 
     #[test]
@@ -458,6 +525,26 @@ mod tests {
             config.m2c_route_key(1, PointType::Adjustment, "A1"),
             "1:A:A1"
         );
+    }
+
+    #[test]
+    fn test_route_prefixes() {
+        // Measurement prefix
+        assert_eq!(KeySpaceConfig::route_measurement_prefix(10), "10:M:");
+        assert_eq!(KeySpaceConfig::route_measurement_prefix(1), "1:M:");
+
+        // Action prefix
+        assert_eq!(KeySpaceConfig::route_action_prefix(10), "10:A:");
+        assert_eq!(KeySpaceConfig::route_action_prefix(1), "1:A:");
+
+        // Verify starts_with matching works
+        let m_prefix = KeySpaceConfig::route_measurement_prefix(10);
+        assert!("10:M:101".starts_with(&m_prefix));
+        assert!(!"10:A:101".starts_with(&m_prefix));
+
+        let a_prefix = KeySpaceConfig::route_action_prefix(10);
+        assert!("10:A:1".starts_with(&a_prefix));
+        assert!(!"10:M:1".starts_with(&a_prefix));
     }
 
     #[test]

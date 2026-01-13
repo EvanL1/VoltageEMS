@@ -51,6 +51,7 @@ use crate::protocols::core::traits::{
     PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
+use voltage_model::PointType;
 
 /// IEC 104 channel configuration.
 #[derive(Debug, Clone)]
@@ -82,8 +83,8 @@ pub struct Iec104ChannelConfig {
     /// Point configurations (IOA to point mapping)
     pub points: Vec<PointConfig>,
 
-    /// IOA to point ID mapping (built from points)
-    ioa_mapping: HashMap<u32, u32>,
+    /// IOA to (point_id, point_type) mapping (built from points)
+    ioa_mapping: HashMap<u32, (u32, PointType)>,
 }
 
 impl Iec104ChannelConfig {
@@ -135,10 +136,11 @@ impl Iec104ChannelConfig {
 
     /// Add point configurations.
     pub fn with_points(mut self, points: Vec<PointConfig>) -> Self {
-        // Build IOA mapping from point configs
+        // Build IOA mapping from point configs (includes point_type for DataPoint creation)
         for point in &points {
             if let crate::protocols::core::point::ProtocolAddress::Iec104(addr) = &point.address {
-                self.ioa_mapping.insert(addr.ioa, point.id);
+                self.ioa_mapping
+                    .insert(addr.ioa, (point.id, point.point_type));
             }
         }
         self.points = points;
@@ -430,13 +432,13 @@ impl Iec104Channel {
         let mut batch = DataBatch::new();
 
         for point in points {
-            // Look up point ID from IOA, or use IOA directly as fallback
-            let point_id = self
+            // Look up (point_id, point_type) from IOA, or use IOA with Telemetry as fallback
+            let (point_id, point_type) = self
                 .config
                 .ioa_mapping
                 .get(&point.ioa)
                 .copied()
-                .unwrap_or(point.ioa);
+                .unwrap_or((point.ioa, PointType::Telemetry));
 
             // Convert value
             let value = convert_iec104_value(&point.value);
@@ -449,6 +451,7 @@ impl Iec104Channel {
 
             let dp = DataPoint {
                 id: point_id,
+                point_type,
                 value,
                 quality,
                 timestamp: Utc::now(),

@@ -15,6 +15,7 @@ use common::{ApiConfig, BaseServiceConfig, RedisConfig, DEFAULT_API_HOST, DEFAUL
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+use voltage_model::KeySpaceConfig;
 
 // Import from error module directly (works in both lib and bin context)
 use super::error::{ModSrvError, Result};
@@ -532,7 +533,8 @@ async fn rebuild_instance_name_index<R: voltage_rtdb::Rtdb>(
     let count = fields.len();
 
     // Write all mappings in one batch operation
-    rtdb.hash_mset("inst:name:index", fields)
+    let keyspace = KeySpaceConfig::production_cached();
+    rtdb.hash_mset(&keyspace.instance_name_index_key(), fields)
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!("Failed to rebuild instance name index: {}", e))

@@ -265,7 +265,9 @@ pub async fn update_instance_routing(
     let instance = match state.instance_manager.get_instance(id).await {
         Ok(inst) => inst,
         Err(e) => {
-            let _ = tx.rollback().await;
+            if let Err(rb_err) = tx.rollback().await {
+                tracing::error!("Transaction rollback failed: {}", rb_err);
+            }
             return Err(ModSrvError::InternalError(format!(
                 "Failed to get instance: {}",
                 e
@@ -446,7 +448,9 @@ pub async fn update_instance_routing(
             "message": format!("Updated {} routings", success_count)
         }))))
     } else {
-        let _ = tx.rollback().await;
+        if let Err(rb_err) = tx.rollback().await {
+            tracing::error!("Transaction rollback failed: {}", rb_err);
+        }
         Err(ModSrvError::InvalidData(format!(
             "Update failed: {:?}",
             errors

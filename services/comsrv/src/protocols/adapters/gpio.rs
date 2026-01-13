@@ -80,6 +80,7 @@ use crate::protocols::core::traits::{
     WriteResult,
 };
 use crate::protocols::gateway::ChannelRuntime;
+use voltage_model::PointType;
 
 // ============================================================================
 // GPIO Driver Trait (Extensible Driver Architecture)
@@ -771,6 +772,9 @@ pub struct GpioPinConfig {
     /// Point ID for SCADA mapping (matches DataPoint/ControlCommand IDs).
     pub point_id: u32,
 
+    /// Point type (Signal for DI, Control for DO).
+    pub point_type: PointType,
+
     /// Active low (invert logic).
     pub active_low: bool,
 
@@ -785,6 +789,8 @@ impl GpioPinConfig {
     /// * `chip` - GPIO chip name (e.g., "gpiochip0")
     /// * `pin` - Pin offset on the chip
     /// * `point_id` - SCADA point ID
+    ///
+    /// Note: Digital inputs use `PointType::Signal` automatically.
     pub fn digital_input(chip: impl Into<String>, pin: u32, point_id: u32) -> Self {
         Self {
             chip: chip.into(),
@@ -792,12 +798,15 @@ impl GpioPinConfig {
             gpio_number: None,
             direction: GpioDirection::Input,
             point_id,
+            point_type: PointType::Signal,
             active_low: false,
             debounce_us: Some(1000), // 1ms default debounce
         }
     }
 
     /// Create a digital output configuration for gpiod driver.
+    ///
+    /// Note: Digital outputs use `PointType::Control` automatically.
     pub fn digital_output(chip: impl Into<String>, pin: u32, point_id: u32) -> Self {
         Self {
             chip: chip.into(),
@@ -805,6 +814,7 @@ impl GpioPinConfig {
             gpio_number: None,
             direction: GpioDirection::Output,
             point_id,
+            point_type: PointType::Control,
             active_low: false,
             debounce_us: None,
         }
@@ -815,6 +825,8 @@ impl GpioPinConfig {
     /// # Arguments
     /// * `gpio_number` - Global GPIO number (e.g., 490 for `/sys/class/gpio/gpio490/`)
     /// * `point_id` - SCADA point ID
+    ///
+    /// Note: Digital inputs use `PointType::Signal` automatically.
     pub fn digital_input_sysfs(gpio_number: u32, point_id: u32) -> Self {
         Self {
             chip: String::new(),
@@ -822,12 +834,15 @@ impl GpioPinConfig {
             gpio_number: Some(gpio_number),
             direction: GpioDirection::Input,
             point_id,
+            point_type: PointType::Signal,
             active_low: false,
             debounce_us: Some(1000),
         }
     }
 
     /// Create a digital output configuration for sysfs driver.
+    ///
+    /// Note: Digital outputs use `PointType::Control` automatically.
     pub fn digital_output_sysfs(gpio_number: u32, point_id: u32) -> Self {
         Self {
             chip: String::new(),
@@ -835,6 +850,7 @@ impl GpioPinConfig {
             gpio_number: Some(gpio_number),
             direction: GpioDirection::Output,
             point_id,
+            point_type: PointType::Control,
             active_low: false,
             debounce_us: None,
         }
@@ -1041,7 +1057,11 @@ impl GpioChannel {
         } else {
             raw_value
         };
-        Ok(DataPoint::new(pin_config.point_id, adjusted))
+        Ok(DataPoint::new(
+            pin_config.point_id,
+            pin_config.point_type,
+            adjusted,
+        ))
     }
 
     /// Write to a single GPIO pin using the configured driver.
@@ -1109,7 +1129,7 @@ impl GpioChannel {
         // Also include output states as feedback (lock-free read)
         for pin in self.config.output_pins() {
             if let Some(state) = self.read_output_state(pin.point_id) {
-                batch.add(DataPoint::new(pin.point_id, state));
+                batch.add(DataPoint::new(pin.point_id, pin.point_type, state));
             }
         }
 

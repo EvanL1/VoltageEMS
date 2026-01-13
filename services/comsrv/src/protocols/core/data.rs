@@ -1,12 +1,21 @@
 //! Data types for the Industrial Gateway.
 //!
 //! This module defines the core data model for protocol-agnostic data representation.
-//! igw is a pure protocol library - it does NOT know about SCADA concepts like
-//! "Four Remotes" (四遥: Telemetry/Signal/Control/Adjustment). The application
-//! layer (e.g., comsrv) is responsible for categorizing data points.
+//!
+//! ## Point Type Design
+//!
+//! Each `DataPoint` carries an explicit `point_type` field to identify its SCADA category:
+//! - **Telemetry (T)**: Analog measurements (e.g., voltage, current, temperature)
+//! - **Signal (S)**: Digital status (e.g., switch state, alarm)
+//! - **Control (C)**: Digital commands (e.g., on/off)
+//! - **Adjustment (A)**: Analog setpoints (e.g., target power)
+//!
+//! This explicit field replaces the previous u32/4 encoding scheme where point types
+//! were encoded into the `id` field via offset arithmetic.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use voltage_model::PointType;
 
 use crate::protocols::core::quality::Quality;
 
@@ -145,13 +154,16 @@ impl From<&str> for Value {
 
 /// A single data point with timestamp and quality.
 ///
-/// This is a protocol-layer data structure. It does NOT contain SCADA-level
-/// categorization (Telemetry/Signal/Control/Adjustment). The application layer
-/// determines the point type based on `id` lookup.
+/// Each point carries its SCADA category (Telemetry/Signal/Control/Adjustment)
+/// explicitly via the `point_type` field. This replaces the previous u32/4
+/// encoding scheme.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataPoint {
-    /// Point identifier (numeric, application-level ID)
+    /// Point identifier (original point_id, no encoding)
     pub id: u32,
+
+    /// SCADA point type (T/S/C/A)
+    pub point_type: PointType,
 
     /// The value
     pub value: Value,
@@ -169,15 +181,43 @@ pub struct DataPoint {
 }
 
 impl DataPoint {
-    /// Create a new data point with current timestamp.
-    pub fn new(id: u32, value: impl Into<Value>) -> Self {
+    /// Create a new data point with explicit point type.
+    ///
+    /// # Arguments
+    /// * `id` - Original point identifier (no encoding needed)
+    /// * `point_type` - SCADA category (Telemetry/Signal/Control/Adjustment)
+    /// * `value` - The point value
+    pub fn new(id: u32, point_type: PointType, value: impl Into<Value>) -> Self {
         Self {
             id,
+            point_type,
             value: value.into(),
             quality: Quality::Good,
             timestamp: Utc::now(),
             source_timestamp: None,
         }
+    }
+
+    /// Create a Telemetry point (convenience for the most common case).
+    ///
+    /// Equivalent to `DataPoint::new(id, PointType::Telemetry, value)`.
+    pub fn telemetry(id: u32, value: impl Into<Value>) -> Self {
+        Self::new(id, PointType::Telemetry, value)
+    }
+
+    /// Create a Signal point (convenience for digital status).
+    pub fn signal(id: u32, value: impl Into<Value>) -> Self {
+        Self::new(id, PointType::Signal, value)
+    }
+
+    /// Create a Control point (convenience for digital commands).
+    pub fn control(id: u32, value: impl Into<Value>) -> Self {
+        Self::new(id, PointType::Control, value)
+    }
+
+    /// Create an Adjustment point (convenience for analog setpoints).
+    pub fn adjustment(id: u32, value: impl Into<Value>) -> Self {
+        Self::new(id, PointType::Adjustment, value)
     }
 
     /// Set the quality.
@@ -306,17 +346,35 @@ mod tests {
 
     #[test]
     fn test_data_point() {
-        let point = DataPoint::new(1, 25.5);
+        // Test with explicit point_type
+        let point = DataPoint::new(1, PointType::Telemetry, 25.5);
         assert_eq!(point.id, 1);
+        assert_eq!(point.point_type, PointType::Telemetry);
         assert_eq!(point.value.as_f64(), Some(25.5));
         assert_eq!(point.quality, Quality::Good);
     }
 
     #[test]
+    fn test_data_point_convenience_constructors() {
+        // Test convenience constructors
+        let t = DataPoint::telemetry(1, 100.0);
+        assert_eq!(t.point_type, PointType::Telemetry);
+
+        let s = DataPoint::signal(2, true);
+        assert_eq!(s.point_type, PointType::Signal);
+
+        let c = DataPoint::control(3, false);
+        assert_eq!(c.point_type, PointType::Control);
+
+        let a = DataPoint::adjustment(4, 50.0);
+        assert_eq!(a.point_type, PointType::Adjustment);
+    }
+
+    #[test]
     fn test_data_batch() {
         let mut batch = DataBatch::new();
-        batch.add(DataPoint::new(1, 25.5));
-        batch.add(DataPoint::new(2, true));
+        batch.add(DataPoint::telemetry(1, 25.5));
+        batch.add(DataPoint::signal(2, true));
 
         assert_eq!(batch.len(), 2);
         assert!(!batch.is_empty());
@@ -328,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_data_batch_from_iter() {
-        let points = vec![DataPoint::new(1, 1.0), DataPoint::new(2, 2.0)];
+        let points = vec![DataPoint::telemetry(1, 1.0), DataPoint::telemetry(2, 2.0)];
         let batch: DataBatch = points.into_iter().collect();
         assert_eq!(batch.len(), 2);
     }

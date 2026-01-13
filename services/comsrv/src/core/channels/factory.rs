@@ -11,9 +11,6 @@ use crate::protocols::adapters::virtual_channel::{VirtualChannel, VirtualChannel
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::gateway::ChannelRuntime;
 
-#[cfg(all(target_os = "linux", feature = "gpio"))]
-use voltage_model::PointType;
-
 #[cfg(feature = "modbus")]
 use crate::protocols::adapters::modbus::{ModbusChannel, ModbusChannelConfig, ReconnectConfig};
 
@@ -129,9 +126,9 @@ pub fn create_modbus_rtu_channel(
 /// Note: Only available on Linux with `gpio` feature enabled.
 /// Storage is handled by the service layer (ChannelManager) after polling.
 ///
-/// **Important**: Uses `PointType::to_internal_id()` to encode type into point_id.
-/// This is critical for GPIO where Signal (DI) and Control (DO) often share
-/// the same original point_id range (e.g., 1-8).
+/// GPIO pins use explicit `point_type` in `GpioPinConfig`:
+/// - Digital inputs (DI) → `PointType::Signal`
+/// - Digital outputs (DO) → `PointType::Control`
 ///
 /// # Arguments
 ///
@@ -166,11 +163,10 @@ pub fn create_gpio_channel(
     };
 
     // Configure DI pins from signal points (using sysfs with global GPIO numbers)
-    // Use internal_id to avoid collision with control points
+    // GpioPinConfig::digital_input_sysfs automatically sets point_type = Signal
     for pt in &runtime_config.signal_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
-            let internal_id = PointType::Signal.to_internal_id(pt.base.point_id);
-            let pin_config = GpioPinConfig::digital_input_sysfs(gpio_num, internal_id)
+            let pin_config = GpioPinConfig::digital_input_sysfs(gpio_num, pt.base.point_id)
                 .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);
@@ -178,11 +174,10 @@ pub fn create_gpio_channel(
     }
 
     // Configure DO pins from control points (using sysfs with global GPIO numbers)
-    // Use internal_id to avoid collision with signal points
+    // GpioPinConfig::digital_output_sysfs automatically sets point_type = Control
     for pt in &runtime_config.control_points {
         if let Some(gpio_num) = parse_gpio_number(&pt.base.protocol_mappings) {
-            let internal_id = PointType::Control.to_internal_id(pt.base.point_id);
-            let pin_config = GpioPinConfig::digital_output_sysfs(gpio_num, internal_id)
+            let pin_config = GpioPinConfig::digital_output_sysfs(gpio_num, pt.base.point_id)
                 .with_active_low(pt.reverse);
 
             gpio_config = gpio_config.add_pin(pin_config);
