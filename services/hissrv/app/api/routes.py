@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import dateutil.parser
 
 from ..models.data_models import (
-    QueryRequest, QueryResponse, StatisticsRequest, StatisticsResponse,
+    QueryRequest, QueryResponse,
     HistoryData, HealthStatus, DataMetrics
 )
 from ..services.query_service import query_service
@@ -89,12 +89,11 @@ async def query_history_data(
     point_id: str = Query(..., description="点位ID，必填参数", example="temperature"),
     start_time: Optional[str] = Query(None, description="开始时间，可选参数。支持多种格式：2025-08-21、2025-08-21 23:59:59、2025-08-21T23:59:59等", example="2025-08-21"),
     end_time: Optional[str] = Query(None, description="结束时间，可选参数。支持多种格式：2025-08-21、2025-08-21 23:59:59、2025-08-21T23:59:59等", example="2025-08-22"),
-    interval: int = Query(600, ge=1, description="数据采样间隔（秒），默认600秒（10分钟）。如果小于原始数据间隔则返回原始数据", example=600),
     page: int = Query(1, ge=1, description="页码，从1开始", example=1),
     page_size: int = Query(100, ge=1, le=1000, description="每页大小，最大1000条", example=100)
 ):
     """
-    查询单个点位的历史数据
+    查询单个点位的历史数据（返回原始数据）
     
     **参数说明:**
     - redis_key: Redis键，如 "inst:1:M"（必填）
@@ -105,24 +104,21 @@ async def query_history_data(
       - ISO格式: 2025-08-21T23:59:59
       - 带时区: 2025-08-21T23:59:59Z
     - end_time: 结束时间（可选，不提供则默认为当前时间），格式同start_time
-    - interval: 数据采样间隔（秒），默认600秒（10分钟）
-      - 用于数据降采样，返回按指定间隔聚合的平均值
-      - 如果设置的间隔小于等于数据收集间隔，则返回原始数据（不进行聚合）
-      - 如果设置的间隔大于数据收集间隔，则进行降采样聚合
-      - 示例：interval=60 表示每1分钟返回一个数据点，interval=600 表示每10分钟返回一个数据点
     - page: 页码，从1开始（默认1）
     - page_size: 每页数据量，最大1000条（默认100）
     
+    **注意:** InfluxDB 3 返回原始数据，不支持时间窗口聚合。如需降采样，请在客户端处理。
+    
     **示例:**
     ```
-    # 查询最近24小时数据（默认10分钟间隔降采样）
+    # 查询最近24小时数据
     GET /hisApi/data/query?redis_key=inst:1:M&point_id=1
     
-    # 查询原始数据（返回原始秒间隔数据，不聚合）
-    GET /hisApi/data/query?redis_key=inst:1:M&point_id=1&interval=1
+    # 查询指定时间范围数据
+    GET /hisApi/data/query?redis_key=inst:1:M&point_id=1&start_time=2025-01-09&end_time=2025-01-10
     
-    # 查询1分钟间隔降采样数据
-    GET /hisApi/data/query?redis_key=inst:1:M&point_id=1&start_time=2025-11-26&end_time=2025-11-27&interval=60
+    # 分页查询
+    GET /hisApi/data/query?redis_key=inst:1:M&point_id=1&page=1&page_size=100
     ```
     """
     try:
@@ -155,7 +151,6 @@ async def query_history_data(
             redis_keys=[redis_key],  # 单个Redis键
             point_ids=[point_id],    # 单个点位ID
             sources=None,           # 不需要来源过滤
-            interval=interval,       # 数据采样间隔
             page=page,
             page_size=page_size
         )
@@ -168,84 +163,6 @@ async def query_history_data(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询失败: {e}")
-
-@router.get("/data/statistics", response_model=StatisticsResponse, summary="查询统计数据")
-async def query_statistics(
-    redis_key: str = Query(..., description="Redis键，必填参数", example="comsrv:device001:sensors"),
-    point_id: str = Query(..., description="点位ID，必填参数", example="temperature"),
-    start_time: str = Query(..., description="开始时间，必填参数。支持多种格式：2025-08-21、2025-08-21 23:59:59、2025-08-21T23:59:59等", example="2025-08-21"),
-    end_time: str = Query(..., description="结束时间，必填参数。支持多种格式：2025-08-21、2025-08-21 23:59:59、2025-08-21T23:59:59等", example="2025-08-22"),
-    aggregation: str = Query("mean", description="聚合方式，支持：mean(平均值)、sum(求和)、min(最小值)、max(最大值)、count(计数)", example="mean"),
-    interval: str = Query("1h", description="时间间隔，支持：1m、5m、15m、30m、1h、2h、6h、12h、1d", example="1h")
-):
-    """
-    查询单个点位的统计数据
-    
-    **参数说明:**
-    - redis_key: Redis键，如 "comsrv:device001:sensors"
-    - point_id: 点位ID，如 "temperature"
-    - start_time: 开始时间，必填，支持格式：
-      - 日期: 2025-08-21
-      - 日期时间: 2025-08-21 23:59:59
-      - ISO格式: 2025-08-21T23:59:59
-      - 带时区: 2025-08-21T23:59:59Z
-    - end_time: 结束时间，必填，格式同start_time
-    - aggregation: 聚合方式，可选值：
-      - mean: 平均值（默认）
-      - sum: 求和
-      - min: 最小值
-      - max: 最大值
-      - count: 计数
-    - interval: 时间间隔，支持：1m、5m、15m、30m、1h、2h、6h、12h、1d
-    
-    **示例:**
-    ```
-    GET /hisApi/data/statistics?redis_key=comsrv:device001:sensors&point_id=temperature&start_time=2025-08-21&end_time=2025-08-22&aggregation=mean&interval=1h
-    ```
-    """
-    try:
-        # 解析时间参数
-        parsed_start_time = parse_datetime(start_time)
-        parsed_end_time = parse_datetime(end_time)
-        
-        # 验证时间范围
-        if parsed_end_time <= parsed_start_time:
-            raise HTTPException(status_code=400, detail="结束时间必须大于开始时间")
-        
-        # 验证聚合方式
-        valid_aggregations = ["mean", "sum", "min", "max", "count"]
-        if aggregation not in valid_aggregations:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"无效的聚合方式，支持: {', '.join(valid_aggregations)}"
-            )
-        
-        # 验证时间间隔
-        valid_intervals = ["1m", "5m", "15m", "30m", "1h", "2h", "6h", "12h", "1d"]
-        if interval not in valid_intervals:
-            raise HTTPException(
-                status_code=400,
-                detail=f"无效的时间间隔，支持: {', '.join(valid_intervals)}"
-            )
-        
-        # 创建统计请求
-        request = StatisticsRequest(
-            start_time=parsed_start_time,
-            end_time=parsed_end_time,
-            redis_key=redis_key,
-            point_id=point_id,
-            aggregation=aggregation,
-            interval=interval
-        )
-        
-        # 执行查询
-        response = query_service.query_statistics(request)
-        return response
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"查询统计数据失败: {e}")
 
 @router.get("/data/latest", response_model=HistoryData, summary="获取最新数据")
 async def get_latest_data(
@@ -324,6 +241,59 @@ async def get_channels():
         return {"channels": channels, "count": len(channels)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取通道列表失败: {e}")
+
+@router.get("/config/influxdb", summary="获取InfluxDB配置信息")
+async def get_influxdb_config():
+    """
+    获取InfluxDB连接配置信息
+    
+    **功能:** 返回当前InfluxDB的连接配置
+    
+    **示例:**
+    ```
+    GET /hisApi/config/influxdb
+    ```
+    
+    **返回:**
+    ```json
+    {
+      "status": "success",
+      "url": "http://192.168.30.21:18181",
+      "database": "history_data",
+      "token": "apiv3_ureLplELJaYvOZjBEWCwMDXERyhMSIgm5hJo_lXLUpI02yNyx-x8MPv7XqtmIpYXH0zDXdz-dCEojm5G_rIjTQ",
+      "connected": true
+    }
+    ```
+    """
+    try:
+        from ..core.config_loader import config_loader
+        from ..core.influxdb import influxdb_manager
+        
+        # 获取配置
+        influxdb_config = config_loader.get_influxdb_config()
+        url = influxdb_config.get('url', '')
+        database = config_loader.get_database_name()
+        token = influxdb_config.get('token', '')
+        
+        # 检查连接状态
+        is_connected = influxdb_manager.is_connected()
+        
+        return {
+            "status": "success",
+            "url": url,
+            "database": database,
+            "token": token,
+            "connected": is_connected
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"获取配置失败: {str(e)}",
+            "url": "",
+            "database": "",
+            "token": "",
+            "connected": False
+        }
 
 @router.get("/metrics", response_model=DataMetrics, summary="获取数据指标")
 async def get_data_metrics():

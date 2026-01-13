@@ -3,13 +3,13 @@
 """
 
 from .data_models import (
-    HistoryData, RedisDataPoint, 
-    QueryRequest, QueryResponse, StatisticsRequest, StatisticsResponse,
+    HistoryData, RedisDataPoint,
+    QueryRequest, QueryResponse,
     HealthStatus, DataMetrics
 )
 
 __all__ = [
     "HistoryData", "RedisDataPoint",
-    "QueryRequest", "QueryResponse", "StatisticsRequest", "StatisticsResponse", 
+    "QueryRequest", "QueryResponse", 
     "HealthStatus", "DataMetrics"
 ]

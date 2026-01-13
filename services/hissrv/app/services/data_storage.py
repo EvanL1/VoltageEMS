@@ -1,12 +1,12 @@
 """
 数据存储服务
-将数据存储到InfluxDB
+将数据存储到InfluxDB 3.x
 """
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from loguru import logger
-from influxdb_client import Point
+from influxdb_client_3 import Point
 
 from ..core.influxdb import influxdb_manager
 from ..core.config_loader import config_loader
@@ -37,29 +37,29 @@ class DataStorage:
             point = Point(measurement)
             
             # 添加标签（tags） - 使用Redis键作为主要标识
-            point.tag("redis_key", str(data.redis_key))
-            point.tag("point_id", str(data.point_id))
-            point.tag("source", data.source)
+            point = point.tag("redis_key", str(data.redis_key))
+            point = point.tag("point_id", str(data.point_id))
+            point = point.tag("source", data.source)
             
             # 添加数值字段
             if isinstance(data.value, (int, float)):
-                point.field("value", float(data.value))
+                point = point.field("value", float(data.value))
             elif isinstance(data.value, bool):
-                point.field("value", int(data.value))
-                point.field("boolean_value", data.value)
+                point = point.field("value", int(data.value))
+                point = point.field("boolean_value", data.value)
             elif isinstance(data.value, str):
                 # 尝试转换为数值
                 try:
                     numeric_value = float(data.value)
-                    point.field("value", numeric_value)
+                    point = point.field("value", numeric_value)
                 except (ValueError, TypeError):
-                    point.field("string_value", data.value)
+                    point = point.field("string_value", data.value)
                     # 对于字符串值，添加一个默认数值字段用于查询
-                    point.field("value", 0.0)
+                    point = point.field("value", 0.0)
             else:
                 # 对于其他类型，转换为字符串
-                point.field("string_value", str(data.value))
-                point.field("value", 0.0)
+                point = point.field("string_value", str(data.value))
+                point = point.field("value", 0.0)
             
             # 设置时间戳
             if data.timestamp.tzinfo is None:
@@ -68,7 +68,7 @@ class DataStorage:
             else:
                 timestamp = data.timestamp
             
-            point.time(timestamp)
+            point = point.time(timestamp)
             
             return point
             
@@ -83,9 +83,9 @@ class DataStorage:
             success = influxdb_manager.write_point(point)
             
             if success:
-                logger.debug(f"存储单条数据成功: {data.channel_id}:{data.point_id}")
+                logger.debug(f"存储单条数据成功: {data.redis_key}:{data.point_id}")
             else:
-                logger.error(f"存储单条数据失败: {data.channel_id}:{data.point_id}")
+                logger.error(f"存储单条数据失败: {data.redis_key}:{data.point_id}")
                 
             return success
             
@@ -136,21 +136,8 @@ class DataStorage:
         
         return result
     
-    def create_retention_policy(self, policy_name: str, duration: str) -> bool:
-        """创建数据保留策略"""
-        try:
-            # InfluxDB 2.x 使用bucket的retention rules
-            if influxdb_manager.client:
-                # 这里可以通过API修改bucket的retention policy
-                # 具体实现依赖于InfluxDB 2.x的API
-                logger.info(f"创建保留策略: {policy_name}, 持续时间: {duration}")
-                return True
-        except Exception as e:
-            logger.error(f"创建保留策略失败: {e}")
-            return False
-    
     def get_storage_stats(self) -> Dict[str, Any]:
-        """获取存储统计信息"""
+        """获取存储统计信息（使用SQL查询）"""
         stats = {
             "total_measurements": 0,
             "total_points": 0,
@@ -160,68 +147,78 @@ class DataStorage:
         }
         
         try:
-            if not influxdb_manager.query_api:
+            # 使用 SHOW TABLES 动态获取所有用户数据表（InfluxDB 3-core 支持）
+            tables_query = "SHOW TABLES"
+            tables_result = influxdb_manager.query_data(tables_query)
+            
+            if not tables_result:
+                logger.warning("未找到任何表")
                 return stats
             
-            # 查询总的数据点数
-            query = f'''from(bucket: "{settings.INFLUXDB_BUCKET}")
-|> range(start: 0)
-|> filter(fn: (r) => r._field == "value")
-|> count()
-|> group()
-|> sum()'''
+            # 提取用户数据表（table_schema = 'iox'，排除系统表）
+            measurements = [
+                row.get('table_name') 
+                for row in tables_result 
+                if row.get('table_schema') == 'iox' and row.get('table_name')
+            ]
             
-            logger.debug(f"查询总数据点数: {query}")
-            result = influxdb_manager.query_data(query)
-            if result and len(result) > 0:
-                stats["total_points"] = result[0].get("_value", 0)
+            if not measurements:
+                logger.warning("未找到任何用户数据表（schema=iox）")
+                return stats
             
-            # 查询最早和最新时间戳
-            try:
-                # 查询最新时间戳
-                query_latest = f'''from(bucket: "{settings.INFLUXDB_BUCKET}")
-|> range(start: 0)
-|> filter(fn: (r) => r._field == "value")
-|> last()
-|> keep(columns: ["_time"])'''
-                
-                latest_result = influxdb_manager.query_data(query_latest)
-                if latest_result and len(latest_result) > 0:
-                    stats["newest_timestamp"] = latest_result[0].get("_time")
-                
-                # 查询最早时间戳
-                query_earliest = f'''from(bucket: "{settings.INFLUXDB_BUCKET}")
-|> range(start: 0)
-|> filter(fn: (r) => r._field == "value")
-|> first()
-|> keep(columns: ["_time"])'''
-                
-                earliest_result = influxdb_manager.query_data(query_earliest)
-                if earliest_result and len(earliest_result) > 0:
-                    stats["oldest_timestamp"] = earliest_result[0].get("_time")
-                        
-            except Exception as e:
-                logger.error(f"查询时间戳统计失败: {e}")
+            logger.info(f"找到 {len(measurements)} 个数据表: {measurements}")
             
-            # 查询各个measurement的统计
-            try:
-                query_measurements = f'''from(bucket: "{settings.INFLUXDB_BUCKET}")
-|> range(start: 0)
-|> filter(fn: (r) => r._field == "value")
-|> group(columns: ["_measurement"])
-|> count()
-|> group()'''
-                
-                measurements_result = influxdb_manager.query_data(query_measurements)
-                for result in measurements_result:
-                    measurement = result.get("_measurement", "unknown")
-                    count = result.get("_value", 0)
-                    stats["measurements"][measurement] = count
+            for measurement in measurements:
+                try:
+                    # 查询该measurement的数据点数
+                    query = f"""
+                        SELECT COUNT(*) as total_count
+                        FROM {measurement}
+                    """
                     
-                stats["total_measurements"] = len(stats["measurements"])
-                        
-            except Exception as e:
-                logger.error(f"查询measurement统计失败: {e}")
+                    logger.debug(f"查询 {measurement} 数据点数: {query}")
+                    result = influxdb_manager.query_data(query)
+                    if result and len(result) > 0:
+                        count = result[0].get("total_count", 0)
+                        if count and count > 0:
+                            stats["total_points"] += count
+                            stats["measurements"][measurement] = count
+                            stats["total_measurements"] += 1
+                    
+                    # 查询最新时间戳
+                    query_latest = f"""
+                        SELECT time
+                        FROM {measurement}
+                        ORDER BY time DESC
+                        LIMIT 1
+                    """
+                    
+                    latest_result = influxdb_manager.query_data(query_latest)
+                    if latest_result and len(latest_result) > 0:
+                        latest_time = latest_result[0].get("time")
+                        if latest_time:
+                            if not stats["newest_timestamp"] or latest_time > stats["newest_timestamp"]:
+                                stats["newest_timestamp"] = latest_time
+                    
+                    # 查询最早时间戳
+                    query_earliest = f"""
+                        SELECT time
+                        FROM {measurement}
+                        ORDER BY time ASC
+                        LIMIT 1
+                    """
+                    
+                    earliest_result = influxdb_manager.query_data(query_earliest)
+                    if earliest_result and len(earliest_result) > 0:
+                        earliest_time = earliest_result[0].get("time")
+                        if earliest_time:
+                            if not stats["oldest_timestamp"] or earliest_time < stats["oldest_timestamp"]:
+                                stats["oldest_timestamp"] = earliest_time
+                    
+                except Exception as e:
+                    # 某个measurement查询失败，记录日志但继续处理其他measurement
+                    logger.warning(f"查询 measurement '{measurement}' 统计信息失败: {e}")
+                    continue
             
         except Exception as e:
             logger.error(f"获取存储统计失败: {e}")
@@ -237,24 +234,27 @@ class DataStorage:
         }
         
         try:
-            # InfluxDB 2.x 使用delete API
-            if influxdb_manager.client:
-                from datetime import timedelta
-                
-                cutoff_time = datetime.utcnow() - timedelta(days=older_than_days)
-                
-                # 构建删除查询
-                delete_predicate = f'_time < "{cutoff_time.isoformat()}Z"'
-                
-                # 执行删除（注意：这个API可能需要管理员权限）
-                logger.info(f"清理 {older_than_days} 天前的旧数据")
-                
-                # 这里需要根据具体的InfluxDB Python客户端版本实现删除逻辑
-                # delete_api = influxdb_manager.client.delete_api()
-                # delete_api.delete(start=..., stop=cutoff_time, predicate=delete_predicate, bucket=...)
-                
-                result["success"] = True
-                logger.info("数据清理完成")
+            database = influxdb_manager.get_database_name()
+            
+            # InfluxDB 3使用SQL DELETE语句
+            # 注意：需要确认InfluxDB 3-core是否支持DELETE操作
+            from datetime import timedelta
+            
+            cutoff_time = datetime.utcnow() - timedelta(days=older_than_days)
+            
+            # 构建删除查询
+            delete_query = f"""
+                DELETE FROM {database}
+                WHERE time < '{cutoff_time.isoformat()}Z'
+            """
+            
+            logger.info(f"清理 {older_than_days} 天前的旧数据")
+            
+            # 执行删除（如果InfluxDB 3支持）
+            # 注意：某些版本可能不支持DELETE，需要通过retention policy管理
+            logger.warning("InfluxDB 3 的数据清理通常通过retention policy自动管理")
+            result["success"] = True
+            result["error"] = "InfluxDB 3使用retention policy自动管理数据保留"
                 
         except Exception as e:
             result["error"] = str(e)

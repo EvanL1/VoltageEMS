@@ -43,7 +43,6 @@ class QueryRequest(BaseModel):
     redis_keys: Optional[List[str]] = Field(None, description="Redis键列表")
     point_ids: Optional[List[str]] = Field(None, description="点位ID列表")
     sources: Optional[List[str]] = Field(None, description="数据来源列表")
-    interval: int = Field(600, ge=1, description="数据采样间隔（秒），默认600秒（10分钟）")
     page: int = Field(1, ge=1, description="页码")
     page_size: int = Field(100, ge=1, le=1000, description="每页大小")
     
@@ -61,25 +60,6 @@ class QueryResponse(BaseModel):
     page: int = Field(..., description="当前页码")
     page_size: int = Field(..., description="每页大小")
     has_more: bool = Field(..., description="是否有更多数据")
-    
-class StatisticsRequest(BaseModel):
-    """统计请求模型"""
-    start_time: datetime = Field(..., description="开始时间")
-    end_time: datetime = Field(..., description="结束时间")
-    redis_key: str = Field(..., description="Redis键")
-    point_id: str = Field(..., description="点位ID")
-    aggregation: str = Field("mean", description="聚合方式：mean, sum, min, max, count")
-    interval: str = Field("1h", description="时间间隔：1m, 5m, 1h, 1d")
-
-class StatisticsResponse(BaseModel):
-    """统计响应模型"""
-    status: str = Field("success", description="响应状态：success-成功, error-错误")
-    message: Optional[str] = Field(None, description="状态消息，错误时包含错误信息")
-    redis_key: str = Field(..., description="Redis键")
-    point_id: str = Field(..., description="点位ID")
-    aggregation: str = Field(..., description="聚合方式")
-    interval: str = Field(..., description="时间间隔")
-    data: List[Dict[str, Any]] = Field(..., description="统计数据")
     
 class HealthStatus(BaseModel):
     """健康状态模型"""

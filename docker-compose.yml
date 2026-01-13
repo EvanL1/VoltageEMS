@@ -87,30 +87,33 @@ services:
 
   # InfluxDB - 时序数据库 (hissrv 依赖)
   influxdb:
-    image: influxdb:2-alpine
+    image: influxdb:3-core
     container_name: voltage-influxdb
     network_mode: host
+    user: "0:0"  # 以 root 运行避免权限问题
     labels:
       - "voltageems.role=infrastructure"
       - "voltageems.protected=true"
-      - "voltageems.description=InfluxDB time-series database"
+      - "voltageems.description=InfluxDB 3.x time-series database"
     volumes:
-      - influxdb-data:/var/lib/influxdb2
-      - influxdb-config:/etc/influxdb2
+      - influxdb-data:/var/lib/influxdb3
     environment:
-      - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_USERNAME:-admin}
-      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_PASSWORD:-voltage123}
-      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-voltage}
-      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET:-history}
       - NO_PROXY="*"
       - no_proxy="*"
+    command:
+      - serve
+      - --node-id=voltage-node-1
+      - --http-bind=0.0.0.0:8181
+      - --object-store=file
+      - --data-dir=/var/lib/influxdb3
+      - --bearer-token=${INFLUXDB_TOKEN:-apiv3_ureLplELJaYvOZjBEWCwMDXERyhMSIgm5hJo_lXLUpI02yNyx-x8MPv7XqtmIpYXH0zDXdz-dCEojm5G_rIjTQ}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "influx", "ping"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8181' || exit 1"]
+      interval: 30s
+      timeout: 10s
       retries: 5
+      start_period: 30s
 
   # History Service - 历史数据存储 (端口 6004)
   hissrv:
@@ -121,9 +124,9 @@ services:
     environment:
       - SERVICE_NAME=hissrv
       - SERVICE_PORT=6004
-      - INFLUXDB_URL=${INFLUXDB_URL:-http://127.0.0.1:8086}
-      - INFLUXDB_ORG=${INFLUXDB_ORG:-voltage}
-      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-history}
+      - INFLUXDB_URL=${INFLUXDB_URL:-http://127.0.0.1:8181}
+      # InfluxDB 3.x 不再使用 org/bucket 概念，改用 database
+      # 但保留这些环境变量以便向后兼容（服务内部会优先使用配置文件）
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:-}
       - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
       - LOG_DIR=/app/logs
@@ -237,5 +240,4 @@ volumes:
   redis-data:
   redis-socket: # Shared Unix socket volume for better performance
   influxdb-data:
-  influxdb-config:
   # Note: voltage-shm now uses host /dev/shm bind mount for external access

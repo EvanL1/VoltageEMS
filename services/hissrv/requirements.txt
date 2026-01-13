@@ -31,8 +31,8 @@ python-multipart==0.0.6
 schedule==1.2.0
 python-dateutil==2.8.2
 
-# InfluxDB客户端
-influxdb-client[ciso]==1.38.0
+# InfluxDB客户端 - InfluxDB 3.x
+influxdb3-python>=0.5.0
 
 # 数据处理
 pandas==2.1.4

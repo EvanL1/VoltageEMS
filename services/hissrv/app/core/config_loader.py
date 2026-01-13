@@ -73,6 +73,16 @@ class ConfigLoader:
         """获取InfluxDB配置"""
         return self.get_config('influxdb', {})
     
+    def get_database_name(self) -> str:
+        """获取InfluxDB 3.x的database名称（向后兼容bucket）"""
+        influxdb_config = self.get_influxdb_config()
+        # 优先使用database字段（InfluxDB 3.x）
+        database = influxdb_config.get('database')
+        if database:
+            return database
+        # 向后兼容：如果没有database字段，使用bucket字段
+        return influxdb_config.get('bucket', 'history_data')
+    
     def get_scheduler_config(self) -> Dict[str, Any]:
         """获取定时任务配置"""
         return self.get_config('scheduler', {})
@@ -143,7 +153,8 @@ class ConfigLoader:
         """获取配置摘要"""
         return {
             'influxdb_url': self.get_config('influxdb.url'),
-            'influxdb_bucket': self.get_config('influxdb.bucket'),
+            'influxdb_database': self.get_database_name(),
+            'influxdb_bucket': self.get_config('influxdb.bucket'),  # 保留用于向后兼容显示
             'data_collection_interval': self.get_config('scheduler.data_collection.interval', 5),
             'data_flush_interval': self.get_config('scheduler.data_collection.flush_interval', 5),
             'data_batch_size': self.get_config('scheduler.data_collection.batch_size', 1000),

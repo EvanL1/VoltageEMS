@@ -1,6 +1,6 @@
 """
 查询服务
-从InfluxDB查询历史数据
+从InfluxDB 3.x查询历史数据（使用SQL）
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -10,8 +10,7 @@ from loguru import logger
 from ..core.influxdb import influxdb_manager
 from ..core.config_loader import config_loader
 from ..models.data_models import (
-    HistoryData, QueryRequest, QueryResponse, 
-    StatisticsRequest, StatisticsResponse
+    HistoryData, QueryRequest, QueryResponse
 )
 
 class QueryService:
@@ -19,88 +18,101 @@ class QueryService:
     
     def __init__(self):
         self.influxdb_client = influxdb_manager.get_client()
-        self.query_api = influxdb_manager.query_api
-        self.bucket = getattr(influxdb_manager.client, '_bucket', 'history_data') if influxdb_manager.client else 'history_data'
+        self.database = influxdb_manager.get_database_name()
+    
+    def _get_measurement_from_redis_key(self, redis_key: str) -> str:
+        """从Redis键提取measurement名称"""
+        key_parts = redis_key.split(':')
+        return key_parts[0] if key_parts else "data"
         
     def _build_time_filter(self, start_time: datetime, end_time: datetime) -> str:
-        """构建时间过滤器"""
+        """构建SQL时间过滤条件"""
         # 确保时间戳有时区信息
         if start_time.tzinfo is None:
             start_time = start_time.replace(tzinfo=timezone.utc)
         if end_time.tzinfo is None:
             end_time = end_time.replace(tzinfo=timezone.utc)
             
-        return f'|> range(start: {start_time.isoformat()}, stop: {end_time.isoformat()})'
+        return f"time >= '{start_time.isoformat()}' AND time <= '{end_time.isoformat()}'"
     
     def _build_filters(self, request: QueryRequest) -> List[str]:
-        """构建过滤器列表"""
+        """构建SQL过滤条件列表"""
         filters = []
         
         # Redis键过滤
         if request.redis_keys:
-            redis_key_filter = ' or '.join([f'r.redis_key == "{key}"' for key in request.redis_keys])
-            filters.append(f'|> filter(fn: (r) => {redis_key_filter})')
+            redis_key_conditions = [f"redis_key = '{key}'" for key in request.redis_keys]
+            filters.append(f"({' OR '.join(redis_key_conditions)})")
         
         # 点位ID过滤
         if request.point_ids:
-            point_filter = ' or '.join([f'r.point_id == "{pid}"' for pid in request.point_ids])
-            filters.append(f'|> filter(fn: (r) => {point_filter})')
+            point_conditions = [f"point_id = '{pid}'" for pid in request.point_ids]
+            filters.append(f"({' OR '.join(point_conditions)})")
         
         # 数据来源过滤
         if request.sources:
-            source_filter = ' or '.join([f'r.source == "{src}"' for src in request.sources])
-            filters.append(f'|> filter(fn: (r) => {source_filter})')
+            source_conditions = [f"source = '{src}'" for src in request.sources]
+            filters.append(f"({' OR '.join(source_conditions)})")
         
         return filters
     
+    def _parse_interval_to_seconds(self, interval_str: str) -> int:
+        """将间隔字符串转换为秒数"""
+        # 支持格式：10s, 1m, 5m, 1h, 2h, 1d
+        import re
+        match = re.match(r'^(\d+)([smhd])$', interval_str)
+        if not match:
+            return 60  # 默认1分钟
+        
+        value = int(match.group(1))
+        unit = match.group(2)
+        
+        multipliers = {
+            's': 1,
+            'm': 60,
+            'h': 3600,
+            'd': 86400
+        }
+        
+        return value * multipliers.get(unit, 60)
+    
     def query_history_data(self, request: QueryRequest) -> QueryResponse:
-        """查询历史数据"""
+        """查询历史数据（使用SQL）"""
         try:
-            if not self.query_api:
-                logger.error("InfluxDB查询API不可用")
-                return QueryResponse(
-                    status="error",
-                    message="InfluxDB查询API不可用",
-                    data=[], 
-                    total=0, 
-                    page=request.page, 
-                    page_size=request.page_size, 
-                    has_more=False
-                )
-            
             # 设置默认时间范围（如果未提供）
             end_time = request.end_time or datetime.now(timezone.utc)
             start_time = request.start_time or (end_time - timedelta(hours=24))
             
-            # 构建基础查询
-            query_parts = [
-                f'from(bucket: "{self.bucket}")',
-                self._build_time_filter(start_time, end_time)
-            ]
+            # 构建SQL查询
+            where_conditions = [self._build_time_filter(start_time, end_time)]
+            where_conditions.extend(self._build_filters(request))
             
-            # 添加过滤器
-            query_parts.extend(self._build_filters(request))
+            where_clause = " AND ".join(where_conditions)
             
-            # 获取数据收集间隔（配置文件中的采样间隔）
-            collection_interval = config_loader.get_data_collection_interval()
+            # 确定表名（measurement）
+            # InfluxDB 3中，表名就是measurement名，从redis_key提取
+            if request.redis_keys and len(request.redis_keys) > 0:
+                # 如果指定了redis_key，从中提取measurement
+                measurement = self._get_measurement_from_redis_key(request.redis_keys[0])
+            else:
+                # 如果没有指定，使用通配符或默认measurement
+                measurement = "*"  # 查询所有measurement
             
-            # 只有当请求的采样间隔大于等于数据收集间隔时，才进行窗口聚合
-            # 如果请求间隔小于数据收集间隔，说明数据库中没有更细粒度的数据，无需聚合
-            if request.interval and request.interval > collection_interval:
-                # 将秒转换为 InfluxDB 的时间格式
-                interval_str = f"{request.interval}s"
-                query_parts.append(f'|> aggregateWindow(every: {interval_str}, fn: mean, createEmpty: false)')
+            # 构建查询语句 - 直接查询原始数据
+            query = f"""
+                SELECT 
+                    time,
+                    redis_key,
+                    point_id,
+                    source,
+                    value
+                FROM {measurement}
+                WHERE {where_clause}
+                ORDER BY time DESC
+                LIMIT {request.page_size} OFFSET {(request.page - 1) * request.page_size}
+            """
             
-            # 添加排序和分页
-            offset = (request.page - 1) * request.page_size
-            query_parts.extend([
-                '|> sort(columns: ["_time"], desc: true)',
-                f'|> limit(n: {request.page_size}, offset: {offset})'
-            ])
-            
-            # 执行查询
-            query = '\n'.join(query_parts)
-            logger.debug(f"执行查询: {query}")
+            logger.debug(f"执行SQL查询: {query}")
             
             results = influxdb_manager.query_data(query)
             
@@ -114,7 +126,7 @@ class QueryService:
                 except Exception as e:
                     logger.error(f"转换记录失败: {e}, 记录: {record}")
             
-            # 获取总数（简化实现，实际项目中可能需要单独的计数查询）
+            # 获取总数（简化实现）
             total = len(history_data)
             has_more = len(history_data) == request.page_size
             
@@ -141,30 +153,32 @@ class QueryService:
             )
     
     def _convert_record_to_history_data(self, record: Dict[str, Any]) -> Optional[HistoryData]:
-        """转换记录为历史数据"""
+        """转换SQL查询记录为历史数据"""
         try:
             # 解析时间戳
-            timestamp_str = record.get('_time')
-            if timestamp_str:
-                if isinstance(timestamp_str, str):
-                    timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            timestamp_value = record.get('time')
+            if timestamp_value:
+                if isinstance(timestamp_value, str):
+                    timestamp = datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
+                elif isinstance(timestamp_value, datetime):
+                    timestamp = timestamp_value
                 else:
-                    timestamp = timestamp_str
+                    timestamp = datetime.utcnow()
             else:
                 timestamp = datetime.utcnow()
             
             # 获取数值
-            value = record.get('_value')
+            value = record.get('value')
             if value is None:
                 # 尝试获取其他字段的值
                 value = record.get('string_value') or record.get('boolean_value', 0)
             
-            # 创建历史数据对象 - 使用简化的结构
+            # 创建历史数据对象
             redis_key = record.get('redis_key', 'unknown')
             
             return HistoryData(
                 timestamp=timestamp,
-                redis_key=redis_key,  # 直接使用Redis键
+                redis_key=redis_key,
                 point_id=str(record.get('point_id', 'unknown')),
                 value=value,
                 source=record.get('source', 'unknown')
@@ -174,86 +188,26 @@ class QueryService:
             logger.error(f"转换记录失败: {e}, 记录: {record}")
             return None
     
-    def query_statistics(self, request: StatisticsRequest) -> StatisticsResponse:
-        """查询统计数据"""
-        try:
-            if not self.query_api:
-                logger.error("InfluxDB查询API不可用")
-                return StatisticsResponse(
-                    status="error",
-                    message="InfluxDB查询API不可用",
-                    redis_key=request.redis_key,
-                    point_id=request.point_id,
-                    aggregation=request.aggregation,
-                    interval=request.interval,
-                    data=[]
-                )
-            
-            # 构建统计查询
-            aggregation_func = {
-                'mean': 'mean',
-                'sum': 'sum',
-                'min': 'min',
-                'max': 'max',
-                'count': 'count'
-            }.get(request.aggregation, 'mean')
-            
-            query = f'''from(bucket: "{self.bucket}")
-|> range(start: {request.start_time.isoformat()}Z, stop: {request.end_time.isoformat()}Z)
-|> filter(fn: (r) => r.redis_key == "{request.redis_key}")
-|> filter(fn: (r) => r.point_id == "{request.point_id}")
-|> filter(fn: (r) => r._field == "value")
-|> aggregateWindow(every: {request.interval}, fn: {aggregation_func}, createEmpty: false)
-|> sort(columns: ["_time"])'''
-            
-            logger.debug(f"执行统计查询: {query}")
-            results = influxdb_manager.query_data(query)
-            
-            # 转换结果
-            data = []
-            for record in results:
-                data.append({
-                    'timestamp': record.get('_time'),
-                    'value': record.get('_value')
-                })
-            
-            return StatisticsResponse(
-                status="success",
-                message=f"成功查询到 {len(data)} 条统计数据" if data else "未查询到统计数据",
-                redis_key=request.redis_key,
-                point_id=request.point_id,
-                aggregation=request.aggregation,
-                interval=request.interval,
-                data=data
-            )
-            
-        except Exception as e:
-            logger.error(f"查询统计数据失败: {e}")
-            return StatisticsResponse(
-                status="error",
-                message=f"查询统计数据失败: {str(e)}",
-                redis_key=request.redis_key,
-                point_id=request.point_id,
-                aggregation=request.aggregation,
-                interval=request.interval,
-                data=[]
-            )
-    
     def get_latest_data(self, redis_key: str, point_id: str) -> Optional[HistoryData]:
-        """获取最新数据"""
+        """获取最新数据（使用SQL）"""
         try:
-            if not self.query_api:
-                return None
+            # 从redis_key提取measurement
+            measurement = self._get_measurement_from_redis_key(redis_key)
             
-            query = f'''
-            from(bucket: "{self.bucket}")
-            |> range(start: -24h)
-            |> filter(fn: (r) => r.redis_key == "{redis_key}")
-            |> filter(fn: (r) => r.point_id == "{point_id}")
-            |> filter(fn: (r) => r._field == "value")
-            |> sort(columns: ["_time"], desc: true)
-            |> limit(n: 1)
-            '''
+            # 只查询必要的字段
+            query = f"""
+                SELECT 
+                    time,
+                    redis_key,
+                    point_id,
+                    source,
+                    value
+                FROM {measurement}
+                WHERE redis_key = '{redis_key}'
+                    AND point_id = '{point_id}'
+                ORDER BY time DESC
+                LIMIT 1
+            """
             
             results = influxdb_manager.query_data(query)
             if results:
@@ -265,7 +219,7 @@ class QueryService:
         return None
     
     def get_data_range_info(self) -> Dict[str, Any]:
-        """获取数据范围信息"""
+        """获取数据范围信息（使用SQL）"""
         info = {
             "earliest_timestamp": None,
             "latest_timestamp": None,
@@ -275,53 +229,99 @@ class QueryService:
         }
         
         try:
-            if not self.query_api:
+            # 使用 SHOW TABLES 获取所有表（InfluxDB 3-core 支持）
+            tables_query = "SHOW TABLES"
+            tables_result = influxdb_manager.query_data(tables_query)
+            
+            if not tables_result:
+                logger.warning("未找到任何表")
                 return info
             
-            # 获取最早时间戳
-            earliest_query = f'''
-            from(bucket: "{self.bucket}")
-            |> range(start: 0)
-            |> sort(columns: ["_time"])
-            |> limit(n: 1)
-            '''
+            # 提取用户数据表（table_schema = 'iox'，排除系统表）
+            measurements = [
+                row.get('table_name') 
+                for row in tables_result 
+                if row.get('table_schema') == 'iox' and row.get('table_name')
+            ]
             
-            results = influxdb_manager.query_data(earliest_query)
-            if results:
-                info["earliest_timestamp"] = results[0].get('_time')
+            if not measurements:
+                logger.warning("未找到任何用户数据表（schema=iox）")
+                return info
             
-            # 获取最新时间戳
-            latest_query = f'''
-            from(bucket: "{self.bucket}")
-            |> range(start: 0)
-            |> sort(columns: ["_time"], desc: true)
-            |> limit(n: 1)
-            '''
+            logger.info(f"找到 {len(measurements)} 个数据表: {measurements}")
             
-            results = influxdb_manager.query_data(latest_query)
-            if results:
-                info["latest_timestamp"] = results[0].get('_time')
-            
-            # 获取唯一通道ID
-            channels_query = f'''
-            from(bucket: "{self.bucket}")
-            |> range(start: 0)
-            |> distinct(column: "channel_id")
-            |> limit(n: 1000)
-            '''
-            
-            results = influxdb_manager.query_data(channels_query)
-            info["channels"] = [r.get('_value') for r in results if r.get('_value')]
-            
-            # 获取数据类型
-            types_query = f'''
-            from(bucket: "{self.bucket}")
-            |> range(start: 0)
-            |> distinct(column: "data_type")
-            '''
-            
-            results = influxdb_manager.query_data(types_query)
-            info["data_types"] = [r.get('_value') for r in results if r.get('_value')]
+            # 遍历所有存在的表
+            for measurement in measurements:
+                try:
+                    # 获取最早时间戳
+                    earliest_query = f"""
+                        SELECT time
+                        FROM {measurement}
+                        ORDER BY time ASC
+                        LIMIT 1
+                    """
+                    
+                    results = influxdb_manager.query_data(earliest_query)
+                    if results:
+                        earliest_time = results[0].get('time')
+                        if earliest_time and (not info["earliest_timestamp"] or earliest_time < info["earliest_timestamp"]):
+                            info["earliest_timestamp"] = earliest_time
+                    
+                    # 获取最新时间戳
+                    latest_query = f"""
+                        SELECT time
+                        FROM {measurement}
+                        ORDER BY time DESC
+                        LIMIT 1
+                    """
+                    
+                    results = influxdb_manager.query_data(latest_query)
+                    if results:
+                        latest_time = results[0].get('time')
+                        if latest_time and (not info["latest_timestamp"] or latest_time > info["latest_timestamp"]):
+                            info["latest_timestamp"] = latest_time
+                    
+                    # 获取总数据点数
+                    count_query = f"""
+                        SELECT COUNT(*) as total
+                        FROM {measurement}
+                    """
+                    
+                    results = influxdb_manager.query_data(count_query)
+                    if results:
+                        count = results[0].get('total', 0)
+                        if count is not None:
+                            info["total_points"] += count
+                    
+                    # 获取唯一redis_key
+                    channels_query = f"""
+                        SELECT DISTINCT redis_key
+                        FROM {measurement}
+                        LIMIT 100
+                    """
+                    
+                    results = influxdb_manager.query_data(channels_query)
+                    for r in results:
+                        redis_key = r.get('redis_key')
+                        if redis_key and redis_key not in info["channels"]:
+                            info["channels"].append(redis_key)
+                    
+                    # 获取唯一source
+                    types_query = f"""
+                        SELECT DISTINCT source
+                        FROM {measurement}
+                    """
+                    
+                    results = influxdb_manager.query_data(types_query)
+                    for r in results:
+                        source = r.get('source')
+                        if source and source not in info["data_types"]:
+                            info["data_types"].append(source)
+                    
+                except Exception as e:
+                    # 某个measurement查询失败，记录日志但继续处理其他measurement
+                    logger.warning(f"查询 measurement '{measurement}' 失败: {e}")
+                    continue
             
         except Exception as e:
             logger.error(f"获取数据范围信息失败: {e}")
