@@ -33,7 +33,7 @@ use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSend
 use voltage_model::{KeySpaceConfig, PointType};
 use voltage_routing::ChannelPointUpdate;
 use voltage_rtdb::{
-    ChannelToSlotIndex, RoutingCache, Rtdb, SharedVecRtdbWriter, WriteBuffer, WriteBufferConfig,
+    ChannelToSlotIndex, RoutingCache, Rtdb, UnifiedWriter, WriteBuffer, WriteBufferConfig,
 };
 
 /// Redis-backed data store for VoltageEMS.
@@ -58,7 +58,7 @@ pub struct RedisDataStore<R: Rtdb> {
     /// Write buffer for aggregating Redis writes
     write_buffer: Arc<WriteBuffer>,
     /// Shared memory writer for zero-copy cross-process data sharing (optional)
-    shared_writer: Option<Arc<SharedVecRtdbWriter>>,
+    shared_writer: Option<Arc<UnifiedWriter>>,
     /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
     channel_index: Option<Arc<ChannelToSlotIndex>>,
     /// Point configurations cache (channel_id -> Arc<configs> for O(1) clone)
@@ -108,7 +108,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// Falls back to WriteBuffer path if shared memory is not available.
     pub fn with_shared_memory(
         mut self,
-        writer: Arc<SharedVecRtdbWriter>,
+        writer: Arc<UnifiedWriter>,
         index: Arc<ChannelToSlotIndex>,
     ) -> Self {
         self.shared_writer = Some(writer);

@@ -260,7 +260,8 @@ pub async fn search_instances(
         } else {
             let p = Arc::new(
                 state
-                    .product_loader
+                    .instance_manager
+                    .product_loader()
                     .get_product(&product_name)
                     .map_err(|e| {
                         ModSrvError::InternalError(format!(

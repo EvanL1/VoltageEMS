@@ -29,45 +29,37 @@ pub async fn health_check(
     let mut overall_healthy = true;
     let mut errors = Vec::new();
 
-    // Check SQLite connectivity using SqliteClient::ping()
+    // Check SQLite connectivity using direct query
     let sqlite_start = Instant::now();
-    let sqlite_status = if let Some(client) = &state.sqlite_client {
-        match client.ping().await {
-            Ok(_) => {
-                checks.insert(
-                    "sqlite".to_string(),
-                    json!({
-                        "status": "healthy",
-                        "message": "Connected",
-                        "duration_ms": sqlite_start.elapsed().as_millis()
-                    }),
-                );
-                "connected"
-            },
-            Err(e) => {
-                overall_healthy = false;
-                let err_msg = format!("Ping failed: {}", e);
-                errors.push(format!("sqlite: {}", err_msg));
-                checks.insert(
-                    "sqlite".to_string(),
-                    json!({
-                        "status": "unhealthy",
-                        "message": err_msg,
-                        "duration_ms": sqlite_start.elapsed().as_millis()
-                    }),
-                );
-                "error"
-            },
-        }
-    } else {
-        checks.insert(
-            "sqlite".to_string(),
-            json!({
-                "status": "not_configured",
-                "message": "SQLite client not initialized"
-            }),
-        );
-        "not configured"
+    let sqlite_status = match sqlx::query("SELECT 1")
+        .fetch_optional(&state.instance_manager.pool)
+        .await
+    {
+        Ok(_) => {
+            checks.insert(
+                "sqlite".to_string(),
+                json!({
+                    "status": "healthy",
+                    "message": "Connected",
+                    "duration_ms": sqlite_start.elapsed().as_millis()
+                }),
+            );
+            "connected"
+        },
+        Err(e) => {
+            overall_healthy = false;
+            let err_msg = format!("Ping failed: {}", e);
+            errors.push(format!("sqlite: {}", err_msg));
+            checks.insert(
+                "sqlite".to_string(),
+                json!({
+                    "status": "unhealthy",
+                    "message": err_msg,
+                    "duration_ms": sqlite_start.elapsed().as_millis()
+                }),
+            );
+            "error"
+        },
     };
 
     // Check instance manager
@@ -100,7 +92,7 @@ pub async fn health_check(
 
     // Check product loader (products are compile-time constants, always healthy)
     let product_start = Instant::now();
-    let products = state.product_loader.get_all_products();
+    let products = state.instance_manager.product_loader().get_all_products();
     checks.insert(
         "products".to_string(),
         json!({

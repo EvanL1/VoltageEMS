@@ -1,0 +1,841 @@
+//! Unified Shared Memory Implementation (Simplified)
+//!
+//! SharedMemory only stores values (Header + PointSlot[]).
+//! Indexes are Vec in process memory, accessed by ID as array index.
+//!
+//! # Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │  SharedMemory (mmap file)                                   │
+//! │  ┌────────────────────────────────────────────────────────┐ │
+//! │  │ Header (64B) │ PointSlot[0] │ PointSlot[1] │ ...       │ │
+//! │  └────────────────────────────────────────────────────────┘ │
+//! │  Only values, no metadata!                                  │
+//! └─────────────────────────────────────────────────────────────┘
+//!
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │  Process Memory (Vec index, not HashMap)                    │
+//! │  - channel_layouts: Vec<ChannelLayout>                      │
+//! │  - slot = layouts[channel_id].base + type_offset + point_id │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! # Key Design Points
+//!
+//! - **Deterministic allocation**: Writer and Reader use same order → same slot numbers
+//! - **Vec index**: O(1) array access, faster than HashMap
+//! - **Routing is permission**: Runtime DashMap, not data synchronization
+
+use crate::routing_cache::RoutingCache;
+use crate::shared_impl::SharedConfig;
+use crate::vec_impl::PointSlot;
+use anyhow::{bail, Context, Result};
+use memmap2::{Mmap, MmapMut, MmapOptions};
+use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use voltage_model::PointType;
+
+// ========== Constants ==========
+
+/// Magic number for unified shared memory: "VOLTAGE_" in ASCII
+pub const UNIFIED_MAGIC: u64 = 0x564F4C544147455F;
+
+/// Current version
+pub const UNIFIED_VERSION: u32 = 2;
+
+/// Default max slots (100,000 points)
+pub const DEFAULT_MAX_SLOTS: u32 = 100_000;
+
+// ========== Header (64 bytes) ==========
+
+/// Unified shared memory header (simplified)
+///
+/// Layout: 64 bytes, cache-line aligned
+#[repr(C, align(64))]
+pub struct UnifiedHeader {
+    /// Magic number for validation ("VOLTAGE_")
+    pub magic: u64,
+    /// Version number
+    pub version: u32,
+    /// Maximum number of slots
+    pub max_slots: u32,
+    /// Current slot count (atomically updated)
+    pub slot_count: AtomicU32,
+    /// Padding for alignment
+    pub _pad: [u8; 4],
+    /// Last update timestamp (for monitoring)
+    pub last_update_ts: AtomicU64,
+    /// Writer heartbeat (for monitoring)
+    pub writer_heartbeat: AtomicU64,
+    /// Reserved for future use
+    pub _reserved: [u8; 24],
+}
+
+const _: () = assert!(std::mem::size_of::<UnifiedHeader>() == 64);
+
+// ========== Memory Layout ==========
+
+/// Calculate file size for given max_slots
+///
+/// Layout: Header (64B) + PointSlot[max_slots] (32B each)
+#[inline]
+pub const fn calculate_file_size(max_slots: u32) -> usize {
+    std::mem::size_of::<UnifiedHeader>() + (max_slots as usize) * std::mem::size_of::<PointSlot>()
+}
+
+/// Get offset of PointSlot array
+#[inline]
+pub const fn slot_offset() -> usize {
+    std::mem::size_of::<UnifiedHeader>()
+}
+
+// ========== Channel Layout (Process Memory Index) ==========
+
+/// Channel layout - allocation info for one channel
+///
+/// Stored in process memory as Vec<ChannelLayout>.
+/// Access: layouts[channel_id]
+#[derive(Clone, Default, Debug)]
+pub struct ChannelLayout {
+    /// Base slot index for this channel
+    pub base_slot: usize,
+    /// Offset for each point type [T, S, C, A]
+    pub type_offsets: [usize; 4],
+    /// Point count for each type [T, S, C, A]
+    pub type_counts: [u32; 4],
+    /// Total points for this channel
+    pub total_points: u32,
+}
+
+impl ChannelLayout {
+    /// Calculate slot index for given type and point_id
+    #[inline]
+    pub fn slot(&self, point_type: u8, point_id: u32) -> Option<usize> {
+        let type_idx = point_type as usize;
+        if type_idx >= 4 || point_id >= self.type_counts[type_idx] {
+            return None;
+        }
+        Some(self.base_slot + self.type_offsets[type_idx] + point_id as usize)
+    }
+
+    /// Check if this layout is valid (has any points)
+    #[inline]
+    pub fn is_valid(&self) -> bool {
+        self.total_points > 0
+    }
+}
+
+// ========== Slot Allocation ==========
+
+/// Collect channel point info from RoutingCache
+///
+/// Returns: BTreeMap<channel_id, [T_count, S_count, C_count, A_count]>
+fn collect_channel_points(routing_cache: &RoutingCache) -> BTreeMap<u32, [u32; 4]> {
+    let mut channel_points: BTreeMap<u32, [u32; 4]> = BTreeMap::new();
+
+    // Collect from C2M (T/S points - upstream)
+    for ((channel_id, point_type, point_id), _target) in routing_cache.c2m_iter() {
+        let counts = channel_points.entry(channel_id).or_insert([0; 4]);
+        let type_idx = point_type.to_u8() as usize;
+        if type_idx < 4 {
+            // Track max point_id + 1 as count
+            counts[type_idx] = counts[type_idx].max(point_id + 1);
+        }
+    }
+
+    // Collect from M2C (C/A points - downstream)
+    for (_key, target) in routing_cache.m2c_iter() {
+        let counts = channel_points.entry(target.channel_id).or_insert([0; 4]);
+        let type_idx = target.point_type.to_u8() as usize;
+        if type_idx < 4 {
+            counts[type_idx] = counts[type_idx].max(target.point_id + 1);
+        }
+    }
+
+    channel_points
+}
+
+/// Allocate layouts from RoutingCache
+///
+/// Both Writer and Reader call this with same RoutingCache → same slot allocation
+pub fn allocate_layouts(routing_cache: &RoutingCache) -> (Vec<ChannelLayout>, usize) {
+    let channel_points = collect_channel_points(routing_cache);
+
+    // Find max channel_id to size the Vec
+    let max_channel_id = channel_points.keys().copied().max().unwrap_or(0);
+    let vec_size = (max_channel_id + 1) as usize;
+
+    let mut layouts = vec![ChannelLayout::default(); vec_size];
+    let mut next_slot = 0usize;
+
+    // Allocate in channel_id order (BTreeMap is sorted)
+    for (channel_id, counts) in channel_points {
+        let layout = &mut layouts[channel_id as usize];
+        layout.base_slot = next_slot;
+
+        // Allocate each type in T/S/C/A order
+        for (type_idx, &count) in counts.iter().enumerate() {
+            layout.type_offsets[type_idx] = next_slot - layout.base_slot;
+            layout.type_counts[type_idx] = count;
+            next_slot += count as usize;
+        }
+
+        layout.total_points = counts.iter().sum();
+    }
+
+    (layouts, next_slot)
+}
+
+// ========== UnifiedWriter ==========
+
+/// Unified shared memory writer
+///
+/// Single writer per shared memory file (comsrv).
+pub struct UnifiedWriter {
+    mmap: MmapMut,
+    path: PathBuf,
+    max_slots: u32,
+    slot_count: usize,
+    /// Channel layouts (Vec index by channel_id)
+    channel_layouts: Vec<ChannelLayout>,
+}
+
+impl UnifiedWriter {
+    /// Create shared memory and initialize from RoutingCache
+    pub fn create(config: &SharedConfig, routing_cache: &RoutingCache) -> Result<Self> {
+        let path = config.path();
+        let max_slots = config.max_slots().unwrap_or(DEFAULT_MAX_SLOTS);
+
+        // Allocate layouts
+        let (channel_layouts, slot_count) = allocate_layouts(routing_cache);
+
+        if slot_count > max_slots as usize {
+            bail!("Too many slots: {} (max={})", slot_count, max_slots);
+        }
+
+        let file_size = calculate_file_size(max_slots);
+
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+        }
+
+        // Open or create file
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true) // Always create fresh
+            .open(path)
+            .with_context(|| format!("Failed to open {:?}", path))?;
+
+        // Set file size
+        file.set_len(file_size as u64)
+            .with_context(|| "Failed to set file size")?;
+
+        // Memory map
+        let mut mmap = unsafe {
+            MmapOptions::new()
+                .len(file_size)
+                .map_mut(&file)
+                .with_context(|| "Failed to mmap")?
+        };
+
+        // Initialize header
+        let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };
+        header.magic = UNIFIED_MAGIC;
+        header.version = UNIFIED_VERSION;
+        header.max_slots = max_slots;
+        header.slot_count = AtomicU32::new(slot_count as u32);
+        header._pad = [0; 4];
+        header.last_update_ts = AtomicU64::new(0);
+        header.writer_heartbeat = AtomicU64::new(0);
+        header._reserved = [0; 24];
+
+        tracing::info!(
+            "Created unified shared memory: {:?}, slots={}/{}, size={}KB, channels={}",
+            path,
+            slot_count,
+            max_slots,
+            file_size / 1024,
+            channel_layouts.iter().filter(|l| l.is_valid()).count()
+        );
+
+        Ok(Self {
+            mmap,
+            path: path.to_path_buf(),
+            max_slots,
+            slot_count,
+            channel_layouts,
+        })
+    }
+
+    /// Get header reference
+    #[inline]
+    fn header(&self) -> &UnifiedHeader {
+        unsafe { &*(self.mmap.as_ptr() as *const UnifiedHeader) }
+    }
+
+    /// Get PointSlot at index
+    #[inline]
+    fn slot_at(&self, index: usize) -> &PointSlot {
+        debug_assert!(index < self.slot_count);
+        unsafe {
+            let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
+            &*ptr.add(index)
+        }
+    }
+
+    /// Write value to slot by channel key
+    ///
+    /// # Arguments
+    /// - `channel_id`: Channel ID
+    /// - `point_type`: Point type (T=0, S=1, C=2, A=3)
+    /// - `point_id`: Point ID
+    /// - `value`: Engineering value
+    /// - `raw`: Raw value
+    /// - `timestamp_ms`: Timestamp in milliseconds
+    #[inline]
+    pub fn set(
+        &self,
+        channel_id: u32,
+        point_type: u8,
+        point_id: u32,
+        value: f64,
+        raw: f64,
+        timestamp_ms: u64,
+    ) -> bool {
+        if let Some(layout) = self.channel_layouts.get(channel_id as usize) {
+            if let Some(slot) = layout.slot(point_type, point_id) {
+                self.slot_at(slot).set(value, raw, timestamp_ms);
+                // Update heartbeat
+                self.header()
+                    .writer_heartbeat
+                    .store(timestamp_ms, Ordering::Relaxed);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Direct write to slot index (for hot path)
+    #[inline]
+    pub fn set_direct(&self, slot: usize, value: f64, raw: f64, timestamp_ms: u64) {
+        debug_assert!(slot < self.slot_count);
+        self.slot_at(slot).set(value, raw, timestamp_ms);
+        self.header()
+            .writer_heartbeat
+            .store(timestamp_ms, Ordering::Relaxed);
+    }
+
+    /// Lookup slot by channel key
+    #[inline]
+    pub fn lookup(&self, channel_id: u32, point_type: u8, point_id: u32) -> Option<usize> {
+        self.channel_layouts
+            .get(channel_id as usize)?
+            .slot(point_type, point_id)
+    }
+
+    /// Get channel layouts (for building ChannelToSlotIndex)
+    #[inline]
+    pub fn channel_layouts(&self) -> &[ChannelLayout] {
+        &self.channel_layouts
+    }
+
+    /// Get current slot count
+    #[inline]
+    pub fn slot_count(&self) -> usize {
+        self.slot_count
+    }
+
+    /// Get max slots
+    #[inline]
+    pub fn max_slots(&self) -> u32 {
+        self.max_slots
+    }
+
+    /// Get file path
+    #[inline]
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
+    /// Flush changes to disk
+    pub fn flush(&self) -> Result<()> {
+        self.mmap.flush().context("Failed to flush mmap")
+    }
+
+    /// Update heartbeat timestamp
+    #[inline]
+    pub fn update_heartbeat(&self, timestamp_ms: u64) {
+        self.header()
+            .writer_heartbeat
+            .store(timestamp_ms, Ordering::Relaxed);
+    }
+}
+
+// ========== UnifiedReader ==========
+
+/// Unified shared memory reader
+///
+/// Multiple readers allowed (modsrv, monarch, etc.).
+/// Builds indexes from RoutingCache using same allocation algorithm.
+pub struct UnifiedReader {
+    mmap: Mmap,
+    max_slots: u32,
+    slot_count: usize,
+    /// Channel layouts (Vec index by channel_id)
+    channel_layouts: Vec<ChannelLayout>,
+    /// For monarch API: list of valid channel IDs
+    channel_ids: Vec<u32>,
+}
+
+impl UnifiedReader {
+    /// Open shared memory and build indexes from RoutingCache
+    pub fn open(config: &SharedConfig, routing_cache: &RoutingCache) -> Result<Self> {
+        let path = config.path();
+
+        let file = OpenOptions::new()
+            .read(true)
+            .open(path)
+            .with_context(|| format!("Failed to open {:?}", path))?;
+
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map(&file)
+                .with_context(|| "Failed to mmap")?
+        };
+
+        // Validate header
+        let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
+        if header.magic != UNIFIED_MAGIC {
+            bail!(
+                "Invalid magic: expected 0x{:X}, got 0x{:X}",
+                UNIFIED_MAGIC,
+                header.magic
+            );
+        }
+        if header.version != UNIFIED_VERSION {
+            bail!(
+                "Version mismatch: expected {}, got {}",
+                UNIFIED_VERSION,
+                header.version
+            );
+        }
+
+        let max_slots = header.max_slots;
+        let slot_count = header.slot_count.load(Ordering::Acquire) as usize;
+
+        // Build indexes using same algorithm
+        let (channel_layouts, calculated_slots) = allocate_layouts(routing_cache);
+
+        // Verify slot count matches
+        if calculated_slots != slot_count {
+            tracing::warn!(
+                "Slot count mismatch: file={}, calculated={}. Using file value.",
+                slot_count,
+                calculated_slots
+            );
+        }
+
+        // Collect valid channel IDs
+        let channel_ids: Vec<u32> = channel_layouts
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.is_valid())
+            .map(|(id, _)| id as u32)
+            .collect();
+
+        tracing::info!(
+            "Opened unified reader: {} slots, {} channels",
+            slot_count,
+            channel_ids.len()
+        );
+
+        Ok(Self {
+            mmap,
+            max_slots,
+            slot_count,
+            channel_layouts,
+            channel_ids,
+        })
+    }
+
+    /// Get header reference
+    #[inline]
+    fn header(&self) -> &UnifiedHeader {
+        unsafe { &*(self.mmap.as_ptr() as *const UnifiedHeader) }
+    }
+
+    /// Get PointSlot at index
+    #[inline]
+    fn slot_at(&self, index: usize) -> &PointSlot {
+        debug_assert!(index < self.slot_count);
+        unsafe {
+            let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
+            &*ptr.add(index)
+        }
+    }
+
+    // ========== Point Query API ==========
+
+    /// Get value by channel key
+    #[inline]
+    pub fn get_channel(
+        &self,
+        channel_id: u32,
+        point_type: u8,
+        point_id: u32,
+    ) -> Option<(f64, u64)> {
+        let layout = self.channel_layouts.get(channel_id as usize)?;
+        let slot = layout.slot(point_type, point_id)?;
+        let point = self.slot_at(slot);
+        Some((point.get_value(), point.get_timestamp()))
+    }
+
+    /// Get value by instance key (requires RoutingCache for C2M lookup)
+    ///
+    /// For Measurement (type=0): looks up C2M routing
+    /// For Action (type=1): looks up M2C routing
+    #[inline]
+    pub fn get_instance(
+        &self,
+        instance_id: u32,
+        instance_type: u8,
+        point_id: u32,
+        routing_cache: &RoutingCache,
+    ) -> Option<(f64, u64)> {
+        // Measurement: instance reads channel T/S via C2M
+        // Action: instance writes channel C/A via M2C
+        let (channel_id, channel_type, channel_point_id) = if instance_type == 0 {
+            // Measurement - need reverse lookup: find which channel maps to this instance point
+            // C2M: (channel, type, point) → (instance, point)
+            // We need: (instance, point) → (channel, type, point)
+            // This requires iterating C2M - inefficient but works for now
+            let mut found = None;
+            for ((ch_id, pt_type, ch_pt_id), target) in routing_cache.c2m_iter() {
+                if target.instance_id == instance_id && target.point_id == point_id {
+                    found = Some((ch_id, pt_type.to_u8(), ch_pt_id));
+                    break;
+                }
+            }
+            found?
+        } else {
+            // Action - lookup M2C (try Control first, then Adjustment)
+            // Instance "Action" can map to either C (Control) or A (Adjustment)
+            let target = routing_cache
+                .lookup_m2c_by_parts(instance_id, PointType::Control, point_id)
+                .or_else(|| {
+                    routing_cache.lookup_m2c_by_parts(instance_id, PointType::Adjustment, point_id)
+                })?;
+            (
+                target.channel_id,
+                target.point_type.to_u8(),
+                target.point_id,
+            )
+        };
+
+        self.get_channel(channel_id, channel_type, channel_point_id)
+    }
+
+    /// Lookup slot by channel key
+    #[inline]
+    pub fn lookup(&self, channel_id: u32, point_type: u8, point_id: u32) -> Option<usize> {
+        self.channel_layouts
+            .get(channel_id as usize)?
+            .slot(point_type, point_id)
+    }
+
+    // ========== Monarch Compatible API ==========
+
+    /// Get all channel IDs
+    #[inline]
+    pub fn channel_ids(&self) -> &[u32] {
+        &self.channel_ids
+    }
+
+    /// Get instance IDs from RoutingCache
+    pub fn instance_ids(&self, routing_cache: &RoutingCache) -> Vec<u32> {
+        let mut ids = std::collections::HashSet::new();
+        for (_, target) in routing_cache.c2m_iter() {
+            ids.insert(target.instance_id);
+        }
+        ids.into_iter().collect()
+    }
+
+    /// Iterate channel points of given type
+    pub fn iter_channel_points<F>(&self, channel_id: u32, point_type: PointType, mut f: F)
+    where
+        F: FnMut(u32, f64),
+    {
+        if let Some(layout) = self.channel_layouts.get(channel_id as usize) {
+            let type_idx = point_type.to_u8() as usize;
+            let count = layout.type_counts[type_idx];
+            for pt_id in 0..count {
+                if let Some(slot) = layout.slot(point_type.to_u8(), pt_id) {
+                    let point = self.slot_at(slot);
+                    f(pt_id, point.get_value());
+                }
+            }
+        }
+    }
+
+    /// Iterate instance Measurement points (requires RoutingCache)
+    pub fn iter_instance_measurements<F>(
+        &self,
+        instance_id: u32,
+        routing_cache: &RoutingCache,
+        mut f: F,
+    ) where
+        F: FnMut(u32, f64),
+    {
+        for ((ch_id, pt_type, ch_pt_id), target) in routing_cache.c2m_iter() {
+            if target.instance_id == instance_id {
+                if let Some((val, _ts)) = self.get_channel(ch_id, pt_type.to_u8(), ch_pt_id) {
+                    f(target.point_id, val);
+                }
+            }
+        }
+    }
+
+    /// Iterate instance Action points (requires RoutingCache)
+    pub fn iter_instance_actions<F>(&self, instance_id: u32, routing_cache: &RoutingCache, mut f: F)
+    where
+        F: FnMut(u32, f64),
+    {
+        // M2C: (instance, point_type, point) → (channel, type, point)
+        // Filter by instance_id
+        for ((inst_id, _inst_type, inst_pt_id), target) in routing_cache.m2c_iter() {
+            if inst_id == instance_id {
+                if let Some((val, _ts)) = self.get_channel(
+                    target.channel_id,
+                    target.point_type.to_u8(),
+                    target.point_id,
+                ) {
+                    f(inst_pt_id, val);
+                }
+            }
+        }
+    }
+
+    // ========== Stats ==========
+
+    /// Get current slot count
+    #[inline]
+    pub fn slot_count(&self) -> usize {
+        self.slot_count
+    }
+
+    /// Get max slots
+    #[inline]
+    pub fn max_slots(&self) -> u32 {
+        self.max_slots
+    }
+
+    /// Get writer heartbeat
+    #[inline]
+    pub fn writer_heartbeat(&self) -> u64 {
+        self.header().writer_heartbeat.load(Ordering::Relaxed)
+    }
+
+    /// Check if writer is alive based on heartbeat timestamp
+    #[inline]
+    pub fn is_writer_alive(&self, timeout_ms: u64) -> bool {
+        let heartbeat = self.writer_heartbeat();
+        if heartbeat == 0 {
+            return false;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("System time before UNIX epoch")
+            .as_millis() as u64;
+        now.saturating_sub(heartbeat) < timeout_ms
+    }
+
+    /// Get channel layouts
+    #[inline]
+    pub fn channel_layouts(&self) -> &[ChannelLayout] {
+        &self.channel_layouts
+    }
+}
+
+// ========== Tests ==========
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+#[allow(clippy::approx_constant)] // Test values, not actual PI
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn test_config(dir: &std::path::Path) -> SharedConfig {
+        SharedConfig::default()
+            .with_path(dir.join("test.shm"))
+            .with_max_slots(1000)
+    }
+
+    fn test_routing_cache() -> RoutingCache {
+        // Create routing with C2M and M2C entries (using string format for from_maps)
+        let mut c2m = std::collections::HashMap::new();
+        let mut m2c = std::collections::HashMap::new();
+        let c2c = std::collections::HashMap::new();
+
+        // C2M: channel 1001 T:0,1,2 → instance 23 M:0,1,2
+        // Key format: "channel:type:point", Value format: "instance:M:point"
+        c2m.insert("1001:T:0".to_string(), "23:M:0".to_string());
+        c2m.insert("1001:T:1".to_string(), "23:M:1".to_string());
+        c2m.insert("1001:T:2".to_string(), "23:M:2".to_string());
+
+        // C2M: channel 1002 S:0 → instance 24 M:0
+        c2m.insert("1002:S:0".to_string(), "24:M:0".to_string());
+
+        // M2C: instance 23 C:0 → channel 1001 C:0
+        // Key format: "instance:type:point", Value format: "channel:type:point"
+        m2c.insert("23:C:0".to_string(), "1001:C:0".to_string());
+
+        // from_maps signature: (c2m, m2c, c2c)
+        RoutingCache::from_maps(c2m, m2c, c2c)
+    }
+
+    #[test]
+    fn test_header_size() {
+        assert_eq!(std::mem::size_of::<UnifiedHeader>(), 64);
+    }
+
+    #[test]
+    fn test_file_size() {
+        // Header (64B) + PointSlot[1000] (32B each) = 64 + 32000 = 32064
+        assert_eq!(calculate_file_size(1000), 64 + 32 * 1000);
+    }
+
+    #[test]
+    fn test_allocate_layouts() {
+        let routing = test_routing_cache();
+        let (layouts, slot_count) = allocate_layouts(&routing);
+
+        // Should have layouts up to channel 1002
+        assert!(layouts.len() >= 1003);
+
+        // Channel 1001: T:3, C:1 = 4 points
+        let layout_1001 = &layouts[1001];
+        assert_eq!(layout_1001.type_counts[0], 3); // T
+        assert_eq!(layout_1001.type_counts[2], 1); // C
+        assert_eq!(layout_1001.total_points, 4);
+
+        // Channel 1002: S:1 = 1 point
+        let layout_1002 = &layouts[1002];
+        assert_eq!(layout_1002.type_counts[1], 1); // S
+        assert_eq!(layout_1002.total_points, 1);
+
+        // Total slots
+        assert_eq!(slot_count, 5); // 4 + 1
+    }
+
+    #[test]
+    fn test_writer_create() {
+        let dir = tempdir().unwrap();
+        let config = test_config(dir.path());
+        let routing = test_routing_cache();
+
+        let writer = UnifiedWriter::create(&config, &routing).unwrap();
+        assert_eq!(writer.slot_count(), 5);
+        assert_eq!(writer.max_slots(), 1000);
+    }
+
+    #[test]
+    fn test_write_read() {
+        let dir = tempdir().unwrap();
+        let config = test_config(dir.path());
+        let routing = test_routing_cache();
+
+        // Writer
+        let writer = UnifiedWriter::create(&config, &routing).unwrap();
+        assert!(writer.set(1001, 0, 0, 3.14, 3.14, 1705234567890)); // T:0
+        assert!(writer.set(1001, 0, 1, 2.71, 2.71, 1705234567890)); // T:1
+        writer.flush().unwrap();
+
+        // Reader
+        let reader = UnifiedReader::open(&config, &routing).unwrap();
+        assert_eq!(reader.slot_count(), 5);
+
+        // Query by channel
+        let (val, ts) = reader.get_channel(1001, 0, 0).unwrap();
+        assert!((val - 3.14).abs() < 1e-10);
+        assert_eq!(ts, 1705234567890);
+
+        let (val2, _) = reader.get_channel(1001, 0, 1).unwrap();
+        assert!((val2 - 2.71).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_instance_lookup() {
+        let dir = tempdir().unwrap();
+        let config = test_config(dir.path());
+        let routing = test_routing_cache();
+
+        let writer = UnifiedWriter::create(&config, &routing).unwrap();
+        writer.set(1001, 0, 1, 42.0, 42.0, 100); // T:1 → inst23:M:1
+        writer.flush().unwrap();
+
+        let reader = UnifiedReader::open(&config, &routing).unwrap();
+
+        // Query by instance (requires routing)
+        let (val, _) = reader.get_instance(23, 0, 1, &routing).unwrap(); // M:1
+        assert!((val - 42.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_monarch_api() {
+        let dir = tempdir().unwrap();
+        let config = test_config(dir.path());
+        let routing = test_routing_cache();
+
+        let writer = UnifiedWriter::create(&config, &routing).unwrap();
+        writer.set(1001, 0, 0, 1.0, 1.0, 100);
+        writer.set(1001, 0, 1, 2.0, 2.0, 100);
+        writer.set(1001, 0, 2, 3.0, 3.0, 100);
+        writer.flush().unwrap();
+
+        let reader = UnifiedReader::open(&config, &routing).unwrap();
+
+        // Check channel IDs
+        assert!(reader.channel_ids().contains(&1001));
+        assert!(reader.channel_ids().contains(&1002));
+
+        // Iterate channel points
+        let mut sum = 0.0;
+        reader.iter_channel_points(1001, PointType::Telemetry, |_pt_id, val| {
+            sum += val;
+        });
+        assert!((sum - 6.0).abs() < 1e-10); // 1 + 2 + 3
+
+        // Iterate instance measurements
+        let mut count = 0;
+        reader.iter_instance_measurements(23, &routing, |_pt_id, _val| {
+            count += 1;
+        });
+        assert_eq!(count, 3); // M:0, M:1, M:2
+    }
+
+    #[test]
+    fn test_direct_write() {
+        let dir = tempdir().unwrap();
+        let config = test_config(dir.path());
+        let routing = test_routing_cache();
+
+        let writer = UnifiedWriter::create(&config, &routing).unwrap();
+
+        // Lookup slot and write directly
+        let slot = writer.lookup(1001, 0, 0).unwrap();
+        writer.set_direct(slot, 99.0, 99.0, 100);
+        writer.flush().unwrap();
+
+        let reader = UnifiedReader::open(&config, &routing).unwrap();
+        let (val, _) = reader.get_channel(1001, 0, 0).unwrap();
+        assert!((val - 99.0).abs() < 1e-10);
+    }
+}

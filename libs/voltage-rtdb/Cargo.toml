@@ -41,6 +41,7 @@ memory-backend = []
 tokio = { workspace = true }
 serial_test = "3.0"
 uuid = { workspace = true }  # Only used in tests
+tempfile = "3.10"  # Temp directories for ring buffer tests
 
 [lints]
 workspace = true

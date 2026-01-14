@@ -69,5 +69,5 @@ pub use product_loader::{
     ProductHierarchy, ProductLoader, PropertyTemplate,
 };
 pub use routing_loader::{
-    ActionRouting, ActionRoutingRow, MeasurementRouting, MeasurementRoutingRow, RoutingLoader,
+    ActionRouting, ActionRoutingRow, MeasurementRouting, MeasurementRoutingRow,
 };

@@ -50,7 +50,10 @@ pub async fn list_products(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Products are compile-time constants, no async needed
-    let product_names = state.product_loader.get_all_product_names();
+    let product_names = state
+        .instance_manager
+        .product_loader()
+        .get_all_product_names();
 
     let products: Vec<serde_json::Value> = product_names
         .into_iter()
@@ -113,7 +116,11 @@ pub async fn get_product_points(
     Path(product_name): Path<String>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Products are compile-time constants, no async needed
-    match state.product_loader.get_product(&product_name) {
+    match state
+        .instance_manager
+        .product_loader()
+        .get_product(&product_name)
+    {
         Ok(product) => Ok(Json(SuccessResponse::new(json!({
             "product": product
         })))),

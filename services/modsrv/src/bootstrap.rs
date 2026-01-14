@@ -10,7 +10,7 @@ use common::bootstrap_database::{setup_redis_connection, setup_sqlite_pool};
 use common::bootstrap_system::{check_system_requirements_with, SystemRequirements};
 use common::redis::RedisClient;
 use common::service_bootstrap::{get_service_port, ServiceInfo};
-use common::sqlite::{ServiceConfigLoader, SqliteClient};
+use common::sqlite::ServiceConfigLoader;
 use common::{ApiConfig, BaseServiceConfig, RedisConfig, DEFAULT_API_HOST, DEFAULT_REDIS_URL};
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -423,7 +423,6 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
 
     // Setup SQLite using common function
     let sqlite_pool = setup_sqlite().await?;
-    let sqlite_client = Some(Arc::new(SqliteClient::from_pool(sqlite_pool.clone())));
 
     // ============ Phase 1: Load routing configuration from unified database ============
     debug!("Loading routing config");
@@ -485,12 +484,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     .await?;
 
     // Create application state
-    Ok(Arc::new(AppState::new(
-        config,
-        sqlite_client,
-        product_loader,
-        instance_manager,
-    )))
+    Ok(Arc::new(AppState::new(config, instance_manager)))
 }
 
 /// Rebuild instance name index from SQLite database

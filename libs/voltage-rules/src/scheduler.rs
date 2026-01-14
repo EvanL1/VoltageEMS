@@ -17,9 +17,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{RoutingCache, SharedVecRtdbReader};
+use voltage_rtdb::{RoutingCache, UnifiedReader};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
@@ -61,10 +62,8 @@ pub struct RuleScheduler<R: Rtdb> {
     pool: SqlitePool,
     /// Cached rules with their trigger configs
     rules: Arc<RwLock<Vec<ScheduledRule>>>,
-    /// Shutdown signal
-    shutdown: Arc<tokio::sync::Notify>,
-    /// Running state
-    running: Arc<std::sync::atomic::AtomicBool>,
+    /// Shutdown token (unified stop signal + running state)
+    shutdown: CancellationToken,
     /// Scheduler tick interval in milliseconds
     tick_ms: u64,
     /// Rule logger manager for independent rule log files
@@ -92,14 +91,13 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
             executor: Arc::new(RuleExecutor::new(rtdb, routing_cache)),
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
-            shutdown: Arc::new(tokio::sync::Notify::new()),
-            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown: CancellationToken::new(),
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
         }
     }
 
-    /// Create with SharedVecRtdbReader for two-tier priority reads
+    /// Create with UnifiedReader for two-tier priority reads
     ///
     /// Enables SharedMemory layer in the executor:
     /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
@@ -113,7 +111,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         pool: SqlitePool,
         tick_ms: u64,
         log_root: PathBuf,
-        shared_reader: Option<Arc<SharedVecRtdbReader>>,
+        shared_reader: Option<Arc<UnifiedReader>>,
     ) -> Self {
         let mut executor = RuleExecutor::new(Arc::clone(&rtdb), routing_cache);
         if let Some(reader) = shared_reader {
@@ -124,8 +122,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
             executor: Arc::new(executor),
             pool,
             rules: Arc::new(RwLock::new(Vec::new())),
-            shutdown: Arc::new(tokio::sync::Notify::new()),
-            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown: CancellationToken::new(),
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
         }
@@ -171,14 +168,11 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
 
     /// Start the scheduler loop
     pub async fn start(&self) {
-        use std::sync::atomic::Ordering;
-
-        if self.running.load(Ordering::Relaxed) {
-            warn!("Scheduler running");
+        if self.shutdown.is_cancelled() {
+            warn!("Scheduler already stopped");
             return;
         }
 
-        self.running.store(true, Ordering::Relaxed);
         info!("Scheduler start ({}ms)", self.tick_ms);
 
         let mut tick_interval = interval(Duration::from_millis(self.tick_ms));
@@ -190,26 +184,29 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
                         error!("Tick err: {}", e);
                     }
                 }
-                _ = self.shutdown.notified() => {
+                _ = self.shutdown.cancelled() => {
                     info!("Scheduler shutdown");
                     break;
                 }
             }
         }
 
-        self.running.store(false, Ordering::Relaxed);
         info!("Scheduler stopped");
     }
 
     /// Stop the scheduler
     pub fn stop(&self) {
         info!("Scheduler stopping");
-        self.shutdown.notify_one();
+        self.shutdown.cancel();
     }
 
     /// Check if scheduler is running
+    ///
+    /// Returns true if the scheduler has not been stopped yet.
+    /// Note: This only indicates whether stop() was called, not whether
+    /// the scheduler loop has actually exited.
     pub fn is_running(&self) -> bool {
-        self.running.load(std::sync::atomic::Ordering::Relaxed)
+        !self.shutdown.is_cancelled()
     }
 
     /// Single scheduler tick - check all rules and execute if due

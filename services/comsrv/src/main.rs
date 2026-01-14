@@ -37,7 +37,7 @@ use comsrv::{
     shutdown_services, wait_for_shutdown,
 };
 use voltage_routing::load_routing_maps;
-use voltage_rtdb::{is_shm_available, ChannelToSlotIndex, SharedConfig, SharedVecRtdbWriter};
+use voltage_rtdb::{is_shm_available, ChannelToSlotIndex, SharedConfig, UnifiedWriter};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -138,9 +138,9 @@ async fn main() -> VoltageResult<()> {
     // RTDB is a pure storage abstraction
     // Routing is handled by ChannelManager using routing_cache
 
-    // ============ Phase 2.5: Initialize shared memory (optional) ============
-    // SharedVecRtdbWriter provides zero-copy cross-process data sharing via tmpfs
-    // Load SharedConfig from global config (SQLite key-value table)
+    // ============ Phase 2.5: Initialize UnifiedWriter (shared memory) ============
+    // UnifiedWriter: creates shared memory with indexes from RoutingCache
+    // Simplified: no SlotMeta, indexes are Vec in process memory
     let (shared_writer, channel_index) = {
         // Load SharedConfig parameters from database
         let config = {
@@ -159,167 +159,32 @@ async fn main() -> VoltageResult<()> {
                 .and_then(|s| s.parse().ok())
             }
 
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_instances").await {
-                cfg = cfg.with_max_instances(v);
-            }
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_points_per_instance").await
-            {
-                cfg = cfg.with_max_points_per_instance(v);
-            }
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_channels").await {
-                cfg = cfg.with_max_channels(v);
-            }
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_points_per_channel").await
-            {
-                cfg = cfg.with_max_points_per_channel(v);
+            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_slots").await {
+                cfg = cfg.with_max_slots(v);
             }
 
-            debug!(
-                "SharedConfig: max_instances={}, max_channels={}, points_per_inst={}, points_per_ch={}",
-                cfg.max_instances, cfg.max_channels, cfg.max_points_per_instance, cfg.max_points_per_channel
-            );
+            debug!("SharedConfig: max_slots={:?}", cfg.max_slots());
             cfg
         };
+
+        // Create UnifiedWriter from RoutingCache (automatic slot allocation)
+        // is_shm_available checks if parent directory exists (Docker mount point)
         if is_shm_available(&config) {
-            match SharedVecRtdbWriter::open(&config) {
-                Ok(mut writer) => {
-                    // Register all instances with both Measurement and Action points
-                    // Measurement points from C2M routing (Channel → Instance)
-                    let mut measurements: std::collections::HashMap<u32, Vec<u32>> =
-                        std::collections::HashMap::new();
-                    for ((_, _, _), target) in routing_cache.c2m_iter() {
-                        measurements
-                            .entry(target.instance_id)
-                            .or_default()
-                            .push(target.point_id);
-                    }
-
-                    // Action points from M2C routing (Instance → Channel)
-                    let mut actions: std::collections::HashMap<u32, Vec<u32>> =
-                        std::collections::HashMap::new();
-                    for ((instance_id, _, point_id), _) in routing_cache.m2c_iter() {
-                        actions.entry(instance_id).or_default().push(point_id);
-                    }
-
-                    // Merge all instance IDs and register with both point types
-                    let all_instances: std::collections::HashSet<u32> =
-                        measurements.keys().chain(actions.keys()).copied().collect();
-                    let mut registered_count = 0;
-                    let mut total_m_points = 0;
-                    let mut total_a_points = 0;
-                    for instance_id in all_instances {
-                        let m_points = measurements
-                            .get(&instance_id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]);
-                        let a_points = actions
-                            .get(&instance_id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]);
-                        if let Err(e) = writer.register_instance(instance_id, m_points, a_points) {
-                            tracing::warn!("Failed to register instance {}: {}", instance_id, e);
-                        } else {
-                            registered_count += 1;
-                            total_m_points += m_points.len();
-                            total_a_points += a_points.len();
-                        }
-                    }
+            match UnifiedWriter::create(&config, &routing_cache) {
+                Ok(writer) => {
                     info!(
-                        "SharedMemory: registered {} instances ({} M + {} A points)",
-                        registered_count, total_m_points, total_a_points
+                        "UnifiedWriter: created with {} slots (Header + PointSlots only)",
+                        writer.slot_count()
                     );
 
-                    // Register all channels with T/S/C/A points
-                    // Collect channel points from routing
-                    let mut ch_telemetry: std::collections::HashMap<u32, Vec<u32>> =
-                        std::collections::HashMap::new();
-                    let mut ch_signal: std::collections::HashMap<u32, Vec<u32>> =
-                        std::collections::HashMap::new();
-                    let mut ch_control: std::collections::HashMap<u32, Vec<u32>> =
-                        std::collections::HashMap::new();
-                    let mut ch_adjustment: std::collections::HashMap<u32, Vec<u32>> =
-                        std::collections::HashMap::new();
+                    // Build channel → slot index from writer's layouts
+                    let index = ChannelToSlotIndex::from_unified_writer(&writer);
+                    info!("ChannelToSlotIndex: {} mappings", index.len());
 
-                    // C2M routing gives us T/S points (uplink: Channel → Instance)
-                    for ((channel_id, point_type, point_id), _) in routing_cache.c2m_iter() {
-                        match point_type {
-                            voltage_model::PointType::Telemetry => {
-                                ch_telemetry.entry(channel_id).or_default().push(point_id);
-                            },
-                            voltage_model::PointType::Signal => {
-                                ch_signal.entry(channel_id).or_default().push(point_id);
-                            },
-                            _ => {}, // C2M should only have T/S
-                        }
-                    }
-
-                    // M2C routing gives us C/A points (downlink: Instance → Channel)
-                    for (_, target) in routing_cache.m2c_iter() {
-                        match target.point_type {
-                            voltage_model::PointType::Control => {
-                                ch_control
-                                    .entry(target.channel_id)
-                                    .or_default()
-                                    .push(target.point_id);
-                            },
-                            voltage_model::PointType::Adjustment => {
-                                ch_adjustment
-                                    .entry(target.channel_id)
-                                    .or_default()
-                                    .push(target.point_id);
-                            },
-                            _ => {}, // M2C should only have C/A
-                        }
-                    }
-
-                    // Register all channels
-                    let all_channels: std::collections::HashSet<u32> = ch_telemetry
-                        .keys()
-                        .chain(ch_signal.keys())
-                        .chain(ch_control.keys())
-                        .chain(ch_adjustment.keys())
-                        .copied()
-                        .collect();
-
-                    let mut ch_count = 0;
-                    let mut ch_points = 0;
-                    for channel_id in all_channels {
-                        let t = ch_telemetry
-                            .get(&channel_id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]);
-                        let s = ch_signal
-                            .get(&channel_id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]);
-                        let c = ch_control
-                            .get(&channel_id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]);
-                        let a = ch_adjustment
-                            .get(&channel_id)
-                            .map(|v| v.as_slice())
-                            .unwrap_or(&[]);
-
-                        if let Err(e) = writer.register_channel(channel_id, t, s, c, a) {
-                            tracing::warn!("Failed to register channel {}: {}", channel_id, e);
-                        } else {
-                            ch_count += 1;
-                            ch_points += t.len() + s.len() + c.len() + a.len();
-                        }
-                    }
-                    info!(
-                        "SharedMemory: registered {} channels ({} T/S/C/A points)",
-                        ch_count, ch_points
-                    );
-
-                    // Build pre-computed channel → slot direct mapping
-                    let index = ChannelToSlotIndex::build(&routing_cache, &writer);
-                    info!("SharedMemory initialized: {} channel mappings", index.len());
                     (Some(Arc::new(writer)), Some(Arc::new(index)))
                 },
                 Err(e) => {
-                    tracing::warn!("SharedMemory not available: {}", e);
+                    tracing::warn!("UnifiedWriter not available: {}", e);
                     (None, None)
                 },
             }

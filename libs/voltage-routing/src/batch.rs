@@ -323,7 +323,7 @@ pub fn write_channel_batch_buffered(
 /// ```
 ///
 /// # Arguments
-/// * `shared_writer` - SharedVecRtdbWriter for direct memory writes
+/// * `shared_writer` - UnifiedWriter for direct memory writes
 /// * `channel_index` - Pre-computed channel-to-slot mapping
 /// * `write_buffer` - WriteBuffer for deferred Redis writes (backup path)
 /// * `routing_cache` - Routing cache for C2C lookups
@@ -332,7 +332,7 @@ pub fn write_channel_batch_buffered(
 /// # Returns
 /// BatchRoutingResult with write counts. `shared_writes` field indicates direct writes.
 pub fn write_channel_batch_direct(
-    shared_writer: &voltage_rtdb::SharedVecRtdbWriter,
+    shared_writer: &voltage_rtdb::UnifiedWriter,
     channel_index: &voltage_rtdb::ChannelToSlotIndex,
     write_buffer: &WriteBuffer,
     routing_cache: &RoutingCache,
@@ -376,20 +376,13 @@ pub fn write_channel_batch_direct(
             points_3layer.push((update.point_id, update.value, raw_value));
 
             // ★ Direct shared memory write (fastest path)
-            // Dual write - Instance area (via C2M) + Channel area
+            // Single write - UnifiedReader builds both channel and instance indexes from SlotMeta
             if let Some(slot_offset) = channel_index.lookup(channel_id, point_type, update.point_id)
             {
-                shared_writer.set_direct(slot_offset, update.value, timestamp_ms);
-                result.channel_writes += 1; // Count shared memory writes
+                // Now properly passes raw_value (was lost in old SharedVecRtdbWriter API)
+                shared_writer.set_direct(slot_offset, update.value, raw_value, timestamp_ms);
+                result.channel_writes += 1;
             }
-            // Also write to Channel area directly (unified RTDB)
-            shared_writer.set_channel(
-                channel_id,
-                point_type,
-                update.point_id,
-                update.value,
-                timestamp_ms,
-            );
 
             // C2M routing for Redis backup
             if let Some(target) =

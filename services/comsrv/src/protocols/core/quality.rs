@@ -11,49 +11,50 @@ use serde::{Deserialize, Serialize};
 /// Based on OPC UA quality codes for maximum compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[repr(u8)]
 pub enum Quality {
     /// Value is good and reliable
     #[default]
-    Good,
+    Good = 0,
 
     /// Value is bad/unreliable
-    Bad,
+    Bad = 1,
 
     /// Value quality is uncertain
-    Uncertain,
+    Uncertain = 2,
 
     /// Value is invalid (not applicable)
-    Invalid,
+    Invalid = 3,
 
     /// Communication with device lost
-    NotConnected,
+    NotConnected = 4,
 
     /// Device failure detected
-    DeviceFailure,
+    DeviceFailure = 5,
 
     /// Sensor failure detected
-    SensorFailure,
+    SensorFailure = 6,
 
     /// Communication failure
-    CommFailure,
+    CommFailure = 7,
 
     /// Point is out of service
-    OutOfService,
+    OutOfService = 8,
 
     /// Value has been manually substituted
-    Substituted,
+    Substituted = 9,
 
     /// Value overflow (out of range)
-    Overflow,
+    Overflow = 10,
 
     /// Value underflow (below range)
-    Underflow,
+    Underflow = 11,
 
     /// Configuration error
-    ConfigError,
+    ConfigError = 12,
 
     /// Last known value (connection lost but value cached)
-    LastKnown,
+    LastKnown = 13,
 }
 
 impl Quality {

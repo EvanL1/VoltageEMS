@@ -20,6 +20,8 @@ pub mod vec_impl;
 
 pub mod shared_impl;
 
+pub mod unified_shm;
+
 pub mod error;
 
 pub mod cleanup;
@@ -31,6 +33,14 @@ pub mod write_buffer;
 pub mod routing_cache;
 
 pub mod numfmt;
+
+pub mod ring_buffer;
+
+pub mod slot_bitmap;
+
+pub mod channel_index;
+
+pub mod instance_index;
 
 // Re-exports
 pub use bytes::Bytes;
@@ -58,9 +68,29 @@ pub use shared_impl::{
 // Internal shared memory types (ChannelIndex, SharedHeader, SHARED_MAGIC) are
 // accessible via crate::shared_impl::{...} where needed - not re-exported here
 
+// Unified shared memory (simplified architecture: Header + PointSlots only)
+pub use unified_shm::{
+    allocate_layouts, calculate_file_size, ChannelLayout, UnifiedHeader, UnifiedReader,
+    UnifiedWriter, UNIFIED_MAGIC, UNIFIED_VERSION,
+};
+
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
 
+// Ring buffer (high-frequency data recording)
+pub use ring_buffer::{
+    current_timestamp_us, DataPoint, HighFreqRingBuffer, RingBufferConfig, SharedRingBuffer,
+};
+
 pub use time::{FixedTimeProvider, SystemTimeProvider, TimeProvider};
+
+// Slot bitmap for dynamic allocation (unified pool architecture)
+pub use slot_bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
+
+// Channel index for dynamic channel management
+pub use channel_index::{ChannelIndex, DynamicChannelLayout};
+
+// Instance index for dynamic instance management with shared slots
+pub use instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 
 pub use write_buffer::{
     WriteBuffer, WriteBufferConfig, WriteBufferStats, WriteBufferStatsSnapshot,

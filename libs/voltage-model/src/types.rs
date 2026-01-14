@@ -18,18 +18,19 @@ use std::fmt;
 /// - A (Adjustment): Analog setpoints (YT in Chinese standards)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[repr(u8)]
 pub enum PointType {
     /// T - Telemetry - Analog measurements (YC in IEC standards)
     #[serde(rename = "T", alias = "YC", alias = "yc", alias = "telemetry")]
-    Telemetry,
+    Telemetry = 0,
 
     /// S - Signal - Digital status (YX in IEC standards)
     #[serde(rename = "S", alias = "YX", alias = "yx", alias = "signal")]
-    Signal,
+    Signal = 1,
 
     /// C - Control - Digital commands (YK in IEC standards)
     #[serde(rename = "C", alias = "YK", alias = "yk", alias = "control")]
-    Control,
+    Control = 2,
 
     /// A - Adjustment - Analog setpoints (YT in IEC standards)
     #[serde(
@@ -39,7 +40,7 @@ pub enum PointType {
         alias = "adjustment",
         alias = "setpoint"
     )]
-    Adjustment,
+    Adjustment = 3,
 }
 
 impl PointType {
@@ -408,13 +409,14 @@ mod tests {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[repr(u8)]
 pub enum PointRole {
     /// Measurement point (M) - data flows from device to model
     #[serde(rename = "M")]
-    Measurement,
+    Measurement = 0,
     /// Action point (A) - data flows from model to device
     #[serde(rename = "A")]
-    Action,
+    Action = 1,
 }
 
 impl PointRole {

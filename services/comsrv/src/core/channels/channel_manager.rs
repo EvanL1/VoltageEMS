@@ -40,7 +40,7 @@ use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
 use crate::store::RedisDataStore;
-use voltage_rtdb::{ChannelToSlotIndex, Rtdb, SharedVecRtdbWriter};
+use voltage_rtdb::{ChannelIndex, ChannelToSlotIndex, Rtdb, SlotBitmap, UnifiedWriter};
 
 // ============================================================================
 // Channel Types (merged from channel.rs)
@@ -528,12 +528,19 @@ pub struct ChannelManager<R: Rtdb> {
     /// SQLite connection pool for configuration loading
     sqlite_pool: Option<sqlx::SqlitePool>,
     /// Shared memory writer for zero-copy cross-process data sharing (optional)
-    shared_writer: Option<Arc<SharedVecRtdbWriter>>,
+    shared_writer: Option<Arc<UnifiedWriter>>,
     /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
     channel_index: Option<Arc<ChannelToSlotIndex>>,
     /// Command TX cache for O(1) hot path access
     /// Shared with AppState for direct API access bypassing RwLock
     command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
+
+    // ========== Dynamic Slot Allocation ==========
+    /// Dynamic channel index for unified pool architecture (optional)
+    /// Supports hot add/remove with ArcSwap for lock-free reads
+    dynamic_channel_index: Option<Arc<ChannelIndex>>,
+    /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
+    slot_bitmap: Option<Arc<std::sync::RwLock<SlotBitmap>>>,
 }
 
 impl<R: Rtdb> std::fmt::Debug for ChannelManager<R> {
@@ -562,6 +569,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             shared_writer: None,
             channel_index: None,
             command_tx_cache: None,
+            dynamic_channel_index: None,
+            slot_bitmap: None,
         }
     }
 
@@ -580,6 +589,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             shared_writer: None,
             channel_index: None,
             command_tx_cache: None,
+            dynamic_channel_index: None,
+            slot_bitmap: None,
         }
     }
 
@@ -598,7 +609,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         rtdb: Arc<R>,
         routing_cache: Arc<voltage_rtdb::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
-        shared_writer: Option<Arc<SharedVecRtdbWriter>>,
+        shared_writer: Option<Arc<UnifiedWriter>>,
         channel_index: Option<Arc<ChannelToSlotIndex>>,
         command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
     ) -> Self {
@@ -611,7 +622,39 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             shared_writer,
             channel_index,
             command_tx_cache,
+            dynamic_channel_index: None,
+            slot_bitmap: None,
         }
+    }
+
+    /// Configure dynamic slot allocation (optional feature)
+    ///
+    /// Call this after construction to enable unified pool architecture.
+    /// If not called, dynamic features are disabled (backward compatible).
+    ///
+    /// # Arguments
+    /// * `dynamic_index` - ChannelIndex for dynamic channel management
+    /// * `slot_bitmap` - SlotBitmap for slot allocation (wrapped in RwLock)
+    pub fn with_dynamic_allocation(
+        mut self,
+        dynamic_index: Arc<ChannelIndex>,
+        slot_bitmap: Arc<std::sync::RwLock<SlotBitmap>>,
+    ) -> Self {
+        self.dynamic_channel_index = Some(dynamic_index);
+        self.slot_bitmap = Some(slot_bitmap);
+        self
+    }
+
+    /// Get dynamic ChannelIndex (for external access, e.g., API stats)
+    pub fn dynamic_channel_index(&self) -> Option<&Arc<ChannelIndex>> {
+        self.dynamic_channel_index.as_ref()
+    }
+
+    /// Get SlotBitmap stats (for monitoring)
+    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb::BitmapStats> {
+        self.slot_bitmap
+            .as_ref()
+            .and_then(|b| b.read().ok().map(|guard| guard.stats()))
     }
 
     /// Create channel
@@ -726,6 +769,38 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
         // 3. Finally: register in active channel index for O(1) iteration
         self.active_channel_ids.insert(channel_id);
+
+        // 4. Dynamic Slot Allocation: Add channel to ChannelIndex
+        if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
+            let type_counts = [
+                runtime_config.telemetry_points.len() as u32,
+                runtime_config.signal_points.len() as u32,
+                runtime_config.control_points.len() as u32,
+                runtime_config.adjustment_points.len() as u32,
+            ];
+            let total: u32 = type_counts.iter().sum();
+            if total > 0 {
+                match bitmap.write() {
+                    Ok(mut bitmap_guard) => {
+                        match index.add_channel(channel_id, type_counts, &mut bitmap_guard) {
+                            Ok(layout) => {
+                                debug!(
+                                    "Ch{} slot allocated: base={}, total={}",
+                                    channel_id, layout.base_slot, layout.total_points
+                                );
+                            },
+                            Err(e) => {
+                                // Log warning but don't fail - dynamic allocation is optional
+                                warn!("Ch{} slot allocation failed: {}", channel_id, e);
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Ch{} bitmap lock poisoned: {}", channel_id, e);
+                    },
+                }
+            }
+        }
 
         info!("Ch{} created ({})", channel_id, protocol_name);
         Ok(entry)
@@ -1125,6 +1200,29 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             if let Some(trigger_arc) = &entry.command_trigger {
                 let mut trigger = trigger_arc.write().await;
                 let _ = trigger.stop().await;
+            }
+
+            // Dynamic Slot Deallocation: Remove channel from ChannelIndex and free slots
+            if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
+                match bitmap.write() {
+                    Ok(mut bitmap_guard) => {
+                        match index.remove_channel(channel_id, &mut bitmap_guard) {
+                            Ok(layout) => {
+                                debug!(
+                                    "Ch{} slot freed: base={}, count={}",
+                                    channel_id, layout.base_slot, layout.total_points
+                                );
+                            },
+                            Err(e) => {
+                                // Log warning but don't fail - dynamic allocation is optional
+                                warn!("Ch{} slot deallocation failed: {}", channel_id, e);
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Ch{} bitmap lock poisoned: {}", channel_id, e);
+                    },
+                }
             }
 
             info!("Ch{} removed", channel_id);

@@ -20,7 +20,7 @@ use modsrv::{
     rule_routes::{create_rule_routes, RuleEngineState},
     Result, RuleScheduler, DEFAULT_TICK_MS,
 };
-use voltage_rtdb::{is_shm_available, SharedConfig, SharedVecRtdbReader};
+use voltage_rtdb::{is_shm_available, SharedConfig, UnifiedReader};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -70,11 +70,9 @@ async fn main() -> Result<()> {
 
     debug!("Rule scheduler tick_ms: {}", tick_ms);
 
-    // Initialize SharedVecRtdbReader for cross-process zero-copy reads
-    // Uses smart path selection - works on any filesystem
+    // Initialize UnifiedReader for cross-process zero-copy reads
+    // Simplified: Header + PointSlots only, indexes built from RoutingCache
     // Added retry mechanism for cold start race condition
-    // Load SharedConfig from global config (SQLite key-value table)
-    // This enables direct mmap access to comsrv's shared memory
     let shared_reader = {
         // Load SharedConfig parameters from database
         let config = {
@@ -93,25 +91,11 @@ async fn main() -> Result<()> {
                 .and_then(|s| s.parse().ok())
             }
 
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_instances").await {
-                cfg = cfg.with_max_instances(v);
-            }
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_points_per_instance").await
-            {
-                cfg = cfg.with_max_points_per_instance(v);
-            }
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_channels").await {
-                cfg = cfg.with_max_channels(v);
-            }
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_points_per_channel").await
-            {
-                cfg = cfg.with_max_points_per_channel(v);
+            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_slots").await {
+                cfg = cfg.with_max_slots(v);
             }
 
-            debug!(
-                "SharedConfig: max_instances={}, max_channels={}, points_per_inst={}, points_per_ch={}",
-                cfg.max_instances, cfg.max_channels, cfg.max_points_per_instance, cfg.max_points_per_channel
-            );
+            debug!("SharedConfig: max_slots={:?}", cfg.max_slots());
             cfg
         };
         const MAX_RETRIES: u32 = 3;
@@ -120,12 +104,14 @@ async fn main() -> Result<()> {
 
         loop {
             if is_shm_available(&config) {
-                match SharedVecRtdbReader::open(&config) {
+                // Open reader with RoutingCache (builds indexes from routing)
+                match UnifiedReader::open(&config, &routing_cache) {
                     Ok(reader) => {
-                        let stats = reader.stats();
                         info!(
-                            "SharedVecRtdbReader opened: {} instances, {} points",
-                            stats.instance_count, stats.total_points
+                            "UnifiedReader opened: {} slots, {} instances, {} channels",
+                            reader.slot_count(),
+                            reader.instance_ids(&routing_cache).len(),
+                            reader.channel_ids().len()
                         );
                         break Some(Arc::new(reader));
                     },
@@ -141,7 +127,7 @@ async fn main() -> Result<()> {
                     },
                     Err(e) => {
                         warn!(
-                            "SharedVecRtdbReader unavailable after {} retries: {}",
+                            "UnifiedReader unavailable after {} retries: {}",
                             MAX_RETRIES, e
                         );
                         break None;

@@ -8,12 +8,13 @@
 
 use crate::config::InstanceRedisKeys;
 use anyhow::{anyhow, Result};
+use dashmap::DashMap;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use voltage_model::validate_instance_name;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{InstanceIndex, Rtdb, SlotBitmap};
 
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 
@@ -57,6 +58,14 @@ pub struct InstanceManager<R: Rtdb> {
     pub rtdb: Arc<R>,
     pub(crate) routing_cache: Arc<voltage_rtdb::RoutingCache>,
     pub(crate) product_loader: Arc<ProductLoader>,
+    /// Instance name → instance_id cache (for fast API lookups)
+    pub(crate) name_cache: DashMap<String, u16>,
+    // ========== Dynamic Slot Allocation ==========
+    /// Dynamic instance index for unified pool architecture (optional)
+    /// Supports hot add/remove with ArcSwap for lock-free reads
+    dynamic_instance_index: Option<Arc<InstanceIndex>>,
+    /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
+    slot_bitmap: Option<Arc<std::sync::RwLock<SlotBitmap>>>,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
@@ -71,7 +80,40 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             rtdb,
             routing_cache,
             product_loader,
+            name_cache: DashMap::new(),
+            dynamic_instance_index: None,
+            slot_bitmap: None,
         }
+    }
+
+    /// Configure dynamic slot allocation (optional feature)
+    ///
+    /// Call this after construction to enable unified pool architecture.
+    /// If not called, dynamic features are disabled (backward compatible).
+    ///
+    /// # Arguments
+    /// * `dynamic_index` - InstanceIndex for dynamic instance management
+    /// * `slot_bitmap` - SlotBitmap for slot allocation (wrapped in RwLock)
+    pub fn with_dynamic_allocation(
+        mut self,
+        dynamic_index: Arc<InstanceIndex>,
+        slot_bitmap: Arc<std::sync::RwLock<SlotBitmap>>,
+    ) -> Self {
+        self.dynamic_instance_index = Some(dynamic_index);
+        self.slot_bitmap = Some(slot_bitmap);
+        self
+    }
+
+    /// Get dynamic InstanceIndex (for external access, e.g., API stats)
+    pub fn dynamic_instance_index(&self) -> Option<&Arc<InstanceIndex>> {
+        self.dynamic_instance_index.as_ref()
+    }
+
+    /// Get SlotBitmap stats (for monitoring)
+    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb::BitmapStats> {
+        self.slot_bitmap
+            .as_ref()
+            .and_then(|b| b.read().ok().map(|guard| guard.stats()))
     }
 
     /// Get the routing cache reference
@@ -80,6 +122,73 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// that need to refresh the cache after routing management operations.
     pub fn routing_cache(&self) -> &Arc<voltage_rtdb::RoutingCache> {
         &self.routing_cache
+    }
+
+    /// Get the product loader reference
+    ///
+    /// Returns a reference to the product loader for accessing product templates.
+    pub fn product_loader(&self) -> &ProductLoader {
+        &self.product_loader
+    }
+
+    // ============================================================================
+    // Instance name → ID translation methods
+    // ============================================================================
+
+    /// Get instance_id by instance_name (with caching)
+    ///
+    /// This method provides fast lookup of instance IDs from names, using a
+    /// DashMap cache for sub-microsecond performance on cache hits.
+    ///
+    /// # Cache Strategy
+    /// - Cache hit: Returns immediately (~100ns)
+    /// - Cache miss: Queries SQLite and updates cache
+    pub async fn get_instance_id(&self, instance_name: &str) -> Result<u16> {
+        // 1. Fast path: Check cache first
+        if let Some(id) = self.name_cache.get(instance_name) {
+            return Ok(*id);
+        }
+
+        // 2. Slow path: Query database
+        let id: u16 =
+            sqlx::query_scalar("SELECT instance_id FROM instances WHERE instance_name = ?")
+                .bind(instance_name)
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or_else(|| anyhow!("Instance not found: {}", instance_name))?;
+
+        // 3. Update cache for next time
+        self.name_cache.insert(instance_name.to_string(), id);
+
+        Ok(id)
+    }
+
+    /// Populate the name→id cache from database at startup
+    ///
+    /// This should be called once after creating the InstanceManager to pre-warm
+    /// the cache with all existing instances.
+    pub async fn populate_name_cache(&self) -> Result<()> {
+        let instances: Vec<(String, u16)> =
+            sqlx::query_as("SELECT instance_name, instance_id FROM instances")
+                .fetch_all(&self.pool)
+                .await?;
+
+        for (name, id) in instances {
+            self.name_cache.insert(name, id);
+        }
+
+        debug!("Name->ID cache: {} entries", self.name_cache.len());
+        Ok(())
+    }
+
+    /// Update cache entry (called on instance create/rename)
+    pub fn update_name_cache(&self, instance_name: String, instance_id: u16) {
+        self.name_cache.insert(instance_name, instance_id);
+    }
+
+    /// Remove entry from cache (called on instance delete)
+    pub fn remove_from_name_cache(&self, instance_name: &str) {
+        self.name_cache.remove(instance_name);
     }
 
     /// Create a new instance based on a product template
@@ -198,7 +307,38 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         info!("Successfully created instance {}", req.instance_name);
 
-        // 8. Return created instance - move req fields into result (avoid clone)
+        // 8. Dynamic Slot Allocation: Add instance to InstanceIndex
+        if let (Some(index), Some(bitmap)) = (&self.dynamic_instance_index, &self.slot_bitmap) {
+            // Instance has M (Measurement) and A (Action) own_counts
+            let own_counts = [
+                product.measurements.len() as u32,
+                product.actions.len() as u32,
+            ];
+            let total: u32 = own_counts.iter().sum();
+            if total > 0 {
+                match bitmap.write() {
+                    Ok(mut bitmap_guard) => {
+                        match index.add_instance(instance_id, own_counts, Some(&mut bitmap_guard)) {
+                            Ok(layout) => {
+                                debug!(
+                                    "Inst{} slot allocated: base={}, total={}",
+                                    instance_id, layout.own_base, layout.own_total
+                                );
+                            },
+                            Err(e) => {
+                                // Log warning but don't fail - dynamic allocation is optional
+                                warn!("Inst{} slot allocation failed: {}", instance_id, e);
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Inst{} bitmap lock poisoned: {}", instance_id, e);
+                    },
+                }
+            }
+        }
+
+        // 9. Return created instance - move req fields into result (avoid clone)
         Ok(Instance {
             core: crate::config::InstanceCore {
                 instance_id,
@@ -649,6 +789,29 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 "Successfully unregistered instance {} ({}) from Redis after deletion",
                 instance_id, instance_name
             );
+        }
+
+        // 6. Dynamic Slot Deallocation: Remove instance from InstanceIndex and free slots
+        if let (Some(index), Some(bitmap)) = (&self.dynamic_instance_index, &self.slot_bitmap) {
+            match bitmap.write() {
+                Ok(mut bitmap_guard) => {
+                    match index.remove_instance(instance_id, Some(&mut bitmap_guard)) {
+                        Ok(layout) => {
+                            debug!(
+                                "Inst{} slot freed: base={}, count={}",
+                                instance_id, layout.own_base, layout.own_total
+                            );
+                        },
+                        Err(e) => {
+                            // Log warning but don't fail - dynamic allocation is optional
+                            warn!("Inst{} slot deallocation failed: {}", instance_id, e);
+                        },
+                    }
+                },
+                Err(e) => {
+                    warn!("Inst{} bitmap lock poisoned: {}", instance_id, e);
+                },
+            }
         }
 
         info!(

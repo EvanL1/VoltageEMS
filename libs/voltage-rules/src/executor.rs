@@ -18,7 +18,7 @@ use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
 use voltage_routing::set_action_point;
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{KeySpaceConfig, RoutingCache, SharedVecRtdbReader};
+use voltage_rtdb::{KeySpaceConfig, RoutingCache, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
 #[inline]
@@ -109,8 +109,8 @@ pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     routing_cache: Arc<RoutingCache>,
     /// State store for stateful calculation functions (integrate, moving_avg, etc.)
     state_store: Arc<S>,
-    /// Optional SharedVecRtdbReader for cross-process zero-copy reads
-    shared_reader: Option<Arc<SharedVecRtdbReader>>,
+    /// Optional UnifiedReader for cross-process zero-copy reads
+    shared_reader: Option<Arc<UnifiedReader>>,
 }
 
 impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
@@ -140,7 +140,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         }
     }
 
-    /// Enable SharedVecRtdbReader for cross-process zero-copy reads
+    /// Enable UnifiedReader for cross-process zero-copy reads
     ///
     /// When enabled, `read_rule_variables()` uses two-tier priority:
     /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
@@ -148,7 +148,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     ///
     /// SharedMemory is populated by comsrv and works on any filesystem.
     /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture
-    pub fn with_shared_reader(mut self, reader: Arc<SharedVecRtdbReader>) -> Self {
+    pub fn with_shared_reader(mut self, reader: Arc<UnifiedReader>) -> Self {
         self.shared_reader = Some(reader);
         self
     }
@@ -447,14 +447,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             let is_action = point_type == "action";
 
             // ★ Priority 1: SharedMemory (~5μs) - cross-process zero-copy
+            // UnifiedReader API: get_instance(id, type, point, routing) → Option<(f64, u64)>
+            // instance_type: 0 = Measurement, 1 = Action
             if let Some(reader) = &self.shared_reader {
-                let cached = if is_action {
-                    reader.get_action(instance_id, point)
-                } else {
-                    reader.get_measurement(instance_id, point)
-                };
-
-                if let Some(val) = cached {
+                let instance_type = if is_action { 1 } else { 0 };
+                if let Some((val, _ts)) =
+                    reader.get_instance(instance_id, instance_type, point, &self.routing_cache)
+                {
                     // SharedMemory hit - fastest path
                     values_changed |= values.insert(var_name, val) != Some(val);
                     continue;

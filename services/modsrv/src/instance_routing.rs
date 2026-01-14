@@ -5,13 +5,15 @@
 
 use anyhow::{anyhow, Result};
 use common::{ValidationLevel, ValidationResult};
+use tracing::{debug, warn};
+use voltage_model::PointType;
 
 use crate::routing_loader::{
     ActionRouting, ActionRoutingRow, MeasurementRouting, MeasurementRoutingRow,
 };
 
 use super::instance_manager::InstanceManager;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{Rtdb, SharedSlotRef};
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Create or update routing for a single measurement point (UPSERT)
@@ -65,6 +67,44 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .bind(request.enabled)
         .execute(&self.pool)
         .await?;
+
+        // Dynamic Slot Allocation: Add shared_slot reference for C2M routing
+        // Only for enabled bound routing (has channel info)
+        if request.enabled {
+            if let (Some(index), Some(channel_id), Some(channel_type), Some(channel_point_id)) = (
+                self.dynamic_instance_index(),
+                request.channel_id,
+                request.four_remote,
+                request.channel_point_id,
+            ) {
+                let channel_id = channel_id as u32;
+                let slot_ref = SharedSlotRef {
+                    // slot_id = 0: Delayed computation - resolve when accessing shared memory
+                    slot_id: 0,
+                    // point_type = source channel type (T/S for measurement routing)
+                    point_type: channel_type,
+                    point_id,
+                    source_channel_id: channel_id,
+                    source_point_type: channel_type,
+                    source_point_id: channel_point_id,
+                };
+
+                match index.add_shared_slot(instance_id, slot_ref) {
+                    Ok(()) => {
+                        debug!(
+                            "Inst{}:M:{} shared_slot added (ch:{}:{}:{})",
+                            instance_id, point_id, channel_id, channel_type, channel_point_id
+                        );
+                    },
+                    Err(e) => {
+                        warn!(
+                            "Inst{}:M:{} shared_slot add failed: {}",
+                            instance_id, point_id, e
+                        );
+                    },
+                }
+            }
+        }
 
         Ok(())
     }
@@ -133,6 +173,44 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .bind(point_id)
         .execute(&self.pool)
         .await?;
+
+        // Dynamic Slot Allocation: Remove shared_slot reference
+        // Try both Telemetry and Signal types since measurement routing uses T/S
+        if result.rows_affected() > 0 {
+            if let Some(index) = self.dynamic_instance_index() {
+                // Try Telemetry first, then Signal
+                let removed = index
+                    .remove_shared_slot(instance_id, PointType::Telemetry, point_id)
+                    .ok()
+                    .flatten()
+                    .or_else(|| {
+                        index
+                            .remove_shared_slot(instance_id, PointType::Signal, point_id)
+                            .ok()
+                            .flatten()
+                    });
+
+                match removed {
+                    Some(slot_ref) => {
+                        debug!(
+                            "Inst{}:M:{} shared_slot removed (ch:{}:{}:{})",
+                            instance_id,
+                            point_id,
+                            slot_ref.source_channel_id,
+                            slot_ref.source_point_type,
+                            slot_ref.source_point_id
+                        );
+                    },
+                    None => {
+                        // No shared_slot found - might be unbound routing
+                        debug!(
+                            "Inst{}:M:{} no shared_slot to remove",
+                            instance_id, point_id
+                        );
+                    },
+                }
+            }
+        }
 
         Ok(result.rows_affected())
     }
@@ -365,6 +443,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Delete all routing for an instance
     ///
     /// Removes all measurement and action routing entries for the specified instance.
+    /// Also clears all shared_slots from InstanceIndex.
     pub async fn delete_all_routing(&self, instance_id: u32) -> Result<(u64, u64)> {
         let measurement_result =
             sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
@@ -376,6 +455,26 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             .bind(instance_id as i32)
             .execute(&self.pool)
             .await?;
+
+        // Dynamic Slot Allocation: Clear all shared_slots for this instance
+        // Note: We don't remove the instance from InstanceIndex, just clear its shared_slots
+        if measurement_result.rows_affected() > 0 {
+            if let Some(index) = self.dynamic_instance_index() {
+                match index.clear_shared_slots(instance_id) {
+                    Ok(cleared_count) if cleared_count > 0 => {
+                        debug!(
+                            "Inst{} cleared {} shared_slots (routing deleted)",
+                            instance_id, cleared_count
+                        );
+                    },
+                    Ok(_) => {},
+                    Err(e) => {
+                        // Instance not found in InstanceIndex - might not be using dynamic allocation
+                        debug!("Inst{} clear_shared_slots skipped: {}", instance_id, e);
+                    },
+                }
+            }
+        }
 
         Ok((
             measurement_result.rows_affected(),

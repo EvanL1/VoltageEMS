@@ -66,14 +66,7 @@ pub struct InstanceTopology {
 pub async fn export_instances(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<InstanceTopology>>, ModSrvError> {
-    let pool = match &state.sqlite_client {
-        Some(client) => client.pool(),
-        None => {
-            return Err(ModSrvError::InternalError(
-                "Database connection not available".to_string(),
-            ))
-        },
-    };
+    let pool = &state.instance_manager.pool;
 
     // Query all instances with parent_id
     #[allow(clippy::type_complexity)]

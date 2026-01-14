@@ -204,50 +204,46 @@ fn format_route_key(key: &StructuredRouteKey) -> String {
 }
 
 // ============================================================================
-// RoutingTables (internal snapshot)
-// ============================================================================
-
-/// Internal routing tables snapshot (immutable after creation)
-///
-/// Replaces DashMap with FxHashMap for lock-free reads.
-/// Wrapped in Arc for atomic replacement via ArcSwap.
-#[derive(Debug, Default)]
-struct RoutingTables {
-    /// C2M routing: (channel_id, point_type, point_id) -> instance target
-    c2m: FxHashMap<StructuredRouteKey, C2MTarget>,
-    /// C2C routing: (channel_id, point_type, point_id) -> channel target
-    c2c: FxHashMap<StructuredRouteKey, C2CTarget>,
-    /// M2C routing: (instance_id, point_type, point_id) -> channel target
-    m2c: FxHashMap<StructuredM2CKey, M2CTarget>,
-}
-
-// ============================================================================
 // RoutingCache
 // ============================================================================
 
 /// Application-layer routing cache for C2M, C2C and M2C routing
 ///
-/// Uses ArcSwap + FxHashMap for lock-free reads (~25ns vs ~50ns for DashMap).
-/// Routing tables are atomically replaced during hot-reload.
+/// Uses independent ArcSwap for each table, enabling fine-grained copy-on-write:
+/// - Modifying C2C only clones the C2C table, not C2M or M2C
+/// - Reduces unnecessary HashMap cloning by 2/3 for single-table updates
 ///
 /// ## Performance
 /// - Read: `ArcSwap::load()` (~5ns) + `FxHashMap::get()` (~20ns) = ~25ns total
-/// - Write: Build new tables + `ArcSwap::store()` (atomic pointer swap)
+/// - Write: Clone only the modified table + `ArcSwap::store()` (atomic pointer swap)
 ///
 /// ## Hot Path Usage
 /// For hot paths like `write_channel_batch`, use `lookup_*_by_parts()` methods
 /// which take structured keys directly, avoiding temporary String allocation.
+///
+/// ## Consistency Note
+/// The three tables are updated independently (not atomically together).
+/// This is acceptable because:
+/// 1. `update()` is a cold path (config reload), not hot path
+/// 2. Each table's snapshot is always consistent
+/// 3. C2M, M2C, C2C are logically independent mappings
 #[derive(Debug)]
 pub struct RoutingCache {
-    /// Atomic-swappable routing tables snapshot
-    tables: ArcSwap<RoutingTables>,
+    /// C2M routing: (channel_id, point_type, point_id) -> instance target
+    c2m: ArcSwap<FxHashMap<StructuredRouteKey, C2MTarget>>,
+    /// C2C routing: (channel_id, point_type, point_id) -> channel target
+    c2c: ArcSwap<FxHashMap<StructuredRouteKey, C2CTarget>>,
+    /// M2C routing: (instance_id, point_type, point_id) -> channel target
+    m2c: ArcSwap<FxHashMap<StructuredM2CKey, M2CTarget>>,
 }
 
 impl RoutingCache {
     /// Create an empty routing cache
     pub fn new() -> Self {
         Self {
-            tables: ArcSwap::from_pointee(RoutingTables::default()),
+            c2m: ArcSwap::from_pointee(FxHashMap::default()),
+            c2c: ArcSwap::from_pointee(FxHashMap::default()),
+            m2c: ArcSwap::from_pointee(FxHashMap::default()),
         }
     }
 
@@ -271,63 +267,75 @@ impl RoutingCache {
         m2c_data: HashMap<String, String>,
         c2c_data: HashMap<String, String>,
     ) -> Self {
-        let mut tables = RoutingTables::default();
+        let mut c2m = FxHashMap::default();
+        let mut c2c = FxHashMap::default();
+        let mut m2c = FxHashMap::default();
 
         for (k, v) in c2m_data {
             if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2m_target(&v)) {
-                tables.c2m.insert(key, target);
+                c2m.insert(key, target);
             }
         }
 
         for (k, v) in m2c_data {
             if let (Some(key), Some(target)) = (parse_route_key(&k), parse_m2c_target(&v)) {
-                tables.m2c.insert(key, target);
+                m2c.insert(key, target);
             }
         }
 
         for (k, v) in c2c_data {
             if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2c_target(&v)) {
-                tables.c2c.insert(key, target);
+                c2c.insert(key, target);
             }
         }
 
         Self {
-            tables: ArcSwap::from_pointee(tables),
+            c2m: ArcSwap::from_pointee(c2m),
+            c2c: ArcSwap::from_pointee(c2c),
+            m2c: ArcSwap::from_pointee(m2c),
         }
     }
 
-    /// Update routing cache with new data (atomic replacement)
+    /// Update routing cache with new data (independent table replacement)
     ///
-    /// Builds a new routing tables snapshot and atomically replaces the old one.
-    /// Used during hot-reload. Readers see either old or new snapshot, never partial.
+    /// Builds new snapshots for each table and replaces them independently.
+    /// Used during hot-reload. Each table's snapshot is always consistent.
+    ///
+    /// Note: The three tables are NOT updated atomically together.
+    /// This is acceptable because update() is a cold path and the tables
+    /// are logically independent (C2M, M2C, C2C don't cross-reference each other).
     pub fn update(
         &self,
         c2m_data: HashMap<String, String>,
         m2c_data: HashMap<String, String>,
         c2c_data: HashMap<String, String>,
     ) {
-        let mut new_tables = RoutingTables::default();
+        let mut new_c2m = FxHashMap::default();
+        let mut new_c2c = FxHashMap::default();
+        let mut new_m2c = FxHashMap::default();
 
         for (k, v) in c2m_data {
             if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2m_target(&v)) {
-                new_tables.c2m.insert(key, target);
+                new_c2m.insert(key, target);
             }
         }
 
         for (k, v) in m2c_data {
             if let (Some(key), Some(target)) = (parse_route_key(&k), parse_m2c_target(&v)) {
-                new_tables.m2c.insert(key, target);
+                new_m2c.insert(key, target);
             }
         }
 
         for (k, v) in c2c_data {
             if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2c_target(&v)) {
-                new_tables.c2c.insert(key, target);
+                new_c2c.insert(key, target);
             }
         }
 
-        // Atomic replacement - readers see either old or new, never partial
-        self.tables.store(Arc::new(new_tables));
+        // Independent replacement - each table is atomically swapped
+        self.c2m.store(Arc::new(new_c2m));
+        self.c2c.store(Arc::new(new_c2c));
+        self.m2c.store(Arc::new(new_m2c));
     }
 
     /// Lookup C2M routing by string key (parses key first)
@@ -350,7 +358,7 @@ impl RoutingCache {
     /// ```
     pub fn lookup_c2m(&self, key: &str) -> Option<C2MTarget> {
         let structured_key = parse_route_key(key)?;
-        self.tables.load().c2m.get(&structured_key).copied()
+        self.c2m.load().get(&structured_key).copied()
     }
 
     /// Lookup C2M routing by structured key (zero-allocation)
@@ -380,9 +388,8 @@ impl RoutingCache {
         point_type: PointType,
         point_id: u32,
     ) -> Option<C2MTarget> {
-        self.tables
+        self.c2m
             .load()
-            .c2m
             .get(&(channel_id, point_type, point_id))
             .copied()
     }
@@ -407,7 +414,7 @@ impl RoutingCache {
     /// ```
     pub fn lookup_m2c(&self, key: &str) -> Option<M2CTarget> {
         let structured_key = parse_route_key(key)?;
-        self.tables.load().m2c.get(&structured_key).copied()
+        self.m2c.load().get(&structured_key).copied()
     }
 
     /// Lookup M2C routing by structured key (zero-allocation)
@@ -418,9 +425,8 @@ impl RoutingCache {
         point_type: PointType,
         point_id: u32,
     ) -> Option<M2CTarget> {
-        self.tables
+        self.m2c
             .load()
-            .m2c
             .get(&(instance_id, point_type, point_id))
             .copied()
     }
@@ -447,7 +453,7 @@ impl RoutingCache {
     /// ```
     pub fn lookup_c2c(&self, key: &str) -> Option<C2CTarget> {
         let structured_key = parse_route_key(key)?;
-        self.tables.load().c2c.get(&structured_key).copied()
+        self.c2c.load().get(&structured_key).copied()
     }
 
     /// Lookup C2C routing by structured key (zero-allocation)
@@ -477,9 +483,8 @@ impl RoutingCache {
         point_type: PointType,
         point_id: u32,
     ) -> Option<C2CTarget> {
-        self.tables
+        self.c2c
             .load()
-            .c2c
             .get(&(channel_id, point_type, point_id))
             .copied()
     }
@@ -498,6 +503,9 @@ impl RoutingCache {
 
     /// Insert C2C routing entry from structured key (copy-on-write)
     ///
+    /// **Optimized COW**: Only clones the C2C table, not C2M or M2C.
+    /// This reduces HashMap cloning overhead by 2/3 compared to single-ArcSwap design.
+    ///
     /// Note: This is a cold-path operation. For bulk updates, use `update()`.
     pub fn insert_c2c_by_parts(
         &self,
@@ -506,17 +514,12 @@ impl RoutingCache {
         point_id: u32,
         target: C2CTarget,
     ) {
-        // Copy-on-write: clone current tables, modify, atomic replace
-        let old = self.tables.load();
-        let mut new_tables = RoutingTables {
-            c2m: old.c2m.clone(),
-            c2c: old.c2c.clone(),
-            m2c: old.m2c.clone(),
-        };
-        new_tables
-            .c2c
-            .insert((channel_id, point_type, point_id), target);
-        self.tables.store(Arc::new(new_tables));
+        // Optimized COW: only clone the C2C table (not C2M or M2C)
+        // Double deref: Guard<Arc<HashMap>> -> Arc<HashMap> -> HashMap
+        let old = self.c2c.load();
+        let mut new_c2c = (**old).clone();
+        new_c2c.insert((channel_id, point_type, point_id), target);
+        self.c2c.store(Arc::new(new_c2c));
     }
 
     /// Remove C2C routing entry by string key (copy-on-write)
@@ -532,6 +535,9 @@ impl RoutingCache {
 
     /// Remove C2C routing entry by structured key (copy-on-write)
     ///
+    /// **Optimized COW**: Only clones the C2C table, not C2M or M2C.
+    /// This reduces HashMap cloning overhead by 2/3 compared to single-ArcSwap design.
+    ///
     /// Note: This is a cold-path operation. For bulk updates, use `update()`.
     pub fn remove_c2c_by_parts(
         &self,
@@ -539,17 +545,14 @@ impl RoutingCache {
         point_type: PointType,
         point_id: u32,
     ) -> Option<C2CTarget> {
-        // Copy-on-write: clone current tables, modify, atomic replace
-        let old = self.tables.load();
-        let target = old.c2c.get(&(channel_id, point_type, point_id)).copied()?;
+        // Optimized COW: only clone the C2C table (not C2M or M2C)
+        // Double deref: Guard<Arc<HashMap>> -> Arc<HashMap> -> HashMap
+        let old = self.c2c.load();
+        let target = old.get(&(channel_id, point_type, point_id)).copied()?;
 
-        let mut new_tables = RoutingTables {
-            c2m: old.c2m.clone(),
-            c2c: old.c2c.clone(),
-            m2c: old.m2c.clone(),
-        };
-        new_tables.c2c.remove(&(channel_id, point_type, point_id));
-        self.tables.store(Arc::new(new_tables));
+        let mut new_c2c = (**old).clone();
+        new_c2c.remove(&(channel_id, point_type, point_id));
+        self.c2c.store(Arc::new(new_c2c));
         Some(target)
     }
 
@@ -561,10 +564,8 @@ impl RoutingCache {
         let Some((id, point_type_filter)) = parse_prefix(prefix) else {
             return vec![];
         };
-        let tables = self.tables.load();
-        tables
-            .c2c
-            .iter()
+        let c2c = self.c2c.load();
+        c2c.iter()
             .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
             .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
             .collect()
@@ -578,10 +579,8 @@ impl RoutingCache {
         let Some((id, point_type_filter)) = parse_prefix(prefix) else {
             return vec![];
         };
-        let tables = self.tables.load();
-        tables
-            .c2m
-            .iter()
+        let c2m = self.c2m.load();
+        c2m.iter()
             .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
             .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
             .collect()
@@ -595,10 +594,8 @@ impl RoutingCache {
         let Some((id, point_type_filter)) = parse_prefix(prefix) else {
             return vec![];
         };
-        let tables = self.tables.load();
-        tables
-            .m2c
-            .iter()
+        let m2c = self.m2c.load();
+        m2c.iter()
             .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
             .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
             .collect()
@@ -606,11 +603,10 @@ impl RoutingCache {
 
     /// Get cache statistics
     pub fn stats(&self) -> RoutingCacheStats {
-        let tables = self.tables.load();
         RoutingCacheStats {
-            c2m_count: tables.c2m.len(),
-            m2c_count: tables.m2c.len(),
-            c2c_count: tables.c2c.len(),
+            c2m_count: self.c2m.load().len(),
+            m2c_count: self.m2c.load().len(),
+            c2c_count: self.c2c.load().len(),
         }
     }
 
@@ -628,8 +624,8 @@ impl RoutingCache {
     /// ```
     #[inline]
     pub fn c2m_iter(&self) -> Vec<(StructuredRouteKey, C2MTarget)> {
-        let tables = self.tables.load();
-        tables.c2m.iter().map(|(&k, &v)| (k, v)).collect()
+        let c2m = self.c2m.load();
+        c2m.iter().map(|(&k, &v)| (k, v)).collect()
     }
 
     /// Iterate over all M2C routes (for building reverse mappings)
@@ -637,8 +633,8 @@ impl RoutingCache {
     /// Returns a Vec of all M2C routes.
     #[inline]
     pub fn m2c_iter(&self) -> Vec<(StructuredM2CKey, M2CTarget)> {
-        let tables = self.tables.load();
-        tables.m2c.iter().map(|(&k, &v)| (k, v)).collect()
+        let m2c = self.m2c.load();
+        m2c.iter().map(|(&k, &v)| (k, v)).collect()
     }
 }
 

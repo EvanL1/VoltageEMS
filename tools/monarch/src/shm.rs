@@ -15,7 +15,7 @@ use rustyline::validate::Validator;
 use rustyline::{Editor, Helper};
 use std::io;
 use std::time::{Duration, Instant};
-use voltage_rtdb::{default_shm_path, SharedConfig, SharedVecRtdbReader};
+use voltage_rtdb::{default_shm_path, RoutingCache, SharedConfig, UnifiedReader};
 
 // TUI imports
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -310,13 +310,22 @@ pub fn handle_command(cmd: Option<ShmCommands>) -> Result<()> {
     }
 }
 
-/// Open shared memory reader
-fn open_reader() -> Result<SharedVecRtdbReader> {
+/// Open shared memory reader with empty RoutingCache
+///
+/// Note: Instance-level access is disabled without routing configuration.
+/// Channel-level access remains fully functional.
+fn open_reader() -> Result<(UnifiedReader, RoutingCache)> {
     let path = default_shm_path();
     let config = SharedConfig::default().with_path(path.clone());
 
-    SharedVecRtdbReader::open(&config)
-        .with_context(|| format!("Failed to open shared memory at {:?}", path))
+    // Use empty RoutingCache - monarch is a debug tool, doesn't need full routing
+    // This means instance_ids() will return empty, but channel access still works
+    let routing_cache = RoutingCache::default();
+
+    let reader = UnifiedReader::open(&config, &routing_cache)
+        .with_context(|| format!("Failed to open shared memory at {:?}", path))?;
+
+    Ok((reader, routing_cache))
 }
 
 /// Handle single command (one-shot mode)
@@ -325,23 +334,23 @@ fn handle_single_command(cmd: ShmCommands) -> Result<()> {
         return run_dashboard();
     }
 
-    let reader = open_reader()?;
+    let (reader, routing_cache) = open_reader()?;
 
     match cmd {
         ShmCommands::Get { key } => {
             let parsed = parse_key(&key)?;
-            let value = get_value(&reader, &parsed);
+            let value = get_value(&reader, &parsed, &routing_cache);
             match value {
                 Some(v) => println!("{}", v),
                 None => println!("(nil)"),
             }
         },
         ShmCommands::Info => {
-            print_info(&reader);
+            print_info(&reader, &routing_cache);
         },
         ShmCommands::Watch { key, interval_ms } => {
             let parsed = parse_key(&key)?;
-            watch_key(&reader, &parsed, interval_ms)?;
+            watch_key(&reader, &parsed, interval_ms, &routing_cache)?;
         },
         ShmCommands::Top => unreachable!(),
     }
@@ -350,55 +359,43 @@ fn handle_single_command(cmd: ShmCommands) -> Result<()> {
 }
 
 /// Get value from shared memory
-fn get_value(reader: &SharedVecRtdbReader, key: &ShmKey) -> Option<f64> {
+fn get_value(reader: &UnifiedReader, key: &ShmKey, routing_cache: &RoutingCache) -> Option<f64> {
     match key {
         ShmKey::Instance {
             instance_id,
             point_type,
             point_id,
-        } => reader.get(*instance_id, *point_type, *point_id),
+        } => reader
+            .get_instance(*instance_id, *point_type, *point_id, routing_cache)
+            .map(|(v, _ts)| v),
         ShmKey::Channel {
             channel_id,
             point_type,
             point_id,
-        } => reader.get_channel(*channel_id, *point_type, *point_id),
+        } => reader
+            .get_channel(*channel_id, point_type.to_u8(), *point_id)
+            .map(|(v, _ts)| v),
     }
 }
 
 /// Print shared memory info/statistics
-fn print_info(reader: &SharedVecRtdbReader) {
-    let stats = reader.stats();
+fn print_info(reader: &UnifiedReader, routing_cache: &RoutingCache) {
     let path = default_shm_path();
 
     println!("{}", "=== Shared Memory Stats ===".bright_cyan());
     println!("Path:          {}", path.display());
     println!(
-        "Instances:     {} (indexed: {})",
-        stats.instance_count, stats.indexed_instances
+        "Instances:     {} (via routing)",
+        reader.instance_ids(routing_cache).len()
     );
-    println!(
-        "Channels:      {} (indexed: {})",
-        stats.channel_count, stats.indexed_channels
-    );
-    println!("Total Points:  {}", stats.total_points);
-
-    // Format timestamp
-    if stats.last_update_ts > 0 {
-        let ts_secs = stats.last_update_ts / 1000;
-        let ts_ms = stats.last_update_ts % 1000;
-        // Use simple epoch seconds display (human-readable timestamp requires chrono)
-        println!(
-            "Last Update:   {} ({}.{:03}s since epoch)",
-            format_epoch_secs(ts_secs),
-            ts_secs,
-            ts_ms
-        );
-    } else {
-        println!("Last Update:   never");
-    }
+    println!("Channels:      {}", reader.channel_ids().len());
+    println!("Total Slots:   {}", reader.slot_count());
+    println!("Max Slots:     {}", reader.max_slots());
+    // Note: meta_epoch removed in simplified design (Version 2)
 
     // Writer heartbeat
-    let heartbeat_age = voltage_rtdb::shared_impl::timestamp_ms() - stats.writer_heartbeat;
+    let heartbeat = reader.writer_heartbeat();
+    let heartbeat_age = voltage_rtdb::shared_impl::timestamp_ms().saturating_sub(heartbeat);
     let alive = reader.is_writer_alive(5000);
     let status = if alive {
         format!("{} ({}ms ago)", "alive".green(), heartbeat_age)
@@ -409,7 +406,12 @@ fn print_info(reader: &SharedVecRtdbReader) {
 }
 
 /// Watch a key for changes with polling
-fn watch_key(reader: &SharedVecRtdbReader, key: &ShmKey, interval_ms: u64) -> Result<()> {
+fn watch_key(
+    reader: &UnifiedReader,
+    key: &ShmKey,
+    interval_ms: u64,
+    routing_cache: &RoutingCache,
+) -> Result<()> {
     println!(
         "Watching {} ({} to stop)",
         key.to_string().bright_yellow(),
@@ -419,7 +421,7 @@ fn watch_key(reader: &SharedVecRtdbReader, key: &ShmKey, interval_ms: u64) -> Re
     let interval = Duration::from_millis(interval_ms);
 
     loop {
-        let value = get_value(reader, key);
+        let value = get_value(reader, key, routing_cache);
         let now = format_current_time();
 
         match value {
@@ -447,6 +449,7 @@ fn format_current_time() -> String {
 }
 
 /// Format epoch seconds as a human-readable time string
+#[allow(dead_code)]
 fn format_epoch_secs(epoch_secs: u64) -> String {
     // Calculate time components
     let secs_in_day = epoch_secs % 86400;
@@ -458,7 +461,7 @@ fn format_epoch_secs(epoch_secs: u64) -> String {
 
 /// Interactive REPL loop
 fn run_repl() -> Result<()> {
-    let reader = open_reader()?;
+    let (reader, routing_cache) = open_reader()?;
 
     // Create editor with Tab completion helper
     let config = rustyline::Config::builder()
@@ -486,7 +489,7 @@ fn run_repl() -> Result<()> {
                 let _ = rl.add_history_entry(line);
 
                 // Parse and execute
-                match execute_repl_command(&reader, line) {
+                match execute_repl_command(&reader, &routing_cache, line) {
                     Ok(true) => continue, // Normal command, continue REPL
                     Ok(false) => break,   // QUIT command
                     Err(e) => eprintln!("{} {}", "Error:".red(), e),
@@ -514,7 +517,11 @@ fn run_repl() -> Result<()> {
 
 /// Execute a single REPL command
 /// Returns Ok(true) to continue, Ok(false) to quit
-fn execute_repl_command(reader: &SharedVecRtdbReader, input: &str) -> Result<bool> {
+fn execute_repl_command(
+    reader: &UnifiedReader,
+    routing_cache: &RoutingCache,
+    input: &str,
+) -> Result<bool> {
     let parts: Vec<&str> = input.split_whitespace().collect();
     let cmd = parts.first().map(|s| s.to_uppercase());
 
@@ -525,14 +532,14 @@ fn execute_repl_command(reader: &SharedVecRtdbReader, input: &str) -> Result<boo
                 println!("  Key format: inst:<id>:M|A:<point_id> or ch:<id>:T|S|C|A:<point_id>");
             } else {
                 let key = parse_key(parts[1])?;
-                match get_value(reader, &key) {
+                match get_value(reader, &key, routing_cache) {
                     Some(v) => println!("{}", v),
                     None => println!("(nil)"),
                 }
             }
         },
         Some("INFO") => {
-            print_info(reader);
+            print_info(reader, routing_cache);
         },
         Some("WATCH") => {
             if parts.len() < 2 {
@@ -541,7 +548,7 @@ fn execute_repl_command(reader: &SharedVecRtdbReader, input: &str) -> Result<boo
                 let key = parse_key(parts[1])?;
                 let interval = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(500);
                 // Note: WATCH will block until Ctrl+C
-                watch_key(reader, &key, interval)?;
+                watch_key(reader, &key, interval, routing_cache)?;
             }
         },
         Some("HELP") | Some("?") => {
@@ -624,8 +631,8 @@ struct DashboardState {
     /// Last scan time (for cache invalidation)
     last_scan: Instant,
     /// Cached instance/channel counts
-    last_instance_count: u32,
-    last_channel_count: u32,
+    last_instance_count: usize,
+    last_channel_count: usize,
 }
 
 impl DashboardState {
@@ -665,13 +672,19 @@ fn run_dashboard() -> Result<()> {
     let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
 
     // Open shared memory reader
-    let reader = open_reader()?;
+    let (reader, routing_cache) = open_reader()?;
     let mut state = DashboardState::new();
 
     // Main loop
     let tick_rate = Duration::from_millis(250); // 4 FPS
 
-    let result = run_dashboard_loop(&mut terminal, &reader, &mut state, tick_rate);
+    let result = run_dashboard_loop(
+        &mut terminal,
+        &reader,
+        &routing_cache,
+        &mut state,
+        tick_rate,
+    );
 
     // Restore terminal
     disable_raw_mode().context("Failed to disable raw mode")?;
@@ -686,7 +699,8 @@ fn run_dashboard() -> Result<()> {
 /// Main dashboard loop
 fn run_dashboard_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    reader: &SharedVecRtdbReader,
+    reader: &UnifiedReader,
+    routing_cache: &RoutingCache,
     state: &mut DashboardState,
     tick_rate: Duration,
 ) -> Result<()> {
@@ -694,10 +708,10 @@ fn run_dashboard_loop(
 
     loop {
         // Refresh data if needed
-        refresh_point_data(reader, state);
+        refresh_point_data(reader, routing_cache, state);
 
         // Draw UI
-        terminal.draw(|f| draw_dashboard(f, reader, state))?;
+        terminal.draw(|f| draw_dashboard(f, reader, routing_cache, state))?;
 
         // Handle input with timeout
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
@@ -726,22 +740,27 @@ fn run_dashboard_loop(
 }
 
 /// Refresh point data by scanning shared memory
-fn refresh_point_data(reader: &SharedVecRtdbReader, state: &mut DashboardState) {
-    let stats = reader.stats();
+fn refresh_point_data(
+    reader: &UnifiedReader,
+    routing_cache: &RoutingCache,
+    state: &mut DashboardState,
+) {
+    let instance_count = reader.instance_ids(routing_cache).len();
+    let channel_count = reader.channel_ids().len();
 
     // Only rescan if counts changed or enough time has passed
-    let should_rescan = stats.instance_count != state.last_instance_count
-        || stats.channel_count != state.last_channel_count
+    let should_rescan = instance_count != state.last_instance_count
+        || channel_count != state.last_channel_count
         || state.last_scan.elapsed() > Duration::from_secs(5);
 
     if should_rescan {
-        state.points = collect_all_points(reader);
-        state.last_instance_count = stats.instance_count;
-        state.last_channel_count = stats.channel_count;
+        state.points = collect_all_points(reader, routing_cache);
+        state.last_instance_count = instance_count;
+        state.last_channel_count = channel_count;
         state.last_scan = Instant::now();
     } else {
         // Just update values for existing points
-        update_point_values(reader, &mut state.points);
+        update_point_values(reader, routing_cache, &mut state.points);
     }
 }
 
@@ -749,13 +768,13 @@ fn refresh_point_data(reader: &SharedVecRtdbReader, state: &mut DashboardState) 
 ///
 /// Uses the new iteration API which only visits registered points,
 /// eliminating the need to blindly scan ID ranges.
-fn collect_all_points(reader: &SharedVecRtdbReader) -> Vec<PointRow> {
+fn collect_all_points(reader: &UnifiedReader, routing_cache: &RoutingCache) -> Vec<PointRow> {
     let mut rows = Vec::new();
 
     // Iterate over all registered instances
-    for inst_id in reader.instance_ids() {
+    for inst_id in reader.instance_ids(routing_cache) {
         // Measurement points
-        reader.iter_instance_measurements(inst_id, |point_id, value| {
+        reader.iter_instance_measurements(inst_id, routing_cache, |point_id, value| {
             rows.push(PointRow {
                 key: format!("inst:{}:M:{}", inst_id, point_id),
                 kind: "M",
@@ -763,7 +782,7 @@ fn collect_all_points(reader: &SharedVecRtdbReader) -> Vec<PointRow> {
             });
         });
         // Action points
-        reader.iter_instance_actions(inst_id, |point_id, value| {
+        reader.iter_instance_actions(inst_id, routing_cache, |point_id, value| {
             rows.push(PointRow {
                 key: format!("inst:{}:A:{}", inst_id, point_id),
                 kind: "A",
@@ -773,7 +792,7 @@ fn collect_all_points(reader: &SharedVecRtdbReader) -> Vec<PointRow> {
     }
 
     // Iterate over all registered channels
-    for ch_id in reader.channel_ids() {
+    for &ch_id in reader.channel_ids() {
         for point_type in [
             PointType::Telemetry,
             PointType::Signal,
@@ -794,10 +813,14 @@ fn collect_all_points(reader: &SharedVecRtdbReader) -> Vec<PointRow> {
 }
 
 /// Update values for existing points (faster than full rescan)
-fn update_point_values(reader: &SharedVecRtdbReader, points: &mut [PointRow]) {
+fn update_point_values(
+    reader: &UnifiedReader,
+    routing_cache: &RoutingCache,
+    points: &mut [PointRow],
+) {
     for point in points.iter_mut() {
         if let Ok(key) = parse_key(&point.key) {
-            if let Some(value) = get_value(reader, &key) {
+            if let Some(value) = get_value(reader, &key, routing_cache) {
                 point.value = value;
             }
         }
@@ -805,10 +828,15 @@ fn update_point_values(reader: &SharedVecRtdbReader, points: &mut [PointRow]) {
 }
 
 /// Draw the dashboard UI
-fn draw_dashboard(f: &mut ratatui::Frame, reader: &SharedVecRtdbReader, state: &DashboardState) {
-    let stats = reader.stats();
+fn draw_dashboard(
+    f: &mut ratatui::Frame,
+    reader: &UnifiedReader,
+    routing_cache: &RoutingCache,
+    state: &DashboardState,
+) {
     let alive = reader.is_writer_alive(5000);
-    let heartbeat_age = voltage_rtdb::shared_impl::timestamp_ms() - stats.writer_heartbeat;
+    let heartbeat = reader.writer_heartbeat();
+    let heartbeat_age = voltage_rtdb::shared_impl::timestamp_ms().saturating_sub(heartbeat);
 
     // Layout: status bar + data table
     let chunks = Layout::default()
@@ -825,8 +853,8 @@ fn draw_dashboard(f: &mut ratatui::Frame, reader: &SharedVecRtdbReader, state: &
 
     let status_text = format!(
         " Instances: {}  Channels: {}  Points: {}  Writer: {}  │  [q]uit [↑↓]scroll [r]efresh",
-        stats.instance_count,
-        stats.channel_count,
+        reader.instance_ids(routing_cache).len(),
+        reader.channel_ids().len(),
         state.points.len(),
         writer_status
     );

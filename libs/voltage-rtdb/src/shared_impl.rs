@@ -279,6 +279,32 @@ impl SharedConfig {
     pub fn channel_data_offset(&self) -> usize {
         self.channel_index_offset() + self.max_channels * std::mem::size_of::<ChannelIndex>()
     }
+
+    /// Get shared memory path
+    #[inline]
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
+    /// Get max slots for unified shared memory
+    ///
+    /// This is used by the new unified_shm implementation.
+    /// Returns the configured value or None if not set.
+    #[inline]
+    pub fn max_slots(&self) -> Option<u32> {
+        // Use max_channels * max_points_per_channel as default
+        // This can be overridden by explicit configuration
+        Some((self.max_channels * self.max_points_per_channel) as u32)
+    }
+
+    /// Create config with explicit max_slots for unified shm
+    pub fn with_max_slots(mut self, max_slots: usize) -> Self {
+        // Store in max_channels * max_points_per_channel
+        // This is a simplification - in practice we might add a dedicated field
+        self.max_channels = max_slots;
+        self.max_points_per_channel = 1;
+        self
+    }
 }
 
 // ========== Helper Functions ==========
@@ -1611,6 +1637,65 @@ impl ChannelToSlotIndex {
     /// Get data offset
     pub fn data_offset(&self) -> usize {
         self.data_offset
+    }
+
+    /// Build from UnifiedWriter's channel_layouts
+    ///
+    /// This method creates a ChannelToSlotIndex from the unified shared memory format.
+    /// The data_offset is Header size (64 bytes), slots are indexed via ChannelLayout.
+    ///
+    /// # Arguments
+    /// * `writer` - UnifiedWriter with registered channel points
+    ///
+    /// # Returns
+    /// ChannelToSlotIndex with pre-computed mappings
+    pub fn from_unified_writer(writer: &crate::unified_shm::UnifiedWriter) -> Self {
+        use crate::unified_shm::slot_offset;
+
+        let mut index = FxHashMap::default();
+        let data_offset = slot_offset(); // Header size (64 bytes)
+        let layouts = writer.channel_layouts();
+
+        // Iterate through all channels and their layouts
+        for (channel_id, layout) in layouts.iter().enumerate() {
+            if layout.total_points == 0 {
+                continue; // Skip unused channel slots
+            }
+
+            // For each point type (T=0, S=1, C=2, A=3)
+            for type_idx in 0..4u8 {
+                let point_type = match type_idx {
+                    0 => PointType::Telemetry,
+                    1 => PointType::Signal,
+                    2 => PointType::Control,
+                    3 => PointType::Adjustment,
+                    _ => unreachable!(),
+                };
+
+                let count = layout.type_counts[type_idx as usize];
+                for point_id in 0..count {
+                    if let Some(slot) = layout.slot(type_idx, point_id) {
+                        // Calculate byte offset: data_offset + slot * sizeof(PointSlot)
+                        let slot_byte_offset =
+                            data_offset + slot * std::mem::size_of::<PointSlot>();
+                        index.insert((channel_id as u32, point_type, point_id), slot_byte_offset);
+                    }
+                }
+            }
+        }
+
+        let mapped_count = index.len();
+        tracing::info!(
+            "ChannelToSlotIndex built from UnifiedWriter: {} direct mappings, data_offset={}",
+            mapped_count,
+            data_offset
+        );
+
+        Self {
+            index,
+            data_offset,
+            mapped_count,
+        }
     }
 }
 
