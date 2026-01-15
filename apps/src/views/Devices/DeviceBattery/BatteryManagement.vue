@@ -5,7 +5,7 @@
         <div class="battery-overview__contain">
           <div class="overview__header">
             <div class="header__Value">
-              <span class="header-name">#124 max</span>
+              <span class="header-name">#124 Max</span>
               <span class="header-value">120</span>
               <span class="header-unit">V</span>
             </div>
@@ -31,7 +31,7 @@
         <div class="battery-overview__contain">
           <div class="overview__header">
             <div class="header__Value">
-              <span class="header-name">#124 max</span>
+              <span class="header-name">#124 Max</span>
               <span class="header-value">96</span>
               <span class="header-unit">℉</span>
             </div>
