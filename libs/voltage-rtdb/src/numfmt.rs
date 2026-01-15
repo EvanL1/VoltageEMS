@@ -21,7 +21,7 @@
 //! let bytes = u32_to_bytes(12345);  // Bytes from stack buffer
 //!
 //! // Cached point IDs (for batch operations)
-//! let cache = PointIdCache::new();
+//! let mut cache = PointIdCache::new();
 //! let arc_str = cache.get(42);  // Returns Arc<str>, O(1) clone
 //! ```
 
@@ -84,8 +84,9 @@ pub fn u32_to_arc_str(n: u32) -> Arc<str> {
 ///
 /// ```rust
 /// use voltage_rtdb::numfmt::PointIdCache;
+/// use std::sync::Arc;
 ///
-/// let cache = PointIdCache::new();
+/// let mut cache = PointIdCache::new();
 ///
 /// // First call: allocates and caches
 /// let s1 = cache.get(42);

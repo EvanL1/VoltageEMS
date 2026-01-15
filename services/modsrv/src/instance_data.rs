@@ -7,7 +7,8 @@
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use tracing::debug;
+use std::time::Duration;
+use tracing::{debug, warn};
 
 use crate::redis_state;
 
@@ -370,12 +371,34 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         value: f64,
     ) -> Result<()> {
         // Use application-layer routing with cache
+        // SHM writer enables direct M2C via shared memory (primary path)
+        // Redis TODO queue remains as fallback
+        // UDS notifier enables event-driven dispatch (~1-2ms latency)
+
+        // Acquire notifier lock if available (OnceLock + tokio Mutex for async context)
+        // Use timeout to prevent blocking in high-concurrency scenarios
+        let mut notifier_guard = match self.shm_notifier.get() {
+            Some(n) => {
+                match tokio::time::timeout(Duration::from_millis(100), n.lock()).await {
+                    Ok(guard) => Some(guard),
+                    Err(_) => {
+                        warn!("ShmNotifier lock timeout, falling back to TODO queue");
+                        None // 超时，降级到 TODO 队列
+                    },
+                }
+            },
+            None => None,
+        };
+        let notifier_ref = notifier_guard.as_deref_mut();
+
         let outcome = voltage_routing::set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_id,
             action_id,
             value,
+            self.shm_action_writer.get().map(|w| w.as_ref()),
+            notifier_ref,
         )
         .await?;
 

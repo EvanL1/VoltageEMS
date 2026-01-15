@@ -24,6 +24,7 @@ async fn setup_test_db() -> SqlitePool {
             enabled INTEGER NOT NULL DEFAULT 1,
             priority INTEGER NOT NULL DEFAULT 100,
             cooldown_ms INTEGER NOT NULL DEFAULT 0,
+            trigger_config TEXT,
             format TEXT NOT NULL DEFAULT 'vue-flow',
             flow_json TEXT NOT NULL,
             nodes_json TEXT NOT NULL,

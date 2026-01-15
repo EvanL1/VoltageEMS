@@ -24,6 +24,7 @@ pub struct TestEnv {
     pub config: ModsrvConfig,
 }
 
+#[allow(dead_code)]
 impl TestEnv {
     /// Create a fully provisioned test environment
     ///
@@ -94,6 +95,7 @@ impl TestEnv {
 }
 
 /// Initialize the test database schema
+#[allow(dead_code)]
 async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
     common::test_utils::schema::init_modsrv_schema(pool).await?;
 
@@ -138,6 +140,7 @@ async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
 }
 
 /// Create a test configuration
+#[allow(dead_code)]
 fn create_test_config() -> Result<ModsrvConfig> {
     use common::{ApiConfig, BaseServiceConfig, RedisConfig};
 

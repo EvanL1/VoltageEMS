@@ -276,3 +276,6 @@ fn decode_point(point: &CanPoint, frame_data: &[u8]) -> Result<Value> {
 
     Ok(final_value)
 }
+
+// NOTE: Tests for CAN decoder have been moved to the cross-platform module
+// at `protocols/adapters/can_decoder.rs` to enable testing on non-Linux platforms.

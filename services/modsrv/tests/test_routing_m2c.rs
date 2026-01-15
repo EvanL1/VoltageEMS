@@ -110,6 +110,8 @@ async fn test_m2c_basic_routing() -> Result<()> {
         23,   // Instance ID
         "1",  // Action point ID
         12.3, // Value
+        None, // SHM writer
+        None, // UDS notifier
     )
     .await?;
 
@@ -169,7 +171,8 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     .await;
 
     // When & Then: Test first instance
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 100.0).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 100.0, None, None).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1001".to_string()));
 
@@ -178,7 +181,8 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     assert_eq!(String::from_utf8(value.to_vec())?, "100");
 
     // When & Then: Test second instance
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 50.0).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 50.0, None, None).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1002".to_string()));
 
@@ -186,7 +190,8 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
     assert_eq!(String::from_utf8(value.to_vec())?, "50");
 
     // Test instance ID without routing config - should succeed but return no_route
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 9999, "1", 0.0).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 9999, "1", 0.0, None, None).await?;
     assert!(!outcome.routed, "Should not be routed");
     assert_eq!(
         outcome.route_result,
@@ -215,7 +220,8 @@ async fn test_m2c_no_routing() -> Result<()> {
     .await;
 
     // When: Set action point
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 15.5).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 15.5, None, None).await?;
 
     // Then: Verify routing result
     assert!(outcome.is_success(), "Operation should succeed");
@@ -262,7 +268,16 @@ async fn test_m2c_batch_actions() -> Result<()> {
     let actions = vec![("1", 10.0), ("2", 20.0), ("3", 30.0)];
 
     for (point_id, value) in actions {
-        let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, point_id, value).await?;
+        let outcome = set_action_point(
+            rtdb.as_ref(),
+            &routing_cache,
+            23,
+            point_id,
+            value,
+            None,
+            None,
+        )
+        .await?;
         assert!(outcome.routed, "Point {} should be routed", point_id);
     }
 
@@ -302,7 +317,7 @@ async fn test_m2c_different_channel_types() -> Result<()> {
     .await;
 
     // When: Set control type action point
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 1.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 1.0, None, None).await?;
 
     // Then: Verify routed to C(Control) TODO queue
     assert!(outcome.routed);
@@ -315,7 +330,7 @@ async fn test_m2c_different_channel_types() -> Result<()> {
     assert_todo_queue_triggered(&rtdb, "comsrv:1001:C:TODO").await;
 
     // When: Set adjustment type action point
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "2", 2.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "2", 2.0, None, None).await?;
 
     // Then: Verify routed to A(Adjustment) TODO queue
     assert!(outcome.routed);
@@ -345,7 +360,8 @@ async fn test_m2c_trigger_message_format() -> Result<()> {
     .await;
 
     // When: Set action point
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 42.5).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 42.5, None, None).await?;
     assert!(outcome.routed);
 
     // Then: Parse TODO queue message
@@ -404,7 +420,7 @@ async fn test_m2c_write_triggers_routing_order() -> Result<()> {
         setup_m2c_routing(vec![("23:A:1", "1001:A:1")], vec![("inverter_01", 23)]).await;
 
     // When: Set action point
-    set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 99.9).await?;
+    set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 99.9, None, None).await?;
 
     // Then: Verify execution order - Hash written first
     let hash_value = rtdb.hash_get("inst:23:A", "1").await?;
@@ -451,7 +467,8 @@ async fn test_m2c_invalid_route_target() -> Result<()> {
     ));
 
     // When: Set action point
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 50.0).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 50.0, None, None).await?;
 
     // Then: Operation succeeds but not routed (invalid entry filtered at load time)
     assert!(outcome.is_success(), "Operation should succeed");
@@ -489,19 +506,22 @@ async fn test_m2c_multiple_instances_multiple_channels() -> Result<()> {
     .await;
 
     // When & Then: Test instance A -> Channel 1001
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 111.1).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 111.1, None, None).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1001".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
 
     // When & Then: Test instance B -> Channel 1002
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 222.2).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 222.2, None, None).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1002".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1002:A:TODO").await;
 
     // When & Then: Test instance C -> Channel 1003
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 30, "1", 333.3).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 30, "1", 333.3, None, None).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1003".to_string()));
     assert_todo_queue_triggered(&rtdb, "comsrv:1003:A:TODO").await;

@@ -5,6 +5,8 @@
 
 // Core modules
 pub mod channel_manager; // Channel lifecycle manager (includes ChannelEntry, ChannelStats)
+pub mod shm_listener; // UDS event-driven command listener (lower latency than polling)
+pub mod shm_poller; // SHM-based command polling (fallback, higher latency)
 pub mod traits; // Core traits and type definitions (re-exports from types)
 pub mod trigger; // Command trigger for storage and synchronization
 pub mod types; // Channel communication types (owned by comsrv)
@@ -19,6 +21,8 @@ pub use types::{ChannelCommand, ChannelStatus, ConnectionState, ProtocolValue};
 // Re-export other types from local modules
 pub use crate::core::config::FourRemote;
 pub use channel_manager::{ChannelEntry, ChannelManager, ChannelMetadata, ChannelStats};
+pub use shm_listener::ShmCommandListener;
+pub use shm_poller::ShmCommandPoller;
 pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand};
 
 // Re-export converters

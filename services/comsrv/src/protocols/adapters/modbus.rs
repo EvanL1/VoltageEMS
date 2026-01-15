@@ -26,7 +26,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tracing::debug;
-use voltage_modbus::{ModbusClient, ModbusTcpClient};
+use voltage_modbus::{DeviceLimits, ModbusClient, ModbusTcpClient};
 
 #[cfg(feature = "modbus")]
 use voltage_modbus::ModbusRtuClient;
@@ -391,6 +391,58 @@ impl ModbusClientWrapper {
             Self::Tcp(client) => client.read_04(slave_id, address, quantity).await,
             #[cfg(feature = "modbus")]
             Self::Rtu(client) => client.read_04(slave_id, address, quantity).await,
+        }
+    }
+
+    /// Batch read holding registers (FC03) with automatic chunking.
+    ///
+    /// Automatically splits requests exceeding protocol limits (125 registers)
+    /// into multiple smaller requests.
+    pub async fn read_03_batch(
+        &mut self,
+        slave_id: u8,
+        address: u16,
+        quantity: u16,
+        limits: &DeviceLimits,
+    ) -> voltage_modbus::ModbusResult<Vec<u16>> {
+        match self {
+            Self::Tcp(client) => {
+                client
+                    .read_03_batch(slave_id, address, quantity, limits)
+                    .await
+            },
+            #[cfg(feature = "modbus")]
+            Self::Rtu(client) => {
+                client
+                    .read_03_batch(slave_id, address, quantity, limits)
+                    .await
+            },
+        }
+    }
+
+    /// Batch read input registers (FC04) with automatic chunking.
+    ///
+    /// Automatically splits requests exceeding protocol limits (125 registers)
+    /// into multiple smaller requests.
+    pub async fn read_04_batch(
+        &mut self,
+        slave_id: u8,
+        address: u16,
+        quantity: u16,
+        limits: &DeviceLimits,
+    ) -> voltage_modbus::ModbusResult<Vec<u16>> {
+        match self {
+            Self::Tcp(client) => {
+                client
+                    .read_04_batch(slave_id, address, quantity, limits)
+                    .await
+            },
+            #[cfg(feature = "modbus")]
+            Self::Rtu(client) => {
+                client
+                    .read_04_batch(slave_id, address, quantity, limits)
+                    .await
+            },
         }
     }
 
@@ -954,8 +1006,14 @@ impl ModbusChannel {
         let mut results = Vec::with_capacity(points.len());
 
         for segment in segments {
-            let batch_result =
-                Self::read_register_segment(client, slave_id, function_code, &segment).await;
+            let batch_result = Self::read_register_segment(
+                client,
+                slave_id,
+                function_code,
+                &segment,
+                max_batch_size,
+            )
+            .await;
 
             match batch_result {
                 Ok(batch_results) => results.extend(batch_results),
@@ -1025,25 +1083,32 @@ impl ModbusChannel {
     }
 
     /// Read a segment of consecutive registers and decode individual points.
+    ///
+    /// Uses batch read methods for automatic chunking protection - if the segment
+    /// somehow exceeds protocol limits (125 registers), requests are automatically split.
     #[allow(clippy::needless_lifetimes)]
     async fn read_register_segment<'a>(
         client: &mut ModbusClientWrapper,
         slave_id: u8,
         function_code: u8,
         segment: &RegisterSegment<'a>,
+        max_batch_size: u16,
     ) -> std::result::Result<Vec<(u32, DataPoint)>, voltage_modbus::ModbusError> {
         let total_registers = segment.end_address - segment.start_address;
 
-        // Read all registers in segment
+        // Create device limits for batch reading protection
+        let limits = DeviceLimits::new().with_max_read_registers(max_batch_size);
+
+        // Read all registers in segment using batch methods for extra safety
         let registers = match function_code {
             3 => {
                 client
-                    .read_03(slave_id, segment.start_address, total_registers)
+                    .read_03_batch(slave_id, segment.start_address, total_registers, &limits)
                     .await?
             },
             4 => {
                 client
-                    .read_04(slave_id, segment.start_address, total_registers)
+                    .read_04_batch(slave_id, segment.start_address, total_registers, &limits)
                     .await?
             },
             _ => return Ok(Vec::new()),

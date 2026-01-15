@@ -491,6 +491,8 @@ pub async fn handle_command(
                 instance_id,
                 &point_id,
                 value,
+                None, // SHM writer - Redis-only for CLI
+                None, // UDS notifier - not needed for CLI
             )
             .await?;
 

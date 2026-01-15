@@ -184,6 +184,7 @@ pub const RULE_CHAINS_TABLE: &str = r#"
         enabled INTEGER DEFAULT 1,
         priority INTEGER DEFAULT 0,
         cooldown_ms INTEGER DEFAULT 0,
+        trigger_config TEXT,
         nodes_json TEXT NOT NULL,
         flow_json TEXT,
         format TEXT DEFAULT 'vue-flow',

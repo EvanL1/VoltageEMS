@@ -34,9 +34,18 @@ pub struct Rule {
     #[serde(default)]
     pub priority: u32,
 
-    /// Cooldown period in milliseconds
+    /// Cooldown period in milliseconds (legacy, use trigger_config for new rules)
     #[serde(default)]
     pub cooldown_ms: u64,
+
+    /// Trigger configuration (JSON string)
+    ///
+    /// Supported formats:
+    /// - `{"type": "interval", "interval_ms": 1000}` - Execute at fixed intervals
+    ///
+    /// If not set, falls back to `cooldown_ms` as interval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<String>,
 
     /// Rule flow topology (nodes with local variables)
     pub flow: RuleFlow,

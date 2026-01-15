@@ -376,6 +376,104 @@ impl UnifiedWriter {
             .writer_heartbeat
             .store(timestamp_ms, Ordering::Relaxed);
     }
+
+    /// Open existing shared memory for writing Action points (C/A types only)
+    ///
+    /// This is used by modsrv to write downstream commands (Control/Adjustment)
+    /// while comsrv owns the main writer for upstream data (Telemetry/Signal).
+    ///
+    /// # Safety
+    /// - Only writes to C/A slots (type 2 and 3)
+    /// - T/S slots (type 0 and 1) should not be written by this writer
+    /// - Atomic operations ensure cross-process safety
+    pub fn open_for_actions(config: &SharedConfig, routing_cache: &RoutingCache) -> Result<Self> {
+        let path = config.path();
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .with_context(|| format!("Failed to open {:?} for actions", path))?;
+
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map_mut(&file)
+                .with_context(|| "Failed to mmap for actions")?
+        };
+
+        // Validate header
+        let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
+        if header.magic != UNIFIED_MAGIC {
+            bail!(
+                "Invalid magic: expected 0x{:X}, got 0x{:X}",
+                UNIFIED_MAGIC,
+                header.magic
+            );
+        }
+        if header.version != UNIFIED_VERSION {
+            bail!(
+                "Version mismatch: expected {}, got {}",
+                UNIFIED_VERSION,
+                header.version
+            );
+        }
+
+        let max_slots = header.max_slots;
+        let slot_count = header.slot_count.load(Ordering::Acquire) as usize;
+
+        // Build indexes using same algorithm (deterministic allocation)
+        let (channel_layouts, calculated_slots) = allocate_layouts(routing_cache);
+
+        if calculated_slots != slot_count {
+            tracing::warn!(
+                "Slot count mismatch: file={}, calculated={}. Using file value.",
+                slot_count,
+                calculated_slots
+            );
+        }
+
+        tracing::info!(
+            "Opened unified writer for actions: {:?}, slots={}, C/A channels={}",
+            path,
+            slot_count,
+            channel_layouts
+                .iter()
+                .filter(|l| l.type_counts[2] > 0 || l.type_counts[3] > 0)
+                .count()
+        );
+
+        Ok(Self {
+            mmap,
+            path: path.to_path_buf(),
+            max_slots,
+            slot_count,
+            channel_layouts,
+        })
+    }
+
+    /// Write Action point (Control or Adjustment only)
+    ///
+    /// This is a safe wrapper that only allows writing to C/A slots.
+    /// Returns false if point_type is not Control (2) or Adjustment (3).
+    #[inline]
+    pub fn set_action(
+        &self,
+        channel_id: u32,
+        point_type: u8,
+        point_id: u32,
+        value: f64,
+        timestamp_ms: u64,
+    ) -> bool {
+        // Only allow Control (2) and Adjustment (3) types
+        if point_type != 2 && point_type != 3 {
+            tracing::warn!(
+                "set_action called with non-action type: {} (expected 2 or 3)",
+                point_type
+            );
+            return false;
+        }
+        self.set(channel_id, point_type, point_id, value, value, timestamp_ms)
+    }
 }
 
 // ========== UnifiedReader ==========

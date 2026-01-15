@@ -66,6 +66,19 @@ pub struct InstanceManager<R: Rtdb> {
     dynamic_instance_index: Option<Arc<InstanceIndex>>,
     /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
     slot_bitmap: Option<Arc<std::sync::RwLock<SlotBitmap>>>,
+    // ========== SHM Action Writer (M2C via SHM) ==========
+    /// UnifiedWriter for writing Control/Adjustment points to SHM
+    /// When set, M2C commands go directly to SHM (primary path)
+    /// Redis TODO queue remains as fallback
+    /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
+    pub(crate) shm_action_writer: std::sync::OnceLock<Arc<voltage_rtdb::UnifiedWriter>>,
+    // ========== UDS Notifier (Event-driven M2C) ==========
+    /// ShmNotifier for sending UDS notifications to comsrv
+    /// When SHM write succeeds, send notification to trigger immediate dispatch
+    /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
+    /// Protected by tokio Mutex for async &mut access
+    pub(crate) shm_notifier:
+        std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>>,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
@@ -83,6 +96,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             name_cache: DashMap::new(),
             dynamic_instance_index: None,
             slot_bitmap: None,
+            shm_action_writer: std::sync::OnceLock::new(),
+            shm_notifier: std::sync::OnceLock::new(),
         }
     }
 
@@ -102,6 +117,35 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         self.dynamic_instance_index = Some(dynamic_index);
         self.slot_bitmap = Some(slot_bitmap);
         self
+    }
+
+    /// Configure SHM action writer for M2C via shared memory
+    ///
+    /// When set, action commands (Control/Adjustment) are written to SHM
+    /// in addition to Redis TODO queue. SHM serves as the primary path
+    /// for comsrv's ShmCommandPoller, with Redis as fallback.
+    ///
+    /// Uses OnceLock for delayed initialization - can be called after
+    /// Arc<InstanceManager> is created. Returns true if set successfully,
+    /// false if already set.
+    pub fn set_shm_action_writer(&self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> bool {
+        self.shm_action_writer.set(writer).is_ok()
+    }
+
+    /// Configure UDS notifier for event-driven M2C command dispatch
+    ///
+    /// When set, after SHM write succeeds, send UDS notification to comsrv
+    /// to trigger immediate command processing (~1-2ms latency).
+    /// Falls back gracefully if notification fails.
+    ///
+    /// Uses OnceLock for delayed initialization - can be called after
+    /// Arc<InstanceManager> is created. Returns true if set successfully,
+    /// false if already set.
+    pub fn set_shm_notifier(
+        &self,
+        notifier: Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>,
+    ) -> bool {
+        self.shm_notifier.set(notifier).is_ok()
     }
 
     /// Get dynamic InstanceIndex (for external access, e.g., API stats)

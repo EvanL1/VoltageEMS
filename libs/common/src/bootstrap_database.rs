@@ -129,14 +129,12 @@ pub async fn setup_redis_with_timeout(
 /// * `redis_config` - Custom Redis configuration with pool settings
 ///
 /// # Example
-/// ```no_run
-/// use common::bootstrap_database::setup_redis_with_config;
-/// use common::redis::RedisConfig;
-///
+/// ```ignore
+/// // In an async context:
 /// let channel_count = 50;
 /// let max_connections = channel_count * 2 + 30; // Dynamic calculation
 ///
-/// let mut redis_config = RedisConfig::from_url("redis://localhost:6379");
+/// let mut redis_config = RedisPoolConfig::default();
 /// redis_config.max_connections = max_connections;
 ///
 /// let (url, client) = setup_redis_with_config(None, redis_config).await?;

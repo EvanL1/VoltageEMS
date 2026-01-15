@@ -18,8 +18,17 @@ pub struct RuleSummary {
 }
 
 /// Type alias for rule database row to avoid clippy::type_complexity warning
-/// Fields: (id, name, description, enabled, priority, cooldown_ms, nodes_json)
-type RuleDbRow = (i64, String, Option<String>, i64, i64, i64, String);
+/// Fields: (id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json)
+type RuleDbRow = (
+    i64,
+    String,
+    Option<String>,
+    i64,
+    i64,
+    i64,
+    Option<String>,
+    String,
+);
 
 /// Rules service - provides rule management and execution operations
 /// Uses ModsrvContext since rules have been merged into modsrv
@@ -64,14 +73,14 @@ impl<'a> RulesService<'a> {
     pub async fn get(&self, rule_id: i64) -> Result<Rule> {
         // Query database for rule
         let row: Option<RuleDbRow> = sqlx::query_as(
-            "SELECT id, name, description, enabled, priority, cooldown_ms, nodes_json
+            "SELECT id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json
              FROM rules WHERE id = ?",
         )
         .bind(rule_id)
         .fetch_optional(&self.ctx.sqlite_pool)
         .await?;
 
-        let (id, name, description, enabled, priority, cooldown_ms, nodes_json) =
+        let (id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json) =
             row.ok_or_else(|| LibApiError::not_found(format!("Rule '{}' not found", rule_id)))?;
 
         // Deserialize compact flow
@@ -85,6 +94,7 @@ impl<'a> RulesService<'a> {
             enabled: enabled != 0,
             priority: priority as u32,
             cooldown_ms: cooldown_ms as u64,
+            trigger_config,
             flow,
         })
     }

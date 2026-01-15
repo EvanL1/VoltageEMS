@@ -69,6 +69,8 @@ pub struct RouteContext {
 /// 1. Looks up M2C routing in cache
 /// 2. Writes to instance Action Hash (state storage)
 /// 3. Writes to channel Hash + triggers TODO queue (Write-Triggers-Routing pattern)
+/// 4. Optionally writes to SHM (shared memory) for zero-copy M2C notification
+/// 5. Optionally sends UDS notification for event-driven M2C command dispatch
 ///
 /// # Arguments
 /// * `redis` - RTDB trait object
@@ -76,6 +78,8 @@ pub struct RouteContext {
 /// * `instance_id` - Instance ID (numeric)
 /// * `point_id` - Action point ID
 /// * `value` - Point value
+/// * `shm_writer` - Optional SHM writer for M2C via shared memory
+/// * `notifier` - Optional UDS notifier for event-driven command notification
 ///
 /// # Returns
 /// * `Ok(ActionRouteOutcome)` - Routing outcome with metadata
@@ -87,6 +91,8 @@ pub async fn set_action_point<R>(
     instance_id: u32,
     point_id: &str,
     value: f64,
+    shm_writer: Option<&voltage_rtdb::UnifiedWriter>,
+    notifier: Option<&mut voltage_rtdb::ShmNotifier>,
 ) -> Result<ActionRouteOutcome>
 where
     R: Rtdb,
@@ -137,6 +143,48 @@ where
         )
         .await
         .context("Failed to set channel point with trigger")?;
+
+        // Step 5: Write to SHM if available (primary path for M2C notification)
+        // This enables comsrv's ShmCommandPoller to detect the command via timestamp change
+        let shm_written = if let Some(writer) = shm_writer {
+            let written = writer.set_action(
+                channel_id,
+                point_type_enum.to_u8(),
+                comsrv_point_id,
+                value,
+                timestamp_ms as u64,
+            );
+            if !written {
+                tracing::warn!(
+                    "SHM write failed for ch{}:{:?}:{}",
+                    channel_id,
+                    point_type_enum,
+                    comsrv_point_id
+                );
+            }
+            written
+        } else {
+            false
+        };
+
+        // Step 6: Send UDS notification (event-driven M2C dispatch)
+        // Only notify if SHM write succeeded (avoid duplicate notifications via TODO queue)
+        if shm_written {
+            if let Some(notifier) = notifier {
+                if let Err(e) = notifier
+                    .notify(channel_id, point_type_enum, comsrv_point_id)
+                    .await
+                {
+                    tracing::warn!(
+                        "UDS notify failed for ch{}:{:?}:{}: {}",
+                        channel_id,
+                        point_type_enum,
+                        comsrv_point_id,
+                        e
+                    );
+                }
+            }
+        }
 
         let todo_key = config.todo_queue_key(channel_id, point_type_enum);
 
@@ -249,7 +297,7 @@ mod tests {
         let rtdb = create_test_rtdb();
         let routing_cache = create_test_routing_cache();
 
-        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 42.5).await;
+        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 42.5, None, None).await;
 
         assert!(result.is_ok(), "set_action_point should succeed");
         let outcome = result.unwrap();
@@ -269,7 +317,7 @@ mod tests {
         let routing_cache = create_routing_cache_with_m2c();
 
         // M2C route: instance 1001:A:1 -> channel 2001:C:10
-        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 100.0).await;
+        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 100.0, None, None).await;
 
         assert!(result.is_ok(), "set_action_point should succeed");
         let outcome = result.unwrap();
@@ -290,7 +338,7 @@ mod tests {
         let routing_cache = create_test_routing_cache();
 
         // Write action point
-        set_action_point(&*rtdb, &routing_cache, 5001, "42", 123.456)
+        set_action_point(&*rtdb, &routing_cache, 5001, "42", 123.456, None, None)
             .await
             .unwrap();
 

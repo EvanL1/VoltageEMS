@@ -22,6 +22,10 @@ pub mod shared_impl;
 
 pub mod unified_shm;
 
+pub mod notification;
+
+pub mod notifier;
+
 pub mod error;
 
 pub mod cleanup;
@@ -73,6 +77,10 @@ pub use unified_shm::{
     allocate_layouts, calculate_file_size, ChannelLayout, UnifiedHeader, UnifiedReader,
     UnifiedWriter, UNIFIED_MAGIC, UNIFIED_VERSION,
 };
+
+// UDS event notification (M2C command notification via Unix Domain Socket)
+pub use notification::ShmNotification;
+pub use notifier::{ShmNotifier, DEFAULT_UDS_PATH};
 
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
 

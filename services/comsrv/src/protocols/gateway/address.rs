@@ -10,6 +10,9 @@ use crate::protocols::core::point::{
 #[cfg(feature = "gpio")]
 use crate::protocols::core::point::GpioAddress;
 
+#[cfg(feature = "can")]
+use crate::protocols::core::point::CanAddress;
+
 /// Parse a shorthand address string into a `ProtocolAddress`.
 ///
 /// # Address Formats
@@ -179,9 +182,16 @@ fn parse_opcua_address(address: &str) -> Result<ProtocolAddress> {
 }
 
 /// Parse CAN address: "can_id:byte_offset:bit_pos:bit_len"
+#[cfg(feature = "can")]
 fn parse_can_address(address: &str) -> Result<ProtocolAddress> {
-    // For now, store as Generic since CAN address is complex
-    // TODO: Add CanAddress to ProtocolAddress enum
+    let can_addr = CanAddress::parse(address)?;
+    Ok(ProtocolAddress::Can(can_addr))
+}
+
+/// Parse CAN address (fallback when `can` feature is disabled).
+#[cfg(not(feature = "can"))]
+fn parse_can_address(address: &str) -> Result<ProtocolAddress> {
+    // Store as Generic when CAN feature is disabled
     Ok(ProtocolAddress::Generic(address.to_string()))
 }
 

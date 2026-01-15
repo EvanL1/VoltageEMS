@@ -20,13 +20,17 @@ use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{RoutingCache, UnifiedReader};
+use voltage_rtdb::{RoutingCache, UnifiedReader, UnifiedWriter};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
 
 /// Rule trigger configuration
-#[derive(Debug, Clone)]
+///
+/// Supports JSON deserialization for database storage:
+/// - `{"type": "interval", "interval_ms": 1000}`
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum TriggerConfig {
     /// Execute rule at fixed intervals
     Interval {
@@ -113,9 +117,37 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         log_root: PathBuf,
         shared_reader: Option<Arc<UnifiedReader>>,
     ) -> Self {
+        Self::with_shm(
+            rtdb,
+            routing_cache,
+            pool,
+            tick_ms,
+            log_root,
+            shared_reader,
+            None,
+        )
+    }
+
+    /// Create with both UnifiedReader (for reads) and UnifiedWriter (for M2C actions)
+    ///
+    /// Enables full SHM two-tier architecture:
+    /// - Reads: SharedMemory (~5μs) > Redis (~1ms)
+    /// - Writes: SHM (primary) + Redis TODO (fallback)
+    pub fn with_shm(
+        rtdb: Arc<R>,
+        routing_cache: Arc<RoutingCache>,
+        pool: SqlitePool,
+        tick_ms: u64,
+        log_root: PathBuf,
+        shared_reader: Option<Arc<UnifiedReader>>,
+        shm_action_writer: Option<Arc<UnifiedWriter>>,
+    ) -> Self {
         let mut executor = RuleExecutor::new(Arc::clone(&rtdb), routing_cache);
         if let Some(reader) = shared_reader {
             executor = executor.with_shared_reader(reader);
+        }
+        if let Some(writer) = shm_action_writer {
+            executor = executor.with_shm_action_writer(writer);
         }
         Self {
             rtdb,
@@ -136,17 +168,24 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         let scheduled: Vec<ScheduledRule> = db_rules
             .into_iter()
             .map(|rule| {
-                // For now, use default interval trigger
-                // TODO: Read trigger config from database
-                let interval_ms = if rule.cooldown_ms > 0 {
-                    rule.cooldown_ms
-                } else {
-                    1000 // Default 1 second
-                };
+                // Parse trigger_config from database, fallback to cooldown_ms
+                let trigger = rule
+                    .trigger_config
+                    .as_ref()
+                    .and_then(|json| serde_json::from_str(json).ok())
+                    .unwrap_or_else(|| {
+                        // Fallback: use cooldown_ms as interval (minimum 1000ms)
+                        let interval_ms = if rule.cooldown_ms > 0 {
+                            rule.cooldown_ms
+                        } else {
+                            1000
+                        };
+                        TriggerConfig::Interval { interval_ms }
+                    });
 
                 ScheduledRule {
                     rule: Arc::new(rule),
-                    trigger: TriggerConfig::Interval { interval_ms },
+                    trigger,
                     last_execution: None,
                     last_cooldown_start: None,
                 }
@@ -518,6 +557,7 @@ mod tests {
             enabled: true,
             priority: 100,
             cooldown_ms,
+            trigger_config: None,
             flow: RuleFlow {
                 start_node: "start".to_string(),
                 nodes,

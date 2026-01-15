@@ -10,7 +10,7 @@ use clap::Parser;
 #[cfg(feature = "swagger-ui")]
 use comsrv::api::routes::ComsrvApiDoc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -205,17 +205,44 @@ async fn main() -> VoltageResult<()> {
     // Use concrete type (native AFIT requires static dispatch)
     let rtdb: Arc<voltage_rtdb::RedisRtdb> = Arc::new(redis_rtdb);
 
+    // Create UnifiedReader for SHM command listener (reads from same SHM file)
+    // This allows event-driven M2C dispatch with ~1-2ms latency
+    let (shm_listener_shutdown_tx, shm_listener_shutdown_rx) = tokio::sync::watch::channel(false);
+    let unified_reader = if shared_writer.is_some() {
+        match voltage_rtdb::UnifiedReader::open(&SharedConfig::default(), &routing_cache) {
+            Ok(reader) => {
+                info!("UnifiedReader opened for event-driven M2C dispatch");
+                Some(Arc::new(reader))
+            },
+            Err(e) => {
+                warn!("UnifiedReader unavailable: {}", e);
+                None
+            },
+        }
+    } else {
+        None
+    };
+
     // Create channel manager with optional shared memory and CommandTxCache support
     // Lock-free architecture - no RwLock wrapper needed
     // Removed VecRtdb - SharedMemory + Redis two-tier architecture
-    let channel_manager = Arc::new(ChannelManager::with_shared_memory(
+    let channel_manager = ChannelManager::with_shared_memory(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
         shared_writer,
         channel_index,
         Some(Arc::clone(&command_tx_cache)),
-    ));
+    );
+
+    // Configure SHM listener for event-driven M2C dispatch (if SHM available)
+    let channel_manager = if let Some(reader) = unified_reader {
+        channel_manager.with_shm_listener(reader, shm_listener_shutdown_rx)
+    } else {
+        channel_manager
+    };
+
+    let channel_manager = Arc::new(channel_manager);
 
     // Determine bind address and start server
     let bind_address = bootstrap::determine_bind_address(
@@ -235,6 +262,14 @@ async fn main() -> VoltageResult<()> {
     // Start communication channels
     let configured_count =
         start_communication_service(config_manager.clone(), Arc::clone(&channel_manager)).await?;
+
+    // Start SHM command listener for event-driven M2C dispatch
+    // This must be started after channels are created (so they can be registered)
+    let shm_listener_handle = channel_manager.start_shm_listener();
+    if shm_listener_handle.is_some() {
+        info!("ShmCommandListener started for event-driven M2C dispatch (~1-2ms latency)");
+    }
+
     let (cleanup_handle, cleanup_token) =
         start_cleanup_task(Arc::clone(&channel_manager), configured_count);
     let warning_token = shutdown_token.clone();
@@ -295,6 +330,10 @@ async fn main() -> VoltageResult<()> {
 
     // Wait for shutdown and cleanup
     wait_for_shutdown().await;
+
+    // Signal SHM listener to shutdown
+    let _ = shm_listener_shutdown_tx.send(true);
+
     shutdown_services(
         channel_manager,
         shutdown_token,
@@ -304,6 +343,12 @@ async fn main() -> VoltageResult<()> {
         warning_handle,
     )
     .await;
+
+    // Wait for SHM listener task to complete (if it was started)
+    if let Some(handle) = shm_listener_handle {
+        let _ = handle.await;
+        info!("ShmCommandListener shutdown complete");
+    }
 
     Ok(())
 }

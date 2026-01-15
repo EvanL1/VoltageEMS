@@ -70,42 +70,44 @@ async fn main() -> Result<()> {
 
     debug!("Rule scheduler tick_ms: {}", tick_ms);
 
+    // Initialize SharedConfig for shared memory access
+    // Load SharedConfig parameters from database
+    let shm_config = {
+        let mut cfg = SharedConfig::default();
+
+        // Helper to load usize value from service_config
+        async fn load_usize(pool: &sqlx::SqlitePool, key: &str) -> Option<usize> {
+            sqlx::query_scalar::<_, String>(&format!(
+                "SELECT value FROM service_config WHERE service_name = 'global' AND key = '{}'",
+                key
+            ))
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse().ok())
+        }
+
+        if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_slots").await {
+            cfg = cfg.with_max_slots(v);
+        }
+
+        debug!("SharedConfig: max_slots={:?}", cfg.max_slots());
+        cfg
+    };
+
     // Initialize UnifiedReader for cross-process zero-copy reads
     // Simplified: Header + PointSlots only, indexes built from RoutingCache
     // Added retry mechanism for cold start race condition
     let shared_reader = {
-        // Load SharedConfig parameters from database
-        let config = {
-            let mut cfg = SharedConfig::default();
-
-            // Helper to load usize value from service_config
-            async fn load_usize(pool: &sqlx::SqlitePool, key: &str) -> Option<usize> {
-                sqlx::query_scalar::<_, String>(&format!(
-                    "SELECT value FROM service_config WHERE service_name = 'global' AND key = '{}'",
-                    key
-                ))
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|s| s.parse().ok())
-            }
-
-            if let Some(v) = load_usize(&sqlite_pool, "shared_memory.max_slots").await {
-                cfg = cfg.with_max_slots(v);
-            }
-
-            debug!("SharedConfig: max_slots={:?}", cfg.max_slots());
-            cfg
-        };
         const MAX_RETRIES: u32 = 3;
         const RETRY_DELAY: Duration = Duration::from_secs(2);
         let mut retry_count = 0;
 
         loop {
-            if is_shm_available(&config) {
+            if is_shm_available(&shm_config) {
                 // Open reader with RoutingCache (builds indexes from routing)
-                match UnifiedReader::open(&config, &routing_cache) {
+                match UnifiedReader::open(&shm_config, &routing_cache) {
                     Ok(reader) => {
                         info!(
                             "UnifiedReader opened: {} slots, {} instances, {} channels",
@@ -151,16 +153,61 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Initialize UnifiedWriter for M2C actions (Control/Adjustment via SHM)
+    // Only open if reader succeeded (SHM file exists)
+    let shm_action_writer = if shared_reader.is_some() {
+        match voltage_rtdb::UnifiedWriter::open_for_actions(&shm_config, &routing_cache) {
+            Ok(writer) => {
+                info!("UnifiedWriter (actions) opened for M2C via SHM");
+                Some(Arc::new(writer))
+            },
+            Err(e) => {
+                warn!("UnifiedWriter (actions) unavailable: {}", e);
+                None
+            },
+        }
+    } else {
+        None
+    };
+
+    // Configure InstanceManager with SHM components for M2C via shared memory
+    // These use OnceLock for delayed initialization after Arc<InstanceManager> is created
+    if let Some(ref writer) = shm_action_writer {
+        // Set SHM action writer for direct M2C writes
+        if state
+            .instance_manager
+            .set_shm_action_writer(Arc::clone(writer))
+        {
+            info!("InstanceManager: SHM action writer configured");
+        }
+
+        // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency)
+        match voltage_rtdb::ShmNotifier::connect_default().await {
+            Ok(notifier) => {
+                let notifier = Arc::new(tokio::sync::Mutex::new(notifier));
+                if state.instance_manager.set_shm_notifier(notifier) {
+                    info!("InstanceManager: ShmNotifier connected for event-driven dispatch");
+                }
+            },
+            Err(e) => {
+                // Not an error - comsrv may not have started UDS listener yet
+                // M2C will fall back to polling or Redis TODO queue
+                info!("ShmNotifier unavailable (UDS listener not ready): {}", e);
+            },
+        }
+    }
+
     // Create rule scheduler with two-tier priority (SharedMemory > Redis)
-    // Removed VecRtdb - using SharedMemory + Redis two-tier architecture
+    // SHM writer enables M2C actions via shared memory (primary path)
     let rule_log_root = PathBuf::from("logs/modsrv");
-    let scheduler = Arc::new(RuleScheduler::with_shared_reader(
+    let scheduler = Arc::new(RuleScheduler::with_shm(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
         tick_ms,
         rule_log_root,
         shared_reader,
+        shm_action_writer,
     ));
 
     // Load rules into scheduler

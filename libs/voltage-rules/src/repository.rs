@@ -88,7 +88,7 @@ pub async fn get_rule(pool: &SqlitePool, id: i64) -> Result<Value> {
 pub async fn get_rule_for_execution(pool: &SqlitePool, id: i64) -> Result<Rule> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, description, enabled, priority, cooldown_ms, nodes_json
+        SELECT id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json
         FROM rules
         WHERE id = ? AND enabled = 1
         "#,
@@ -107,7 +107,7 @@ pub async fn get_rule_for_execution(pool: &SqlitePool, id: i64) -> Result<Rule> 
 pub async fn load_enabled_rules(pool: &SqlitePool) -> Result<Vec<Rule>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, description, enabled, priority, cooldown_ms, nodes_json
+        SELECT id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json
         FROM rules
         WHERE enabled = 1
         ORDER BY priority DESC, id ASC
@@ -127,7 +127,7 @@ pub async fn load_enabled_rules(pool: &SqlitePool) -> Result<Vec<Rule>> {
 pub async fn load_all_rules(pool: &SqlitePool) -> Result<Vec<Rule>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, description, enabled, priority, cooldown_ms, nodes_json
+        SELECT id, name, description, enabled, priority, cooldown_ms, trigger_config, nodes_json
         FROM rules
         ORDER BY priority DESC, id ASC
         "#,
@@ -304,6 +304,7 @@ fn hydrate_rule(row: SqliteRow) -> Result<Rule> {
     let enabled: i64 = row.try_get("enabled")?;
     let priority: i64 = row.try_get("priority")?;
     let cooldown_ms: i64 = row.try_get("cooldown_ms")?;
+    let trigger_config: Option<String> = row.try_get("trigger_config")?;
     let nodes_json_str: String = row.try_get("nodes_json")?;
 
     // Deserialize compact flow
@@ -317,6 +318,7 @@ fn hydrate_rule(row: SqliteRow) -> Result<Rule> {
         enabled: enabled != 0,
         priority: priority as u32,
         cooldown_ms: cooldown_ms as u64,
+        trigger_config,
         flow,
     })
 }

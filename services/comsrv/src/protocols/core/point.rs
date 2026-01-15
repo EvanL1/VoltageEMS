@@ -126,6 +126,10 @@ pub enum ProtocolAddress {
     #[cfg(feature = "gpio")]
     Gpio(GpioAddress),
 
+    /// CAN bus address (for raw CAN and J1939 protocols).
+    #[cfg(feature = "can")]
+    Can(CanAddress),
+
     /// Generic string address (for custom protocols).
     Generic(String),
 }
@@ -218,6 +222,106 @@ impl GpioAddress {
     pub fn with_active_low(mut self, active_low: bool) -> Self {
         self.active_low = active_low;
         self
+    }
+}
+
+/// CAN bus address for raw CAN and J1939 protocols.
+///
+/// Supports bit-level extraction from CAN frame data.
+/// Format string: "can_id:byte_offset:bit_position:bit_length"
+#[cfg(feature = "can")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanAddress {
+    /// CAN frame ID (11-bit standard or 29-bit extended).
+    pub can_id: u32,
+
+    /// Byte offset in CAN data field (0-7).
+    pub byte_offset: u8,
+
+    /// Bit position within the starting byte (0-7, LSB=0).
+    pub bit_position: u8,
+
+    /// Bit length to extract (1-64).
+    pub bit_length: u8,
+}
+
+#[cfg(feature = "can")]
+impl CanAddress {
+    /// Create a new CAN address.
+    pub fn new(can_id: u32, byte_offset: u8, bit_position: u8, bit_length: u8) -> Self {
+        Self {
+            can_id,
+            byte_offset,
+            bit_position,
+            bit_length,
+        }
+    }
+
+    /// Create a CAN address for a 16-bit unsigned value at the given byte offset.
+    pub fn uint16(can_id: u32, byte_offset: u8) -> Self {
+        Self::new(can_id, byte_offset, 0, 16)
+    }
+
+    /// Create a CAN address for an 8-bit unsigned value at the given byte offset.
+    pub fn uint8(can_id: u32, byte_offset: u8) -> Self {
+        Self::new(can_id, byte_offset, 0, 8)
+    }
+
+    /// Parse from string format: "can_id:byte_offset:bit_position:bit_length"
+    pub fn parse(s: &str) -> Result<Self, GatewayError> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 4 {
+            return Err(GatewayError::Config(format!(
+                "Invalid CAN address format '{}', expected 'can_id:byte_offset:bit_pos:bit_len'",
+                s
+            )));
+        }
+
+        let can_id = parse_can_id(parts[0])?;
+        let byte_offset = parts[1]
+            .parse::<u8>()
+            .map_err(|_| GatewayError::Config(format!("Invalid byte_offset: {}", parts[1])))?;
+        let bit_position = parts[2]
+            .parse::<u8>()
+            .map_err(|_| GatewayError::Config(format!("Invalid bit_position: {}", parts[2])))?;
+        let bit_length = parts[3]
+            .parse::<u8>()
+            .map_err(|_| GatewayError::Config(format!("Invalid bit_length: {}", parts[3])))?;
+
+        // Validate ranges
+        if byte_offset > 7 {
+            return Err(GatewayError::Config(format!(
+                "byte_offset {} exceeds CAN frame size (0-7)",
+                byte_offset
+            )));
+        }
+        if bit_position > 7 {
+            return Err(GatewayError::Config(format!(
+                "bit_position {} must be 0-7",
+                bit_position
+            )));
+        }
+        if bit_length == 0 || bit_length > 64 {
+            return Err(GatewayError::Config(format!(
+                "bit_length {} must be 1-64",
+                bit_length
+            )));
+        }
+
+        Ok(Self::new(can_id, byte_offset, bit_position, bit_length))
+    }
+}
+
+/// Parse CAN ID from string (supports decimal and hex "0x" prefix).
+#[cfg(feature = "can")]
+fn parse_can_id(s: &str) -> Result<u32, GatewayError> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16)
+            .map_err(|_| GatewayError::Config(format!("Invalid hex CAN ID: {}", s)))
+    } else {
+        s.parse::<u32>()
+            .map_err(|_| GatewayError::Config(format!("Invalid CAN ID: {}", s)))
     }
 }
 

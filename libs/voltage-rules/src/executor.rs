@@ -33,6 +33,95 @@ fn point_type_to_static(pt: Option<&str>, default: &'static str) -> &'static str
     }
 }
 
+/// Check if a string is an arithmetic operator
+#[inline]
+fn is_rpn_operator(s: &str) -> bool {
+    matches!(s, "+" | "-" | "*" | "/")
+}
+
+/// Evaluate a formula in Reverse Polish Notation (RPN)
+///
+/// Formula format: `["X1", "X2", "+", 2, "*"]`
+/// This evaluates as: `(X1 + X2) * 2`
+///
+/// Supported operators: `+`, `-`, `*`, `/`
+///
+/// # Arguments
+/// * `formula` - RPN tokens (variable names, numbers, operators)
+/// * `values` - Variable values map
+///
+/// # Returns
+/// * `Some(f64)` - Computed result
+/// * `None` - If formula is invalid or references undefined variables
+fn evaluate_rpn_formula(
+    formula: &[serde_json::Value],
+    values: &HashMap<String, f64>,
+) -> Option<f64> {
+    let mut stack: Vec<f64> = Vec::with_capacity(formula.len());
+
+    for token in formula {
+        match token {
+            // Operator: pop two operands, compute, push result
+            serde_json::Value::String(s) if is_rpn_operator(s) => {
+                if stack.len() < 2 {
+                    tracing::warn!(
+                        "RPN formula error: not enough operands for operator '{}'",
+                        s
+                    );
+                    return None;
+                }
+                let b = stack.pop()?;
+                let a = stack.pop()?;
+                let result = match s.as_str() {
+                    "+" => a + b,
+                    "-" => a - b,
+                    "*" => a * b,
+                    "/" => {
+                        if b == 0.0 {
+                            tracing::warn!("RPN formula error: division by zero");
+                            return None;
+                        }
+                        a / b
+                    },
+                    _ => return None,
+                };
+                stack.push(result);
+            },
+            // Variable reference: look up in values map
+            serde_json::Value::String(var_name) => {
+                let val = values.get(var_name).copied().or_else(|| {
+                    tracing::warn!("RPN formula error: undefined variable '{}'", var_name);
+                    None
+                })?;
+                stack.push(val);
+            },
+            // Number literal (integer or float)
+            serde_json::Value::Number(n) => {
+                let val = n.as_f64().or_else(|| {
+                    tracing::warn!("RPN formula error: invalid number {:?}", n);
+                    None
+                })?;
+                stack.push(val);
+            },
+            _ => {
+                tracing::warn!("RPN formula error: invalid token {:?}", token);
+                return None;
+            },
+        }
+    }
+
+    // Result should be a single value on the stack
+    if stack.len() == 1 {
+        stack.pop()
+    } else {
+        tracing::warn!(
+            "RPN formula error: expected 1 result, got {} values on stack",
+            stack.len()
+        );
+        None
+    }
+}
+
 /// Result of executing a rule
 #[derive(Debug, Clone, Serialize)]
 pub struct RuleExecutionResult {
@@ -111,6 +200,8 @@ pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     state_store: Arc<S>,
     /// Optional UnifiedReader for cross-process zero-copy reads
     shared_reader: Option<Arc<UnifiedReader>>,
+    /// Optional UnifiedWriter for M2C via shared memory
+    shm_action_writer: Option<Arc<voltage_rtdb::UnifiedWriter>>,
 }
 
 impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
@@ -121,6 +212,7 @@ impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
             routing_cache,
             state_store: Arc::new(MemoryStateStore::new()),
             shared_reader: None,
+            shm_action_writer: None,
         }
     }
 }
@@ -137,6 +229,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             routing_cache,
             state_store,
             shared_reader: None,
+            shm_action_writer: None,
         }
     }
 
@@ -150,6 +243,15 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub fn with_shared_reader(mut self, reader: Arc<UnifiedReader>) -> Self {
         self.shared_reader = Some(reader);
+        self
+    }
+
+    /// Enable UnifiedWriter for M2C via shared memory
+    ///
+    /// When enabled, action outputs are written to SHM in addition to Redis.
+    /// SHM serves as the primary path for comsrv's ShmCommandPoller.
+    pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> Self {
+        self.shm_action_writer = Some(writer);
         self
     }
 
@@ -416,9 +518,8 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         let mut values_changed = false;
 
         for var in variables {
-            // Skip combined variables (formula-based) - they need separate calculation
+            // Skip formula variables in Phase 1 - calculated in Phase 2 after base variables
             if !var.formula.is_empty() {
-                // TODO: Calculate combined variables from formula
                 continue;
             }
 
@@ -492,6 +593,28 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 },
                 Err(e) => {
                     tracing::error!("Var {} read err: {}", var_name, e);
+                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
+                },
+            }
+        }
+
+        // ★ Phase 2: Calculate formula variables (depend on base variables)
+        // Formula variables use RPN (Reverse Polish Notation) like ["X1", "X2", "+", 2, "*"]
+        for var in variables {
+            if var.formula.is_empty() {
+                continue; // Skip non-formula variables (already handled above)
+            }
+
+            let var_name = var.name.clone();
+            match evaluate_rpn_formula(&var.formula, values) {
+                Some(result) => {
+                    values_changed |= values.insert(var_name, result) != Some(result);
+                },
+                None => {
+                    tracing::warn!(
+                        "Failed to evaluate formula for variable '{}', using 0.0",
+                        var_name
+                    );
                     values_changed |= values.insert(var_name, 0.0) != Some(0.0);
                 },
             }
@@ -699,12 +822,15 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         // Use voltage_routing to set the action point
         // Use precomputed pool for common point IDs (0-255)
         let point_str = precomputed::get_point_id_str_or_alloc(point);
+        // SHM writer enables direct M2C via shared memory (primary path)
         let routed = match set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_id,
             &point_str,
             resolved_value,
+            self.shm_action_writer.as_ref().map(|w| w.as_ref()),
+            None, // TODO: Add ShmNotifier for UDS event notification
         )
         .await
         {
@@ -786,12 +912,15 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 // Use M2C routing for action points
                 // Use precomputed pool for common point IDs (0-255)
                 let point_str = precomputed::get_point_id_str_or_alloc(point);
+                // SHM writer enables direct M2C via shared memory
                 match set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
                     instance_id,
                     &point_str,
                     value,
+                    self.shm_action_writer.as_ref().map(|w| w.as_ref()),
+                    None, // TODO: Add ShmNotifier for UDS event notification
                 )
                 .await
                 {
@@ -1166,6 +1295,7 @@ mod tests {
             enabled: true,
             priority: 0,
             cooldown_ms: 0,
+            trigger_config: None,
             flow: rule_flow,
         }
     }
@@ -1353,5 +1483,103 @@ mod tests {
 
         // Should read directly from Redis
         assert_eq!(values.get("DIRECT"), Some(&55.5));
+    }
+
+    // ============================================================================
+    // RPN Formula Calculation Tests
+    // ============================================================================
+
+    #[test]
+    fn test_rpn_simple_addition() {
+        // X1 + X2 = 10 + 20 = 30
+        let formula = vec![json!("X1"), json!("X2"), json!("+")];
+        let mut values = HashMap::new();
+        values.insert("X1".to_string(), 10.0);
+        values.insert("X2".to_string(), 20.0);
+
+        let result = evaluate_rpn_formula(&formula, &values);
+        assert_eq!(result, Some(30.0));
+    }
+
+    #[test]
+    fn test_rpn_complex_expression() {
+        // (X1 + X2) * 2 = (10 + 20) * 2 = 60
+        let formula = vec![json!("X1"), json!("X2"), json!("+"), json!(2), json!("*")];
+        let mut values = HashMap::new();
+        values.insert("X1".to_string(), 10.0);
+        values.insert("X2".to_string(), 20.0);
+
+        let result = evaluate_rpn_formula(&formula, &values);
+        assert_eq!(result, Some(60.0));
+    }
+
+    #[test]
+    fn test_rpn_all_operators() {
+        // a + b - c * d / e
+        // In RPN: a b + c d * e / -
+        // With values: 10 + 5 = 15, 6 * 4 = 24, 24 / 2 = 12, 15 - 12 = 3
+        let formula = vec![
+            json!("a"),
+            json!("b"),
+            json!("+"),
+            json!("c"),
+            json!("d"),
+            json!("*"),
+            json!("e"),
+            json!("/"),
+            json!("-"),
+        ];
+        let mut values = HashMap::new();
+        values.insert("a".to_string(), 10.0);
+        values.insert("b".to_string(), 5.0);
+        values.insert("c".to_string(), 6.0);
+        values.insert("d".to_string(), 4.0);
+        values.insert("e".to_string(), 2.0);
+
+        let result = evaluate_rpn_formula(&formula, &values);
+        assert_eq!(result, Some(3.0));
+    }
+
+    #[test]
+    fn test_rpn_division_by_zero() {
+        // X1 / 0 should return None
+        let formula = vec![json!("X1"), json!(0), json!("/")];
+        let mut values = HashMap::new();
+        values.insert("X1".to_string(), 10.0);
+
+        let result = evaluate_rpn_formula(&formula, &values);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_rpn_undefined_variable() {
+        // Reference to undefined variable should return None
+        let formula = vec![json!("X1"), json!("UNDEFINED"), json!("+")];
+        let mut values = HashMap::new();
+        values.insert("X1".to_string(), 10.0);
+
+        let result = evaluate_rpn_formula(&formula, &values);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_rpn_numeric_literals() {
+        // Pure numeric calculation: 5 + 3 * 2 = 5 + 6 = 11
+        // In RPN: 5 3 2 * +
+        let formula = vec![json!(5), json!(3), json!(2), json!("*"), json!("+")];
+        let values = HashMap::new();
+
+        let result = evaluate_rpn_formula(&formula, &values);
+        assert_eq!(result, Some(11.0));
+    }
+
+    #[test]
+    fn test_rpn_float_precision() {
+        // Float calculation: 1.5 + 2.5 = 4.0
+        let formula = vec![json!(1.5), json!(2.5), json!("+")];
+        let values = HashMap::new();
+
+        let result = evaluate_rpn_formula(&formula, &values);
+        assert_eq!(result, Some(4.0));
     }
 }

@@ -75,6 +75,8 @@ async fn test_m2c_concurrent_triggers() -> Result<()> {
                 10,
                 &point_id.to_string(),
                 point_id as f64 * 10.0,
+                None,
+                None,
             )
             .await
             .expect("Action failed");
@@ -138,6 +140,8 @@ async fn test_m2c_concurrent_multi_instance() -> Result<()> {
                 instance_id,
                 "1",
                 instance_id as f64,
+                None,
+                None,
             )
             .await
             .expect("Action failed")
@@ -193,6 +197,8 @@ async fn test_m2c_high_volume_single_instance() -> Result<()> {
             10,
             &point_id.to_string(),
             point_id as f64,
+            None,
+            None,
         )
         .await?;
         assert!(outcome.routed);
@@ -245,6 +251,8 @@ async fn test_m2c_high_volume_multi_instance() -> Result<()> {
                 instance_id as u32,
                 &point.to_string(),
                 (instance_id + point) as f64,
+                None,
+                None,
             )
             .await?;
         }
@@ -279,7 +287,7 @@ async fn test_m2c_broadcast_pattern() -> Result<()> {
     .await;
 
     // Trigger start command
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1.0, None, None).await?;
 
     // M2C routing is 1:1, so only first route is effective
     assert!(outcome.routed);
@@ -301,8 +309,16 @@ async fn test_m2c_fan_out_from_multiple_points() -> Result<()> {
 
     // Trigger commands to all devices
     for (point, channel) in [(1, 1001), (2, 1002), (3, 1003)] {
-        let outcome =
-            set_action_point(rtdb.as_ref(), &routing_cache, 10, &point.to_string(), 1.0).await?;
+        let outcome = set_action_point(
+            rtdb.as_ref(),
+            &routing_cache,
+            10,
+            &point.to_string(),
+            1.0,
+            None,
+            None,
+        )
+        .await?;
 
         assert!(outcome.routed);
         assert_eq!(
@@ -346,7 +362,7 @@ async fn test_m2c_rule_trigger_simulation() -> Result<()> {
 
     // Step 2: Rule triggers action
     if should_trigger {
-        let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1.0) // 1.0 = start
+        let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1.0, None, None) // 1.0 = start
             .await?;
 
         assert!(outcome.routed, "Action should be routed");
@@ -378,10 +394,10 @@ async fn test_m2c_sequential_rule_triggers() -> Result<()> {
     .await;
 
     // Rule 1 triggers
-    set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1.0).await?; // Enable export
+    set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1.0, None, None).await?; // Enable export
 
     // Rule 2 triggers (e.g., 100ms later in real scenario)
-    set_action_point(rtdb.as_ref(), &routing_cache, 10, "2", 0.5).await?; // Reduce charge rate to 50%
+    set_action_point(rtdb.as_ref(), &routing_cache, 10, "2", 0.5, None, None).await?; // Reduce charge rate to 50%
 
     // Verify both actions queued
     let count = todo_queue_count(&rtdb, "comsrv:1001:A:TODO").await;
@@ -406,23 +422,26 @@ async fn test_m2c_action_value_edge_cases() -> Result<()> {
     let (rtdb, routing_cache) = setup_m2c_routing(vec![("10:A:1", "1001:A:1")]).await;
 
     // Test zero value
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 0.0).await?;
+    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 0.0, None, None).await?;
     assert!(outcome.routed);
     let value = rtdb.hash_get("inst:10:A", "1").await?.unwrap();
     assert!(String::from_utf8(value.to_vec())?.contains("0"));
 
     // Test negative value
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", -100.0).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", -100.0, None, None).await?;
     assert!(outcome.routed);
     let value = rtdb.hash_get("inst:10:A", "1").await?.unwrap();
     assert!(String::from_utf8(value.to_vec())?.starts_with("-"));
 
     // Test very small value
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 0.0001).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 0.0001, None, None).await?;
     assert!(outcome.routed);
 
     // Test very large value
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1e10).await?;
+    let outcome =
+        set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 1e10, None, None).await?;
     assert!(outcome.routed);
 
     Ok(())
@@ -436,7 +455,7 @@ async fn test_m2c_rapid_updates() -> Result<()> {
     // Rapid updates
     for i in 0..10 {
         let value = if i % 2 == 0 { 1.0 } else { 0.0 }; // Toggle
-        set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", value).await?;
+        set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", value, None, None).await?;
     }
 
     // All updates should be queued (comsrv will handle de-duplication if needed)
