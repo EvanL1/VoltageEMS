@@ -56,16 +56,21 @@ watch(
     batteryCardData.value.forEach((item) => {
       const pointValue = values[item.pointId]
       if (pointValue !== undefined && pointValue !== null) {
-        item.value = formatNumber(pointValue)
+        if (item.pointId === 15) {
+          item.value = pointValue === 1 ? 'Charge' : 'Discharge'
+        } else {
+          item.value = formatNumber(pointValue)
+        }
       }
     })
   },
   { deep: true, immediate: true },
 )
 const batteryCardData = ref<BatteryCardItem[]>([
+  //no
   {
-    pointId: 2,
-    title: 'Charge Discharge Status',
+    pointId: 15,
+    title: 'Status',
     value: '-',
     unit: '',
   },
@@ -174,9 +179,9 @@ const batteryCardData = ref<BatteryCardItem[]>([
     z-index: 2; // 确保内容在背景之上
 
     .battery-card {
-      height: 18%;
+      height: calc((100% - 0.48rem) / 4);
       width: calc((100% - 0.32rem) / 3);
-      margin-bottom: 0.01rem;
+      // margin-bottom: 0.01rem;
     }
   }
 }

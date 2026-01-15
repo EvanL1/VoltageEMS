@@ -13,38 +13,6 @@
         box-shadow: none !important;
       }
     }
-    .el-input__wrapper {
-      padding: 0 !important;
-      height: 0.32rem !important;
-      display: flex !important;
-      align-items: center !important;
-      position: relative !important;
-      background-color: $bg-color-input !important;
-      box-shadow: none !important;
-      border: 0.01rem solid $border-color-base !important;
-      border-radius: $border-radius-base !important;
-      // outline: none !important;
-      // 聚焦状�?
-      &.is-focus {
-        border-color: $border-color-base !important;
-        box-shadow: none !important;
-        //   outline: none !important;
-      }
-
-      // 错误状�?
-      &.is-error {
-        border-color: $danger-color !important;
-      }
-
-      // 禁用状�?
-      &.is-disabled {
-        background-color: transparent !important;
-      }
-
-      // 只读状�?
-      &.is-readonly {
-      }
-    }
     // 输入�?
     .el-input__inner {
       border: none !important;
@@ -213,6 +181,38 @@
     }
     .el-input-number__increase {
       border-left: 0.01rem solid $border-color-base;
+    }
+  }
+  .el-input__wrapper {
+    padding: 0 !important;
+    height: 0.32rem !important;
+    display: flex !important;
+    align-items: center !important;
+    position: relative !important;
+    background-color: $bg-color-input !important;
+    box-shadow: none !important;
+    border: 0.01rem solid $border-color-base !important;
+    border-radius: $border-radius-base !important;
+    // outline: none !important;
+    // 聚焦状�?
+    &.is-focus {
+      border-color: $border-color-base !important;
+      box-shadow: none !important;
+      //   outline: none !important;
+    }
+
+    // 错误状�?
+    &.is-error {
+      border-color: $danger-color !important;
+    }
+
+    // 禁用状�?
+    &.is-disabled {
+      background-color: transparent !important;
+    }
+
+    // 只读状�?
+    &.is-readonly {
     }
   }
 }
