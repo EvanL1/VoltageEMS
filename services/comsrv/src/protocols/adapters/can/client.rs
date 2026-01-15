@@ -10,6 +10,7 @@ use socketcan::{CanSocket, EmbeddedFrame, Frame, Socket};
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use voltage_model::PointType;
 
 use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::error::{GatewayError, Result};
@@ -275,7 +276,7 @@ impl CanClient {
     fn start_read_task(&mut self) -> Result<()> {
         // Build SlotStore with actual point IDs now that all points are known
         let point_ids = self.point_manager.point_ids();
-        self.slot_store = Arc::new(SlotStore::from_points(&point_ids));
+        self.slot_store = Arc::new(SlotStore::from_points(&point_ids, PointType::Telemetry));
 
         let is_connected = Arc::clone(&self.is_connected);
         let frame_cache = Arc::clone(&self.frame_cache);
@@ -335,7 +336,7 @@ impl CanClient {
                             slot_store.update(point_id, value.clone(), Quality::Good);
 
                             // Add to batch for event dispatch
-                            let data_point = DataPoint::new(point_id, value);
+                            let data_point = DataPoint::new(point_id, PointType::Telemetry, value);
                             batch.add(data_point);
                         }
 

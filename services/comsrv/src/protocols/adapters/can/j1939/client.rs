@@ -10,6 +10,7 @@ use socketcan::{CanSocket, EmbeddedFrame, Id, Socket};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use voltage_j1939::{database_stats, decode_frame, extract_source_address, list_supported_pgns};
+use voltage_model::PointType;
 
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::error::{GatewayError, Result};
@@ -92,7 +93,7 @@ impl J1939Client {
         // Build SlotStore from J1939 SPN database - all known PGNs pre-indexed
         // Note: SPNs are dynamically decoded from frames, we pre-allocate for common PGNs
         let pgn_list = list_supported_pgns();
-        let slot_store = Arc::new(SlotStore::from_points(&pgn_list));
+        let slot_store = Arc::new(SlotStore::from_points(&pgn_list, PointType::Telemetry));
 
         Self {
             config,
@@ -165,7 +166,7 @@ impl J1939Client {
                             slot_store.update(d.spn, value.clone(), Quality::Good);
 
                             // Add to batch for event dispatch
-                            let data_point = DataPoint::new(d.spn, value);
+                            let data_point = DataPoint::new(d.spn, PointType::Telemetry, value);
                             batch.add(data_point);
                         }
 

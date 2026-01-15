@@ -138,9 +138,16 @@ fn default_bit_length() -> u8 {
 
 impl CanMappingConfig {
     /// Convert to CanPoint.
-    pub fn to_can_point(&self, point_id: u32, scale: f64, offset: f64) -> CanPoint {
+    pub fn to_can_point(
+        &self,
+        point_id: u32,
+        point_type: PointType,
+        scale: f64,
+        offset: f64,
+    ) -> CanPoint {
         CanPoint {
             point_id,
+            point_type,
             can_id: self.can_id,
             byte_offset: self.byte_offset,
             bit_position: self.bit_position,
