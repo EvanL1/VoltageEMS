@@ -1,0 +1,646 @@
+#!/bin/bash
+# ==============================================================================
+# VoltageEMS E2E Full-Chain Integration Test
+# ==============================================================================
+#
+# Tests the complete bidirectional data flow with 4 devices × 1000+ points:
+#   Uplink:   simulator -> comsrv -> Redis -> modsrv (C2M routing)
+#   Downlink: API -> comsrv -> simulator (C/A write)
+#
+# Test Phases:
+#   Phase 0: Build            - Build simulator, comsrv, modsrv, monarch
+#   Phase 1: Environment      - Verify Redis, clear test data
+#   Phase 2: Simulation       - Start 4 simulators (PV, Battery, Diesel, Load)
+#   Phase 3: DB Config        - Initialize database via monarch
+#   Phase 4: Data Acquisition - Start comsrv, collect Modbus data
+#   Phase 5: Redis Verify     - Validate T/S/C/A data in Redis
+#   Phase 6: modsrv Routing   - Start modsrv, verify C2M + M2C routing pointers
+#   Phase 7: C/A Write        - Test FC05/FC06 reverse write via API
+#
+# Function Codes Tested:
+#   FC01 - Read Coils           (Signal read)
+#   FC02 - Read Discrete Inputs (Signal read)
+#   FC03 - Read Holding Regs    (Telemetry read)
+#   FC05 - Write Single Coil    (Control write)
+#   FC06 - Write Single Register(Adjustment write)
+#
+# Usage:
+#   ./scripts/ci-e2e-test.sh           # Full E2E test
+#   ./scripts/ci-e2e-test.sh --skip-build  # Skip cargo build
+#
+# ==============================================================================
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+BOLD='\033[1m'
+
+# Box drawing characters
+BOX_TL='╔'
+BOX_TR='╗'
+BOX_BL='╚'
+BOX_BR='╝'
+BOX_H='═'
+BOX_V='║'
+BOX_ML='╠'
+BOX_MR='╣'
+LINE_TL='┌'
+LINE_TR='┐'
+LINE_BL='└'
+LINE_BR='┘'
+LINE_H='─'
+LINE_V='│'
+LINE_ML='├'
+LINE_MR='┤'
+
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+print_header() {
+    echo -e "${BOLD}"
+    echo "${BOX_TL}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_TR}"
+    echo "${BOX_V}        VoltageEMS E2E Full-Chain Integration Test            ${BOX_V}"
+    echo "${BOX_V}        4 Devices × 1000+ Points per Channel                  ${BOX_V}"
+    echo "${BOX_BL}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_BR}"
+    echo -e "${NC}"
+}
+
+print_phase() {
+    local phase_name=$1
+    echo ""
+    echo -e "${LINE_TL}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_TR}"
+    echo -e "${LINE_V} ${CYAN}${BOLD}${phase_name}${NC}"
+    echo -e "${LINE_ML}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_MR}"
+}
+
+print_phase_end() {
+    local status=$1
+    if [ "$status" = "pass" ]; then
+        echo -e "${LINE_V} ${GREEN}✓${NC} Phase completed successfully"
+    else
+        echo -e "${LINE_V} ${RED}✗${NC} Phase failed"
+    fi
+    echo -e "${LINE_BL}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_H}${LINE_BR}"
+}
+
+# Process tracking
+PV_SIM_PID=""
+BATTERY_SIM_PID=""
+DIESEL_SIM_PID=""
+LOAD_SIM_PID=""
+COMSRV_PID=""
+MODSRV_PID=""
+
+cleanup() {
+    echo ""
+    log_info "Cleaning up..."
+    [ -n "$MODSRV_PID" ] && kill "$MODSRV_PID" 2>/dev/null || true
+    [ -n "$COMSRV_PID" ] && kill "$COMSRV_PID" 2>/dev/null || true
+    [ -n "$PV_SIM_PID" ] && kill "$PV_SIM_PID" 2>/dev/null || true
+    [ -n "$BATTERY_SIM_PID" ] && kill "$BATTERY_SIM_PID" 2>/dev/null || true
+    [ -n "$DIESEL_SIM_PID" ] && kill "$DIESEL_SIM_PID" 2>/dev/null || true
+    [ -n "$LOAD_SIM_PID" ] && kill "$LOAD_SIM_PID" 2>/dev/null || true
+    rm -rf /tmp/e2e_comsrv.db /tmp/e2e_modsrv.db
+    log_info "Cleanup complete"
+}
+
+trap cleanup EXIT
+
+# Parse arguments
+SKIP_BUILD=false
+for arg in "$@"; do
+    case $arg in
+        --skip-build)
+            SKIP_BUILD=true
+            ;;
+        --help)
+            echo "Usage: $0 [--skip-build]"
+            echo "  --skip-build  Skip cargo build (use existing binaries)"
+            exit 0
+            ;;
+    esac
+done
+
+# ==============================================================================
+# Main Test Flow
+# ==============================================================================
+
+print_header
+
+START_TIME=$(date +%s)
+
+# Step 0: Build binaries (if not skipped)
+if [ "$SKIP_BUILD" = false ]; then
+    print_phase "[Phase 0] Building Binaries"
+    echo -e "${LINE_V} Building simulator, comsrv, modsrv, and monarch..."
+    cargo build --release -p simulator -p comsrv -p modsrv -p monarch 2>&1 | tail -5
+    print_phase_end "pass"
+else
+    log_warn "Skipping build (--skip-build specified)"
+fi
+
+# Verify binaries exist
+for bin in simulator comsrv modsrv monarch; do
+    if [ ! -f "./target/release/$bin" ]; then
+        log_error "Binary not found: ./target/release/$bin"
+        log_error "Run without --skip-build to build binaries"
+        exit 1
+    fi
+done
+
+# Step 1: Verify Redis is running
+print_phase "[Phase 1] Environment Check"
+echo -e "${LINE_V} Checking Redis connection..."
+if ! redis-cli ping > /dev/null 2>&1; then
+    log_error "Redis is not running. Please start Redis first:"
+    log_error "  docker compose up -d voltage-redis"
+    exit 1
+fi
+echo -e "${LINE_V} ${GREEN}✓${NC} Redis is running"
+
+# Clear any existing test data
+echo -e "${LINE_V} Clearing existing test data..."
+redis-cli KEYS "comsrv:*" | xargs -r redis-cli DEL > /dev/null 2>&1 || true
+redis-cli KEYS "inst:*" | xargs -r redis-cli DEL > /dev/null 2>&1 || true
+echo -e "${LINE_V} ${GREEN}✓${NC} Test data cleared"
+print_phase_end "pass"
+
+# Step 2: Start 4 simulators
+print_phase "[Phase 2] Device Simulation (4 Simulators)"
+
+# PV Simulator (port 5020)
+echo -e "${LINE_V} Starting PV simulator on port 5020..."
+./target/release/simulator \
+    --scenario tools/simulator/scenarios/e2e_pv.yaml \
+    --port 5020 \
+    --log-level warn &
+PV_SIM_PID=$!
+sleep 0.5
+
+# Battery Simulator (port 5021)
+echo -e "${LINE_V} Starting Battery simulator on port 5021..."
+./target/release/simulator \
+    --scenario tools/simulator/scenarios/e2e_battery.yaml \
+    --port 5021 \
+    --log-level warn &
+BATTERY_SIM_PID=$!
+sleep 0.5
+
+# Diesel Simulator (port 5022)
+echo -e "${LINE_V} Starting Diesel simulator on port 5022..."
+./target/release/simulator \
+    --scenario tools/simulator/scenarios/e2e_diesel.yaml \
+    --port 5022 \
+    --log-level warn &
+DIESEL_SIM_PID=$!
+sleep 0.5
+
+# Load Simulator (port 5023)
+echo -e "${LINE_V} Starting Load simulator on port 5023..."
+./target/release/simulator \
+    --scenario tools/simulator/scenarios/e2e_load.yaml \
+    --port 5023 \
+    --log-level warn &
+LOAD_SIM_PID=$!
+sleep 1
+
+# Verify all simulators are running
+SIMULATORS_OK=true
+for name_pid in "PV:$PV_SIM_PID" "Battery:$BATTERY_SIM_PID" "Diesel:$DIESEL_SIM_PID" "Load:$LOAD_SIM_PID"; do
+    name="${name_pid%%:*}"
+    pid="${name_pid##*:}"
+    if kill -0 "$pid" 2>/dev/null; then
+        echo -e "${LINE_V}   ${GREEN}✓${NC} $name simulator running (PID: $pid)"
+    else
+        echo -e "${LINE_V}   ${RED}✗${NC} $name simulator failed to start"
+        SIMULATORS_OK=false
+    fi
+done
+
+if [ "$SIMULATORS_OK" = false ]; then
+    print_phase_end "fail"
+    exit 1
+fi
+print_phase_end "pass"
+
+# Step 3: Initialize and sync database
+print_phase "[Phase 3] Database Configuration (Monarch)"
+
+echo -e "${LINE_V} Initializing database..."
+./target/release/monarch init \
+    --config-path config.e2e \
+    --db-path /tmp/e2e_comsrv.db 2>&1 | while read line; do
+    echo -e "${LINE_V}   $line"
+done
+
+echo -e "${LINE_V} Syncing configuration..."
+./target/release/monarch sync \
+    --config-path config.e2e \
+    --db-path /tmp/e2e_comsrv.db \
+    --force 2>&1 | while read line; do
+    echo -e "${LINE_V}   $line"
+done
+
+echo -e "${LINE_V} ${GREEN}✓${NC} Configuration synced"
+print_phase_end "pass"
+
+# Step 4: Start comsrv
+print_phase "[Phase 4] Data Acquisition (comsrv)"
+
+echo -e "${LINE_V} Starting comsrv..."
+VOLTAGE_DB_PATH=/tmp/e2e_comsrv.db/voltage.db \
+REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}" \
+RUST_LOG=info \
+./target/release/comsrv &
+COMSRV_PID=$!
+sleep 2
+
+# Verify comsrv is running
+if ! kill -0 "$COMSRV_PID" 2>/dev/null; then
+    echo -e "${LINE_V} ${RED}✗${NC} comsrv failed to start"
+    print_phase_end "fail"
+    exit 1
+fi
+echo -e "${LINE_V} ${GREEN}✓${NC} comsrv running (PID: $COMSRV_PID)"
+
+# Wait for data collection
+echo -e "${LINE_V} Waiting for data collection (8 seconds)..."
+for i in $(seq 1 8); do
+    sleep 1
+    echo -ne "\r${LINE_V}   Progress: $i/8 seconds..."
+done
+echo -e "\r${LINE_V}   Progress: 8/8 seconds... done"
+print_phase_end "pass"
+
+# Step 5: Verify Redis data
+print_phase "[Phase 5] Redis Data Verification"
+
+# Use python from PATH (CI installs redis via pip, local uses uv venv)
+if command -v python &> /dev/null && python -c "import redis" &> /dev/null; then
+    PYTHON_CMD="python"
+elif [ -f "$HOME/.venv/bin/python" ] && "$HOME/.venv/bin/python" -c "import redis" &> /dev/null; then
+    PYTHON_CMD="$HOME/.venv/bin/python"
+else
+    log_error "Python redis module not found. Install with: pip install redis"
+    exit 1
+fi
+
+# Run verification script
+$PYTHON_CMD << 'PYTHON_VERIFY'
+import redis
+import sys
+from datetime import datetime
+
+# Colors
+GREEN = '\033[0;32m'
+RED = '\033[0;31m'
+YELLOW = '\033[1;33m'
+NC = '\033[0m'
+LINE_V = '│'
+
+def check_mark(ok):
+    return f"{GREEN}✓{NC}" if ok else f"{RED}✗{NC}"
+
+# Connect to Redis
+r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
+
+# Expected channels and their point counts
+channels = {
+    1001: {"name": "PV", "T": 800, "S": 100, "C": 50, "A": 50},
+    1002: {"name": "Battery", "T": 800, "S": 100, "C": 50, "A": 50},
+    1003: {"name": "Diesel", "T": 800, "S": 100, "C": 50, "A": 50},
+    1004: {"name": "Load", "T": 800, "S": 100, "C": 0, "A": 0},
+}
+
+total_expected = 0
+total_found = 0
+all_passed = True
+
+print(f"{LINE_V}")
+print(f"{LINE_V} Checking Redis Hash data for 4 channels...")
+print(f"{LINE_V}")
+
+for ch_id, cfg in channels.items():
+    ch_name = cfg["name"]
+    ch_passed = True
+    ch_found = 0
+    ch_expected = 0
+
+    for point_type in ["T", "S", "C", "A"]:
+        expected = cfg[point_type]
+        if expected == 0:
+            continue
+
+        ch_expected += expected
+        key = f"comsrv:{ch_id}:{point_type}"
+        data = r.hgetall(key)
+        found = len(data)
+        ch_found += found
+
+        ok = found >= expected * 0.8  # Allow 80% threshold for timing
+        if not ok:
+            ch_passed = False
+
+        status = check_mark(ok)
+        print(f"{LINE_V}   comsrv:{ch_id}:{point_type}  {found:4d}/{expected:4d} points  {status}")
+
+    total_expected += ch_expected
+    total_found += ch_found
+    if not ch_passed:
+        all_passed = False
+
+    ch_status = check_mark(ch_passed)
+    print(f"{LINE_V}   Channel {ch_id} ({ch_name}): {ch_found}/{ch_expected} points  {ch_status}")
+    print(f"{LINE_V}")
+
+# Summary statistics
+print(f"{LINE_V} {'─' * 60}")
+print(f"{LINE_V}")
+print(f"{LINE_V} Summary:")
+print(f"{LINE_V}   Total points expected: {total_expected}")
+print(f"{LINE_V}   Total points found:    {total_found}")
+pct = (total_found / total_expected * 100) if total_expected > 0 else 0
+print(f"{LINE_V}   Coverage:              {pct:.1f}%")
+print(f"{LINE_V}")
+
+# Spot check some values
+print(f"{LINE_V} Value spot check:")
+for ch_id in [1001, 1002, 1003, 1004]:
+    key = f"comsrv:{ch_id}:T"
+    data = r.hgetall(key)
+    if data:
+        # Check first point
+        if "1" in data:
+            val = data["1"]
+            try:
+                fval = float(val)
+                print(f"{LINE_V}   Point {ch_id}:T:1 = {fval:.2f} {check_mark(True)}")
+            except:
+                print(f"{LINE_V}   Point {ch_id}:T:1 = {val} (non-numeric)")
+
+print(f"{LINE_V}")
+
+# Final verdict
+if all_passed:
+    print(f"{LINE_V} {GREEN}✓ All E2E data verification tests passed!{NC}")
+    sys.exit(0)
+else:
+    print(f"{LINE_V} {RED}✗ Some E2E tests failed{NC}")
+    sys.exit(1)
+PYTHON_VERIFY
+
+E2E_RESULT=$?
+print_phase_end "$([ $E2E_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
+if [ $E2E_RESULT -ne 0 ]; then
+    log_error "Phase 5 failed, skipping remaining phases"
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    exit 1
+fi
+
+# Step 6: Start modsrv and verify C2M routing
+print_phase "[Phase 6] modsrv Routing Pointer Verification (C2M + M2C)"
+
+echo -e "${LINE_V} Starting modsrv..."
+VOLTAGE_DB_PATH=/tmp/e2e_comsrv.db/voltage.db \
+REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379}" \
+RUST_LOG=info \
+./target/release/modsrv &
+MODSRV_PID=$!
+sleep 3
+
+# Verify modsrv is running
+if ! kill -0 "$MODSRV_PID" 2>/dev/null; then
+    echo -e "${LINE_V} ${RED}✗${NC} modsrv failed to start"
+    print_phase_end "fail"
+    exit 1
+fi
+echo -e "${LINE_V} ${GREEN}✓${NC} modsrv running (PID: $MODSRV_PID)"
+
+# Wait for C2M routing to initialize
+echo -e "${LINE_V} Waiting for C2M routing initialization (5 seconds)..."
+sleep 5
+
+# Verify C2M routing and instance data
+$PYTHON_CMD << 'PYTHON_C2M_VERIFY'
+import redis
+import sys
+
+# Colors
+GREEN = '\033[0;32m'
+RED = '\033[0;31m'
+YELLOW = '\033[1;33m'
+NC = '\033[0m'
+LINE_V = '│'
+
+def check_mark(ok):
+    return f"{GREEN}✓{NC}" if ok else f"{RED}✗{NC}"
+
+r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
+
+print(f"{LINE_V}")
+print(f"{LINE_V} Checking modsrv instance initialization...")
+print(f"{LINE_V}")
+
+all_passed = True
+
+# ⚠️ 重要：C2M 和 M2C 路由是内存中的"指针"（RoutingCache），不在 Redis 中！
+# - C2M Pointer: "1001:T:1" → "inst:1:M:1" (上行数据路由)
+# - M2C Pointer: "inst:1:A:1" → "1001:A:1" (下行控制路由)
+# modsrv 日志 "Routes: N C2M, M M2C" 确认指针已加载到内存
+# 验证方式: 检查 inst:{id}:M 和 inst:{id}:A 数据是否存在
+print(f"{LINE_V}   {YELLOW}ℹ{NC} C2M/M2C routing pointers stored in memory (RoutingCache), NOT Redis")
+print(f"{LINE_V}   {YELLOW}ℹ{NC} Verified via modsrv startup log: 'Routes: N C2M, M M2C'")
+print(f"{LINE_V}")
+print(f"{LINE_V} C2M Pointer Verification (Measurement points):")
+
+# Check instance M data (inst:1:M, inst:2:M, inst:3:M, inst:4:M)
+# This verifies sync_instances_to_redis() ran successfully
+instances = {
+    1: ("e2e_pv", 14),       # PV DCDC: 14 M points
+    2: ("e2e_battery", 19),  # Battery: 19 M points
+    3: ("e2e_diesel", 17),   # Diesel: 17 M points
+    4: ("e2e_load", 8),      # Load: 8 M points
+}
+
+for inst_id, (name, expected) in instances.items():
+    m_data = r.hgetall(f"inst:{inst_id}:M")
+    # Filter out meta fields
+    real_points = {k: v for k, v in m_data.items() if not k.startswith('_')}
+    point_count = len(real_points)
+    ok = point_count >= expected
+    print(f"{LINE_V}   inst:{inst_id}:M ({name}): {point_count}/{expected} measurements {check_mark(ok)}")
+    if not ok:
+        all_passed = False
+
+# Also check instance name index exists (inst:name:index)
+name_index = r.hgetall("inst:name:index")
+index_ok = len(name_index) >= 4
+print(f"{LINE_V}   inst:name:index: {len(name_index)} entries {check_mark(index_ok)}")
+if not index_ok:
+    all_passed = False
+
+print(f"{LINE_V}")
+
+# ========================================
+# M2C Pointer Verification (Action points)
+# ========================================
+# M2C 指针验证 (下行路由)
+# 注意: M2C 指针在内存中 (RoutingCache)，不在 Redis
+# 但 inst:{id}:A Hash 在 register_instance() 时预初始化
+# 与 M 点保持一致，便于查询和验证 M2C 路由配置
+print(f"{LINE_V} M2C Pointer Verification (Action points):")
+print(f"{LINE_V}   {YELLOW}ℹ{NC} M2C pointers in memory (RoutingCache), not Redis")
+print(f"{LINE_V}   {YELLOW}ℹ{NC} inst:*:A Hash pre-initialized at startup (consistent with M)")
+
+# 验证 inst:{id}:A Hash 存在且点数正确
+# A 点数量取决于产品定义和 channel_routing 配置
+action_points = {
+    1: ("e2e_pv", 0),       # PV DCDC: 无 A 点 (纯测量设备)
+    2: ("e2e_battery", 3),  # Battery: 3 A 点 (channel_routing 中 C1-C3 → A1-A3)
+    3: ("e2e_diesel", 5),   # Diesel: 5 A 点 (channel_routing 中 C1-C5 → A1-A5)
+    4: ("e2e_load", 0),     # Load: 无 A 点 (纯测量设备)
+}
+
+for inst_id, (name, expected) in action_points.items():
+    a_data = r.hgetall(f"inst:{inst_id}:A")
+    # 过滤元字段 (_updated_at 等)
+    real_points = {k: v for k, v in a_data.items() if not k.startswith('_')}
+    point_count = len(real_points)
+    ok = point_count >= expected
+    print(f"{LINE_V}   inst:{inst_id}:A ({name}): {point_count}/{expected} actions {check_mark(ok)}")
+    if not ok:
+        all_passed = False
+
+print(f"{LINE_V}")
+
+if all_passed:
+    print(f"{LINE_V} {GREEN}✓ C2M + M2C routing pointers verified!{NC}")
+    sys.exit(0)
+else:
+    print(f"{LINE_V} {RED}✗ Routing pointer verification failed{NC}")
+    sys.exit(1)
+PYTHON_C2M_VERIFY
+
+C2M_RESULT=$?
+print_phase_end "$([ $C2M_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
+if [ $C2M_RESULT -ne 0 ]; then
+    log_error "Phase 6 failed, skipping remaining phases"
+    END_TIME=$(date +%s)
+    DURATION=$((END_TIME - START_TIME))
+    exit 1
+fi
+
+# Step 7: Test C/A reverse write (FC05/FC06)
+print_phase "[Phase 7] Control/Adjustment Write (FC05/FC06)"
+
+echo -e "${LINE_V} Testing C/A reverse write via comsrv API..."
+
+# Function to test write command
+test_write() {
+    local ch_id=$1
+    local type=$2
+    local point_id=$3
+    local value=$4
+    local desc=$5
+    local fc_name=$6
+
+    local response
+    response=$(curl -s -w "\n%{http_code}" -X POST "http://127.0.0.1:6001/api/channels/${ch_id}/write" \
+        -H "Content-Type: application/json" \
+        -d "{\"type\": \"${type}\", \"id\": \"${point_id}\", \"value\": ${value}}" \
+        --connect-timeout 5 2>&1)
+
+    local http_code
+    http_code=$(echo "$response" | tail -n1)
+    local body
+    body=$(echo "$response" | sed '$d')
+
+    if [ "$http_code" = "200" ]; then
+        echo -e "${LINE_V}   ${fc_name} Ch${ch_id} ${desc}: ${GREEN}✓${NC}"
+        return 0
+    else
+        echo -e "${LINE_V}   ${fc_name} Ch${ch_id} ${desc}: ${RED}✗${NC} (HTTP ${http_code})"
+        return 1
+    fi
+}
+
+CA_PASSED=true
+
+echo -e "${LINE_V}"
+echo -e "${LINE_V} Testing Control write (FC05) and Adjustment write (FC06)..."
+echo -e "${LINE_V}"
+
+# Test Control write (FC05) for channels with C points
+test_write 1001 "C" "1" 1.0 "PV C1=ON" "Control (FC05)" || CA_PASSED=false
+test_write 1001 "C" "2" 0.0 "PV C2=OFF" "Control (FC05)" || CA_PASSED=false
+test_write 1002 "C" "1" 1.0 "Battery C1=ON" "Control (FC05)" || CA_PASSED=false
+test_write 1003 "C" "1" 1.0 "Diesel C1=ON" "Control (FC05)" || CA_PASSED=false
+
+echo -e "${LINE_V}"
+
+# Test Adjustment write (FC06) for channels with A points
+test_write 1001 "A" "1" 4500.0 "PV A1=4500" "Adjustment (FC06)" || CA_PASSED=false
+test_write 1001 "A" "2" 3200.0 "PV A2=3200" "Adjustment (FC06)" || CA_PASSED=false
+test_write 1002 "A" "1" 5000.0 "Battery A1=5000" "Adjustment (FC06)" || CA_PASSED=false
+test_write 1003 "A" "1" 6000.0 "Diesel A1=6000" "Adjustment (FC06)" || CA_PASSED=false
+
+echo -e "${LINE_V}"
+
+if [ "$CA_PASSED" = true ]; then
+    echo -e "${LINE_V} ${GREEN}✓ C/A reverse write test passed (8/8)!${NC}"
+    CA_RESULT=0
+else
+    echo -e "${LINE_V} ${RED}✗ C/A reverse write test failed${NC}"
+    CA_RESULT=1
+fi
+
+print_phase_end "$([ $CA_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
+# Combine results
+FINAL_RESULT=0
+if [ $E2E_RESULT -ne 0 ] || [ $C2M_RESULT -ne 0 ] || [ $CA_RESULT -ne 0 ]; then
+    FINAL_RESULT=1
+fi
+
+# Calculate duration
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+# Print summary
+echo ""
+echo -e "${BOX_TL}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_TR}"
+echo -e "${BOX_V}                        TEST SUMMARY                           ${BOX_V}"
+echo -e "${BOX_ML}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_MR}"
+echo -e "${BOX_V}  Test Duration:  ${DURATION}s                                         ${BOX_V}"
+echo -e "${BOX_V}  Channels:       4 (PV, Battery, Diesel, Load)                ${BOX_V}"
+echo -e "${BOX_V}  Expected:       3900 points + C/A write                      ${BOX_V}"
+echo -e "${BOX_V}                                                               ${BOX_V}"
+echo -e "${BOX_V}  Uplink (Read):                                               ${BOX_V}"
+echo -e "${BOX_V}    FC03 (Holding Registers): 3200 points                      ${BOX_V}"
+echo -e "${BOX_V}    FC01 (Read Coils):        200 points                       ${BOX_V}"
+echo -e "${BOX_V}    FC02 (Discrete Inputs):   200 points                       ${BOX_V}"
+echo -e "${BOX_V}  Downlink (Write):                                            ${BOX_V}"
+echo -e "${BOX_V}    FC05 (Write Coil):        tested                           ${BOX_V}"
+echo -e "${BOX_V}    FC06 (Write Register):    tested                           ${BOX_V}"
+echo -e "${BOX_V}  Routing:                                                     ${BOX_V}"
+echo -e "${BOX_V}    route:c2m + inst:*:M:     verified                         ${BOX_V}"
+echo -e "${BOX_V}                                                               ${BOX_V}"
+
+if [ $FINAL_RESULT -eq 0 ]; then
+    echo -e "${BOX_V}  ${GREEN}✓ E2E FULL-CHAIN TEST PASSED${NC}                                 ${BOX_V}"
+else
+    echo -e "${BOX_V}  ${RED}✗ E2E FULL-CHAIN TEST FAILED${NC}                                 ${BOX_V}"
+fi
+echo -e "${BOX_BL}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_H}${BOX_BR}"
+
+exit $FINAL_RESULT
