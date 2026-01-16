@@ -1390,13 +1390,15 @@ mod tests {
             }
         }
 
-        /// 预设引脚值 (用于模拟 DI 输入)
+        /// Set pin value (for simulating DI input)
+        #[allow(dead_code)]
         fn set_pin_value(&self, point_id: u32, value: bool) {
             let mut values = self.values.lock().unwrap();
             values.insert(point_id, value);
         }
 
-        /// 获取原始写入值 (用于验证 active_low 处理)
+        /// Get raw written value (for verifying active_low handling)
+        #[allow(dead_code)]
         fn get_raw_value(&self, point_id: u32) -> Option<bool> {
             let values = self.values.lock().unwrap();
             values.get(&point_id).copied()
@@ -1433,13 +1435,15 @@ mod tests {
             }
         }
 
-        /// 预设引脚值 (用于模拟 DI 输入)
+        /// Set pin value (for simulating DI input)
+        #[allow(dead_code)]
         fn set_pin_value(&self, point_id: u32, value: bool) {
             let mut values = self.inner.lock().unwrap();
             values.insert(point_id, value);
         }
 
-        /// 获取原始写入值 (用于验证 active_low 处理)
+        /// Get raw written value (for verifying active_low handling)
+        #[allow(dead_code)]
         fn get_raw_value(&self, point_id: u32) -> Option<bool> {
             let values = self.inner.lock().unwrap();
             values.get(&point_id).copied()
