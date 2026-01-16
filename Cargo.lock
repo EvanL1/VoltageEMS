@@ -4259,6 +4259,8 @@ checksum = "6fc1183d33494cddfff62e98bb6f1eb16fa15bf3739ceb804700433cd46a8546"
 [[package]]
 name = "voltage_modbus"
 version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d1f4757edd39317b1e7d8205151b301f6a7503d37231b305dadecfc68b89d52"
 dependencies = [
  "bytes",
  "chrono",

@@ -978,7 +978,7 @@ impl GpioChannel {
     /// without requiring external network connections (unlike Modbus TCP).
     pub fn new(config: GpioChannelConfig, channel_id: u32, name: String) -> Self {
         // Collect output pin IDs for lock-free AtomicBoolStore
-        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
+        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.id).collect();
 
         // Create driver based on configuration
         let driver: Box<dyn GpioDriver> = match &config.driver {
@@ -1010,7 +1010,7 @@ impl GpioChannel {
         name: String,
     ) -> Self {
         // Collect output pin IDs for lock-free AtomicBoolStore
-        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
+        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.id).collect();
 
         Self {
             channel_id,
@@ -1258,7 +1258,7 @@ impl ProtocolClient for GpioChannel {
                 .config
                 .pins
                 .iter()
-                .find(|p| p.point_id == cmd.id && p.direction == GpioDirection::Output);
+                .find(|p| p.id == cmd.id && p.direction == GpioDirection::Output);
 
             match pin {
                 Some(p) => match self.write_pin(p, cmd.value).await {
@@ -1580,8 +1580,8 @@ mod tests {
         let batch = result.data;
         assert_eq!(batch.len(), 1, "should have 1 data point");
 
-        let point = batch.get(0).expect("should have point");
-        assert_eq!(point.point_id, 1);
+        let point = batch.iter().next().expect("should have point");
+        assert_eq!(point.id, 1);
         assert_eq!(point.value.as_bool(), Some(true), "DI should read true");
     }
 
@@ -1613,7 +1613,7 @@ mod tests {
         // 验证各引脚值
         let expected = [(1, true), (2, false), (3, true), (4, false)];
         for (point_id, expected_value) in expected {
-            let point = batch.iter().find(|p| p.point_id == point_id);
+            let point = batch.iter().find(|p| p.id == point_id);
             assert!(point.is_some(), "should have point {}", point_id);
             assert_eq!(
                 point.unwrap().value.as_bool(),
@@ -1644,7 +1644,7 @@ mod tests {
         let result = ProtocolClient::poll_once(&mut gpio).await;
         let batch = result.data;
 
-        let point = batch.get(0).expect("should have point");
+        let point = batch.iter().next().expect("should have point");
         assert_eq!(
             point.value.as_bool(),
             Some(false),
@@ -1654,7 +1654,7 @@ mod tests {
         // 原始值为 false，active_low 应反转为 true
         shared.set_pin_value(1, false);
         let result = ProtocolClient::poll_once(&mut gpio).await;
-        let point = result.data.get(0).expect("should have point");
+        let point = result.data.iter().next().expect("should have point");
         assert_eq!(
             point.value.as_bool(),
             Some(true),
@@ -1810,21 +1810,21 @@ mod tests {
         assert_eq!(batch.len(), 4, "should have 4 data points (2 DI + 2 DO)");
 
         // 验证 DI 值
-        let di1 = batch.iter().find(|p| p.point_id == 1).expect("DI 1");
+        let di1 = batch.iter().find(|p| p.id == 1).expect("DI 1");
         assert_eq!(di1.value.as_bool(), Some(true), "DI 1 should be true");
 
-        let di2 = batch.iter().find(|p| p.point_id == 2).expect("DI 2");
+        let di2 = batch.iter().find(|p| p.id == 2).expect("DI 2");
         assert_eq!(di2.value.as_bool(), Some(false), "DI 2 should be false");
 
         // 验证 DO 反馈
-        let do101 = batch.iter().find(|p| p.point_id == 101).expect("DO 101");
+        let do101 = batch.iter().find(|p| p.id == 101).expect("DO 101");
         assert_eq!(
             do101.value.as_bool(),
             Some(true),
             "DO 101 feedback should be true"
         );
 
-        let do102 = batch.iter().find(|p| p.point_id == 102).expect("DO 102");
+        let do102 = batch.iter().find(|p| p.id == 102).expect("DO 102");
         assert_eq!(
             do102.value.as_bool(),
             Some(false),
@@ -1863,7 +1863,7 @@ mod tests {
                 point.value.as_bool(),
                 Some(true),
                 "DO {} feedback should be true after write",
-                point.point_id
+                point.id
             );
         }
 
@@ -1873,8 +1873,8 @@ mod tests {
             .unwrap();
 
         let result = ProtocolClient::poll_once(&mut gpio).await;
-        let do101 = result.data.iter().find(|p| p.point_id == 101).unwrap();
-        let do102 = result.data.iter().find(|p| p.point_id == 102).unwrap();
+        let do101 = result.data.iter().find(|p| p.id == 101).unwrap();
+        let do102 = result.data.iter().find(|p| p.id == 102).unwrap();
         assert_eq!(do101.value.as_bool(), Some(false), "DO 101 should be false");
         assert_eq!(
             do102.value.as_bool(),
