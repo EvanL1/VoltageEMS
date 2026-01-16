@@ -978,7 +978,7 @@ impl GpioChannel {
     /// without requiring external network connections (unlike Modbus TCP).
     pub fn new(config: GpioChannelConfig, channel_id: u32, name: String) -> Self {
         // Collect output pin IDs for lock-free AtomicBoolStore
-        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.id).collect();
+        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
 
         // Create driver based on configuration
         let driver: Box<dyn GpioDriver> = match &config.driver {
@@ -1010,7 +1010,7 @@ impl GpioChannel {
         name: String,
     ) -> Self {
         // Collect output pin IDs for lock-free AtomicBoolStore
-        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.id).collect();
+        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
 
         Self {
             channel_id,
@@ -1258,7 +1258,7 @@ impl ProtocolClient for GpioChannel {
                 .config
                 .pins
                 .iter()
-                .find(|p| p.id == cmd.id && p.direction == GpioDirection::Output);
+                .find(|p| p.point_id == cmd.id && p.direction == GpioDirection::Output);
 
             match pin {
                 Some(p) => match self.write_pin(p, cmd.value).await {
