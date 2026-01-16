@@ -12,10 +12,12 @@ members = [
     "libs/voltage-routing",
     "libs/voltage-rules",
     "libs/voltage-schema-macro",
+    "libs/voltage-sim",
     "services/comsrv",
     "services/modsrv",
     # CLI tools
     "tools/monarch",
+    "tools/simulator",
 ]
 
 [workspace.package]
