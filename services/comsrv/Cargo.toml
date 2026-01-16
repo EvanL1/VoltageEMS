@@ -22,8 +22,7 @@ voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 
 # Protocol libraries
-# Using local path for development with bug fix (byte_count prefix parsing)
-voltage_modbus = { path = "../../../voltage-modbus", optional = true, features = ["rtu"] }
+voltage_modbus = { version = "0.4.8", optional = true, features = ["rtu"] }
 voltage_iec104 = { version = "0.1", optional = true }
 voltage_j1939 = { version = "0.1", optional = true }
 async-opcua = { version = "0.14", default-features = false, features = ["client"], optional = true }
