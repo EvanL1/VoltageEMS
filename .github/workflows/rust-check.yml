@@ -423,8 +423,8 @@ jobs:
       # Build all required binaries
       - name: Build Binaries
         run: |
-          echo "Building simulator, comsrv, and monarch..."
-          cargo build --release -p simulator -p comsrv -p monarch
+          echo "Building simulator, comsrv, modsrv, and monarch..."
+          cargo build --release -p simulator -p comsrv -p modsrv -p monarch
 
       # Run E2E test script
       - name: Run E2E Tests
