@@ -1746,7 +1746,10 @@ async fn delete_point_handler_inner<R: Rtdb>(
     //   - {point_id} (value)
     //   - {point_id}:ts (timestamp)
     //   - {point_id}:raw (raw value)
-    let redis_key = format!("comsrv:{}:{}", channel_id, point_type_upper);
+    // point_type_upper was already validated above in the match statement
+    let pt = PointType::from_str(&point_type_upper).expect("validated point type");
+    let keyspace = KeySpaceConfig::production_cached();
+    let redis_key = keyspace.channel_key(channel_id, pt);
     let fields_to_delete = vec![
         point_id.to_string(),
         format!("{}:ts", point_id),

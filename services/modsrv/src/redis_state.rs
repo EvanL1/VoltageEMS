@@ -4,7 +4,6 @@
 //! control-plane read/write for instances/products, keeping business
 //! logic and type safety directly in Rust.
 
-use crate::config::InstanceRedisKeys;
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use common::RedisRoutingKeys;
@@ -260,7 +259,8 @@ pub async fn upsert_product<R>(redis: &R, product: &Product) -> Result<()>
 where
     R: Rtdb,
 {
-    let product_key = InstanceRedisKeys::product(&product.product_name);
+    let keyspace = KeySpaceConfig::production_cached();
+    let product_key = keyspace.product_key(&product.product_name);
     let now_ms = SystemTimeProvider.now_millis();
     let product_json = serde_json::to_string(product)?;
 
@@ -271,31 +271,31 @@ where
     redis.hash_mset(&product_key, fields).await?;
 
     redis
-        .sadd(InstanceRedisKeys::PRODUCT_INDEX, &product.product_name)
+        .sadd(keyspace.product_index_key(), &product.product_name)
         .await?;
 
     if let Some(parent) = &product.parent_name {
-        let parent_key = InstanceRedisKeys::product_children(parent);
+        let parent_key = keyspace.product_children_key(parent);
         redis.sadd(&parent_key, &product.product_name).await?;
     }
 
     write_point_definitions(
         redis,
-        &InstanceRedisKeys::product_measurements(&product.product_name),
+        &keyspace.product_measurements_key(&product.product_name),
         &product.measurements,
     )
     .await?;
 
     write_action_definitions(
         redis,
-        &InstanceRedisKeys::product_actions(&product.product_name),
+        &keyspace.product_actions_key(&product.product_name),
         &product.actions,
     )
     .await?;
 
     write_property_definitions(
         redis,
-        &InstanceRedisKeys::product_properties(&product.product_name),
+        &keyspace.product_properties_key(&product.product_name),
         &product.properties,
     )
     .await?;
@@ -393,6 +393,8 @@ pub async fn register_instance<R>(
 where
     R: Rtdb,
 {
+    let keyspace = KeySpaceConfig::production_cached();
+
     // ========================================================================
     // Redis = Real-time data only (SQLite = Single source of truth for config)
     // ========================================================================
@@ -403,7 +405,7 @@ where
     // ========================================================================
 
     // 1. Initialize inst:{id}:M Hash with all measurement points set to 0
-    let m_key = InstanceRedisKeys::measurement_hash(instance_id);
+    let m_key = keyspace.instance_measurement_key(instance_id);
     for point in measurements {
         redis
             .hash_set(&m_key, &point.measurement_id.to_string(), Bytes::from("0"))
@@ -412,7 +414,7 @@ where
 
     // 2. Initialize inst:{id}:A Hash with all action points set to 0
     // 与 M 点保持一致：启动时预初始化，便于查询和验证 M2C 路由
-    let a_key = InstanceRedisKeys::action_hash(instance_id);
+    let a_key = keyspace.instance_action_key(instance_id);
     for action in actions {
         redis
             .hash_set(&a_key, &action.action_id.to_string(), Bytes::from("0"))
@@ -422,13 +424,12 @@ where
     // 3. Set inst:{id}:name for bidirectional lookup and aggregation queries
     redis
         .set(
-            &InstanceRedisKeys::instance_name(instance_id),
+            &keyspace.instance_name_key(instance_id),
             Bytes::from(instance_name.to_string()),
         )
         .await?;
 
     // 4. Add reverse index: inst:name:index Hash for O(1) name→ID lookup
-    let keyspace = KeySpaceConfig::production_cached();
     redis
         .hash_set(
             &keyspace.instance_name_index_key(),
@@ -446,11 +447,13 @@ pub async fn unregister_instance<R>(redis: &R, instance_id: u32, instance_name: 
 where
     R: Rtdb,
 {
+    let keyspace = KeySpaceConfig::production_cached();
+
     // Delete real-time data keys (Redis = real-time data only)
     let keys_to_delete = vec![
-        InstanceRedisKeys::measurement_hash(instance_id), // inst:{id}:M
-        InstanceRedisKeys::action_hash(instance_id),      // inst:{id}:A
-        InstanceRedisKeys::instance_name(instance_id),    // inst:{id}:name
+        keyspace.instance_measurement_key(instance_id), // inst:{id}:M
+        keyspace.instance_action_key(instance_id),      // inst:{id}:A
+        keyspace.instance_name_key(instance_id),        // inst:{id}:name
     ];
 
     for key in &keys_to_delete {
@@ -458,7 +461,6 @@ where
     }
 
     // Safety: SCAN and delete any remaining inst:{id}:* keys (for cleanup)
-    let keyspace = KeySpaceConfig::production_cached();
     let pattern = keyspace.instance_pattern(instance_id);
     let extra_keys = redis.scan_match(&pattern).await?;
     for key in &extra_keys {
@@ -514,7 +516,7 @@ where
     // 3. Update inst:{id}:name
     redis
         .set(
-            &InstanceRedisKeys::instance_name(instance_id),
+            &keyspace.instance_name_key(instance_id),
             Bytes::from(new_name.to_string()),
         )
         .await?;
@@ -582,7 +584,8 @@ pub async fn sync_measurement<R>(
 where
     R: Rtdb,
 {
-    let key = InstanceRedisKeys::measurement_hash(instance_id);
+    let keyspace = KeySpaceConfig::production_cached();
+    let key = keyspace.instance_measurement_key(instance_id);
     let now_ms = SystemTimeProvider.now_millis();
     // Use into_iter() to consume ownership and avoid cloning keys
     let mut fields: Vec<(String, Bytes)> = measurement
@@ -604,10 +607,12 @@ pub async fn get_instance_data<R>(
 where
     R: Rtdb,
 {
+    let keyspace = KeySpaceConfig::production_cached();
+
     match data_type {
         Some("measurement") => {
             // Return measurement data only
-            let key = InstanceRedisKeys::measurement_hash(instance_id);
+            let key = keyspace.instance_measurement_key(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
             // Build Map directly, skipping intermediate HashMap
             let mut map = Map::new();
@@ -623,7 +628,7 @@ where
         },
         Some("action") => {
             // Return control data only
-            let key = InstanceRedisKeys::action_hash(instance_id);
+            let key = keyspace.instance_action_key(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
             // Build Map directly, skipping intermediate HashMap
             let mut map = Map::new();
@@ -639,8 +644,8 @@ where
         },
         None => {
             // Return both as structured data
-            let m_key = InstanceRedisKeys::measurement_hash(instance_id);
-            let a_key = InstanceRedisKeys::action_hash(instance_id);
+            let m_key = keyspace.instance_measurement_key(instance_id);
+            let a_key = keyspace.instance_action_key(instance_id);
 
             let m_data_bytes = redis.hash_get_all(&m_key).await?;
             let a_data_bytes = redis.hash_get_all(&a_key).await?;
@@ -950,14 +955,15 @@ mod tests {
         .expect("register_instance should succeed");
 
         // Verify inst:{id}:M Hash was initialized
-        let m_key = InstanceRedisKeys::measurement_hash(instance_id);
+        let keyspace = KeySpaceConfig::production_cached();
+        let m_key = keyspace.instance_measurement_key(instance_id);
         let m_data = rtdb.hash_get_all(&m_key).await.unwrap();
         assert_eq!(m_data.len(), 2, "M Hash should have 2 measurement points");
         assert!(m_data.contains_key("1"), "M Hash should contain point 1");
         assert!(m_data.contains_key("2"), "M Hash should contain point 2");
 
         // Verify inst:{id}:A Hash was initialized (THIS IS THE NEW BEHAVIOR)
-        let a_key = InstanceRedisKeys::action_hash(instance_id);
+        let a_key = keyspace.instance_action_key(instance_id);
         let a_data = rtdb.hash_get_all(&a_key).await.unwrap();
         assert_eq!(a_data.len(), 3, "A Hash should have 3 action points");
         assert!(a_data.contains_key("1"), "A Hash should contain point 1");
@@ -975,13 +981,12 @@ mod tests {
         }
 
         // Verify inst:{id}:name was set
-        let name_key = InstanceRedisKeys::instance_name(instance_id);
+        let name_key = keyspace.instance_name_key(instance_id);
         let name_value = rtdb.get(&name_key).await.unwrap();
         assert!(name_value.is_some(), "inst:{{id}}:name should be set");
         assert_eq!(name_value.unwrap().as_ref(), instance_name.as_bytes());
 
         // Verify inst:name:index was set
-        let keyspace = KeySpaceConfig::production_cached();
         let index_key = keyspace.instance_name_index_key();
         let index_value = rtdb.hash_get(&index_key, instance_name).await.unwrap();
         assert!(
@@ -1028,12 +1033,13 @@ mod tests {
         .expect("register_instance should succeed");
 
         // M Hash should have 1 point
-        let m_key = InstanceRedisKeys::measurement_hash(instance_id);
+        let keyspace = KeySpaceConfig::production_cached();
+        let m_key = keyspace.instance_measurement_key(instance_id);
         let m_data = rtdb.hash_get_all(&m_key).await.unwrap();
         assert_eq!(m_data.len(), 1);
 
         // A Hash should be empty (but the loop still runs, just 0 iterations)
-        let a_key = InstanceRedisKeys::action_hash(instance_id);
+        let a_key = keyspace.instance_action_key(instance_id);
         let a_data = rtdb.hash_get_all(&a_key).await.unwrap();
         assert_eq!(
             a_data.len(),

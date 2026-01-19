@@ -191,12 +191,6 @@ impl ProductLoader {
     pub fn product_count(&self) -> usize {
         product_lib::get_builtin_products().len()
     }
-
-    /// Generate Redis key for a point
-    pub fn get_redis_key(instance: &str, point_role: PointRole, id: i32) -> String {
-        let type_prefix = point_role.as_str();
-        format!("modsrv:{}:{}:{}", instance, type_prefix, id)
-    }
 }
 
 // ============ Type Conversion Functions ============
@@ -322,15 +316,6 @@ mod tests {
 
             assert_eq!(loader.product_count(), 9);
         });
-    }
-
-    #[test]
-    fn test_redis_key_generation() {
-        let key = ProductLoader::get_redis_key("pv_inv_001", PointRole::Measurement, 1);
-        assert_eq!(key, "modsrv:pv_inv_001:M:1");
-
-        let key = ProductLoader::get_redis_key("pv_inv_001", PointRole::Action, 1);
-        assert_eq!(key, "modsrv:pv_inv_001:A:1");
     }
 
     #[test]

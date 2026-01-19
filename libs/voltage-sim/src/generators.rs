@@ -254,7 +254,10 @@ impl WaveformGenerator for DailyPattern {
     fn generate(&self, timestamp_ms: i64) -> f64 {
         use chrono::{TimeZone, Timelike, Utc};
 
-        let datetime = Utc.timestamp_millis_opt(timestamp_ms).unwrap();
+        // Use single() to handle LocalResult, fallback to base value if timestamp is invalid
+        let Some(datetime) = Utc.timestamp_millis_opt(timestamp_ms).single() else {
+            return self.base_value;
+        };
         let hour = datetime.hour() as f64 + datetime.minute() as f64 / 60.0;
 
         // Calculate distance from peak (handle wrap-around)

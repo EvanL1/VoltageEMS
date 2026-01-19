@@ -6,6 +6,7 @@ use crate::context::ModsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use modsrv::{CreateInstanceRequest, Instance, Product};
 use serde::{Deserialize, Serialize};
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
 
 /// Instance summary for list operations
@@ -146,8 +147,9 @@ impl<'a> ModelsService<'a> {
         let (instance_id,) = instance
             .ok_or_else(|| LibApiError::not_found(format!("Instance '{}' not found", name)))?;
 
-        // Get data from Redis
-        let key = format!("inst:{}:M", instance_id);
+        // Get data from Redis using KeySpaceConfig
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.instance_measurement_key(instance_id as u32);
         let points = self.ctx.rtdb.hash_get_all(&key).await?;
 
         let result: Vec<(String, String)> = points
@@ -181,9 +183,10 @@ impl<'a> ModelsService<'a> {
             LibApiError::not_found(format!("Instance '{}' not found", instance_name))
         })?;
 
-        // Write to instance action hash
+        // Write to instance action hash using KeySpaceConfig
         // Note: Actual routing is handled by application layer (voltage_routing::set_action_point)
-        let key = format!("inst:{}:A", instance_id);
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.instance_action_key(instance_id as u32);
         self.ctx
             .rtdb
             .hash_set(&key, &point_id.to_string(), value.to_string().into())
