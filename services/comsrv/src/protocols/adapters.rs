@@ -30,3 +30,6 @@ pub mod can;
 
 #[cfg(all(feature = "gpio", target_os = "linux"))]
 pub mod gpio;
+
+#[cfg(feature = "dl645")]
+pub mod dl645;

@@ -26,6 +26,7 @@ voltage_modbus = { version = "0.4.8", optional = true, features = ["rtu"] }
 voltage_iec104 = { version = "0.1", optional = true }
 voltage_j1939 = { version = "0.1", optional = true }
 async-opcua = { version = "0.14", default-features = false, features = ["client"], optional = true }
+tokio-serial = { version = "5.4", optional = true }
 
 # Lazy initialization
 once_cell = "1"
@@ -94,6 +95,7 @@ opcua = ["dep:async-opcua"]
 can = ["dep:socketcan"]
 j1939 = ["can", "dep:voltage_j1939"]
 gpio = ["dep:tokio-gpiod"]
+dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP 和串口 RTU）
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []

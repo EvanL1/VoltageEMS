@@ -666,6 +666,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-gpiod",
+ "tokio-serial",
  "tokio-util",
  "tower",
  "tower-http",
