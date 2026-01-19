@@ -55,8 +55,6 @@ sqlx = { workspace = true, optional = true }
 schemars = { version = "0.8", optional = true }
 
 [dev-dependencies]
-tokio-test = "0.4"
-tempfile = { workspace = true }
 rand = { workspace = true }
 
 [lints]

@@ -79,11 +79,9 @@ socketcan = { version = "3.5", optional = true }
 tokio-gpiod = { version = "0.3", optional = true }
 
 [dev-dependencies]
-tracing-test = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
 tower = { workspace = true }
-modsrv = { path = "../modsrv" }
 http-body-util = "0.1"
 redis = { workspace = true }
 

@@ -183,7 +183,10 @@ impl RandomDrift {
 
 impl WaveformGenerator for RandomDrift {
     fn generate(&self, _timestamp_ms: i64) -> f64 {
-        let mut state = self.state.lock().expect("RandomDrift state lock poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let mut rng = rand::thread_rng();
 
         // Generate random target within bounds
@@ -204,7 +207,10 @@ impl WaveformGenerator for RandomDrift {
 // Implement Clone manually due to Mutex
 impl Clone for RandomDrift {
     fn clone(&self) -> Self {
-        let state = *self.state.lock().expect("RandomDrift state lock poisoned");
+        let state = *self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         Self {
             center: self.center,
             max_delta: self.max_delta,

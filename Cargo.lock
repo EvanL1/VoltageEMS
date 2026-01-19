@@ -100,15 +100,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
-name = "approx"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -606,10 +597,8 @@ dependencies = [
  "serde_yaml",
  "sqlx",
  "sysinfo",
- "tempfile",
  "thiserror 2.0.17",
  "tokio",
- "tokio-test",
  "tokio-util",
  "tracing",
  "tracing-appender",
@@ -652,7 +641,6 @@ dependencies = [
  "errors",
  "futures",
  "http-body-util",
- "modsrv",
  "once_cell",
  "rand 0.8.5",
  "redis",
@@ -673,7 +661,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "tracing-test",
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
@@ -3098,9 +3085,7 @@ dependencies = [
  "serde",
  "serde_yaml",
  "tokio",
- "tokio-modbus",
  "tokio-serial",
- "tokio-test",
  "tracing",
  "tracing-subscriber",
  "voltage-sim",
@@ -3669,26 +3654,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-modbus"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95d06136e737e962c71d922a09148f5a264f6609a021fdf031ad16ffd172c818"
-dependencies = [
- "async-trait",
- "byteorder",
- "bytes",
- "crc",
- "futures-core",
- "futures-util",
- "log",
- "smallvec",
- "socket2 0.6.1",
- "thiserror 2.0.17",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
 name = "tokio-retry"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3732,17 +3697,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]
@@ -3891,27 +3845,6 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
-]
-
-[[package]]
-name = "tracing-test"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "557b891436fe0d5e0e363427fc7f217abf9ccd510d5136549847bdcbcd011d68"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracing-test-macro",
-]
-
-[[package]]
-name = "tracing-test-macro"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04659ddb06c87d233c566112c1c9c5b9e98256d9af50ec3bc9c8327f873a7568"
-dependencies = [
- "quote",
- "syn 2.0.114",
 ]
 
 [[package]]
@@ -4218,13 +4151,10 @@ dependencies = [
 name = "voltage-schema-macro"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "darling 0.20.11",
  "heck",
  "proc-macro2",
  "quote",
- "serde",
- "serde_json",
  "syn 2.0.114",
 ]
 
@@ -4232,7 +4162,6 @@ dependencies = [
 name = "voltage-sim"
 version = "0.1.0"
 dependencies = [
- "approx",
  "chrono",
  "rand 0.8.5",
  "serde",
