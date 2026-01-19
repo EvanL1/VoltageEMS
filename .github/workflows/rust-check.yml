@@ -343,18 +343,20 @@ jobs:
           docker compose down -v --rmi local
           docker system prune -f
 
-  # Job 5: Simulator Tests (TCP + RTU)
-  simulator-tests:
-    name: Simulator Tests
+  # Job 5: E2E Integration Tests (comsrv + simulator + Redis)
+  # Tests the complete data acquisition flow:
+  #   simulator (Modbus slave) -> comsrv (Modbus master) -> Redis (storage)
+  e2e-tests:
+    name: E2E Integration Tests
     runs-on: ubuntu-latest
-    needs: quality-check
+    needs: [unit-tests, config-validation]
 
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
 
-      # Free disk space by removing unnecessary pre-installed software
+      # Free disk space
       - name: Free Disk Space
         run: |
           echo "=== Before cleanup ==="
@@ -369,11 +371,18 @@ jobs:
           echo "=== After cleanup ==="
           df -h /
 
+      # Install protoc for gRPC compilation
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       # Setup Rust toolchain
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # Cache Cargo dependencies (unified key, no target/ to save space)
+      # Cache Cargo dependencies
       - name: Cache Dependencies
         uses: actions/cache@v4
         with:
@@ -386,260 +395,66 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # Install socat for RTU virtual serial port testing
-      - name: Install socat
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y socat
-
-      # Install Python dependencies for test verification
+      # Install Python redis client
       - name: Install Python Dependencies
         run: |
-          pip3 install pyserial
+          pip3 install redis
 
-      # Build simulator
-      - name: Build Simulator
+      # Start Redis
+      - name: Start Redis
         run: |
-          echo "Building simulator (release mode)..."
-          cargo build --release -p simulator
+          echo "Starting Redis container..."
+          docker compose up -d voltage-redis
 
-      # Run TCP scenario tests
-      - name: Run TCP Scenario Tests
+          echo "Waiting for Redis to be ready..."
+          for i in {1..30}; do
+            if docker compose exec -T voltage-redis redis-cli ping >/dev/null 2>&1; then
+              echo "✓ Redis is ready"
+              exit 0
+            fi
+            echo "Waiting for Redis... ($i/30)"
+            sleep 2
+          done
+
+          echo "Redis failed to start" >&2
+          docker compose logs voltage-redis
+          exit 1
+
+      # Build all required binaries
+      - name: Build Binaries
         run: |
-          echo "=== Starting TCP Scenario Tests ==="
+          echo "Building simulator, comsrv, and monarch..."
+          cargo build --release -p simulator -p comsrv -p monarch
 
-          # Start PCS simulator
-          ./target/release/simulator \
-            --scenario tools/simulator/scenarios/pcs_full.yaml \
-            --port 5020 &
-          PCS_PID=$!
-
-          # Start BMS simulator
-          ./target/release/simulator \
-            --scenario tools/simulator/scenarios/bms_full.yaml \
-            --port 5021 &
-          BMS_PID=$!
-
-          # Start GENSET simulator (TCP mode for CI)
-          ./target/release/simulator \
-            --scenario tools/simulator/scenarios/genset_rtu.yaml \
-            --port 5022 &
-          GEN_PID=$!
-
-          # Wait for servers to start
-          sleep 3
-
-          # Verify all servers are running
-          echo "Checking simulator processes..."
-          ps -p $PCS_PID && echo "✓ PCS running" || echo "✗ PCS failed"
-          ps -p $BMS_PID && echo "✓ BMS running" || echo "✗ BMS failed"
-          ps -p $GEN_PID && echo "✓ GENSET running" || echo "✗ GENSET failed"
-
-          # Run Python validation
-          python3 << 'EOF'
-          import socket
-          import struct
-          import sys
-
-          def modbus_read(sock, unit_id, addr, count):
-              tx_id = 1
-              req = struct.pack('>HHHBBHH', tx_id, 0, 6, unit_id, 0x03, addr, count)
-              sock.send(req)
-              resp = sock.recv(256)
-              if len(resp) < 9 + count * 2:
-                  return None
-              return struct.unpack('>' + 'H' * count, resp[9:9+count*2])
-
-          def modbus_write_single(sock, unit_id, addr, value):
-              tx_id = 2
-              req = struct.pack('>HHHBBHH', tx_id, 0, 6, unit_id, 0x06, addr, value)
-              sock.send(req)
-              return sock.recv(256)
-
-          tests_passed = 0
-          tests_failed = 0
-
-          # PCS Test
-          try:
-              sock = socket.socket()
-              sock.settimeout(5)
-              sock.connect(('127.0.0.1', 5020))
-              vals = modbus_read(sock, 1, 32, 1)
-              if vals and vals[0] > 0:
-                  print(f"✓ PCS read test passed (status={vals[0]})")
-                  tests_passed += 1
-              else:
-                  print("✗ PCS read test failed")
-                  tests_failed += 1
-
-              # Write test
-              modbus_write_single(sock, 1, 1024, 4500)
-              vals = modbus_read(sock, 1, 1024, 1)
-              if vals and vals[0] == 4500:
-                  print(f"✓ PCS write test passed (value={vals[0]})")
-                  tests_passed += 1
-              else:
-                  print("✗ PCS write test failed")
-                  tests_failed += 1
-              sock.close()
-          except Exception as e:
-              print(f"✗ PCS test error: {e}")
-              tests_failed += 2
-
-          # BMS Test
-          try:
-              sock = socket.socket()
-              sock.settimeout(5)
-              sock.connect(('127.0.0.1', 5021))
-              vals = modbus_read(sock, 2, 62006, 2)
-              if vals and vals[0] > 0:
-                  print(f"✓ BMS read test passed (SOC={vals[0]/10:.1f}%)")
-                  tests_passed += 1
-              else:
-                  print("✗ BMS read test failed")
-                  tests_failed += 1
-              sock.close()
-          except Exception as e:
-              print(f"✗ BMS test error: {e}")
-              tests_failed += 1
-
-          # GENSET Test
-          try:
-              sock = socket.socket()
-              sock.settimeout(5)
-              sock.connect(('127.0.0.1', 5022))
-              vals = modbus_read(sock, 2, 1800, 1)
-              if vals and vals[0] > 0:
-                  print(f"✓ GENSET read test passed (voltage={vals[0]/10:.1f}V)")
-                  tests_passed += 1
-              else:
-                  print("✗ GENSET read test failed")
-                  tests_failed += 1
-              sock.close()
-          except Exception as e:
-              print(f"✗ GENSET test error: {e}")
-              tests_failed += 1
-
-          print(f"\nTCP Test Results: {tests_passed} passed, {tests_failed} failed")
-          sys.exit(0 if tests_failed == 0 else 1)
-          EOF
-
-          TCP_RESULT=$?
-
-          # Cleanup
-          kill $PCS_PID $BMS_PID $GEN_PID 2>/dev/null || true
-          exit $TCP_RESULT
-
-      # Run RTU virtual serial port tests
-      - name: Run RTU Virtual Serial Port Tests
+      # Run E2E test script
+      - name: Run E2E Tests
+        env:
+          REDIS_URL: redis://localhost:6379
         run: |
-          echo "=== Starting RTU Virtual Serial Port Tests ==="
+          chmod +x scripts/ci-e2e-test.sh
+          ./scripts/ci-e2e-test.sh --skip-build
 
-          # Create virtual serial port pair
-          socat -d -d \
-            pty,raw,echo=0,link=/tmp/ttyRTU_SIM \
-            pty,raw,echo=0,link=/tmp/ttyRTU_CLIENT &
-          SOCAT_PID=$!
-          sleep 2
-
-          # Verify virtual ports created
-          ls -la /tmp/ttyRTU_* || {
-            echo "Failed to create virtual serial ports"
-            kill $SOCAT_PID 2>/dev/null || true
-            exit 1
-          }
-
-          # Start RTU simulator
-          ./target/release/simulator \
-            --scenario tools/simulator/scenarios/genset_rtu.yaml \
-            --rtu /tmp/ttyRTU_SIM \
-            --baud 9600 &
-          RTU_PID=$!
-          sleep 3
-
-          # Run RTU test
-          python3 << 'EOF'
-          import serial
-          import struct
-          import sys
-          import time
-
-          def calculate_crc16(data):
-              crc = 0xFFFF
-              for byte in data:
-                  crc ^= byte
-                  for _ in range(8):
-                      if crc & 0x0001:
-                          crc = (crc >> 1) ^ 0xA001
-                      else:
-                          crc >>= 1
-              return crc
-
-          try:
-              ser = serial.Serial('/tmp/ttyRTU_CLIENT', 9600, timeout=3)
-              time.sleep(0.5)
-
-              # Build RTU read request
-              request = struct.pack('>BBHH', 2, 0x03, 1800, 1)
-              crc = calculate_crc16(request)
-              request += struct.pack('<H', crc)
-
-              # Send and receive
-              ser.write(request)
-              ser.flush()
-              time.sleep(0.2)
-
-              response = ser.read(256)
-              ser.close()
-
-              if len(response) >= 7:
-                  # Verify CRC
-                  recv_crc = struct.unpack('<H', response[-2:])[0]
-                  calc_crc = calculate_crc16(response[:-2])
-
-                  if recv_crc == calc_crc:
-                      value = struct.unpack('>H', response[3:5])[0]
-                      print(f"✓ RTU read test passed (voltage={value/10:.1f}V)")
-                      print(f"✓ CRC16 verification passed")
-                      sys.exit(0)
-                  else:
-                      print(f"✗ CRC mismatch: recv=0x{recv_crc:04X}, calc=0x{calc_crc:04X}")
-                      sys.exit(1)
-              else:
-                  print(f"✗ Response too short: {len(response)} bytes")
-                  sys.exit(1)
-
-          except Exception as e:
-              print(f"✗ RTU test error: {e}")
-              sys.exit(1)
-          EOF
-
-          RTU_RESULT=$?
-
-          # Cleanup
-          kill $RTU_PID $SOCAT_PID 2>/dev/null || true
-
-          if [ $RTU_RESULT -eq 0 ]; then
-            echo "✓ RTU tests passed"
-          else
-            echo "✗ RTU tests failed"
-            exit 1
-          fi
+      # Cleanup
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v --rmi local
+          docker system prune -f
 
       - name: Test Summary
         if: always()
         run: |
           echo "=============================================="
-          echo "   Simulator CI Tests Complete"
+          echo "   E2E Integration Tests Complete"
           echo "=============================================="
           echo ""
-          echo "Scenarios tested:"
-          echo "  - PCS (TCP, 149 points)"
-          echo "  - BMS (TCP, ~70 points)"
-          echo "  - GENSET (TCP + RTU, ~57 points)"
+          echo "Test flow verified:"
+          echo "  - Modbus simulator (TCP port 5020)"
+          echo "  - comsrv data acquisition"
+          echo "  - Redis data storage"
+          echo "  - Point value transformation (scale/offset)"
           echo ""
-          echo "Functions verified:"
-          echo "  - FC=0x03 Read Holding Registers"
-          echo "  - FC=0x06 Write Single Register"
-          echo "  - CRC16 checksum (RTU)"
-          echo "  - Virtual serial port communication"
+          echo "Key components tested:"
+          echo "  - simulator -> comsrv Modbus connection"
+          echo "  - comsrv -> Redis data writing"
+          echo "  - Configuration loading (monarch)"
