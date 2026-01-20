@@ -474,6 +474,186 @@ impl UnifiedWriter {
         }
         self.set(channel_id, point_type, point_id, value, value, timestamp_ms)
     }
+
+    // ========== Snapshot API ==========
+
+    /// Save current shared memory state to a snapshot file
+    ///
+    /// Uses atomic write: writes to temp file first, then renames to final path.
+    /// This ensures the snapshot file is never in a corrupted state.
+    ///
+    /// # Arguments
+    /// - `path`: Path to save the snapshot file
+    ///
+    /// # Returns
+    /// - `Ok(())` on success
+    /// - `Err` if write or flush fails
+    pub fn save_snapshot(&self, path: &std::path::Path) -> Result<()> {
+        use std::io::Write;
+
+        // Flush mmap to ensure all data is written to the underlying file
+        self.mmap
+            .flush()
+            .context("Failed to flush mmap before snapshot")?;
+
+        // Calculate actual data size (header + used slots)
+        let data_size = slot_offset() + self.slot_count * std::mem::size_of::<PointSlot>();
+
+        // Create temp file in same directory for atomic rename
+        let temp_path = path.with_extension("tmp");
+
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create snapshot directory: {:?}", parent))?;
+        }
+
+        // Write to temp file
+        let mut file = std::fs::File::create(&temp_path)
+            .with_context(|| format!("Failed to create temp snapshot file: {:?}", temp_path))?;
+
+        // Write mmap contents (only used portion)
+        let data = &self.mmap[..data_size];
+        file.write_all(data)
+            .with_context(|| "Failed to write snapshot data")?;
+
+        file.flush().context("Failed to flush snapshot file")?;
+        file.sync_all().context("Failed to sync snapshot file")?;
+
+        // Atomic rename
+        std::fs::rename(&temp_path, path)
+            .with_context(|| format!("Failed to rename temp to snapshot: {:?}", path))?;
+
+        tracing::info!(
+            "Snapshot saved: {:?}, size={} bytes, slots={}",
+            path,
+            data_size,
+            self.slot_count
+        );
+
+        Ok(())
+    }
+
+    /// Restore from snapshot file
+    ///
+    /// Creates a new UnifiedWriter and loads PointSlot data from the snapshot.
+    /// The header is re-initialized from current config, only point data is restored.
+    ///
+    /// # Arguments
+    /// - `config`: Shared memory configuration
+    /// - `snapshot_path`: Path to the snapshot file
+    /// - `routing_cache`: Routing configuration for slot allocation
+    ///
+    /// # Returns
+    /// - `Ok(Self)` with restored data
+    /// - `Err` if snapshot is invalid or incompatible
+    pub fn restore_from_snapshot(
+        config: &SharedConfig,
+        snapshot_path: &std::path::Path,
+        routing_cache: &RoutingCache,
+    ) -> Result<Self> {
+        use std::io::Read;
+
+        // First create a fresh writer with current config
+        let writer = Self::create(config, routing_cache)?;
+
+        // Read snapshot file
+        let mut file = std::fs::File::open(snapshot_path)
+            .with_context(|| format!("Failed to open snapshot file: {:?}", snapshot_path))?;
+
+        let mut snapshot_data = Vec::new();
+        file.read_to_end(&mut snapshot_data)
+            .with_context(|| "Failed to read snapshot file")?;
+
+        // Validate snapshot header
+        if snapshot_data.len() < std::mem::size_of::<UnifiedHeader>() {
+            bail!("Snapshot file too small: {} bytes", snapshot_data.len());
+        }
+
+        let snapshot_header = unsafe { &*(snapshot_data.as_ptr() as *const UnifiedHeader) };
+
+        if snapshot_header.magic != UNIFIED_MAGIC {
+            bail!(
+                "Invalid snapshot magic: expected 0x{:X}, got 0x{:X}",
+                UNIFIED_MAGIC,
+                snapshot_header.magic
+            );
+        }
+
+        if snapshot_header.version != UNIFIED_VERSION {
+            bail!(
+                "Snapshot version mismatch: expected {}, got {}",
+                UNIFIED_VERSION,
+                snapshot_header.version
+            );
+        }
+
+        let snapshot_slot_count = snapshot_header.slot_count.load(Ordering::Relaxed) as usize;
+
+        // Determine how many slots to restore (min of snapshot and current allocation)
+        let slots_to_restore = snapshot_slot_count.min(writer.slot_count);
+
+        if slots_to_restore == 0 {
+            tracing::warn!("Snapshot has no slots to restore");
+            return Ok(writer);
+        }
+
+        // Calculate data ranges
+        let header_size = slot_offset();
+        let slot_size = std::mem::size_of::<PointSlot>();
+        let snapshot_data_end = header_size + slots_to_restore * slot_size;
+
+        if snapshot_data.len() < snapshot_data_end {
+            bail!(
+                "Snapshot file truncated: expected at least {} bytes, got {}",
+                snapshot_data_end,
+                snapshot_data.len()
+            );
+        }
+
+        // Copy point data (not header - keep current header)
+        let src = &snapshot_data[header_size..snapshot_data_end];
+        let dst_start = header_size;
+
+        // SAFETY: We're copying PointSlot data which is repr(C) and has atomic fields
+        // The atomic operations will be valid after the copy
+        unsafe {
+            let mmap_ptr = writer.mmap.as_ptr() as *mut u8;
+            std::ptr::copy_nonoverlapping(src.as_ptr(), mmap_ptr.add(dst_start), src.len());
+        }
+
+        // Update timestamps
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("System time before UNIX epoch")
+            .as_millis() as u64;
+        writer
+            .header()
+            .last_update_ts
+            .store(now_ms, Ordering::Relaxed);
+        writer
+            .header()
+            .writer_heartbeat
+            .store(now_ms, Ordering::Relaxed);
+
+        tracing::info!(
+            "Snapshot restored: {:?}, restored {} of {} slots",
+            snapshot_path,
+            slots_to_restore,
+            writer.slot_count
+        );
+
+        if slots_to_restore < writer.slot_count {
+            tracing::warn!(
+                "Snapshot had fewer slots ({}) than current config ({}), {} slots uninitialized",
+                snapshot_slot_count,
+                writer.slot_count,
+                writer.slot_count - slots_to_restore
+            );
+        }
+
+        Ok(writer)
+    }
 }
 
 // ========== UnifiedReader ==========
@@ -758,6 +938,60 @@ impl UnifiedReader {
     #[inline]
     pub fn channel_layouts(&self) -> &[ChannelLayout] {
         &self.channel_layouts
+    }
+
+    // ========== Snapshot API ==========
+
+    /// Save current shared memory state to a snapshot file (read-only snapshot)
+    ///
+    /// This is useful for readers like modsrv to save state before shutdown.
+    /// Uses atomic write: writes to temp file first, then renames to final path.
+    ///
+    /// # Arguments
+    /// - `path`: Path to save the snapshot file
+    ///
+    /// # Returns
+    /// - `Ok(())` on success
+    /// - `Err` if write fails
+    pub fn save_snapshot(&self, path: &std::path::Path) -> Result<()> {
+        use std::io::Write;
+
+        // Calculate actual data size (header + used slots)
+        let data_size = slot_offset() + self.slot_count * std::mem::size_of::<PointSlot>();
+
+        // Create temp file in same directory for atomic rename
+        let temp_path = path.with_extension("tmp");
+
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create snapshot directory: {:?}", parent))?;
+        }
+
+        // Write to temp file
+        let mut file = std::fs::File::create(&temp_path)
+            .with_context(|| format!("Failed to create temp snapshot file: {:?}", temp_path))?;
+
+        // Write mmap contents (only used portion)
+        let data = &self.mmap[..data_size];
+        file.write_all(data)
+            .with_context(|| "Failed to write snapshot data")?;
+
+        file.flush().context("Failed to flush snapshot file")?;
+        file.sync_all().context("Failed to sync snapshot file")?;
+
+        // Atomic rename
+        std::fs::rename(&temp_path, path)
+            .with_context(|| format!("Failed to rename temp to snapshot: {:?}", path))?;
+
+        tracing::info!(
+            "Reader snapshot saved: {:?}, size={} bytes, slots={}",
+            path,
+            data_size,
+            self.slot_count
+        );
+
+        Ok(())
     }
 }
 

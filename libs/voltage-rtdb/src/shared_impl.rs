@@ -204,6 +204,14 @@ pub struct SharedConfig {
     pub max_channels: usize,
     /// Maximum points per channel (all types combined)
     pub max_points_per_channel: usize,
+
+    // ========== Snapshot Configuration ==========
+    /// Path to snapshot file (None = disabled)
+    pub snapshot_path: Option<PathBuf>,
+    /// Automatic snapshot interval (None = disabled)
+    pub snapshot_interval: Option<std::time::Duration>,
+    /// Whether to restore from snapshot on startup
+    pub restore_on_start: bool,
 }
 
 impl Default for SharedConfig {
@@ -217,6 +225,10 @@ impl Default for SharedConfig {
             max_points_per_instance: 65536,
             max_channels: 65536,
             max_points_per_channel: 65536,
+            // Snapshot defaults
+            snapshot_path: None,
+            snapshot_interval: None,
+            restore_on_start: true,
         }
     }
 }
@@ -303,6 +315,86 @@ impl SharedConfig {
         // This is a simplification - in practice we might add a dedicated field
         self.max_channels = max_slots;
         self.max_points_per_channel = 1;
+        self
+    }
+
+    // ========== Snapshot Configuration Methods ==========
+
+    /// Configure snapshot file path
+    ///
+    /// If set, enables snapshot saving. If None, snapshots are disabled.
+    pub fn with_snapshot_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.snapshot_path = Some(path.into());
+        self
+    }
+
+    /// Configure automatic snapshot interval
+    ///
+    /// If set, a background task will save snapshots at this interval.
+    /// Requires snapshot_path to be set.
+    pub fn with_snapshot_interval(mut self, interval: std::time::Duration) -> Self {
+        self.snapshot_interval = Some(interval);
+        self
+    }
+
+    /// Configure whether to restore from snapshot on startup
+    ///
+    /// Default is true. If false, always starts with fresh empty data.
+    pub fn with_restore_on_start(mut self, restore: bool) -> Self {
+        self.restore_on_start = restore;
+        self
+    }
+
+    /// Get snapshot path
+    #[inline]
+    pub fn snapshot_path(&self) -> Option<&PathBuf> {
+        self.snapshot_path.as_ref()
+    }
+
+    /// Get snapshot interval
+    #[inline]
+    pub fn snapshot_interval(&self) -> Option<std::time::Duration> {
+        self.snapshot_interval
+    }
+
+    /// Check if should restore on start
+    #[inline]
+    pub fn restore_on_start(&self) -> bool {
+        self.restore_on_start
+    }
+
+    /// Build snapshot config from environment variables
+    ///
+    /// Reads:
+    /// - SHM_SNAPSHOT_PATH: Path to snapshot file (default: data/shm-snapshot.bin)
+    /// - SHM_SNAPSHOT_INTERVAL: Interval in seconds (default: 300 = 5 minutes)
+    /// - SHM_RESTORE_ON_START: "true" or "false" (default: true)
+    pub fn with_snapshot_from_env(mut self) -> Self {
+        use std::env;
+
+        // Snapshot path
+        if let Ok(path) = env::var("SHM_SNAPSHOT_PATH") {
+            self.snapshot_path = Some(PathBuf::from(path));
+        } else {
+            // Default path if not explicitly disabled
+            self.snapshot_path = Some(PathBuf::from("data/shm-snapshot.bin"));
+        }
+
+        // Snapshot interval
+        if let Ok(interval_str) = env::var("SHM_SNAPSHOT_INTERVAL") {
+            if let Ok(secs) = interval_str.parse::<u64>() {
+                self.snapshot_interval = Some(std::time::Duration::from_secs(secs));
+            }
+        } else {
+            // Default: 5 minutes
+            self.snapshot_interval = Some(std::time::Duration::from_secs(300));
+        }
+
+        // Restore on start
+        if let Ok(restore_str) = env::var("SHM_RESTORE_ON_START") {
+            self.restore_on_start = restore_str.to_lowercase() != "false";
+        }
+
         self
     }
 }
@@ -1732,6 +1824,7 @@ mod tests {
             max_points_per_instance: 32,
             max_channels: 8,
             max_points_per_channel: 32,
+            ..Default::default()
         }
     }
 
@@ -1884,6 +1977,7 @@ mod tests {
             max_points_per_instance: 32,
             max_channels: 8,
             max_points_per_channel: 32,
+            ..Default::default()
         };
 
         // Create writer and register instance
