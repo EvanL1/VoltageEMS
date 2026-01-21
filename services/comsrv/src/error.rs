@@ -400,6 +400,47 @@ impl VoltageErrorTrait for ComSrvError {
             Self::InternalError(_) => ErrorCategory::Internal,
         }
     }
+
+    fn suggestion(&self) -> Option<String> {
+        match self {
+            Self::ConfigError(_) => Some(
+                "Check comsrv configuration in config/comsrv/ and run 'monarch sync comsrv'".to_string()
+            ),
+            Self::ChannelError(msg) => {
+                if msg.contains("not found") {
+                    Some("Use 'monarch channels list' to see available channels".to_string())
+                } else if msg.contains("exists") {
+                    Some("Channel already exists. Use a different ID or update the existing channel".to_string())
+                } else {
+                    Some("Check channel configuration and status with 'monarch channels status <id>'".to_string())
+                }
+            },
+            Self::PointError(msg) => {
+                if msg.contains("not found") {
+                    Some("Verify the point exists in the channel configuration. Use GET /api/channels/{id}/points to list points".to_string())
+                } else {
+                    Some("Check point configuration in the channel's CSV files".to_string())
+                }
+            },
+            Self::ConnectionError(_) => Some(
+                "Verify the device is reachable and check network/serial port settings".to_string()
+            ),
+            Self::ProtocolError(_) => Some(
+                "Check protocol configuration (Modbus slave ID, function codes, register addresses)".to_string()
+            ),
+            Self::TimeoutError(_) => Some(
+                "Increase timeout settings or check device responsiveness".to_string()
+            ),
+            Self::StorageError(_) => Some(
+                "Run 'monarch doctor' to check Redis connection".to_string()
+            ),
+            Self::ValidationError(_) => None, // Validation errors should be specific in the message
+            Self::DataError(_) => Some(
+                "Check data format and types. Verify scale/offset configuration in point definitions".to_string()
+            ),
+            _ => None,
+        }
+    }
 }
 
 // ============================================================================
@@ -412,7 +453,7 @@ impl From<ComSrvError> for common::AppError {
         use errors::VoltageErrorTrait;
 
         let status = err.http_status();
-        let error_info = ErrorInfo::new(err.to_string())
+        let mut error_info = ErrorInfo::new(err.to_string())
             .with_code(status.as_u16())
             .with_details(format!(
                 "error_code: {}, category: {:?}, retryable: {}",
@@ -420,6 +461,11 @@ impl From<ComSrvError> for common::AppError {
                 err.category(),
                 err.is_retryable()
             ));
+
+        // Add suggestion if available
+        if let Some(suggestion) = err.suggestion() {
+            error_info = error_info.with_suggestion(suggestion);
+        }
 
         AppError::new(status, error_info)
     }

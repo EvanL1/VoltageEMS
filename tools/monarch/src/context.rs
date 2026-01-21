@@ -40,24 +40,48 @@ impl ServiceConfig {
     }
 
     /// Auto-detect paths from environment or defaults
+    ///
+    /// # Environment Variables (checked in order of priority)
+    ///
+    /// **Data Path:**
+    /// 1. `VOLTAGE_DATA_PATH` - Explicit data directory path
+    /// 2. `/opt/MonarchEdge/data` - Production default (if exists)
+    /// 3. `./data` - Development fallback
+    ///
+    /// **Config Path:**
+    /// 1. `VOLTAGE_CONFIG_PATH` - Explicit config directory path
+    /// 2. `/opt/MonarchEdge/config` - Production default (if exists)
+    /// 3. `./config` - Development fallback
+    ///
+    /// **Redis URL:**
+    /// 1. `VOLTAGE_REDIS_URL` - Explicit Redis URL
+    /// 2. `redis://localhost:6379` - Default fallback
     pub fn auto_detect() -> Self {
-        // Detect database path
-        let db_path = if Path::new("/opt/MonarchEdge/data").exists() {
-            PathBuf::from("/opt/MonarchEdge/data")
-        } else {
-            PathBuf::from("data")
-        };
+        // Detect database path: env var > production path > relative path
+        let db_path = std::env::var("VOLTAGE_DATA_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                if Path::new("/opt/MonarchEdge/data").exists() {
+                    PathBuf::from("/opt/MonarchEdge/data")
+                } else {
+                    PathBuf::from("data")
+                }
+            });
 
-        // Detect config path
-        let config_path = if Path::new("/opt/MonarchEdge/config").exists() {
-            PathBuf::from("/opt/MonarchEdge/config")
-        } else {
-            PathBuf::from("config")
-        };
+        // Detect config path: env var > production path > relative path
+        let config_path = std::env::var("VOLTAGE_CONFIG_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                if Path::new("/opt/MonarchEdge/config").exists() {
+                    PathBuf::from("/opt/MonarchEdge/config")
+                } else {
+                    PathBuf::from("config")
+                }
+            });
 
-        // Get Redis URL from environment or default
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+        // Get Redis URL from VOLTAGE_REDIS_URL or default
+        let redis_url = std::env::var("VOLTAGE_REDIS_URL")
+            .unwrap_or_else(|_| "redis://localhost:6379".to_string());
 
         Self {
             db_path,
@@ -100,6 +124,18 @@ impl ServiceContext {
 
         let modsrv = ModsrvContext::new(&self.config).await?;
         self.modsrv = Some(modsrv);
+        Ok(())
+    }
+
+    /// Initialize comsrv context (public API for lib-mode users)
+    #[cfg(feature = "lib-mode")]
+    pub async fn init_comsrv(&mut self) -> Result<()> {
+        if self.comsrv.is_some() {
+            return Ok(()); // Already initialized
+        }
+
+        let comsrv = ComsrvContext::new(&self.config).await?;
+        self.comsrv = Some(comsrv);
         Ok(())
     }
 

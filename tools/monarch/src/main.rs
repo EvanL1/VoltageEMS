@@ -358,25 +358,50 @@ async fn main() -> Result<()> {
             // Use the constructed service_config directly
             let mut ctx = ServiceContext::new(service_config.clone());
 
-            // Initialize only modsrv (on-demand initialization)
-            // SetAction command only needs modsrv, not comsrv
-            match ctx.init_modsrv().await {
-                Ok(_) => {
-                    if cli.verbose {
-                        println!(
-                            "{} Offline mode initialized (modsrv only)",
-                            "INFO".bright_green()
-                        );
-                    }
-                    Some(ctx)
-                },
+            // Initialize both modsrv and comsrv for offline mode
+            // modsrv: for models, rules, instances
+            // comsrv: for channels
+            let modsrv_ok = match ctx.init_modsrv().await {
+                Ok(_) => true,
                 Err(e) => {
                     if cli.verbose {
                         println!("{} Failed to initialize modsrv: {}", "WARN".yellow(), e);
-                        println!("{} Falling back to online mode", "INFO".bright_cyan());
                     }
-                    None
+                    false
                 },
+            };
+
+            let comsrv_ok = match ctx.init_comsrv().await {
+                Ok(_) => true,
+                Err(e) => {
+                    if cli.verbose {
+                        println!("{} Failed to initialize comsrv: {}", "WARN".yellow(), e);
+                    }
+                    false
+                },
+            };
+
+            if modsrv_ok || comsrv_ok {
+                if cli.verbose {
+                    let services: Vec<&str> = [
+                        if modsrv_ok { Some("modsrv") } else { None },
+                        if comsrv_ok { Some("comsrv") } else { None },
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                    println!(
+                        "{} Offline mode initialized ({})",
+                        "INFO".bright_green(),
+                        services.join(", ")
+                    );
+                }
+                Some(ctx)
+            } else {
+                if cli.verbose {
+                    println!("{} Falling back to online mode", "INFO".bright_cyan());
+                }
+                None
             }
         } else {
             if cli.verbose {
@@ -426,19 +451,19 @@ async fn main() -> Result<()> {
 
         // Service management commands
         Commands::Channels { command } => {
-            let base_url =
-                std::env::var("COMSRV_URL").unwrap_or_else(|_| "http://localhost:6001".to_string());
+            let base_url = std::env::var("VOLTAGE_COMSRV_URL")
+                .unwrap_or_else(|_| "http://localhost:6001".to_string());
             channels::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
         },
         Commands::Models { command } => {
-            let base_url =
-                std::env::var("MODSRV_URL").unwrap_or_else(|_| "http://localhost:6002".to_string());
+            let base_url = std::env::var("VOLTAGE_MODSRV_URL")
+                .unwrap_or_else(|_| "http://localhost:6002".to_string());
             models::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
         },
         Commands::Rules { command } => {
-            // rules merged into modsrv (port 6002)
-            let base_url =
-                std::env::var("RULES_URL").unwrap_or_else(|_| "http://localhost:6002".to_string());
+            // Rules merged into modsrv (port 6002)
+            let base_url = std::env::var("VOLTAGE_MODSRV_URL")
+                .unwrap_or_else(|_| "http://localhost:6002".to_string());
             rules::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
         },
         Commands::Rtdb { command } => {
