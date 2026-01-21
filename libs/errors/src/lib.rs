@@ -22,6 +22,9 @@ pub struct ErrorInfo {
     /// Detailed error description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    /// Suggested action to fix the error
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
     /// Field-specific errors for validation
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub field_errors: HashMap<String, Vec<String>>,
@@ -34,6 +37,7 @@ impl ErrorInfo {
             code: 500,
             message: message.into(),
             details: None,
+            suggestion: None,
             field_errors: HashMap::new(),
         }
     }
@@ -47,6 +51,12 @@ impl ErrorInfo {
     /// Add details
     pub fn with_details(mut self, details: impl Into<String>) -> Self {
         self.details = Some(details.into());
+        self
+    }
+
+    /// Add a suggestion for how to fix the error
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestion = Some(suggestion.into());
         self
     }
 
@@ -678,6 +688,45 @@ pub trait VoltageErrorTrait: std::error::Error + Send + Sync + 'static {
         )
     }
 
+    /// Get a suggestion for how to fix this error (default is category-based)
+    fn suggestion(&self) -> Option<String> {
+        match self.category() {
+            ErrorCategory::Configuration => {
+                Some("Check your configuration files and environment variables".to_string())
+            },
+            ErrorCategory::Database => {
+                Some("Verify database connection and run 'monarch doctor' to check system health".to_string())
+            },
+            ErrorCategory::Network => {
+                Some("Check network connectivity and service availability".to_string())
+            },
+            ErrorCategory::Timeout => {
+                Some("The operation timed out. Try again or increase timeout settings".to_string())
+            },
+            ErrorCategory::NotFound => None, // Specific not found suggestions should be provided by implementations
+            ErrorCategory::Validation => None, // Validation errors should include specific field guidance
+            ErrorCategory::Permission => {
+                Some("Check your permissions and authentication credentials".to_string())
+            },
+            ErrorCategory::Conflict => {
+                Some("The resource already exists. Use update instead of create, or choose a different identifier".to_string())
+            },
+            ErrorCategory::Protocol => {
+                Some("Check device connection and protocol configuration".to_string())
+            },
+            ErrorCategory::Connection => {
+                Some("Verify the target host is reachable and the port is correct".to_string())
+            },
+            ErrorCategory::ResourceBusy => {
+                Some("The resource is currently in use. Wait and retry the operation".to_string())
+            },
+            ErrorCategory::ResourceExhausted => {
+                Some("System resources are exhausted. Wait before retrying or scale up resources".to_string())
+            },
+            _ => None,
+        }
+    }
+
     /// Recommended retry delay in milliseconds
     fn retry_delay_ms(&self) -> u64 {
         match self.category() {
@@ -726,17 +775,20 @@ pub trait VoltageErrorTrait: std::error::Error + Send + Sync + 'static {
         use axum::response::{IntoResponse, Json};
         use serde_json::json;
 
-        (
-            self.http_status(),
-            Json(json!({
-                "error_code": self.error_code(),
-                "message": self.to_string(),
-                "category": format!("{:?}", self.category()),
-                "retryable": self.is_retryable(),
-                "retry_delay_ms": self.retry_delay_ms(),
-            })),
-        )
-            .into_response()
+        let mut response = json!({
+            "error_code": self.error_code(),
+            "message": self.to_string(),
+            "category": format!("{:?}", self.category()),
+            "retryable": self.is_retryable(),
+            "retry_delay_ms": self.retry_delay_ms(),
+        });
+
+        // Add suggestion if available
+        if let Some(suggestion) = self.suggestion() {
+            response["suggestion"] = json!(suggestion);
+        }
+
+        (self.http_status(), Json(response)).into_response()
     }
 
     /// Get log level

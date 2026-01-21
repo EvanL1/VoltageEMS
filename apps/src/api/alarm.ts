@@ -19,8 +19,8 @@ export const deleteRule = (id: string) => {
   return Request.delete(`/alarmApi/rules/${id}`)
 }
 export const enableRule = (id: string | number) => {
-  return Request.patch(`/alarmApi/rules/${id}/enable`)
+  return Request.post(`/alarmApi/rules/${id}/enable`)
 }
 export const disableRule = (id: string | number) => {
-  return Request.patch(`/alarmApi/rules/${id}/disable`)
+  return Request.post(`/alarmApi/rules/${id}/disable`)
 }

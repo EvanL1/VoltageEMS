@@ -15,7 +15,6 @@ pub struct InstanceSummary {
     pub id: u32,
     pub name: String,
     pub product_name: String,
-    pub enabled: bool,
 }
 
 /// Models service - provides instance and product management operations
@@ -34,19 +33,18 @@ impl<'a> ModelsService<'a> {
     /// Returns a list of all configured model instances.
     pub async fn list_instances(&self) -> Result<Vec<InstanceSummary>> {
         // Query database for instances
-        let db_instances: Vec<(u32, String, String, bool)> = sqlx::query_as(
-            "SELECT instance_id, name, product_name, enabled FROM instances ORDER BY instance_id",
+        let db_instances: Vec<(u32, String, String)> = sqlx::query_as(
+            "SELECT instance_id, instance_name, product_name FROM instances ORDER BY instance_id",
         )
         .fetch_all(&self.ctx.sqlite_pool)
         .await?;
 
         let summaries: Vec<InstanceSummary> = db_instances
             .into_iter()
-            .map(|(id, name, product_name, enabled)| InstanceSummary {
+            .map(|(id, name, product_name)| InstanceSummary {
                 id,
                 name,
                 product_name,
-                enabled,
             })
             .collect();
 
@@ -139,7 +137,7 @@ impl<'a> ModelsService<'a> {
     pub async fn get_instance_data(&self, name: &str) -> Result<Vec<(String, String)>> {
         // First, get instance ID from database
         let instance: Option<(i64,)> =
-            sqlx::query_as("SELECT instance_id FROM instances WHERE name = ?")
+            sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
                 .bind(name)
                 .fetch_optional(&self.ctx.sqlite_pool)
                 .await?;
@@ -174,7 +172,7 @@ impl<'a> ModelsService<'a> {
     ) -> Result<()> {
         // Get instance ID
         let instance: Option<(i64,)> =
-            sqlx::query_as("SELECT instance_id FROM instances WHERE name = ?")
+            sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
                 .bind(instance_name)
                 .fetch_optional(&self.ctx.sqlite_pool)
                 .await?;

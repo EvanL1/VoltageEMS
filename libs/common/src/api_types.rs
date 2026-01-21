@@ -66,6 +66,9 @@ pub struct ErrorInfo {
     /// Detailed error description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    /// Suggested action to fix the error
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
     /// Field-specific errors for validation
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub field_errors: HashMap<String, Vec<String>>,
@@ -78,6 +81,7 @@ impl ErrorInfo {
             code: 500,
             message: message.into(),
             details: None,
+            suggestion: None,
             field_errors: HashMap::new(),
         }
     }
@@ -91,6 +95,12 @@ impl ErrorInfo {
     /// Add details
     pub fn with_details(mut self, details: impl Into<String>) -> Self {
         self.details = Some(details.into());
+        self
+    }
+
+    /// Add a suggestion for how to fix the error
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestion = Some(suggestion.into());
         self
     }
 

@@ -10,7 +10,7 @@
 
 ```bash
 ./scripts/quick-check.sh              # fmt + clippy + tests + frontend
-monarch init all && monarch sync all  # 配置初始化并同步
+monarch init && monarch sync  # 配置初始化并同步
 monarch services start                # 启动服务
 monarch services refresh --smart      # 智能刷新镜像
 ```

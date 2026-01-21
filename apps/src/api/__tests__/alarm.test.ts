@@ -90,11 +90,11 @@ describe('Alarm API', () => {
       success: true,
     }
     const { Request } = await import('@/utils/request')
-    vi.mocked(Request.patch).mockResolvedValue(mockData)
+    vi.mocked(Request.post).mockResolvedValue(mockData)
 
     const result = await enableRule('1')
     expect(result).toEqual(mockData)
-    expect(Request.patch).toHaveBeenCalledWith('/alarmApi/rules/1/enable')
+    expect(Request.post).toHaveBeenCalledWith('/alarmApi/rules/1/enable')
   })
 
   it('should disable rule', async () => {
@@ -105,10 +105,10 @@ describe('Alarm API', () => {
       success: true,
     }
     const { Request } = await import('@/utils/request')
-    vi.mocked(Request.patch).mockResolvedValue(mockData)
+    vi.mocked(Request.post).mockResolvedValue(mockData)
 
     const result = await disableRule('1')
     expect(result).toEqual(mockData)
-    expect(Request.patch).toHaveBeenCalledWith('/alarmApi/rules/1/disable')
+    expect(Request.post).toHaveBeenCalledWith('/alarmApi/rules/1/disable')
   })
 })
