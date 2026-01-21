@@ -1,0 +1,19 @@
+[package]
+name = "voltage-shm"
+version = "0.1.0"
+edition = "2021"
+description = "Shared memory abstraction for VoltageEMS - platform-agnostic reader/writer"
+license.workspace = true
+
+[features]
+default = ["std"]
+std = ["voltage-core/std", "memmap2"]
+
+[dependencies]
+voltage-core = { path = "../voltage-core", default-features = false }
+
+# std-only dependencies
+memmap2 = { version = "0.9", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
