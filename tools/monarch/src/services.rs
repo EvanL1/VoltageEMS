@@ -4,6 +4,8 @@
 
 use anyhow::Result;
 use clap::Subcommand;
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 use voltage_model::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
@@ -128,6 +130,10 @@ pub async fn handle_command(
 ) -> Result<()> {
     match cmd {
         ServiceCommands::Start { services } => {
+            // IMPORTANT: Ensure SHM file exists before Docker starts
+            // Docker bind mount creates directory if source doesn't exist!
+            ensure_shm_file_exists();
+
             // Default docker-compose up behavior: recreate containers if config changed
             // NOTE: This does NOT auto-recreate when only the image ID changes.
             // Use `monarch services refresh --smart` to detect and apply image updates.
@@ -149,6 +155,9 @@ pub async fn handle_command(
             println!("Services stopped");
         },
         ServiceCommands::Restart { services } => {
+            // Ensure SHM file exists before restart
+            ensure_shm_file_exists();
+
             let args = build_docker_compose_args("restart", "", services);
             execute_docker_compose_str(&args)?;
             println!("Services restarted");
@@ -255,6 +264,9 @@ pub async fn handle_command(
             pull,
             smart,
         } => {
+            // Ensure SHM file exists before refresh
+            ensure_shm_file_exists();
+
             if smart {
                 // Smart mode: Only recreate containers if images actually changed
                 println!("Refreshing services with smart mode...");
@@ -650,6 +662,29 @@ pub async fn handle_command(
         },
     }
     Ok(())
+}
+
+/// Ensure shared memory file exists (not directory)
+/// Docker bind mount creates directory if source doesn't exist!
+fn ensure_shm_file_exists() {
+    let shm_path = Path::new("/dev/shm/voltage-rtdb.shm");
+
+    if shm_path.is_dir() {
+        eprintln!(
+            "Warning: {} is a directory (Docker artifact), removing...",
+            shm_path.display()
+        );
+        if let Err(e) = fs::remove_dir_all(shm_path) {
+            eprintln!("Failed to remove directory: {}", e);
+        }
+    }
+
+    if !shm_path.exists() {
+        println!("Creating shared memory file: {}", shm_path.display());
+        if let Err(e) = fs::File::create(shm_path) {
+            eprintln!("Failed to create SHM file: {}", e);
+        }
+    }
 }
 
 fn build_docker_compose_args(command: &str, flag: &str, services: Vec<String>) -> Vec<String> {

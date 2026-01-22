@@ -24,6 +24,7 @@ LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
 # =============================================================================
 AUTO_MODE=false  # Default to interactive mode
 SHOW_HELP=false
+SERVICES_ALREADY_STARTED=false  # Track if services were started during Smart Update
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -83,6 +84,23 @@ run_docker_compose() {
         docker compose "$@"
     else
         docker-compose "$@"
+    fi
+}
+
+# Ensure shared memory file exists (not directory)
+# Docker bind mount creates directory if source doesn't exist!
+ensure_shm_file() {
+    local shm_path="/dev/shm/voltage-rtdb.shm"
+
+    if [[ -d "$shm_path" ]]; then
+        echo -e "${YELLOW}Warning: $shm_path is a directory (Docker artifact), removing...${NC}"
+        $SUDO rm -rf "$shm_path"
+    fi
+
+    if [[ ! -f "$shm_path" ]]; then
+        echo -e "${BLUE}Creating shared memory file: $shm_path${NC}"
+        $SUDO touch "$shm_path"
+        $SUDO chmod 666 "$shm_path"
     fi
 }
 
@@ -407,6 +425,9 @@ ensure_core_services_running() {
     echo ""
     echo -e "${BLUE}Ensuring core services are running...${NC}"
 
+    # IMPORTANT: Ensure SHM file exists before Docker starts (Docker creates directory if missing!)
+    ensure_shm_file
+
     local services_started=0
     local core_containers=("voltage-redis" "voltageems-comsrv" "voltageems-modsrv")
 
@@ -502,6 +523,65 @@ determine_install_user() {
     ACTUAL_USER=$(whoami)
     ACTUAL_UID=$(id -u)
     ACTUAL_GID=$(id -g)
+}
+
+# Migrate point tables: add ON DELETE CASCADE for foreign keys
+# SQLite doesn't support ALTER TABLE for foreign keys, so we must recreate tables
+migrate_points_tables() {
+    local db_file="$1"
+
+    # Check if migration is needed (tables exist but lack ON DELETE CASCADE)
+    local needs_migration=$(sqlite3 "$db_file" "SELECT sql FROM sqlite_master WHERE type='table' AND name='telemetry_points'" 2>/dev/null | grep -v "ON DELETE CASCADE")
+
+    if [[ -n "$needs_migration" ]]; then
+        echo -e "${YELLOW}Migrating point tables to add ON DELETE CASCADE...${NC}"
+
+        for table in telemetry_points signal_points control_points adjustment_points; do
+            echo -n "  Migrating $table... "
+
+            # 1. Backup data to temporary table
+            sqlite3 "$db_file" "CREATE TABLE ${table}_backup AS SELECT * FROM $table" 2>/dev/null || true
+
+            # 2. Drop old table
+            sqlite3 "$db_file" "DROP TABLE IF EXISTS $table"
+
+            echo -e "${GREEN}done${NC}"
+        done
+
+        # 3. monarch init will create new tables (with CASCADE), then restore data
+        echo -e "${GREEN}✓ Tables prepared for migration${NC}"
+        echo -e "${BLUE}  Data will be restored after schema update${NC}"
+
+        NEEDS_DATA_RESTORE=true
+    fi
+}
+
+# Restore migrated data after schema update
+restore_migrated_data() {
+    local db_file="$1"
+
+    if [[ "${NEEDS_DATA_RESTORE:-false}" == "true" ]]; then
+        echo -e "${YELLOW}Restoring migrated data...${NC}"
+
+        for table in telemetry_points signal_points control_points adjustment_points; do
+            if sqlite3 "$db_file" "SELECT 1 FROM ${table}_backup LIMIT 1" 2>/dev/null; then
+                echo -n "  Restoring $table... "
+
+                # Get column names from new table
+                local columns=$(sqlite3 "$db_file" "PRAGMA table_info($table)" | cut -d'|' -f2 | tr '\n' ',' | sed 's/,$//')
+
+                # Restore data
+                sqlite3 "$db_file" "INSERT INTO $table SELECT $columns FROM ${table}_backup"
+
+                # Drop backup table
+                sqlite3 "$db_file" "DROP TABLE ${table}_backup"
+
+                echo -e "${GREEN}done${NC}"
+            fi
+        done
+
+        echo -e "${GREEN}✓ Data restored successfully${NC}"
+    fi
 }
 
 echo -e "${BLUE}================================${NC}"
@@ -686,6 +766,7 @@ if command -v docker &> /dev/null; then
                 # Ensure core services are running
                 echo ""
                 ensure_core_services_running
+                SERVICES_ALREADY_STARTED=true
             else
                 echo ""
                 echo "  Detecting changes vs running containers:"
@@ -825,6 +906,7 @@ if command -v docker &> /dev/null; then
 
             # Ensure core services are running (even if images unchanged)
             ensure_core_services_running
+            SERVICES_ALREADY_STARTED=true
 
             # Verify updated containers are using correct images
             if [[ ${#UPDATE_SUCCESS[@]} -gt 0 ]]; then
@@ -836,6 +918,7 @@ if command -v docker &> /dev/null; then
 
             # Still ensure core services are running
             ensure_core_services_running
+            SERVICES_ALREADY_STARTED=true
         fi
     else
         # No existing images - first installation
@@ -1020,7 +1103,9 @@ if [[ -f "$DB_FILE" ]]; then
         case $DB_OPTION in
             1)
                 echo -e "${YELLOW}Running safe schema upgrade...${NC}"
+                migrate_points_tables "$DB_FILE"  # Prepare tables for migration
                 monarch init  # IF NOT EXISTS ensures safety
+                restore_migrated_data "$DB_FILE"  # Restore data after schema update
                 echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
                 ;;
             2)
@@ -1028,7 +1113,9 @@ if [[ -f "$DB_FILE" ]]; then
                 ;;
             *)
                 echo -e "${YELLOW}Invalid option. Using safe upgrade (option 1)...${NC}"
+                migrate_points_tables "$DB_FILE"
                 monarch init
+                restore_migrated_data "$DB_FILE"
                 ;;
         esac
     else
@@ -1277,7 +1364,13 @@ echo -e "${BLUE}  Start Services                ${NC}"
 echo -e "${BLUE}================================${NC}"
 echo ""
 
-if [[ "$AUTO_MODE" == true ]]; then
+# Skip if services were already started during Smart Update
+if [[ "$SERVICES_ALREADY_STARTED" == true ]]; then
+    echo -e "${GREEN}✓ Services already started during installation${NC}"
+    docker ps --format "table {{.Names}}\t{{.Status}}"
+elif [[ "$AUTO_MODE" == true ]]; then
+    # Ensure SHM file exists before Docker starts
+    ensure_shm_file
     echo -e "${GREEN}Auto mode: Starting services...${NC}"
     cd "$INSTALL_DIR" && run_docker_compose up -d
     echo ""
@@ -1287,6 +1380,8 @@ else
     read -p "Start services now? (Y/n): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        # Ensure SHM file exists before Docker starts
+        ensure_shm_file
         echo -e "${GREEN}Starting services...${NC}"
         cd "$INSTALL_DIR" && run_docker_compose up -d
         echo ""

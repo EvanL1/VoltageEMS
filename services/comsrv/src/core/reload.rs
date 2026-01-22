@@ -298,10 +298,11 @@ impl<R: Rtdb> ChannelManager<R> {
                 .fetch_one(pool)
                 .await?;
 
-        // Load description and parameters from config JSON
-        let (description, parameters): (
+        // Load description, parameters, and logging from config JSON
+        let (description, parameters, logging): (
             Option<String>,
             std::collections::HashMap<String, serde_json::Value>,
+            crate::core::config::ChannelLoggingConfig,
         ) = {
             let config_str: Option<String> =
                 sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
@@ -324,9 +325,26 @@ impl<R: Rtdb> ChannelManager<R> {
                         _ => std::collections::HashMap::new(),
                     };
 
-                    (desc, params)
+                    // Extract logging config from JSON
+                    let log_cfg = config_value
+                        .get("logging")
+                        .and_then(|v| {
+                            serde_json::from_value::<crate::core::config::ChannelLoggingConfig>(
+                                v.clone(),
+                            )
+                            .ok()
+                        })
+                        .unwrap_or_default();
+
+                    (desc, params, log_cfg)
                 })
-                .unwrap_or_else(|| (None, std::collections::HashMap::new()))
+                .unwrap_or_else(|| {
+                    (
+                        None,
+                        std::collections::HashMap::new(),
+                        crate::core::config::ChannelLoggingConfig::default(),
+                    )
+                })
         };
 
         Ok(ChannelConfig {
@@ -338,7 +356,7 @@ impl<R: Rtdb> ChannelManager<R> {
                 enabled,
             },
             parameters,
-            logging: crate::core::config::ChannelLoggingConfig::default(),
+            logging,
         })
     }
 
