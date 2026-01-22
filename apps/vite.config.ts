@@ -54,43 +54,43 @@ export default defineConfig({
     open: true, // 自动打开浏览器
     proxy: {
       '/api': {
-        target: 'http://192.168.30.62:6005',
+        target: 'http://192.168.30.21:6005',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/hisApi': {
-        target: 'http://192.168.30.62:6004',
+        target: 'http://192.168.30.21:6004',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/alarmApi': {
-        target: 'http://192.168.30.62:6002',
+        target: 'http://192.168.30.21:6002',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/netApi': {
-        target: 'http://192.168.30.62:6006',
+        target: 'http://192.168.30.21:6006',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/comApi': {
-        target: 'http://192.168.30.62:6001',
+        target: 'http://192.168.30.21:6001',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/comApi/, ''),
       },
       '/ruleApi': {
-        target: 'http://192.168.30.62:6002',
+        target: 'http://192.168.30.21:6002',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/ruleApi/, ''),
       },
       '/modApi': {
-        target: 'http://192.168.30.62:6002',
+        target: 'http://192.168.30.21:6002',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/modApi/, ''),
       },
       // WebSocket 代理：将前端的 /ws 转发到本机 127.0.0.1:6005
       '/ws': {
-        target: 'ws://192.168.30.62:6005',
+        target: 'ws://192.168.30.21:6005',
         changeOrigin: true,
         ws: true,
         // 不做 path 重写，保持 /ws 直通后端 /ws
@@ -156,7 +156,7 @@ export default defineConfig({
     minify: 'terser',
     terserOptions: {
       compress: {
-        drop_console: true, // 移除console
+        // drop_console: true, // 移除console
         drop_debugger: true, // 移除debugger
       },
     },

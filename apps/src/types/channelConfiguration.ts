@@ -17,6 +17,7 @@ export interface modbusTcpParams {
   port: number
   retry_count?: number
   timeout_ms?: number
+  max_batch_size: number
 }
 export interface canParams {
   bitrate: number
@@ -39,6 +40,7 @@ export interface modbusRtuParams {
   retry_count: number
   stop_bits: number
   timeout_ms: number
+  max_batch_size: number
 }
 // 通道详情信息
 export interface ChannelDetail extends ChannelBasic {
@@ -61,6 +63,10 @@ export interface ChannelDetail extends ChannelBasic {
     signal: number
     control: number
     adjustment: number
+  }
+  logging: {
+    enabled: boolean
+    level: 'info' | 'debug'
   }
 }
 export interface updateChannelDetail extends ChannelBasic {
