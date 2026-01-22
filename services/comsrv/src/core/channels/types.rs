@@ -48,6 +48,34 @@ impl ConnectionState {
             ConnectionState::Disconnected | ConnectionState::Retrying
         )
     }
+
+    /// Convert to u8 for atomic storage
+    pub const fn as_u8(self) -> u8 {
+        match self {
+            ConnectionState::Uninitialized => 0,
+            ConnectionState::Initializing => 1,
+            ConnectionState::Connecting => 2,
+            ConnectionState::Connected => 3,
+            ConnectionState::Disconnected => 4,
+            ConnectionState::Retrying => 5,
+            ConnectionState::Closed => 6,
+            ConnectionState::Failed => 7,
+        }
+    }
+
+    /// Convert from u8
+    pub const fn from_u8(v: u8) -> Self {
+        match v {
+            0 => ConnectionState::Uninitialized,
+            1 => ConnectionState::Initializing,
+            2 => ConnectionState::Connecting,
+            3 => ConnectionState::Connected,
+            4 => ConnectionState::Disconnected,
+            5 => ConnectionState::Retrying,
+            6 => ConnectionState::Closed,
+            _ => ConnectionState::Failed, // 7 or any invalid value
+        }
+    }
 }
 
 impl std::fmt::Display for ConnectionState {

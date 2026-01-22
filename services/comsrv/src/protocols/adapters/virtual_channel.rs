@@ -426,6 +426,10 @@ impl ChannelRuntime for VirtualChannel {
     async fn diagnostics(&self) -> Result<Diagnostics> {
         <Self as Protocol>::diagnostics(self).await
     }
+
+    fn connection_state(&self) -> ConnectionState {
+        <Self as Protocol>::connection_state(self)
+    }
 }
 
 #[cfg(test)]
@@ -458,7 +462,10 @@ mod tests {
         let config = VirtualChannelConfig::new("test");
         let channel = VirtualChannel::new(config, 1);
 
-        assert_eq!(channel.connection_state(), ConnectionState::Connected);
+        assert_eq!(
+            Protocol::connection_state(&channel),
+            ConnectionState::Connected
+        );
     }
 
     #[tokio::test]

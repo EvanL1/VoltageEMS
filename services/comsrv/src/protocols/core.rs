@@ -5,6 +5,7 @@
 pub mod data;
 pub mod diagnostics;
 pub mod error;
+pub mod file_logging;
 pub mod logging;
 pub mod metadata;
 pub mod point;
@@ -15,6 +16,7 @@ pub mod traits;
 pub use data::*;
 pub use diagnostics::{AtomicDiagnostics, DiagnosticsSnapshot};
 pub use error::{GatewayError, Result};
+pub use file_logging::{ChannelFileLogHandler, FileLogLevel};
 pub use metadata::{
     get_protocol_registry, DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
     ProtocolMetadata, ProtocolRegistry,

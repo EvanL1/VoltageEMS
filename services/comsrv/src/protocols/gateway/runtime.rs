@@ -5,8 +5,11 @@
 
 use async_trait::async_trait;
 
+use std::sync::Arc;
+
 use crate::protocols::core::error::Result;
-use crate::protocols::core::traits::{DataEventReceiver, Diagnostics, PollResult};
+use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
+use crate::protocols::core::traits::{ConnectionState, DataEventReceiver, Diagnostics, PollResult};
 
 /// Object-safe wrapper for protocol channels.
 ///
@@ -72,6 +75,21 @@ pub trait ChannelRuntime: Send + Sync {
 
     /// Get channel diagnostics.
     async fn diagnostics(&self) -> Result<Diagnostics>;
+
+    /// Get current connection state.
+    fn connection_state(&self) -> ConnectionState;
+
+    // === Logging ===
+
+    /// Set the log handler for this channel.
+    ///
+    /// Default implementation does nothing.
+    fn set_log_handler(&mut self, _handler: Arc<dyn ChannelLogHandler>) {}
+
+    /// Set the log configuration for this channel.
+    ///
+    /// Default implementation does nothing.
+    fn set_log_config(&mut self, _config: ChannelLogConfig) {}
 }
 
 /// Channel communication mode.

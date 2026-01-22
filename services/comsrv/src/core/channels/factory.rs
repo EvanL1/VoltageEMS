@@ -5,9 +5,6 @@
 //! This module provides factory functions that create protocol client instances
 //! (VirtualChannel, ModbusChannel, GpioChannel, CanClient) from comsrv configuration.
 
-#[cfg(feature = "modbus")]
-use std::sync::Arc;
-
 use crate::protocols::adapters::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::gateway::ChannelRuntime;
@@ -66,8 +63,6 @@ pub fn create_modbus_channel(
     port: u16,
     point_configs: Vec<PointConfig>,
 ) -> Box<dyn ChannelRuntime> {
-    use crate::protocols::core::logging::{ChannelLogConfig, LoggableProtocol, TracingLogHandler};
-
     let address = format!("{}:{}", host, port);
 
     let config = ModbusChannelConfig::tcp(&address)
@@ -75,12 +70,10 @@ pub fn create_modbus_channel(
         .with_reconnect(ReconnectConfig::default());
 
     let channel_name = format!("modbus_tcp_{}", channel_id);
-    let mut channel = ModbusChannel::new(config, channel_id, channel_name.clone());
-    // Enable tracing logs
-    channel.set_log_handler(Arc::new(TracingLogHandler));
-    channel.set_log_config(ChannelLogConfig::default());
+    let channel = ModbusChannel::new(config, channel_id, channel_name.clone());
 
     // ModbusChannel directly implements ChannelRuntime - no wrapper needed
+    // Logging is configured by ChannelManager.configure_channel_logging()
     Box::new(channel)
 }
 
@@ -102,19 +95,15 @@ pub fn create_modbus_rtu_channel(
     baud_rate: u32,
     point_configs: Vec<PointConfig>,
 ) -> Box<dyn ChannelRuntime> {
-    use crate::protocols::core::logging::{ChannelLogConfig, LoggableProtocol, TracingLogHandler};
-
     let config = ModbusChannelConfig::rtu(device, baud_rate)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
 
     let channel_name = format!("modbus_rtu_{}", channel_id);
-    let mut channel = ModbusChannel::new(config, channel_id, channel_name.clone());
-    // Enable tracing logs
-    channel.set_log_handler(Arc::new(TracingLogHandler));
-    channel.set_log_config(ChannelLogConfig::default());
+    let channel = ModbusChannel::new(config, channel_id, channel_name.clone());
 
     // ModbusChannel directly implements ChannelRuntime - no wrapper needed
+    // Logging is configured by ChannelManager.configure_channel_logging()
     Box::new(channel)
 }
 

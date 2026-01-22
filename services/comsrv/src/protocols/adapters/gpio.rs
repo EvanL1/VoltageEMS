@@ -1369,6 +1369,18 @@ impl ChannelRuntime for GpioChannel {
     async fn diagnostics(&self) -> Result<Diagnostics> {
         <Self as Protocol>::diagnostics(self).await
     }
+
+    fn connection_state(&self) -> ConnectionState {
+        <Self as Protocol>::connection_state(self)
+    }
+
+    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
+        <Self as LoggableProtocol>::set_log_handler(self, handler);
+    }
+
+    fn set_log_config(&mut self, config: ChannelLogConfig) {
+        <Self as LoggableProtocol>::set_log_config(self, config);
+    }
 }
 
 #[cfg(test)]

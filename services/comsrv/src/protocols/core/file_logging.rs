@@ -1,0 +1,539 @@
+//! File-based channel logging handler.
+//!
+//! This module provides `ChannelFileLogHandler` which writes channel logs
+//! to per-channel, per-day log files.
+//!
+//! # Directory Structure
+//!
+//! ```text
+//! /logs/comsrv/channels/
+//! ├── PCS#1/
+//! │   ├── 2025-01-22.log
+//! │   └── 2025-01-21.log
+//! ├── BAMS#1/
+//! │   └── 2025-01-22.log
+//! └── GENSET#1/
+//!     └── 2025-01-22.log
+//! ```
+//!
+//! # Log Levels
+//!
+//! - **Info**: Raw packets (hex format) and errors only
+//! - **Debug**: Raw packets + poll cycles, state changes, control writes
+
+use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use async_trait::async_trait;
+use chrono::{Local, NaiveDate};
+
+use super::logging::{
+    ChannelLogEvent, ChannelLogHandler, ErrorContext, PacketDirection, PacketMetadata,
+};
+
+// ============================================================================
+// File Log Level
+// ============================================================================
+
+/// Log level for file logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FileLogLevel {
+    /// Info level: raw packets and errors only.
+    #[default]
+    Info,
+    /// Debug level: raw packets + poll cycles, state changes, control writes.
+    Debug,
+}
+
+impl FileLogLevel {
+    /// Parse from optional string (case-insensitive).
+    pub fn parse(s: Option<&str>) -> Self {
+        match s.map(str::to_lowercase).as_deref() {
+            Some("debug") => Self::Debug,
+            _ => Self::Info,
+        }
+    }
+}
+
+// ============================================================================
+// Channel File Log Handler
+// ============================================================================
+
+/// State for an open log file.
+struct OpenFile {
+    /// The date this file was created for.
+    date: NaiveDate,
+    /// Buffered writer for the file.
+    writer: BufWriter<File>,
+}
+
+/// File-based channel log handler.
+///
+/// Writes channel logs to per-channel, per-day log files.
+/// Thread-safe through internal `Mutex` on file handles.
+pub struct ChannelFileLogHandler {
+    /// Base directory for log files.
+    base_dir: PathBuf,
+    /// Mapping from channel_id to channel name.
+    channel_names: HashMap<u32, String>,
+    /// Open file handles: channel_id -> (date, writer).
+    open_files: Mutex<HashMap<u32, OpenFile>>,
+    /// Log level filter.
+    level: FileLogLevel,
+}
+
+impl ChannelFileLogHandler {
+    /// Create a new file log handler with the given base directory.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let handler = ChannelFileLogHandler::new("/logs/comsrv/channels")
+    ///     .with_level(FileLogLevel::Debug)
+    ///     .with_channel(1, "PCS#1");
+    /// ```
+    pub fn new(base_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            base_dir: base_dir.into(),
+            channel_names: HashMap::new(),
+            open_files: Mutex::new(HashMap::new()),
+            level: FileLogLevel::default(),
+        }
+    }
+
+    /// Set the log level.
+    #[must_use]
+    pub fn with_level(mut self, level: FileLogLevel) -> Self {
+        self.level = level;
+        self
+    }
+
+    /// Register a channel with its name.
+    #[must_use]
+    pub fn with_channel(mut self, channel_id: u32, channel_name: impl Into<String>) -> Self {
+        self.channel_names.insert(channel_id, channel_name.into());
+        self
+    }
+
+    /// Register a channel (mutable variant).
+    pub fn add_channel(&mut self, channel_id: u32, channel_name: impl Into<String>) {
+        self.channel_names.insert(channel_id, channel_name.into());
+    }
+
+    /// Sanitize channel name for use as directory name.
+    /// Replaces invalid filesystem characters with underscore.
+    fn sanitize_name(name: &str) -> String {
+        name.chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == '#' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    /// Get or create the directory for a channel.
+    fn get_channel_dir(&self, channel_id: u32) -> PathBuf {
+        let channel_name = self
+            .channel_names
+            .get(&channel_id)
+            .map(|s| Self::sanitize_name(s))
+            .unwrap_or_else(|| format!("channel_{}", channel_id));
+
+        self.base_dir.join(channel_name)
+    }
+
+    /// Get or create a file writer for the given channel and date.
+    fn get_writer(
+        &self,
+        channel_id: u32,
+        date: NaiveDate,
+    ) -> Option<std::sync::MutexGuard<'_, HashMap<u32, OpenFile>>> {
+        let mut files = self.open_files.lock().ok()?;
+
+        // Check if we need to open a new file (new day or new channel)
+        let needs_new_file = match files.get(&channel_id) {
+            Some(open) => open.date != date,
+            None => true,
+        };
+
+        if needs_new_file {
+            // Create channel directory if needed
+            let channel_dir = self.get_channel_dir(channel_id);
+            if let Err(e) = fs::create_dir_all(&channel_dir) {
+                tracing::warn!("Failed to create log directory {:?}: {}", channel_dir, e);
+                return None;
+            }
+
+            // Open log file for the date
+            let file_path = channel_dir.join(format!("{}.log", date.format("%Y-%m-%d")));
+            let file = match OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&file_path)
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("Failed to open log file {:?}: {}", file_path, e);
+                    return None;
+                },
+            };
+
+            files.insert(
+                channel_id,
+                OpenFile {
+                    date,
+                    writer: BufWriter::new(file),
+                },
+            );
+        }
+
+        Some(files)
+    }
+
+    /// Format a raw packet event as log line.
+    fn format_raw_packet(
+        &self,
+        direction: &PacketDirection,
+        data: &[u8],
+        metadata: &PacketMetadata,
+    ) -> String {
+        let mut line = String::with_capacity(128);
+
+        // Direction arrow
+        let arrow = match direction {
+            PacketDirection::Send => ">>>",
+            PacketDirection::Receive => "<<<",
+        };
+
+        // Protocol name and metadata
+        let proto_info = match metadata {
+            PacketMetadata::Modbus {
+                slave_id,
+                function_code,
+                ..
+            } => {
+                format!("modbus [slave={} fc=0x{:02X}]", slave_id, function_code)
+            },
+            PacketMetadata::Iec104 {
+                asdu_type,
+                cause_of_tx,
+                common_addr,
+            } => {
+                format!(
+                    "iec104 [type={} cot={} ca={}]",
+                    asdu_type, cause_of_tx, common_addr
+                )
+            },
+            PacketMetadata::J1939 {
+                pgn,
+                source,
+                destination,
+            } => {
+                format!("j1939 [pgn={} src={} dst={}]", pgn, source, destination)
+            },
+            PacketMetadata::OpcUa {
+                message_type,
+                request_id,
+            } => {
+                format!("opcua [msg={} req={}]", message_type, request_id)
+            },
+            PacketMetadata::Gpio => "gpio".to_string(),
+            PacketMetadata::Virtual => "virtual".to_string(),
+            PacketMetadata::Other { protocol } => protocol.clone(),
+        };
+
+        // Format: >>> modbus [slave=1 fc=0x03] [12B] 00 01 00 00 00 06 01 03 00 64 00 0A
+        let _ = write!(line, "{} {} [{}B] ", arrow, proto_info, data.len());
+
+        // Append hex data
+        for (i, byte) in data.iter().enumerate() {
+            if i > 0 {
+                line.push(' ');
+            }
+            let _ = write!(line, "{:02X}", byte);
+        }
+
+        line
+    }
+
+    /// Format an error event as log line.
+    fn format_error(&self, error: &str, context: &ErrorContext) -> String {
+        format!("[ERROR] [{}] {}", context, error)
+    }
+
+    /// Format a poll cycle event as log line (debug mode only).
+    fn format_poll_cycle(
+        &self,
+        points_count: usize,
+        success_count: usize,
+        failed_count: usize,
+        duration_ms: u64,
+    ) -> String {
+        format!(
+            "[POLL] points={} ok={} fail={} ({}ms)",
+            points_count, success_count, failed_count, duration_ms
+        )
+    }
+
+    /// Format a state change event as log line (debug mode only).
+    fn format_state_change(
+        &self,
+        old_state: &crate::protocols::core::ConnectionState,
+        new_state: &crate::protocols::core::ConnectionState,
+    ) -> String {
+        format!("[STATE] {} -> {}", old_state, new_state)
+    }
+
+    /// Format a control write event as log line (debug mode only).
+    fn format_control_write(
+        &self,
+        commands_count: usize,
+        result: &Result<crate::protocols::core::WriteResult, String>,
+        duration_ms: u64,
+    ) -> String {
+        match result {
+            Ok(write_result) => {
+                format!(
+                    "[CONTROL] cmds={} ok ({}) ({}ms)",
+                    commands_count, write_result.success_count, duration_ms
+                )
+            },
+            Err(e) => {
+                format!(
+                    "[CONTROL] cmds={} FAILED: {} ({}ms)",
+                    commands_count, e, duration_ms
+                )
+            },
+        }
+    }
+
+    /// Write a log line to the channel's log file.
+    fn write_log(&self, channel_id: u32, line: &str) {
+        let now = Local::now();
+        let date = now.date_naive();
+
+        if let Some(mut files) = self.get_writer(channel_id, date) {
+            if let Some(open_file) = files.get_mut(&channel_id) {
+                let timestamp = now.format("%Y-%m-%d %H:%M:%S%.3f");
+                let _ = writeln!(open_file.writer, "{} {}", timestamp, line);
+                let _ = open_file.writer.flush();
+            }
+        }
+    }
+
+    /// Check if the event should be logged based on the level.
+    fn should_log(&self, event: &ChannelLogEvent) -> bool {
+        match event {
+            // Always log these at Info level
+            ChannelLogEvent::RawPacket { .. } => true,
+            ChannelLogEvent::Error { .. } => true,
+            ChannelLogEvent::Connected { .. } => true,
+            ChannelLogEvent::Disconnected { .. } => true,
+
+            // Debug level only
+            ChannelLogEvent::PollCycleCompleted { .. } => self.level == FileLogLevel::Debug,
+            ChannelLogEvent::StateChanged { .. } => self.level == FileLogLevel::Debug,
+            ChannelLogEvent::ControlWrite { .. } => self.level == FileLogLevel::Debug,
+            ChannelLogEvent::AdjustmentWrite { .. } => self.level == FileLogLevel::Debug,
+            ChannelLogEvent::ReconnectAttempt { .. } => self.level == FileLogLevel::Debug,
+            ChannelLogEvent::ReconnectSuccess { .. } => self.level == FileLogLevel::Debug,
+            ChannelLogEvent::ReadOperation { .. } => self.level == FileLogLevel::Debug,
+        }
+    }
+}
+
+#[async_trait]
+impl ChannelLogHandler for ChannelFileLogHandler {
+    async fn on_log(&self, channel_id: u32, event: ChannelLogEvent) {
+        // Level filter
+        if !self.should_log(&event) {
+            return;
+        }
+
+        let line = match &event {
+            ChannelLogEvent::RawPacket {
+                direction,
+                data,
+                metadata,
+                ..
+            } => self.format_raw_packet(direction, data, metadata),
+
+            ChannelLogEvent::Error { error, context, .. } => self.format_error(error, context),
+
+            ChannelLogEvent::Connected {
+                endpoint,
+                duration_ms,
+                ..
+            } => {
+                format!("[CONNECTED] {} ({}ms)", endpoint, duration_ms)
+            },
+
+            ChannelLogEvent::Disconnected { reason, .. } => {
+                let reason_str = reason.as_deref().unwrap_or("intentional");
+                format!("[DISCONNECTED] reason={}", reason_str)
+            },
+
+            ChannelLogEvent::PollCycleCompleted {
+                points_count,
+                success_count,
+                failed_count,
+                duration_ms,
+                ..
+            } => self.format_poll_cycle(*points_count, *success_count, *failed_count, *duration_ms),
+
+            ChannelLogEvent::StateChanged {
+                old_state,
+                new_state,
+                ..
+            } => self.format_state_change(old_state, new_state),
+
+            ChannelLogEvent::ControlWrite {
+                commands,
+                result,
+                duration_ms,
+                ..
+            } => self.format_control_write(commands.len(), result, *duration_ms),
+
+            ChannelLogEvent::AdjustmentWrite {
+                commands,
+                result,
+                duration_ms,
+                ..
+            } => match result {
+                Ok(write_result) => {
+                    format!(
+                        "[ADJUST] cmds={} ok ({}) ({}ms)",
+                        commands.len(),
+                        write_result.success_count,
+                        duration_ms
+                    )
+                },
+                Err(e) => {
+                    format!(
+                        "[ADJUST] cmds={} FAILED: {} ({}ms)",
+                        commands.len(),
+                        e,
+                        duration_ms
+                    )
+                },
+            },
+
+            ChannelLogEvent::ReconnectAttempt {
+                attempt,
+                max_attempts,
+                next_retry_ms,
+                ..
+            } => {
+                let max_str = max_attempts
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "∞".to_string());
+                let retry_str = next_retry_ms
+                    .map(|ms| format!(" retry in {}ms", ms))
+                    .unwrap_or_default();
+                format!("[RECONNECT] attempt {}/{}{}", attempt, max_str, retry_str)
+            },
+
+            ChannelLogEvent::ReconnectSuccess {
+                total_attempts,
+                total_duration_ms,
+                ..
+            } => {
+                format!(
+                    "[RECONNECT] SUCCESS after {} attempts ({}ms)",
+                    total_attempts, total_duration_ms
+                )
+            },
+
+            ChannelLogEvent::ReadOperation { .. } => {
+                // Skip detailed read operations in file log
+                return;
+            },
+        };
+
+        self.write_log(channel_id, &line);
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_sanitize_name() {
+        assert_eq!(ChannelFileLogHandler::sanitize_name("PCS#1"), "PCS#1");
+        assert_eq!(ChannelFileLogHandler::sanitize_name("BAMS/1"), "BAMS_1");
+        assert_eq!(
+            ChannelFileLogHandler::sanitize_name("test:name"),
+            "test_name"
+        );
+        assert_eq!(ChannelFileLogHandler::sanitize_name("a b c"), "a_b_c");
+    }
+
+    #[test]
+    fn test_file_log_level_from_str() {
+        assert_eq!(FileLogLevel::parse(None), FileLogLevel::Info);
+        assert_eq!(FileLogLevel::parse(Some("info")), FileLogLevel::Info);
+        assert_eq!(FileLogLevel::parse(Some("INFO")), FileLogLevel::Info);
+        assert_eq!(FileLogLevel::parse(Some("debug")), FileLogLevel::Debug);
+        assert_eq!(FileLogLevel::parse(Some("DEBUG")), FileLogLevel::Debug);
+    }
+
+    #[tokio::test]
+    async fn test_file_log_handler() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let handler = ChannelFileLogHandler::new(temp_dir.path())
+            .with_level(FileLogLevel::Debug)
+            .with_channel(1, "TestChannel#1");
+
+        // Log a raw packet
+        let event = ChannelLogEvent::RawPacket {
+            timestamp: SystemTime::now(),
+            direction: PacketDirection::Send,
+            data: vec![
+                0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x64, 0x00, 0x0A,
+            ],
+            metadata: PacketMetadata::modbus_tcp(1, 0x03),
+        };
+
+        handler.on_log(1, event).await;
+
+        // Verify file was created
+        let channel_dir = temp_dir.path().join("TestChannel#1");
+        assert!(channel_dir.exists());
+
+        let today = Local::now().date_naive();
+        let log_file = channel_dir.join(format!("{}.log", today.format("%Y-%m-%d")));
+        assert!(log_file.exists());
+
+        // Verify content
+        let content = fs::read_to_string(&log_file).expect("Failed to read log file");
+        assert!(content.contains(">>> modbus [slave=1 fc=0x03]"));
+        assert!(content.contains("00 01 00 00 00 06 01 03 00 64 00 0A"));
+    }
+
+    #[test]
+    fn test_format_raw_packet() {
+        let handler = ChannelFileLogHandler::new("/tmp");
+
+        let line = handler.format_raw_packet(
+            &PacketDirection::Send,
+            &[0x00, 0x01, 0x00, 0x00, 0x00, 0x06],
+            &PacketMetadata::modbus_tcp(1, 0x03),
+        );
+
+        assert_eq!(line, ">>> modbus [slave=1 fc=0x03] [6B] 00 01 00 00 00 06");
+    }
+}
