@@ -132,6 +132,10 @@ pub enum ProtocolAddress {
 
     /// Generic string address (for custom protocols).
     Generic(String),
+
+    /// DL/T 645-2007 address (for smart meters).
+    #[cfg(feature = "dl645")]
+    Dl645(Dl645Address),
 }
 
 /// Virtual channel address.
@@ -163,6 +167,86 @@ impl VirtualAddress {
             group: Some(group.into()),
             tag: tag.into(),
         }
+    }
+}
+
+/// DL/T 645-2007 point address (DI code only).
+///
+/// The DI code (Data Identifier) specifies which data item to read from the meter.
+/// The meter address is configured at the channel level, not per-point.
+///
+/// # Format
+///
+/// Supports hexadecimal format with optional "0x" prefix:
+/// - `"0x02010100"` - A相电压
+/// - `"02010100"` - same as above, without prefix
+///
+/// # Example
+///
+/// ```ignore
+/// // Create address for A-phase voltage
+/// let addr = Dl645Address::new(0x02010100);
+///
+/// // Parse from string
+/// let addr = Dl645Address::parse("0x02010100")?;
+/// ```
+#[cfg(feature = "dl645")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dl645Address {
+    /// DI code (Data Identifier, 4 bytes).
+    /// Standard codes defined in DL/T 645-2007.
+    pub di_code: u32,
+}
+
+#[cfg(feature = "dl645")]
+impl Dl645Address {
+    /// Create a new DL/T 645 address from DI code.
+    #[must_use]
+    pub fn new(di_code: u32) -> Self {
+        Self { di_code }
+    }
+
+    /// Parse from hexadecimal string (with or without "0x" prefix).
+    ///
+    /// # Examples
+    ///
+    /// - `"0x02010100"` → di_code = 0x02010100
+    /// - `"02010100"` → di_code = 0x02010100
+    /// - `"00010000"` → di_code = 0x00010000 (正向有功总电能)
+    pub fn parse(s: &str) -> Result<Self, GatewayError> {
+        let s = s.trim();
+
+        // Remove optional "0x" or "0X" prefix
+        let hex_str = s
+            .strip_prefix("0x")
+            .or_else(|| s.strip_prefix("0X"))
+            .unwrap_or(s);
+
+        // Validate: must be 8 hex characters
+        if hex_str.len() != 8 {
+            return Err(GatewayError::Config(format!(
+                "Invalid DL/T 645 DI code: '{}'. Expected 8 hex characters (e.g., '02010100').",
+                s
+            )));
+        }
+
+        if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(GatewayError::Config(format!(
+                "Invalid DL/T 645 DI code: '{}'. Must contain only hex digits.",
+                s
+            )));
+        }
+
+        let di_code = u32::from_str_radix(hex_str, 16)
+            .map_err(|_| GatewayError::Config(format!("Failed to parse DI code: '{}'", s)))?;
+
+        Ok(Self::new(di_code))
+    }
+
+    /// Get the DI code as a hex string (8 uppercase characters).
+    #[must_use]
+    pub fn to_hex_string(&self) -> String {
+        format!("{:08X}", self.di_code)
     }
 }
 

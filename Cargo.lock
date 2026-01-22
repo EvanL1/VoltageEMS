@@ -597,10 +597,8 @@ dependencies = [
  "serde_yaml",
  "sqlx",
  "sysinfo",
- "tempfile",
  "thiserror 2.0.17",
  "tokio",
- "tokio-test",
  "tokio-util",
  "tracing",
  "tracing-appender",
@@ -643,7 +641,6 @@ dependencies = [
  "errors",
  "futures",
  "http-body-util",
- "modsrv",
  "once_cell",
  "rand 0.8.5",
  "redis",
@@ -657,13 +654,13 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-gpiod",
+ "tokio-serial",
  "tokio-util",
  "tower",
  "tower-http",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "tracing-test",
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
@@ -1350,6 +1347,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1379,6 +1385,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
 ]
 
 [[package]]
@@ -3078,6 +3094,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 
 [[package]]
+name = "simulator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "rand 0.8.5",
+ "serde",
+ "serde_yaml",
+ "tokio",
+ "tokio-serial",
+ "tracing",
+ "tracing-subscriber",
+ "voltage-sim",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3686,17 +3719,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-test"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6d24790a10a7af737693a3e8f1d03faef7e6ca0cc99aae5066f533766de545"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
 name = "tokio-util"
 version = "0.7.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3842,27 +3864,6 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
-]
-
-[[package]]
-name = "tracing-test"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "557b891436fe0d5e0e363427fc7f217abf9ccd510d5136549847bdcbcd011d68"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracing-test-macro",
-]
-
-[[package]]
-name = "tracing-test-macro"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04659ddb06c87d233c566112c1c9c5b9e98256d9af50ec3bc9c8327f873a7568"
-dependencies = [
- "quote",
- "syn 2.0.114",
 ]
 
 [[package]]
@@ -4071,6 +4072,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "voltage-core"
+version = "0.1.0"
+dependencies = [
+ "heapless",
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "voltage-infra"
 version = "0.1.0"
 dependencies = [
@@ -4100,6 +4110,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "utoipa",
+ "voltage-core",
 ]
 
 [[package]]
@@ -4169,14 +4180,29 @@ dependencies = [
 name = "voltage-schema-macro"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "darling 0.20.11",
  "heck",
  "proc-macro2",
  "quote",
- "serde",
- "serde_json",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "voltage-shm"
+version = "0.1.0"
+dependencies = [
+ "memmap2",
+ "tempfile",
+ "voltage-core",
+]
+
+[[package]]
+name = "voltage-sim"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand 0.8.5",
+ "serde",
 ]
 
 [[package]]
@@ -4201,6 +4227,8 @@ checksum = "6fc1183d33494cddfff62e98bb6f1eb16fa15bf3739ceb804700433cd46a8546"
 [[package]]
 name = "voltage_modbus"
 version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d1f4757edd39317b1e7d8205151b301f6a7503d37231b305dadecfc68b89d52"
 dependencies = [
  "bytes",
  "chrono",

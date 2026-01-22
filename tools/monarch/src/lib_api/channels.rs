@@ -5,6 +5,7 @@
 use crate::context::ComsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use serde::{Deserialize, Serialize};
+use voltage_model::{KeySpaceConfig, PointType};
 use voltage_rtdb::Rtdb; // Trait must be in scope for method calls
 
 // Use chrono from sqlx::types for timestamp generation
@@ -62,15 +63,11 @@ impl<'a> ChannelsService<'a> {
 
         for (channel_id, name, protocol, enabled) in db_channels {
             // Check if channel is connected at runtime
-            let connected = manager
-                .get_channel(channel_id)
-                .map(|_ch| {
-                    // Access the channel's runtime status
-                    // Note: This assumes channels have a is_connected method
-                    // If not available, default to false
-                    false // TODO: Implement connection status check
-                })
-                .unwrap_or(false);
+            let connected = if let Some(ch) = manager.get_channel(channel_id) {
+                ch.is_connected().await
+            } else {
+                false
+            };
 
             summaries.push(ChannelSummary {
                 id: channel_id,
@@ -102,13 +99,25 @@ impl<'a> ChannelsService<'a> {
 
         // Get runtime status from channel manager
         let manager = self.ctx.channel_manager.read().await;
-        let (connected, connection_info, last_error) = manager
-            .get_channel(channel_id)
-            .map(|_ch| {
-                // TODO: Extract actual connection info and error from channel
+        let (connected, connection_info, last_error) =
+            if let Some(ch) = manager.get_channel(channel_id) {
+                let status = ch.get_status().await;
+                // get_diagnostics may fail if the channel protocol task is not running
+                let (conn_info, err_info) = match ch.get_diagnostics(channel_id).await {
+                    Ok(diag) => (
+                        diag.get("connection_info")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        diag.get("last_error")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                    ),
+                    Err(_) => (None, None),
+                };
+                (status.is_connected, conn_info, err_info)
+            } else {
                 (false, None, None)
-            })
-            .unwrap_or((false, None, None));
+            };
 
         Ok(ChannelStatus {
             id: channel_id,
@@ -133,9 +142,10 @@ impl<'a> ChannelsService<'a> {
             );
         }
 
-        // Build the key for the control point
-        let key = format!("comsrv:{}:C", channel_id);
-        let todo_key = format!("comsrv:{}:C:TODO", channel_id);
+        // Build the key for the control point using KeySpaceConfig
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.channel_key(channel_id, PointType::Control);
+        let todo_key = keyspace.todo_queue_key(channel_id, PointType::Control);
 
         // Write to RTDB (this will trigger the channel to send the command)
         self.ctx
@@ -162,9 +172,10 @@ impl<'a> ChannelsService<'a> {
     /// Sends an analog adjustment value to a specific point on a channel.
     #[allow(clippy::disallowed_methods)] // serde_json::json! macro uses unwrap internally
     pub async fn send_adjustment(&self, channel_id: u32, point_id: u32, value: f64) -> Result<()> {
-        // Write to Redis TODO queue via channel manager
-        let key = format!("comsrv:{}:A", channel_id);
-        let todo_key = format!("comsrv:{}:A:TODO", channel_id);
+        // Write to Redis TODO queue via channel manager using KeySpaceConfig
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.channel_key(channel_id, PointType::Adjustment);
+        let todo_key = keyspace.todo_queue_key(channel_id, PointType::Adjustment);
 
         // Write to RTDB
         self.ctx
@@ -201,7 +212,8 @@ impl<'a> ChannelsService<'a> {
     /// Public API for data access.
     #[allow(dead_code)]
     pub async fn get_telemetry_points(&self, channel_id: u16) -> Result<Vec<(String, String)>> {
-        let key = format!("comsrv:{}:T", channel_id);
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.channel_key(channel_id as u32, PointType::Telemetry);
         let points = self.ctx.rtdb.hash_get_all(&key).await?;
 
         let result: Vec<(String, String)> = points
@@ -218,7 +230,8 @@ impl<'a> ChannelsService<'a> {
     /// Public API for data access.
     #[allow(dead_code)]
     pub async fn get_signal_points(&self, channel_id: u16) -> Result<Vec<(String, String)>> {
-        let key = format!("comsrv:{}:S", channel_id);
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.channel_key(channel_id as u32, PointType::Signal);
         let points = self.ctx.rtdb.hash_get_all(&key).await?;
 
         let result: Vec<(String, String)> = points

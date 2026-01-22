@@ -7,6 +7,7 @@ use anyhow::Result;
 use common::{InstanceReloadResult, ReloadableService};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
 
 use crate::instance_manager::InstanceManager;
@@ -62,7 +63,7 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
             // Avoids intermediate to_vec() copy
             let instance_name = self
                 .rtdb
-                .get(&format!("inst:{}:name", id))
+                .get(&KeySpaceConfig::production_cached().instance_name_key(*id))
                 .await
                 .ok()
                 .flatten()

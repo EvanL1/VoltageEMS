@@ -236,7 +236,7 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
                                 Ok(Some((queue, data_bytes))) => {
                                     // Determine the command type.
                                     let is_control = queue.contains(":C:");
-                                    let point_type_str = if is_control { "C" } else { "A" };
+                                    let point_type = if is_control { PointType::Control } else { PointType::Adjustment };
 
                                     // ★ Parse with untagged enum (single JSON parse for both formats)
                                     let trigger_msg: TriggerMessage = match serde_json::from_slice(&data_bytes) {
@@ -258,8 +258,8 @@ impl<R: Rtdb + 'static> CommandTrigger<R> {
 
                                             // Structure B: comsrv:{channel_id}:{type} for values
                                             //              comsrv:{channel_id}:{type}:ts for timestamps
-                                            let channel_key = format!("comsrv:{}:{}", channel_id, point_type_str);
-                                            let ts_key = format!("{}:ts", channel_key);
+                                            let channel_key = keyspace.channel_key(channel_id, point_type);
+                                            let ts_key = keyspace.channel_ts_key(channel_id, point_type);
                                             let point_id_str = point_id.to_string(); // Pre-allocate for reuse
 
                                             // Read timestamp from :ts hash

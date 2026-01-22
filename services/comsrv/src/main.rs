@@ -37,7 +37,10 @@ use comsrv::{
     shutdown_services, wait_for_shutdown,
 };
 use voltage_routing::load_routing_maps;
-use voltage_rtdb::{is_shm_available, ChannelToSlotIndex, SharedConfig, UnifiedWriter};
+use voltage_rtdb::{
+    is_shm_available, snapshot_exists, ChannelToSlotIndex, SharedConfig, SnapshotConfig,
+    SnapshotManager, UnifiedWriter,
+};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -141,7 +144,8 @@ async fn main() -> VoltageResult<()> {
     // ============ Phase 2.5: Initialize UnifiedWriter (shared memory) ============
     // UnifiedWriter: creates shared memory with indexes from RoutingCache
     // Simplified: no SlotMeta, indexes are Vec in process memory
-    let (shared_writer, channel_index) = {
+    // Now with snapshot restore/save support
+    let (shared_writer, channel_index, snapshot_manager_handle, snapshot_shutdown_tx) = {
         // Load SharedConfig parameters from database
         let config = {
             let mut cfg = SharedConfig::default();
@@ -163,17 +167,68 @@ async fn main() -> VoltageResult<()> {
                 cfg = cfg.with_max_slots(v);
             }
 
-            debug!("SharedConfig: max_slots={:?}", cfg.max_slots());
+            // Apply snapshot configuration from environment
+            cfg = cfg.with_snapshot_from_env();
+
+            debug!(
+                "SharedConfig: max_slots={:?}, snapshot_path={:?}, snapshot_interval={:?}",
+                cfg.max_slots(),
+                cfg.snapshot_path(),
+                cfg.snapshot_interval()
+            );
             cfg
         };
 
         // Create UnifiedWriter from RoutingCache (automatic slot allocation)
         // is_shm_available checks if parent directory exists (Docker mount point)
         if is_shm_available(&config) {
-            match UnifiedWriter::create(&config, &routing_cache) {
+            // Try to restore from snapshot first (if enabled and snapshot exists)
+            let writer = if config.restore_on_start() {
+                if let Some(snapshot_path) = config.snapshot_path() {
+                    if snapshot_exists(snapshot_path) {
+                        info!("Attempting to restore from snapshot: {:?}", snapshot_path);
+                        match UnifiedWriter::restore_from_snapshot(
+                            &config,
+                            snapshot_path,
+                            &routing_cache,
+                        ) {
+                            Ok(w) => {
+                                info!(
+                                    "UnifiedWriter: restored from snapshot with {} slots",
+                                    w.slot_count()
+                                );
+                                Some(w)
+                            },
+                            Err(e) => {
+                                warn!("Snapshot restore failed, creating fresh: {}", e);
+                                None
+                            },
+                        }
+                    } else {
+                        debug!(
+                            "No snapshot file found at {:?}, creating fresh",
+                            snapshot_path
+                        );
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                debug!("Snapshot restore disabled, creating fresh");
+                None
+            };
+
+            // If restore failed or not attempted, create fresh
+            let writer = match writer {
+                Some(w) => Ok(w),
+                None => UnifiedWriter::create(&config, &routing_cache),
+            };
+
+            match writer {
                 Ok(writer) => {
                     info!(
-                        "UnifiedWriter: created with {} slots (Header + PointSlots only)",
+                        "UnifiedWriter: ready with {} slots (Header + PointSlots only)",
                         writer.slot_count()
                     );
 
@@ -181,16 +236,42 @@ async fn main() -> VoltageResult<()> {
                     let index = ChannelToSlotIndex::from_unified_writer(&writer);
                     info!("ChannelToSlotIndex: {} mappings", index.len());
 
-                    (Some(Arc::new(writer)), Some(Arc::new(index)))
+                    let writer = Arc::new(writer);
+
+                    // Start SnapshotManager if configured
+                    let (snapshot_handle, snapshot_tx) = if let (Some(path), Some(interval)) =
+                        (config.snapshot_path(), config.snapshot_interval())
+                    {
+                        let (tx, rx) = tokio::sync::watch::channel(false);
+                        let snapshot_config = SnapshotConfig::new(path.clone(), interval);
+                        let manager =
+                            SnapshotManager::new(Arc::clone(&writer), snapshot_config, rx);
+                        let handle = manager.start();
+                        info!(
+                            "SnapshotManager started: interval={:?}, path={:?}",
+                            interval, path
+                        );
+                        (Some(handle), Some(tx))
+                    } else {
+                        debug!("SnapshotManager not started (snapshot disabled)");
+                        (None, None)
+                    };
+
+                    (
+                        Some(writer),
+                        Some(Arc::new(index)),
+                        snapshot_handle,
+                        snapshot_tx,
+                    )
                 },
                 Err(e) => {
                     tracing::warn!("UnifiedWriter not available: {}", e);
-                    (None, None)
+                    (None, None, None, None)
                 },
             }
         } else {
             info!("SharedMemory path not found, skipping (non-Docker environment)");
-            (None, None)
+            (None, None, None, None)
         }
     };
 
@@ -334,6 +415,12 @@ async fn main() -> VoltageResult<()> {
     // Signal SHM listener to shutdown
     let _ = shm_listener_shutdown_tx.send(true);
 
+    // Signal SnapshotManager to shutdown and save final snapshot
+    if let Some(tx) = snapshot_shutdown_tx {
+        let _ = tx.send(true);
+        info!("Signaled SnapshotManager to save final snapshot");
+    }
+
     shutdown_services(
         channel_manager,
         shutdown_token,
@@ -348,6 +435,15 @@ async fn main() -> VoltageResult<()> {
     if let Some(handle) = shm_listener_handle {
         let _ = handle.await;
         info!("ShmCommandListener shutdown complete");
+    }
+
+    // Wait for SnapshotManager to complete (saves final snapshot)
+    if let Some(handle) = snapshot_manager_handle {
+        match tokio::time::timeout(std::time::Duration::from_secs(10), handle).await {
+            Ok(Ok(())) => info!("SnapshotManager shutdown complete"),
+            Ok(Err(e)) => error!("SnapshotManager task failed: {}", e),
+            Err(_) => error!("SnapshotManager shutdown timed out"),
+        }
     }
 
     Ok(())

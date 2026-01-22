@@ -225,7 +225,7 @@ jobs:
              \`\`\`bash
              cd /opt/MonarchEdge
              docker-compose up -d
-             monarch sync all
+             monarch sync
              \`\`\`
 
           ### Package Contents

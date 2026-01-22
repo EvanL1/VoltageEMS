@@ -6,6 +6,7 @@ use crate::context::ModsrvContext;
 use crate::lib_api::{LibApiError, Result};
 use modsrv::{CreateInstanceRequest, Instance, Product};
 use serde::{Deserialize, Serialize};
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
 
 /// Instance summary for list operations
@@ -14,7 +15,6 @@ pub struct InstanceSummary {
     pub id: u32,
     pub name: String,
     pub product_name: String,
-    pub enabled: bool,
 }
 
 /// Models service - provides instance and product management operations
@@ -33,19 +33,18 @@ impl<'a> ModelsService<'a> {
     /// Returns a list of all configured model instances.
     pub async fn list_instances(&self) -> Result<Vec<InstanceSummary>> {
         // Query database for instances
-        let db_instances: Vec<(u32, String, String, bool)> = sqlx::query_as(
-            "SELECT instance_id, name, product_name, enabled FROM instances ORDER BY instance_id",
+        let db_instances: Vec<(u32, String, String)> = sqlx::query_as(
+            "SELECT instance_id, instance_name, product_name FROM instances ORDER BY instance_id",
         )
         .fetch_all(&self.ctx.sqlite_pool)
         .await?;
 
         let summaries: Vec<InstanceSummary> = db_instances
             .into_iter()
-            .map(|(id, name, product_name, enabled)| InstanceSummary {
+            .map(|(id, name, product_name)| InstanceSummary {
                 id,
                 name,
                 product_name,
-                enabled,
             })
             .collect();
 
@@ -138,7 +137,7 @@ impl<'a> ModelsService<'a> {
     pub async fn get_instance_data(&self, name: &str) -> Result<Vec<(String, String)>> {
         // First, get instance ID from database
         let instance: Option<(i64,)> =
-            sqlx::query_as("SELECT instance_id FROM instances WHERE name = ?")
+            sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
                 .bind(name)
                 .fetch_optional(&self.ctx.sqlite_pool)
                 .await?;
@@ -146,8 +145,9 @@ impl<'a> ModelsService<'a> {
         let (instance_id,) = instance
             .ok_or_else(|| LibApiError::not_found(format!("Instance '{}' not found", name)))?;
 
-        // Get data from Redis
-        let key = format!("inst:{}:M", instance_id);
+        // Get data from Redis using KeySpaceConfig
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.instance_measurement_key(instance_id as u32);
         let points = self.ctx.rtdb.hash_get_all(&key).await?;
 
         let result: Vec<(String, String)> = points
@@ -172,7 +172,7 @@ impl<'a> ModelsService<'a> {
     ) -> Result<()> {
         // Get instance ID
         let instance: Option<(i64,)> =
-            sqlx::query_as("SELECT instance_id FROM instances WHERE name = ?")
+            sqlx::query_as("SELECT instance_id FROM instances WHERE instance_name = ?")
                 .bind(instance_name)
                 .fetch_optional(&self.ctx.sqlite_pool)
                 .await?;
@@ -181,9 +181,10 @@ impl<'a> ModelsService<'a> {
             LibApiError::not_found(format!("Instance '{}' not found", instance_name))
         })?;
 
-        // Write to instance action hash
+        // Write to instance action hash using KeySpaceConfig
         // Note: Actual routing is handled by application layer (voltage_routing::set_action_point)
-        let key = format!("inst:{}:A", instance_id);
+        let keyspace = KeySpaceConfig::production_cached();
+        let key = keyspace.instance_action_key(instance_id as u32);
         self.ctx
             .rtdb
             .hash_set(&key, &point_id.to_string(), value.to_string().into())

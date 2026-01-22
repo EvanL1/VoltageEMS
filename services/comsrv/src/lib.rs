@@ -2,6 +2,9 @@
 //!
 //! Industrial communication service providing unified interface for various protocols
 
+// Allow large error types - AppError contains rich error context by design
+#![allow(clippy::result_large_err)]
+
 // Module declarations
 pub mod error;
 pub mod protocols;

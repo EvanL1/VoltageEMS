@@ -17,13 +17,12 @@ benchmarks
 
 # backup
 * bac
-# DOC
-docs/
 
 # Claude and dot files
 .claude/
 .*
 !.env
+!.env.example
 !.gitignore
 !.gitmodules
 !.github/

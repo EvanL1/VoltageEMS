@@ -1,0 +1,6 @@
+# E2E Test - modsrv configuration
+# Products from git submodule, instances for E2E testing
+
+products_path: "libs/voltage-model/src/products"
+instances_path: "config.e2e/modsrv/instances"
+auto_load_instances: true

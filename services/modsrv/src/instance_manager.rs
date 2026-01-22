@@ -6,14 +6,13 @@
 //! - `instance_redis_sync.rs` - Redis synchronization
 //! - `instance_data.rs` - Data loading and querying
 
-use crate::config::InstanceRedisKeys;
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use voltage_model::validate_instance_name;
+use voltage_model::{validate_instance_name, KeySpaceConfig};
 use voltage_rtdb::{InstanceIndex, Rtdb, SlotBitmap};
 
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
@@ -305,12 +304,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // Build point routing maps for Redis registration (generate Redis keys)
         // Note: Routing configuration is managed by routing_loader.rs, not stored here
         for point in &product.measurements {
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point.measurement_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_measurement_point_key(instance_id, &point.measurement_id.to_string());
             measurement_point_routings.insert(point.measurement_id, redis_key);
         }
 
         for point in &product.actions {
-            let redis_key = InstanceRedisKeys::action(instance_id, point.action_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_action_point_key(instance_id, &point.action_id.to_string());
             action_point_routings.insert(point.action_id, redis_key);
         }
 
@@ -676,7 +677,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         for (point_id,) in measurement_points {
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_measurement_point_key(instance_id, &point_id.to_string());
             measurement_point_routings.insert(point_id, redis_key);
         }
 
@@ -693,7 +695,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         for (point_id,) in action_points {
-            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_action_point_key(instance_id, &point_id.to_string());
             action_point_routings.insert(point_id, redis_key);
         }
 
@@ -738,7 +741,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         for (instance_id, point_id) in all_measurements {
             let instance_id = instance_id as u32;
             let point_id = point_id as u32;
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_measurement_point_key(instance_id, &point_id.to_string());
             measurement_routings
                 .entry(instance_id)
                 .or_default()
@@ -750,7 +754,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         for (instance_id, point_id) in all_actions {
             let instance_id = instance_id as u32;
             let point_id = point_id as u32;
-            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_action_point_key(instance_id, &point_id.to_string());
             action_routings
                 .entry(instance_id)
                 .or_default()

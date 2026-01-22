@@ -1160,7 +1160,7 @@ pub type FourRemote = PointType;
 
 /// Helper to convert database string to FourRemote/PointType
 pub fn parse_four_remote(s: &str) -> Result<PointType, String> {
-    s.parse()
+    s.parse().map_err(|e| format!("{e}"))
 }
 
 #[cfg(test)]

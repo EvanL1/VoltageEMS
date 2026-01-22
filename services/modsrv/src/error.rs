@@ -159,6 +159,48 @@ impl errors::VoltageErrorTrait for ModSrvError {
             | Self::InternalError(_) => ErrorCategory::Internal,
         }
     }
+
+    fn suggestion(&self) -> Option<String> {
+        match self {
+            Self::ConfigError(_) | Self::InvalidConfig(_) => Some(
+                "Check modsrv configuration in config/modsrv/ and run 'monarch sync modsrv'".to_string()
+            ),
+            Self::MissingConfig(_) => Some(
+                "Add the missing configuration to config/modsrv/ and run 'monarch sync modsrv'".to_string()
+            ),
+            Self::DatabaseError(_) => Some(
+                "Run 'monarch doctor' to check database status. Try 'monarch init' if database is missing".to_string()
+            ),
+            Self::RedisError(_) => Some(
+                "Run 'monarch doctor' to check Redis connection".to_string()
+            ),
+            Self::InstanceNotFound(_) => Some(
+                "Use GET /api/instances to list available instances, or create a new one with POST /api/instances".to_string()
+            ),
+            Self::InstanceExists(_) => Some(
+                "Instance already exists. Use PUT /api/instances/{id} to update, or choose a different ID".to_string()
+            ),
+            Self::RuleNotFound(_) => Some(
+                "Use GET /api/rules to list available rules, or create a new one with POST /api/rules".to_string()
+            ),
+            Self::RuleExists(_) => Some(
+                "Rule already exists. Use PUT /api/rules/{id} to update, or choose a different ID".to_string()
+            ),
+            Self::InvalidRule(_) | Self::ParseError(_) => Some(
+                "Check rule syntax. See docs/API_REFERENCE.md for rule format documentation".to_string()
+            ),
+            Self::InvalidRouting(_) => Some(
+                "Verify routing configuration. Check that source and target channels/instances exist".to_string()
+            ),
+            Self::ExecutionError(_) => Some(
+                "Check rule conditions and actions. Use 'monarch rules test <id>' to debug".to_string()
+            ),
+            Self::SchedulerError(_) => Some(
+                "Check scheduler status with GET /api/scheduler/status".to_string()
+            ),
+            _ => None,
+        }
+    }
 }
 
 // ============================================================================
@@ -172,7 +214,7 @@ impl From<ModSrvError> for common::AppError {
         use errors::VoltageErrorTrait;
 
         let status = err.http_status();
-        let error_info = ErrorInfo::new(err.to_string())
+        let mut error_info = ErrorInfo::new(err.to_string())
             .with_code(status.as_u16())
             .with_details(format!(
                 "error_code: {}, category: {:?}, retryable: {}",
@@ -180,6 +222,11 @@ impl From<ModSrvError> for common::AppError {
                 err.category(),
                 err.is_retryable()
             ));
+
+        // Add suggestion if available
+        if let Some(suggestion) = err.suggestion() {
+            error_info = error_info.with_suggestion(suggestion);
+        }
 
         AppError::new(status, error_info)
     }
