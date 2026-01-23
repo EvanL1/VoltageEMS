@@ -106,7 +106,7 @@ services:
       - --http-bind=0.0.0.0:8181
       - --object-store=file
       - --data-dir=/var/lib/influxdb3
-      - --bearer-token=${INFLUXDB_TOKEN:-apiv3_ureLplELJaYvOZjBEWCwMDXERyhMSIgm5hJo_lXLUpI02yNyx-x8MPv7XqtmIpYXH0zDXdz-dCEojm5G_rIjTQ}
+      - --without-auth  # InfluxDB 3.x: use `influxdb3 create token --admin` after startup for auth
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8181' || exit 1"]

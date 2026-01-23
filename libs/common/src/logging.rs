@@ -1158,20 +1158,32 @@ pub async fn http_request_logger(
         .unwrap_or("");
     let start = Instant::now();
 
-    // Only read body at DEBUG level and for modifying methods (POST/PUT/PATCH/DELETE)
+    // Check Content-Length to avoid reading large bodies
+    let content_length = req
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+
+    // Only read body at DEBUG level for modifying methods with small JSON payloads
+    // Skip reading if body is too large to avoid the body-consumption bug
     let should_read_body = level_enabled!(Level::DEBUG)
         && matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
-        && content_type.contains("application/json");
+        && content_type.contains("application/json")
+        && content_length <= MAX_BODY_READ;
 
     let (req, body_str) = if should_read_body {
-        // Read body bytes
+        // Read body bytes (safe because we checked content_length)
         let (parts, body) = req.into_parts();
         let bytes = match axum::body::to_bytes(body, MAX_BODY_READ).await {
             Ok(b) => b,
             Err(e) => {
-                // Body too large or read failed - continue with placeholder
-                tracing::debug!(
-                    "Request body exceeds {}B or read failed: {}",
+                // Read failed (shouldn't happen since we checked length) - log and pass empty
+                // This is a fallback; the Content-Length check above should prevent this
+                tracing::warn!(
+                    "Unexpected body read failure (len={}, limit={}): {}",
+                    content_length,
                     MAX_BODY_READ,
                     e
                 );

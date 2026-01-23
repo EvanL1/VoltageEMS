@@ -252,7 +252,7 @@ pub struct ModbusChannelParamsConfig {
     #[serde(default = "default_io_timeout_ms")]
     pub io_timeout_ms: u64,
 
-    /// Maximum registers per batch read (default: 125).
+    /// Maximum registers per batch read (default: 64).
     #[serde(default = "default_max_batch_size_config")]
     pub max_batch_size: u16,
 
@@ -278,7 +278,7 @@ fn default_io_timeout_ms() -> u64 {
 }
 
 fn default_max_batch_size_config() -> u16 {
-    125
+    64
 }
 
 fn default_max_gap_config() -> u16 {
@@ -324,7 +324,7 @@ impl ModbusChannelParamsConfig {
 }
 
 /// Default maximum registers per batch read
-const DEFAULT_MAX_BATCH_SIZE: u16 = 125;
+const DEFAULT_MAX_BATCH_SIZE: u16 = 64;
 
 /// Default maximum gap between registers to allow merging
 const DEFAULT_MAX_GAP: u16 = 10;
@@ -1230,7 +1230,7 @@ impl HasMetadata for ModbusChannel {
                 "connect_timeout_ms": 5000,
                 "read_timeout_ms": 3000,
                 "polling_interval_ms": 1000,
-                "max_batch_size": 125,
+                "max_batch_size": 64,
                 "max_reconnect_attempts": 5
             }),
             parameters: vec![
@@ -1278,9 +1278,9 @@ impl HasMetadata for ModbusChannel {
                 ParameterMetadata::optional(
                     "max_batch_size",
                     "Max Batch Size",
-                    "Maximum registers per batch read (max 125)",
+                    "Maximum registers per batch read (default 64, max 125)",
                     ParameterType::Integer,
-                    serde_json::json!(125),
+                    serde_json::json!(64),
                 ),
                 ParameterMetadata::optional(
                     "max_reconnect_attempts",
@@ -1559,11 +1559,16 @@ impl ProtocolCapabilities for ModbusChannel {
 
 impl LoggableProtocol for ModbusChannel {
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        // Create a new LogContext with the handler
-        let new_ctx = LogContext::new(self.channel_id)
-            .with_handler(handler)
-            .with_config(self.log_context.config().clone());
-        self.log_context = Arc::new(new_ctx);
+        // Use Arc::get_mut pattern to update in-place when possible,
+        // avoiding LogContext recreation and potential loss of file handlers
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_handler(handler);
+        } else {
+            // Other references exist, must clone and update
+            let mut new_ctx = (*self.log_context).clone();
+            new_ctx.set_handler(handler);
+            self.log_context = Arc::new(new_ctx);
+        }
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {

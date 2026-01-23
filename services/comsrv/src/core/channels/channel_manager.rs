@@ -336,20 +336,48 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         self.channel_config.id()
     }
 
-    /// Shutdown the unified channel task
+    /// Shutdown the unified channel task gracefully.
     ///
-    /// Sends a Shutdown command and aborts the task if needed.
+    /// Sends a Shutdown command to the unified task. The task will process
+    /// the command and exit its loop cleanly, allowing proper resource cleanup.
+    ///
+    /// NOTE: This method does NOT abort the task immediately. Use `abort_task()`
+    /// if you need to force-terminate after a timeout.
     pub fn shutdown(&self) {
         use crate::core::channels::types::ProtocolCommand;
 
-        // Try to send shutdown command (fire-and-forget)
+        // Send shutdown command (fire-and-forget)
+        // The unified task will receive this and break out of its loop
         let _ = self.protocol_tx.try_send(ProtocolCommand::Shutdown);
+    }
 
-        // Also abort the task handle as a fallback
+    /// Force-abort the unified channel task.
+    ///
+    /// Use this only after `shutdown()` if the task doesn't exit in time.
+    /// This is a last resort that may cause resource leaks.
+    pub fn abort_task(&self) {
         if let Ok(mut handle) = self.task_handle.lock() {
             if let Some(h) = handle.take() {
-                h.abort();
+                if !h.is_finished() {
+                    warn!(
+                        "Ch{} task did not exit gracefully, aborting",
+                        self.channel_id()
+                    );
+                    h.abort();
+                }
             }
+        }
+    }
+
+    /// Check if the unified task has finished.
+    pub fn is_task_finished(&self) -> bool {
+        if let Ok(handle) = self.task_handle.lock() {
+            match handle.as_ref() {
+                Some(h) => h.is_finished(),
+                None => true, // Task was already taken/aborted
+            }
+        } else {
+            true // Lock poisoned, assume finished
         }
     }
 }
@@ -630,8 +658,12 @@ impl<R: Rtdb> std::fmt::Debug for ChannelManager<R> {
     }
 }
 
-/// Default base directory for channel log files.
-const CHANNEL_LOG_BASE_DIR: &str = "/logs/comsrv/channels";
+/// Get the base directory for channel log files.
+/// Uses VOLTAGE_LOG_DIR environment variable if set, otherwise falls back to "/app/logs".
+fn get_channel_log_base_dir() -> String {
+    let base = std::env::var("VOLTAGE_LOG_DIR").unwrap_or_else(|_| "/app/logs".to_string());
+    format!("{}/comsrv/channels", base)
+}
 
 impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Pre-allocate channel slots for O(1) access
@@ -655,16 +687,17 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         // Add file logging if enabled
         if logging_config.enabled {
             let level = FileLogLevel::parse(logging_config.level.as_deref());
+            let log_dir = get_channel_log_base_dir();
 
-            let file_handler = ChannelFileLogHandler::new(CHANNEL_LOG_BASE_DIR)
+            let file_handler = ChannelFileLogHandler::new(&log_dir)
                 .with_level(level)
                 .with_channel(channel_id, channel_name);
 
             composite.add_handler(Arc::new(file_handler));
 
-            debug!(
+            info!(
                 "Ch{} file logging enabled (level={:?}, dir={})",
-                channel_id, level, CHANNEL_LOG_BASE_DIR
+                channel_id, level, log_dir
             );
         }
 
@@ -1150,8 +1183,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 502
             });
 
+        // 4b. Extract I/O timeout from config (UI parameter name: read_timeout_ms)
+        let io_timeout_ms = params.get("read_timeout_ms").and_then(|v| v.as_u64());
+        if let Some(timeout) = io_timeout_ms {
+            debug!("Ch{} using read_timeout_ms: {}ms", channel_id, timeout);
+        }
+
         // 5. Create ModbusChannel protocol
-        let mut protocol = create_modbus_channel(channel_id, host, port, point_configs);
+        let mut protocol =
+            create_modbus_channel(channel_id, host, port, point_configs, io_timeout_ms);
 
         // 6. Configure channel logging
         Self::configure_channel_logging(
@@ -1233,8 +1273,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 9600
             });
 
+        // 4b. Extract I/O timeout from config (UI parameter name: read_timeout_ms)
+        let io_timeout_ms = params.get("read_timeout_ms").and_then(|v| v.as_u64());
+        if let Some(timeout) = io_timeout_ms {
+            debug!("Ch{} using read_timeout_ms: {}ms", channel_id, timeout);
+        }
+
         // 5. Create ModbusChannel (RTU) protocol
-        let mut protocol = create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs);
+        let mut protocol =
+            create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs, io_timeout_ms);
 
         // 6. Configure channel logging
         Self::configure_channel_logging(
@@ -1453,7 +1500,16 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         Ok(())
     }
 
-    /// Remove channel
+    /// Remove channel with graceful shutdown.
+    ///
+    /// Performs proper cleanup in the following order:
+    /// 1. Unregister from external systems (cache, SHM poller/listener)
+    /// 2. Send shutdown signal to unified task
+    /// 3. Wait for task to exit gracefully (with timeout)
+    /// 4. Shutdown store to flush WriteBuffer
+    /// 5. Disconnect channel
+    /// 6. Stop command trigger
+    /// 7. Deallocate dynamic slots
     pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
         // Unregister from cache before removing channel
         if let Some(ref cache) = self.command_tx_cache {
@@ -1480,19 +1536,36 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .ok_or_else(|| ComSrvError::invalid_channel_id(channel_id))?;
 
         if let Some(entry) = slot.swap(None) {
-            // Shutdown background tasks
+            // 1. Send shutdown signal to unified task (non-blocking)
             entry.shutdown();
 
-            // Disconnect channel
+            // 2. Wait for task to exit gracefully (up to 500ms)
+            //    This allows the protocol to clean up file handles, flush buffers, etc.
+            let max_wait = std::time::Duration::from_millis(500);
+            let start = std::time::Instant::now();
+            while !entry.is_task_finished() && start.elapsed() < max_wait {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+
+            // 3. Force-abort if task didn't exit in time
+            if !entry.is_task_finished() {
+                entry.abort_task();
+            }
+
+            // 4. Shutdown store to flush WriteBuffer to Redis
+            //    This is CRITICAL: ensures polled data is persisted before channel removal
+            entry.store.shutdown().await;
+
+            // 5. Disconnect channel
             let _ = entry.disconnect().await;
 
-            // Stop command trigger if exists
+            // 6. Stop command trigger if exists
             if let Some(trigger_arc) = &entry.command_trigger {
                 let mut trigger = trigger_arc.write().await;
                 let _ = trigger.stop().await;
             }
 
-            // Dynamic Slot Deallocation: Remove channel from ChannelIndex and free slots
+            // 7. Dynamic Slot Deallocation: Remove channel from ChannelIndex and free slots
             if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
                 match bitmap.write() {
                     Ok(mut bitmap_guard) => {
@@ -1515,7 +1588,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 }
             }
 
-            info!("Ch{} removed", channel_id);
+            info!("Ch{} removed (graceful shutdown)", channel_id);
             Ok(())
         } else {
             Err(ComSrvError::channel_not_found(channel_id))

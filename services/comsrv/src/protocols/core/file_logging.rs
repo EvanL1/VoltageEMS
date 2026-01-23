@@ -155,7 +155,17 @@ impl ChannelFileLogHandler {
         channel_id: u32,
         date: NaiveDate,
     ) -> Option<std::sync::MutexGuard<'_, HashMap<u32, OpenFile>>> {
-        let mut files = self.open_files.lock().ok()?;
+        // Recover from poisoned mutex - the data is still valid even if a thread panicked
+        let mut files = match self.open_files.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                tracing::warn!(
+                    "Ch{} recovering from poisoned mutex in file logger",
+                    channel_id
+                );
+                poisoned.into_inner()
+            },
+        };
 
         // Check if we need to open a new file (new day or new channel)
         let needs_new_file = match files.get(&channel_id) {
@@ -167,7 +177,12 @@ impl ChannelFileLogHandler {
             // Create channel directory if needed
             let channel_dir = self.get_channel_dir(channel_id);
             if let Err(e) = fs::create_dir_all(&channel_dir) {
-                tracing::warn!("Failed to create log directory {:?}: {}", channel_dir, e);
+                tracing::error!(
+                    "Ch{} log dir create failed: {} - path: {}",
+                    channel_id,
+                    e,
+                    channel_dir.display()
+                );
                 return None;
             }
 
@@ -180,7 +195,12 @@ impl ChannelFileLogHandler {
             {
                 Ok(f) => f,
                 Err(e) => {
-                    tracing::warn!("Failed to open log file {:?}: {}", file_path, e);
+                    tracing::error!(
+                        "Ch{} log file open failed: {} - path: {}",
+                        channel_id,
+                        e,
+                        file_path.display()
+                    );
                     return None;
                 },
             };
@@ -322,8 +342,12 @@ impl ChannelFileLogHandler {
         if let Some(mut files) = self.get_writer(channel_id, date) {
             if let Some(open_file) = files.get_mut(&channel_id) {
                 let timestamp = now.format("%Y-%m-%d %H:%M:%S%.3f");
-                let _ = writeln!(open_file.writer, "{} {}", timestamp, line);
-                let _ = open_file.writer.flush();
+                if let Err(e) = writeln!(open_file.writer, "{} {}", timestamp, line) {
+                    tracing::warn!("Ch{} log write failed: {}", channel_id, e);
+                }
+                if let Err(e) = open_file.writer.flush() {
+                    tracing::warn!("Ch{} log flush failed: {}", channel_id, e);
+                }
             }
         }
     }
@@ -458,6 +482,24 @@ impl ChannelLogHandler for ChannelFileLogHandler {
         };
 
         self.write_log(channel_id, &line);
+    }
+}
+
+impl Drop for ChannelFileLogHandler {
+    fn drop(&mut self) {
+        // Flush all open file writers to ensure no buffered data is lost
+        // when the handler is dropped (e.g., during channel reconnection)
+        if let Ok(mut files) = self.open_files.lock() {
+            for (channel_id, open_file) in files.iter_mut() {
+                if let Err(e) = open_file.writer.flush() {
+                    // Can't use tracing in drop (might be shutting down), use eprintln
+                    eprintln!(
+                        "[FileLogHandler] Ch{} flush failed on drop: {}",
+                        channel_id, e
+                    );
+                }
+            }
+        }
     }
 }
 

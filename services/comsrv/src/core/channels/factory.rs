@@ -56,18 +56,27 @@ pub fn create_virtual_channel(
 /// * `host` - Modbus TCP server host address
 /// * `port` - Modbus TCP server port
 /// * `point_configs` - Point configurations with Modbus addresses
+/// * `io_timeout_ms` - Optional I/O timeout in milliseconds (default: 3000ms)
 #[cfg(feature = "modbus")]
 pub fn create_modbus_channel(
     channel_id: u32,
     host: &str,
     port: u16,
     point_configs: Vec<PointConfig>,
+    io_timeout_ms: Option<u64>,
 ) -> Box<dyn ChannelRuntime> {
+    use std::time::Duration;
+
     let address = format!("{}:{}", host, port);
 
-    let config = ModbusChannelConfig::tcp(&address)
+    let mut config = ModbusChannelConfig::tcp(&address)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
+
+    // Apply custom I/O timeout if provided
+    if let Some(timeout_ms) = io_timeout_ms {
+        config = config.with_io_timeout(Duration::from_millis(timeout_ms));
+    }
 
     let channel_name = format!("modbus_tcp_{}", channel_id);
     let channel = ModbusChannel::new(config, channel_id, channel_name.clone());
@@ -88,16 +97,25 @@ pub fn create_modbus_channel(
 /// * `device` - Serial device path (e.g., "/dev/ttyUSB0" on Linux)
 /// * `baud_rate` - Serial baud rate (e.g., 9600, 19200, 115200)
 /// * `point_configs` - Point configurations with Modbus addresses
+/// * `io_timeout_ms` - Optional I/O timeout in milliseconds (default: 3000ms)
 #[cfg(feature = "modbus")]
 pub fn create_modbus_rtu_channel(
     channel_id: u32,
     device: &str,
     baud_rate: u32,
     point_configs: Vec<PointConfig>,
+    io_timeout_ms: Option<u64>,
 ) -> Box<dyn ChannelRuntime> {
-    let config = ModbusChannelConfig::rtu(device, baud_rate)
+    use std::time::Duration;
+
+    let mut config = ModbusChannelConfig::rtu(device, baud_rate)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
+
+    // Apply custom I/O timeout if provided
+    if let Some(timeout_ms) = io_timeout_ms {
+        config = config.with_io_timeout(Duration::from_millis(timeout_ms));
+    }
 
     let channel_name = format!("modbus_rtu_{}", channel_id);
     let channel = ModbusChannel::new(config, channel_id, channel_name.clone());

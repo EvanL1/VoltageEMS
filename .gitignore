@@ -137,3 +137,4 @@ services/*/*.md
 .venv/
 venv/
 env/
+data/shm-snapshot.bin
