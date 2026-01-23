@@ -402,6 +402,7 @@ use crate::protocols::core::traits::PollResult;
 ///
 /// This design eliminates lock contention between polling and command execution,
 /// reducing command latency from 300ms to <10ms.
+#[allow(clippy::too_many_arguments)]
 async fn run_unified_channel_task<R: Rtdb>(
     mut protocol: Box<dyn ChannelRuntime>,
     mut protocol_rx: tokio::sync::mpsc::Receiver<ProtocolCommand>,
