@@ -1526,15 +1526,24 @@ mod tests {
         let mut gpio = create_mock_gpio(config, 1, "test_gpio");
 
         // GPIO is always connected on creation (local hardware, no external connection)
-        assert_eq!(gpio.connection_state(), ConnectionState::Connected);
+        assert_eq!(
+            Protocol::connection_state(&gpio),
+            ConnectionState::Connected
+        );
 
         // connect() is idempotent for GPIO
         ProtocolClient::connect(&mut gpio).await.unwrap();
-        assert_eq!(gpio.connection_state(), ConnectionState::Connected);
+        assert_eq!(
+            Protocol::connection_state(&gpio),
+            ConnectionState::Connected
+        );
 
         // disconnect() still works for explicit shutdown
         ProtocolClient::disconnect(&mut gpio).await.unwrap();
-        assert_eq!(gpio.connection_state(), ConnectionState::Disconnected);
+        assert_eq!(
+            Protocol::connection_state(&gpio),
+            ConnectionState::Disconnected
+        );
     }
 
     #[tokio::test]
