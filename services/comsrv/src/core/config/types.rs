@@ -13,7 +13,6 @@ use std::sync::Arc;
 use voltage_model::PointType;
 use voltage_schema_macro::Schema;
 
-#[cfg(feature = "openapi")]
 use utoipa::ToSchema;
 
 /// Default API configuration for comsrv (port 6001)
@@ -152,8 +151,7 @@ struct ChannelRecord {
 pub const CHANNELS_TABLE: &str = ChannelRecord::CREATE_TABLE_SQL;
 
 /// Channel-specific logging configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg_attr(feature = "openapi", derive(ToSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct ChannelLoggingConfig {
     /// Whether logging is enabled for this channel
     #[serde(default)]

@@ -172,35 +172,45 @@ async fn main() -> Result<()> {
 
     // Configure InstanceManager with SHM components for M2C via shared memory
     // These use OnceLock for delayed initialization after Arc<InstanceManager> is created
-    if let Some(ref writer) = shm_action_writer {
-        // Set SHM action writer for direct M2C writes
-        if state
-            .instance_manager
-            .set_shm_action_writer(Arc::clone(writer))
-        {
-            info!("InstanceManager: SHM action writer configured");
-        }
+    // ShmNotifier is shared between InstanceManager and RuleScheduler for unified M2C dispatch
+    let shm_notifier: Option<Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>> =
+        if let Some(ref writer) = shm_action_writer {
+            // Set SHM action writer for direct M2C writes
+            if state
+                .instance_manager
+                .set_shm_action_writer(Arc::clone(writer))
+            {
+                info!("InstanceManager: SHM action writer configured");
+            }
 
-        // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency)
-        match voltage_rtdb::ShmNotifier::connect_default().await {
-            Ok(notifier) => {
-                let notifier = Arc::new(tokio::sync::Mutex::new(notifier));
-                if state.instance_manager.set_shm_notifier(notifier) {
-                    info!("InstanceManager: ShmNotifier connected for event-driven dispatch");
-                }
-            },
-            Err(e) => {
-                // Not an error - comsrv may not have started UDS listener yet
-                // M2C will fall back to polling or Redis TODO queue
-                info!("ShmNotifier unavailable (UDS listener not ready): {}", e);
-            },
-        }
-    }
+            // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency)
+            match voltage_rtdb::ShmNotifier::connect_default().await {
+                Ok(notifier) => {
+                    let notifier = Arc::new(tokio::sync::Mutex::new(notifier));
+                    if state
+                        .instance_manager
+                        .set_shm_notifier(Arc::clone(&notifier))
+                    {
+                        info!("InstanceManager: ShmNotifier connected for event-driven dispatch");
+                    }
+                    Some(notifier)
+                },
+                Err(e) => {
+                    // Not an error - comsrv may not have started UDS listener yet
+                    // M2C will fall back to polling or Redis TODO queue
+                    info!("ShmNotifier unavailable (UDS listener not ready): {}", e);
+                    None
+                },
+            }
+        } else {
+            None
+        };
 
     // Create rule scheduler with two-tier priority (SharedMemory > Redis)
     // SHM writer enables M2C actions via shared memory (primary path)
+    // ShmNotifier enables UDS event notification for immediate dispatch
     let rule_log_root = PathBuf::from("logs/modsrv");
-    let scheduler = Arc::new(RuleScheduler::with_shm(
+    let scheduler = Arc::new(RuleScheduler::with_shm_full(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
@@ -208,6 +218,7 @@ async fn main() -> Result<()> {
         rule_log_root,
         shared_reader,
         shm_action_writer,
+        shm_notifier,
     ));
 
     // Load rules into scheduler

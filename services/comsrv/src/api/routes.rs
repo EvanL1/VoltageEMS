@@ -134,6 +134,7 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
         // Control operations
         crate::api::handlers::control_handlers::control_channel,
         crate::api::handlers::control_handlers::write_channel_point,  // Unified write endpoint (supports single & batch)
+        crate::api::handlers::control_handlers::set_channel_log_level,
 
         // Point information
         crate::api::handlers::point_handlers::get_point_info_handler,
@@ -266,6 +267,7 @@ pub fn create_api_routes_generic<R: Rtdb>(
         .route("/api/channels/{id}/status", get(get_channel_status))
         .route("/api/channels/{id}/control", post(control_channel))
         .route("/api/channels/{id}/enabled", axum::routing::put(set_channel_enabled_handler))
+        .route("/api/channels/{id}/logging", axum::routing::put(set_channel_log_level))
         .route("/api/channels/{id}/points", get(get_channel_points_handler))
         .route("/api/channels/{id}/unmapped-points", get(get_unmapped_points_handler))
         .route("/api/channels/{id}/mappings", get(get_channel_mappings_handler).put(update_channel_mappings_handler))

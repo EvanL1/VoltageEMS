@@ -205,26 +205,29 @@ impl ShmCommandListener {
         let command = Self::build_command(point_type, point_id, value, timestamp as i64);
 
         if let Some(sender) = senders.get(&channel_id) {
-            if let Err(e) = sender.try_send(command) {
-                // 区分缓冲区满和通道关闭两种情况
-                use tokio::sync::mpsc::error::TrySendError;
-                match e {
-                    TrySendError::Full(_) => {
-                        // 背压：缓冲区满，通知被丢弃，需要关注
-                        error!(
-                            "ShmListener: channel {} buffer FULL, notification DROPPED \
-                             (point {:?}:{}, backpressure detected)",
-                            channel_id, point_type, point_id
-                        );
-                    },
-                    TrySendError::Closed(_) => {
-                        // 通道关闭：可能是正常关闭流程
-                        warn!(
-                            "ShmListener: channel {} closed, notification discarded",
-                            channel_id
-                        );
-                    },
-                }
+            // Use send_timeout instead of try_send to handle transient backpressure
+            // 50ms timeout allows brief buffer congestion without blocking event loop
+            match tokio::time::timeout(std::time::Duration::from_millis(50), sender.send(command))
+                .await
+            {
+                Ok(Ok(())) => {
+                    // Successfully sent
+                },
+                Ok(Err(_)) => {
+                    // Channel closed
+                    warn!(
+                        "ShmListener: channel {} closed, notification discarded",
+                        channel_id
+                    );
+                },
+                Err(_) => {
+                    // Timeout - sustained backpressure, drop command
+                    error!(
+                        "ShmListener: channel {} buffer FULL for 50ms, notification DROPPED \
+                         (point {:?}:{}, sustained backpressure)",
+                        channel_id, point_type, point_id
+                    );
+                },
             }
         } else {
             debug!(

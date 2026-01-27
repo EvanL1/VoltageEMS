@@ -26,6 +26,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -57,6 +58,24 @@ impl FileLogLevel {
             _ => Self::Info,
         }
     }
+
+    /// Convert to u8 for atomic storage.
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        match self {
+            Self::Info => 0,
+            Self::Debug => 1,
+        }
+    }
+
+    /// Convert from u8 (atomic load).
+    #[must_use]
+    pub const fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Debug,
+            _ => Self::Info,
+        }
+    }
 }
 
 // ============================================================================
@@ -75,6 +94,8 @@ struct OpenFile {
 ///
 /// Writes channel logs to per-channel, per-day log files.
 /// Thread-safe through internal `Mutex` on file handles.
+///
+/// The log level can be changed dynamically at runtime via `set_level()`.
 pub struct ChannelFileLogHandler {
     /// Base directory for log files.
     base_dir: PathBuf,
@@ -82,8 +103,8 @@ pub struct ChannelFileLogHandler {
     channel_names: HashMap<u32, String>,
     /// Open file handles: channel_id -> (date, writer).
     open_files: Mutex<HashMap<u32, OpenFile>>,
-    /// Log level filter.
-    level: FileLogLevel,
+    /// Log level filter (stored as AtomicU8 for hot-reload support).
+    level: AtomicU8,
 }
 
 impl ChannelFileLogHandler {
@@ -101,15 +122,29 @@ impl ChannelFileLogHandler {
             base_dir: base_dir.into(),
             channel_names: HashMap::new(),
             open_files: Mutex::new(HashMap::new()),
-            level: FileLogLevel::default(),
+            level: AtomicU8::new(FileLogLevel::default().as_u8()),
         }
     }
 
-    /// Set the log level.
+    /// Set the log level (builder pattern).
     #[must_use]
-    pub fn with_level(mut self, level: FileLogLevel) -> Self {
-        self.level = level;
+    pub fn with_level(self, level: FileLogLevel) -> Self {
+        self.level.store(level.as_u8(), Ordering::Relaxed);
         self
+    }
+
+    /// Get the current log level.
+    #[must_use]
+    pub fn level(&self) -> FileLogLevel {
+        FileLogLevel::from_u8(self.level.load(Ordering::Relaxed))
+    }
+
+    /// Set the log level dynamically at runtime.
+    ///
+    /// This method is thread-safe and can be called while the handler is
+    /// actively processing log events.
+    pub fn set_level(&self, level: FileLogLevel) {
+        self.level.store(level.as_u8(), Ordering::Relaxed);
     }
 
     /// Register a channel with its name.
@@ -167,9 +202,10 @@ impl ChannelFileLogHandler {
             },
         };
 
-        // Check if we need to open a new file (new day or new channel)
+        // Check if we need to open a new file (new day or new channel or directory deleted)
+        // This ensures directory is recreated if it was deleted while the channel was running
         let needs_new_file = match files.get(&channel_id) {
-            Some(open) => open.date != date,
+            Some(open) => open.date != date || !self.get_channel_dir(channel_id).exists(),
             None => true,
         };
 
@@ -335,6 +371,9 @@ impl ChannelFileLogHandler {
     }
 
     /// Write a log line to the channel's log file.
+    ///
+    /// If write fails (e.g., directory was deleted), the file handle is invalidated
+    /// so the next write attempt will recreate the directory and file.
     fn write_log(&self, channel_id: u32, line: &str) {
         let now = Local::now();
         let date = now.date_naive();
@@ -342,33 +381,54 @@ impl ChannelFileLogHandler {
         if let Some(mut files) = self.get_writer(channel_id, date) {
             if let Some(open_file) = files.get_mut(&channel_id) {
                 let timestamp = now.format("%Y-%m-%d %H:%M:%S%.3f");
-                if let Err(e) = writeln!(open_file.writer, "{} {}", timestamp, line) {
-                    tracing::warn!("Ch{} log write failed: {}", channel_id, e);
-                }
-                if let Err(e) = open_file.writer.flush() {
-                    tracing::warn!("Ch{} log flush failed: {}", channel_id, e);
+                let write_result = writeln!(open_file.writer, "{} {}", timestamp, line);
+                let flush_result = open_file.writer.flush();
+
+                // If write or flush failed, invalidate cache so next call will recreate
+                if write_result.is_err() || flush_result.is_err() {
+                    if let Err(e) = write_result {
+                        tracing::warn!(
+                            "Ch{} log write failed: {}, will recreate on next write",
+                            channel_id,
+                            e
+                        );
+                    }
+                    if let Err(e) = flush_result {
+                        tracing::warn!(
+                            "Ch{} log flush failed: {}, will recreate on next write",
+                            channel_id,
+                            e
+                        );
+                    }
+                    // Remove from cache to force recreation on next write
+                    files.remove(&channel_id);
                 }
             }
         }
     }
 
     /// Check if the event should be logged based on the level.
+    ///
+    /// Log level mapping:
+    /// - **Info**: Errors, connections, disconnections, control writes (key events only)
+    /// - **Debug**: All of Info + raw packets, poll cycles, state changes, reconnects
     fn should_log(&self, event: &ChannelLogEvent) -> bool {
+        let level = self.level(); // Atomic read for hot-reload support
         match event {
-            // Always log these at Info level
-            ChannelLogEvent::RawPacket { .. } => true,
+            // Always log these at Info level (key events)
             ChannelLogEvent::Error { .. } => true,
             ChannelLogEvent::Connected { .. } => true,
             ChannelLogEvent::Disconnected { .. } => true,
+            ChannelLogEvent::ControlWrite { .. } => true, // Control commands are important
+            ChannelLogEvent::AdjustmentWrite { .. } => true, // Adjustment commands are important
 
-            // Debug level only
-            ChannelLogEvent::PollCycleCompleted { .. } => self.level == FileLogLevel::Debug,
-            ChannelLogEvent::StateChanged { .. } => self.level == FileLogLevel::Debug,
-            ChannelLogEvent::ControlWrite { .. } => self.level == FileLogLevel::Debug,
-            ChannelLogEvent::AdjustmentWrite { .. } => self.level == FileLogLevel::Debug,
-            ChannelLogEvent::ReconnectAttempt { .. } => self.level == FileLogLevel::Debug,
-            ChannelLogEvent::ReconnectSuccess { .. } => self.level == FileLogLevel::Debug,
-            ChannelLogEvent::ReadOperation { .. } => self.level == FileLogLevel::Debug,
+            // Debug level only (verbose logging)
+            ChannelLogEvent::RawPacket { .. } => level == FileLogLevel::Debug,
+            ChannelLogEvent::PollCycleCompleted { .. } => level == FileLogLevel::Debug,
+            ChannelLogEvent::StateChanged { .. } => level == FileLogLevel::Debug,
+            ChannelLogEvent::ReconnectAttempt { .. } => level == FileLogLevel::Debug,
+            ChannelLogEvent::ReconnectSuccess { .. } => level == FileLogLevel::Debug,
+            ChannelLogEvent::ReadOperation { .. } => level == FileLogLevel::Debug,
         }
     }
 }
@@ -483,6 +543,11 @@ impl ChannelLogHandler for ChannelFileLogHandler {
 
         self.write_log(channel_id, &line);
     }
+
+    fn set_log_level(&self, level: &str) {
+        let new_level = FileLogLevel::parse(Some(level));
+        self.set_level(new_level);
+    }
 }
 
 impl Drop for ChannelFileLogHandler {
@@ -564,6 +629,34 @@ mod tests {
         let content = fs::read_to_string(&log_file).expect("Failed to read log file");
         assert!(content.contains(">>> modbus [slave=1 fc=0x03]"));
         assert!(content.contains("00 01 00 00 00 06 01 03 00 64 00 0A"));
+    }
+
+    #[test]
+    fn test_dynamic_level_change() {
+        let handler = ChannelFileLogHandler::new("/tmp").with_level(FileLogLevel::Info);
+
+        // Initial level should be Info
+        assert_eq!(handler.level(), FileLogLevel::Info);
+
+        // Change to Debug dynamically
+        handler.set_level(FileLogLevel::Debug);
+        assert_eq!(handler.level(), FileLogLevel::Debug);
+
+        // Change back to Info
+        handler.set_level(FileLogLevel::Info);
+        assert_eq!(handler.level(), FileLogLevel::Info);
+
+        // Test via trait method (simulates API call)
+        use crate::protocols::core::logging::ChannelLogHandler;
+        handler.set_log_level("debug");
+        assert_eq!(handler.level(), FileLogLevel::Debug);
+
+        handler.set_log_level("info");
+        assert_eq!(handler.level(), FileLogLevel::Info);
+
+        // Invalid level should default to Info
+        handler.set_log_level("invalid");
+        assert_eq!(handler.level(), FileLogLevel::Info);
     }
 
     #[test]

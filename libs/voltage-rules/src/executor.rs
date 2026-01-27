@@ -18,7 +18,7 @@ use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
 use voltage_routing::set_action_point;
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{KeySpaceConfig, RoutingCache, UnifiedReader};
+use voltage_rtdb::{KeySpaceConfig, RoutingCache, ShmNotifier, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
 #[inline]
@@ -202,6 +202,8 @@ pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     shared_reader: Option<Arc<UnifiedReader>>,
     /// Optional UnifiedWriter for M2C via shared memory
     shm_action_writer: Option<Arc<voltage_rtdb::UnifiedWriter>>,
+    /// Optional ShmNotifier for UDS event notification (M2C low-latency path)
+    shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
 }
 
 impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
@@ -213,6 +215,7 @@ impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
             state_store: Arc::new(MemoryStateStore::new()),
             shared_reader: None,
             shm_action_writer: None,
+            shm_notifier: None,
         }
     }
 }
@@ -230,6 +233,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             state_store,
             shared_reader: None,
             shm_action_writer: None,
+            shm_notifier: None,
         }
     }
 
@@ -252,6 +256,15 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     /// SHM serves as the primary path for comsrv's ShmCommandPoller.
     pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> Self {
         self.shm_action_writer = Some(writer);
+        self
+    }
+
+    /// Enable ShmNotifier for UDS event notification
+    ///
+    /// When enabled, after writing to SHM, sends UDS notification to comsrv
+    /// for immediate command dispatch (~1-2ms latency vs polling).
+    pub fn with_shm_notifier(mut self, notifier: Arc<tokio::sync::Mutex<ShmNotifier>>) -> Self {
+        self.shm_notifier = Some(notifier);
         self
     }
 
@@ -516,6 +529,12 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         values: &mut HashMap<String, f64>,
     ) -> Result<bool> {
         let mut values_changed = false;
+        let keyspace = KeySpaceConfig::production_cached();
+
+        // ★ Phase 1a: Try SHM first, collect Redis fallback requests
+        // Group by Redis key for batched HMGET (reduces N calls to ~2 calls)
+        // Key: (redis_key, is_action), Value: Vec<(var_name, field)>
+        let mut redis_requests: HashMap<(String, bool), Vec<(String, String)>> = HashMap::new();
 
         for var in variables {
             // Skip formula variables in Phase 1 - calculated in Phase 2 after base variables
@@ -523,7 +542,6 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 continue;
             }
 
-            // Clone var.name once at loop start, reuse in all branches
             let var_name = var.name.clone();
 
             // Get instance ID (supports both "instance" and "instance_id" via serde alias)
@@ -548,8 +566,6 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             let is_action = point_type == "action";
 
             // ★ Priority 1: SharedMemory (~5μs) - cross-process zero-copy
-            // UnifiedReader API: get_instance(id, type, point, routing) → Option<(f64, u64)>
-            // instance_type: 0 = Measurement, 1 = Action
             if let Some(reader) = &self.shared_reader {
                 let instance_type = if is_action { 1 } else { 0 };
                 if let Some((val, _ts)) =
@@ -561,40 +577,49 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 }
             }
 
-            // ★ Priority 2: Redis (~1ms) - remote fallback
-            let keyspace = KeySpaceConfig::production_cached();
+            // SHM miss - queue for batched Redis fetch
             let key = if is_action {
                 keyspace.instance_action_key(instance_id)
             } else {
                 keyspace.instance_measurement_key(instance_id)
             };
+            let field = precomputed::get_point_id_str_or_alloc(point).to_string();
+            redis_requests
+                .entry((key, is_action))
+                .or_default()
+                .push((var_name, field));
+        }
 
-            // Use precomputed pool for common point IDs (0-255) to avoid allocation
-            let field = precomputed::get_point_id_str_or_alloc(point);
-
-            match self.rtdb.hash_get(&key, &field).await {
-                Ok(Some(val_bytes)) => {
-                    let val_str = String::from_utf8_lossy(&val_bytes);
-                    if let Ok(val) = val_str.parse::<f64>() {
+        // ★ Phase 1b: Batched Redis fetch using HMGET (single RTT per key)
+        for ((key, _is_action), var_fields) in redis_requests {
+            let fields: Vec<&str> = var_fields.iter().map(|(_, f)| f.as_str()).collect();
+            match self.rtdb.hash_mget(&key, &fields).await {
+                Ok(results) => {
+                    for (i, (var_name, field)) in var_fields.into_iter().enumerate() {
+                        let val = results
+                            .get(i)
+                            .and_then(|opt| opt.as_ref())
+                            .and_then(|bytes| {
+                                let s = String::from_utf8_lossy(bytes);
+                                s.parse::<f64>().ok()
+                            })
+                            .unwrap_or_else(|| {
+                                tracing::warn!(
+                                    "Var {}: {}:{} not found or invalid",
+                                    var_name,
+                                    key,
+                                    field
+                                );
+                                0.0
+                            });
                         values_changed |= values.insert(var_name, val) != Some(val);
-                    } else {
-                        tracing::warn!(
-                            "Var {}: '{}' not number at {}:{}",
-                            var_name,
-                            val_str,
-                            key,
-                            field
-                        );
-                        values_changed |= values.insert(var_name, 0.0) != Some(0.0);
                     }
                 },
-                Ok(None) => {
-                    tracing::warn!("Var {}: {}:{} not found", var_name, key, field);
-                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
-                },
                 Err(e) => {
-                    tracing::error!("Var {} read err: {}", var_name, e);
-                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
+                    tracing::error!("Redis HMGET error for {}: {}", key, e);
+                    for (var_name, _) in var_fields {
+                        values_changed |= values.insert(var_name, 0.0) != Some(0.0);
+                    }
                 },
             }
         }
@@ -824,6 +849,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         // Use precomputed pool for common point IDs (0-255)
         let point_str = precomputed::get_point_id_str_or_alloc(point);
         // SHM writer enables direct M2C via shared memory (primary path)
+        // Lock notifier for mutable access during async call
+        let mut notifier_guard = match &self.shm_notifier {
+            Some(n) => Some(n.lock().await),
+            None => None,
+        };
         let routed = match set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
@@ -831,7 +861,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             &point_str,
             resolved_value,
             self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-            None, // TODO: Add ShmNotifier for UDS event notification
+            notifier_guard.as_deref_mut(),
         )
         .await
         {
@@ -914,6 +944,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 // Use precomputed pool for common point IDs (0-255)
                 let point_str = precomputed::get_point_id_str_or_alloc(point);
                 // SHM writer enables direct M2C via shared memory
+                // Lock notifier for mutable access during async call
+                let mut notifier_guard = match &self.shm_notifier {
+                    Some(n) => Some(n.lock().await),
+                    None => None,
+                };
                 match set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
@@ -921,7 +956,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     &point_str,
                     value,
                     self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-                    None, // TODO: Add ShmNotifier for UDS event notification
+                    notifier_guard.as_deref_mut(),
                 )
                 .await
                 {

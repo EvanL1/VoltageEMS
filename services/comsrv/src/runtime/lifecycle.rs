@@ -325,8 +325,9 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
 
     info!("Stopping {} channels concurrently...", total_channels);
 
-    // Stop all channels concurrently.
+    // Stop all channels concurrently with per-channel timeout
     use futures::future::join_all;
+    const CHANNEL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     let shutdown_futures: Vec<_> = channel_ids
         .into_iter()
@@ -334,16 +335,28 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
             let channel_manager = Arc::clone(&channel_manager);
             async move {
                 // Direct access without RwLock (lock-free)
-                let result = channel_manager.remove_channel(channel_id).await;
+                // Add timeout to prevent single channel from blocking entire shutdown
+                let result = tokio::time::timeout(
+                    CHANNEL_SHUTDOWN_TIMEOUT,
+                    channel_manager.remove_channel(channel_id),
+                )
+                .await;
 
                 match result {
-                    Ok(_) => {
+                    Ok(Ok(_)) => {
                         debug!("Channel {} stopped successfully", channel_id);
                         Ok(channel_id)
                     },
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         error!("Error stopping channel {}: {}", channel_id, e);
-                        Err((channel_id, e))
+                        Err((channel_id, format!("{}", e)))
+                    },
+                    Err(_) => {
+                        error!(
+                            "Channel {} shutdown timed out after {:?}",
+                            channel_id, CHANNEL_SHUTDOWN_TIMEOUT
+                        );
+                        Err((channel_id, "timeout".to_string()))
                     },
                 }
             }

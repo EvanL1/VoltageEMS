@@ -158,8 +158,8 @@ fn is_test_environment() -> bool {
     false
 }
 
-/// Default max file size: 100MB
-const DEFAULT_MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
+/// Default max file size: 20MB (reduced from 100MB for faster rotation and compression)
+const DEFAULT_MAX_FILE_SIZE: u64 = 20 * 1024 * 1024;
 
 // Custom daily rolling file writer with naming format: {service}{YYYYMMDD}.log
 // Also supports size-based rotation within a day
@@ -914,8 +914,8 @@ pub fn start_log_compression_task(log_dir: PathBuf, service_name: String) {
         // Initial delay of 1 minute to let service fully start
         tokio::time::sleep(Duration::from_secs(60)).await;
 
-        // Then run compression task every 24 hours
-        let mut interval = interval(Duration::from_secs(86400)); // 24 hours
+        // Then run compression task every 6 hours (reduced from 24 hours for more timely cleanup)
+        let mut interval = interval(Duration::from_secs(6 * 3600)); // 6 hours
 
         loop {
             interval.tick().await;
@@ -961,8 +961,8 @@ async fn compress_old_logs(
 
         // Process uncompressed log files
         if !file_name.ends_with(".gz") {
-            // Compress logs older than 7 days
-            if age > Duration::from_secs(7 * 86400) {
+            // Compress logs older than 1 day (reduced from 7 days for faster disk space reclaim)
+            if age > Duration::from_secs(86400) {
                 compress_file(&path).await?;
                 tokio::fs::remove_file(&path).await?; // Remove original file
                 tracing::debug!("Compressed: {}", file_name);

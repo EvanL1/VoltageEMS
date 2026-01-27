@@ -729,6 +729,16 @@ pub trait ChannelLogHandler: Send + Sync {
     /// * `channel_id` - The channel identifier
     /// * `event` - The log event
     async fn on_log(&self, channel_id: u32, event: ChannelLogEvent);
+
+    /// Set the log level dynamically (for hot-reload support).
+    ///
+    /// Default implementation is a no-op for backward compatibility.
+    /// File-based handlers should override this to update their filtering level.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - Log level string: "info", "debug", or "error"
+    fn set_log_level(&self, _level: &str) {}
 }
 
 // ============================================================================
@@ -937,6 +947,12 @@ impl ChannelLogHandler for CompositeLogHandler {
             }
         }
     }
+
+    fn set_log_level(&self, level: &str) {
+        for handler in &self.handlers {
+            handler.set_log_level(level);
+        }
+    }
 }
 
 /// Tracing log handler that integrates with the `tracing` crate.
@@ -1123,6 +1139,11 @@ impl LogContext {
     /// Get the channel ID.
     pub fn channel_id(&self) -> u32 {
         self.channel_id
+    }
+
+    /// Get the log handler reference (for hot-reload support).
+    pub fn handler(&self) -> Option<Arc<dyn ChannelLogHandler>> {
+        self.handler.clone()
     }
 
     /// Log an event (async).
