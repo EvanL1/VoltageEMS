@@ -482,3 +482,504 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         ))
     }
 }
+
+// ============================================================================
+// Unit Tests for Instance Routing
+// ============================================================================
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+    use crate::product_loader::ProductLoader;
+    use common::FourRemote;
+    use sqlx::SqlitePool;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use voltage_rtdb::{helpers::create_test_rtdb, RoutingCache};
+
+    // Helper: Create test database with full modsrv schema
+    async fn create_test_database() -> (TempDir, SqlitePool) {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_routing.db");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.display());
+
+        let pool = SqlitePool::connect(&db_url).await.unwrap();
+
+        // Use standard modsrv schema
+        common::test_utils::schema::init_modsrv_schema(&pool)
+            .await
+            .unwrap();
+
+        // Create measurement_points table for validation tests (without FK constraint)
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS measurement_points (
+                product_name TEXT NOT NULL,
+                measurement_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                unit TEXT,
+                description TEXT,
+                PRIMARY KEY (product_name, measurement_id)
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Create action_points table for validation tests
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS action_points (
+                product_name TEXT NOT NULL,
+                action_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                unit TEXT,
+                description TEXT,
+                PRIMARY KEY (product_name, action_id)
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Insert Battery measurement points (matches Battery.json)
+        for id in 1..=19 {
+            sqlx::query(
+                "INSERT INTO measurement_points (product_name, measurement_id, name) VALUES (?, ?, ?)",
+            )
+            .bind("Battery")
+            .bind(id)
+            .bind(format!("Battery M{}", id))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Insert Battery action points
+        for id in 1..=3 {
+            sqlx::query(
+                "INSERT INTO action_points (product_name, action_id, name) VALUES (?, ?, ?)",
+            )
+            .bind("Battery")
+            .bind(id)
+            .bind(format!("Battery A{}", id))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Insert PCS measurement points (for PCS tests)
+        for id in 1..=10 {
+            sqlx::query(
+                "INSERT INTO measurement_points (product_name, measurement_id, name) VALUES (?, ?, ?)",
+            )
+            .bind("PCS")
+            .bind(id)
+            .bind(format!("PCS M{}", id))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Insert PCS action points
+        for id in 1..=5 {
+            sqlx::query(
+                "INSERT INTO action_points (product_name, action_id, name) VALUES (?, ?, ?)",
+            )
+            .bind("PCS")
+            .bind(id)
+            .bind(format!("PCS A{}", id))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        (temp_dir, pool)
+    }
+
+    // Helper: Create InstanceManager for testing
+    fn create_test_instance_manager(pool: SqlitePool) -> InstanceManager<voltage_rtdb::MemoryRtdb> {
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(RoutingCache::new());
+        let product_loader = Arc::new(ProductLoader::new(pool.clone()));
+
+        InstanceManager::new(pool, rtdb, routing_cache, product_loader)
+    }
+
+    // Helper: Create a test instance
+    async fn create_test_instance(
+        manager: &InstanceManager<voltage_rtdb::MemoryRtdb>,
+        instance_id: u32,
+        instance_name: &str,
+        product_name: &str,
+    ) {
+        let req = crate::product_loader::CreateInstanceRequest {
+            instance_id,
+            instance_name: instance_name.to_string(),
+            product_name: product_name.to_string(),
+            properties: HashMap::new(),
+        };
+        manager
+            .create_instance(req)
+            .await
+            .expect("Failed to create instance");
+    }
+
+    // Helper: Create a test channel in the database
+    async fn create_test_channel(pool: &SqlitePool, channel_id: i32, name: &str) {
+        sqlx::query(
+            r#"INSERT INTO channels (channel_id, name, protocol, enabled)
+               VALUES (?, ?, 'Virtual', 1)"#,
+        )
+        .bind(channel_id)
+        .bind(name)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // ========== upsert_measurement_routing tests ==========
+
+    #[tokio::test]
+    async fn test_upsert_measurement_routing_success() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        // Create instance (using built-in Battery product)
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+
+        // Create channel (required for routing FK)
+        create_test_channel(&pool, 3001, "test_channel").await;
+
+        // Create routing
+        let request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3001),
+            four_remote: Some(FourRemote::Telemetry),
+            channel_point_id: Some(101),
+            enabled: true,
+        };
+
+        let result = manager.upsert_measurement_routing(1001, 1, request).await;
+
+        assert!(result.is_ok(), "Upsert should succeed: {:?}", result.err());
+
+        // Verify routing was created
+        let routing = manager.get_measurement_routing(1001).await.unwrap();
+        assert_eq!(routing.len(), 1);
+        assert_eq!(routing[0].measurement_id, 1);
+        assert_eq!(routing[0].channel_id, Some(3001));
+    }
+
+    #[tokio::test]
+    async fn test_upsert_measurement_routing_invalid_channel_type() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+
+        // Try to create measurement routing with Control type (invalid)
+        let request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3001),
+            four_remote: Some(FourRemote::Control), // Invalid for measurement
+            channel_point_id: Some(101),
+            enabled: true,
+        };
+
+        let result = manager.upsert_measurement_routing(1001, 1, request).await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid channel_type"));
+    }
+
+    #[tokio::test]
+    async fn test_upsert_measurement_routing_unbound() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+
+        // Create unbound routing (all channel fields are None, enabled=true so we can verify)
+        let request = crate::dto::SinglePointRoutingRequest {
+            channel_id: None,
+            four_remote: None,
+            channel_point_id: None,
+            enabled: true, // Enable so get_measurement_routing returns it
+        };
+
+        let result = manager.upsert_measurement_routing(1001, 1, request).await;
+
+        assert!(result.is_ok());
+
+        // Verify unbound routing via get_measurement_routing (only returns enabled=true)
+        let routing = manager.get_measurement_routing(1001).await.unwrap();
+        assert_eq!(routing.len(), 1);
+        assert!(routing[0].channel_id.is_none());
+        assert!(routing[0].channel_type.is_none());
+        assert!(routing[0].channel_point_id.is_none());
+    }
+
+    // ========== upsert_action_routing tests ==========
+
+    #[tokio::test]
+    async fn test_upsert_action_routing_success() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        // Use PCS product which has action points
+        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+
+        // Create channel
+        create_test_channel(&pool, 3002, "test_channel_2").await;
+
+        // Create action routing with Adjustment type
+        let request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3002),
+            four_remote: Some(FourRemote::Adjustment),
+            channel_point_id: Some(201),
+            enabled: true,
+        };
+
+        let result = manager.upsert_action_routing(2001, 1, request).await;
+
+        assert!(result.is_ok(), "Upsert should succeed: {:?}", result.err());
+
+        // Verify routing was created
+        let routing = manager.get_action_routing(2001).await.unwrap();
+        assert_eq!(routing.len(), 1);
+        assert_eq!(routing[0].action_id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_upsert_action_routing_invalid_channel_type() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+
+        // Try to create action routing with Telemetry type (invalid)
+        let request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3002),
+            four_remote: Some(FourRemote::Telemetry), // Invalid for action
+            channel_point_id: Some(201),
+            enabled: true,
+        };
+
+        let result = manager.upsert_action_routing(2001, 1, request).await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid channel_type"));
+    }
+
+    // ========== delete_measurement_routing tests ==========
+
+    #[tokio::test]
+    async fn test_delete_measurement_routing_success() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        create_test_channel(&pool, 3001, "test_channel").await;
+
+        // Create routing first
+        let request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3001),
+            four_remote: Some(FourRemote::Telemetry),
+            channel_point_id: Some(101),
+            enabled: true,
+        };
+        manager
+            .upsert_measurement_routing(1001, 1, request)
+            .await
+            .unwrap();
+
+        // Delete the routing
+        let rows_affected = manager.delete_measurement_routing(1001, 1).await.unwrap();
+
+        assert_eq!(rows_affected, 1);
+
+        // Verify routing was deleted
+        let routing = manager.get_measurement_routing(1001).await.unwrap();
+        assert!(routing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_measurement_routing_not_found() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+
+        // Try to delete non-existent routing
+        let rows_affected = manager.delete_measurement_routing(1001, 999).await.unwrap();
+
+        assert_eq!(rows_affected, 0);
+    }
+
+    // ========== toggle_routing tests ==========
+
+    #[tokio::test]
+    async fn test_toggle_measurement_routing() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        create_test_channel(&pool, 3001, "test_channel").await;
+
+        // Create routing (enabled)
+        let request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3001),
+            four_remote: Some(FourRemote::Telemetry),
+            channel_point_id: Some(101),
+            enabled: true,
+        };
+        manager
+            .upsert_measurement_routing(1001, 1, request)
+            .await
+            .unwrap();
+
+        // Verify initially enabled
+        let routing = manager.get_measurement_routing(1001).await.unwrap();
+        assert_eq!(routing.len(), 1);
+        assert!(routing[0].enabled);
+
+        // Toggle to disabled
+        let rows_affected = manager
+            .toggle_measurement_routing(1001, 1, false)
+            .await
+            .unwrap();
+
+        assert_eq!(rows_affected, 1);
+
+        // Verify routing is now disabled (use raw SQL since get_measurement_routing only returns enabled)
+        let enabled: bool = sqlx::query_scalar(
+            "SELECT enabled FROM measurement_routing WHERE instance_id = ? AND measurement_id = ?",
+        )
+        .bind(1001i32)
+        .bind(1u32)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!enabled, "Routing should be disabled after toggle");
+
+        // get_measurement_routing should return empty for disabled routing
+        let routing = manager.get_measurement_routing(1001).await.unwrap();
+        assert!(routing.is_empty(), "No enabled routing should exist");
+
+        // Toggle back to enabled
+        manager
+            .toggle_measurement_routing(1001, 1, true)
+            .await
+            .unwrap();
+
+        // Now get_measurement_routing should return the routing
+        let routing = manager.get_measurement_routing(1001).await.unwrap();
+        assert_eq!(routing.len(), 1);
+        assert!(routing[0].enabled);
+    }
+
+    // ========== validate_routing tests ==========
+
+    #[tokio::test]
+    async fn test_validate_measurement_routing_valid() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        create_test_channel(&pool, 3001, "test_channel").await;
+
+        // Create valid routing row
+        let routing_row = MeasurementRoutingRow {
+            channel_id: Some(3001),
+            channel_type: Some(FourRemote::Telemetry),
+            channel_point_id: Some(101),
+            measurement_id: 1, // Battery has measurement point 1
+        };
+
+        let result = manager
+            .validate_measurement_routing(&routing_row, "battery_test")
+            .await
+            .unwrap();
+
+        assert!(result.is_valid);
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_validate_measurement_routing_invalid_point() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        create_test_channel(&pool, 3001, "test_channel").await;
+
+        // Create routing row with non-existent measurement point
+        let routing_row = MeasurementRoutingRow {
+            channel_id: Some(3001),
+            channel_type: Some(FourRemote::Telemetry),
+            channel_point_id: Some(101),
+            measurement_id: 9999, // Invalid measurement ID
+        };
+
+        let result = manager
+            .validate_measurement_routing(&routing_row, "battery_test")
+            .await
+            .unwrap();
+
+        assert!(!result.is_valid);
+        assert!(!result.errors.is_empty());
+    }
+
+    // ========== delete_all_routing tests ==========
+
+    #[tokio::test]
+    async fn test_delete_all_routing() {
+        let (_temp_dir, pool) = create_test_database().await;
+        let manager = create_test_instance_manager(pool.clone());
+
+        // Use PCS which has both measurement and action points
+        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+        create_test_channel(&pool, 3001, "test_channel").await;
+
+        // Create measurement routing
+        let m_request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3001),
+            four_remote: Some(FourRemote::Telemetry),
+            channel_point_id: Some(101),
+            enabled: true,
+        };
+        manager
+            .upsert_measurement_routing(2001, 1, m_request)
+            .await
+            .unwrap();
+
+        // Create action routing
+        let a_request = crate::dto::SinglePointRoutingRequest {
+            channel_id: Some(3001),
+            four_remote: Some(FourRemote::Adjustment),
+            channel_point_id: Some(201),
+            enabled: true,
+        };
+        manager
+            .upsert_action_routing(2001, 1, a_request)
+            .await
+            .unwrap();
+
+        // Delete all routing
+        let (m_deleted, a_deleted) = manager.delete_all_routing(2001).await.unwrap();
+
+        assert_eq!(m_deleted, 1);
+        assert_eq!(a_deleted, 1);
+
+        // Verify all routing is deleted
+        let m_routing = manager.get_measurement_routing(2001).await.unwrap();
+        let a_routing = manager.get_action_routing(2001).await.unwrap();
+        assert!(m_routing.is_empty());
+        assert!(a_routing.is_empty());
+    }
+}

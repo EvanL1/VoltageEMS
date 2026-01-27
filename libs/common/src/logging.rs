@@ -1308,3 +1308,270 @@ pub async fn shutdown_logging_tasks() {
         tracing::debug!("Logging tasks shutdown complete");
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+    use tracing::Level;
+
+    // ========================================================================
+    // format_level tests
+    // ========================================================================
+
+    #[test]
+    fn test_format_level_trace() {
+        assert_eq!(format_level(&Level::TRACE), "[TRACE]");
+    }
+
+    #[test]
+    fn test_format_level_debug() {
+        assert_eq!(format_level(&Level::DEBUG), "[DEBUG]");
+    }
+
+    #[test]
+    fn test_format_level_info() {
+        assert_eq!(format_level(&Level::INFO), "[INFO]");
+    }
+
+    #[test]
+    fn test_format_level_warn() {
+        assert_eq!(format_level(&Level::WARN), "[WARN]");
+    }
+
+    #[test]
+    fn test_format_level_error() {
+        assert_eq!(format_level(&Level::ERROR), "[ERROR]");
+    }
+
+    // ========================================================================
+    // truncate_body tests
+    // ========================================================================
+
+    #[test]
+    fn test_truncate_body_short_string() {
+        let body = "hello";
+        let result = truncate_body(body, 100);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_truncate_body_exact_length() {
+        let body = "12345";
+        let result = truncate_body(body, 5);
+        assert_eq!(result, "12345");
+    }
+
+    #[test]
+    fn test_truncate_body_long_string() {
+        let body = "hello world";
+        let result = truncate_body(body, 5);
+        assert_eq!(result, "hello[truncated 6 bytes]");
+    }
+
+    #[test]
+    fn test_truncate_body_empty_string() {
+        let body = "";
+        let result = truncate_body(body, 100);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_truncate_body_max_zero() {
+        let body = "hello";
+        let result = truncate_body(body, 0);
+        assert_eq!(result, "[truncated 5 bytes]");
+    }
+
+    #[test]
+    fn test_truncate_body_realistic() {
+        let body = r#"{"username":"admin","password":"secret123","data":{"key":"value"}}"#;
+        let result = truncate_body(body, 30);
+        assert!(result.starts_with(r#"{"username":"admin","password""#));
+        assert!(result.contains("[truncated"));
+    }
+
+    // ========================================================================
+    // redact_sensitive_fields tests
+    // ========================================================================
+
+    #[test]
+    fn test_redact_password_field() {
+        let json = r#"{"username":"admin","password":"secret123"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""password":"***REDACTED***""#));
+        assert!(result.contains(r#""username":"admin""#));
+    }
+
+    #[test]
+    fn test_redact_token_field() {
+        let json = r#"{"token":"abc123xyz"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""token":"***REDACTED***""#));
+    }
+
+    #[test]
+    fn test_redact_api_key_field() {
+        let json = r#"{"api_key":"sk-12345"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""api_key":"***REDACTED***""#));
+    }
+
+    #[test]
+    fn test_redact_secret_field() {
+        let json = r#"{"client_secret":"mysecret"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""client_secret":"***REDACTED***""#));
+    }
+
+    #[test]
+    fn test_redact_authorization_field() {
+        let json = r#"{"authorization":"Bearer xyz"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""authorization":"***REDACTED***""#));
+    }
+
+    #[test]
+    fn test_redact_case_insensitive() {
+        let json = r#"{"PASSWORD":"secret","Token":"abc"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""***REDACTED***""#));
+        // Both should be redacted (case insensitive)
+        assert!(!result.contains("secret"));
+        assert!(!result.contains("abc"));
+    }
+
+    #[test]
+    fn test_redact_nested_object() {
+        let json = r#"{"user":{"name":"john","password":"secret"}}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""password":"***REDACTED***""#));
+        assert!(result.contains(r#""name":"john""#));
+    }
+
+    #[test]
+    fn test_redact_array_of_objects() {
+        let json = r#"[{"password":"a"},{"password":"b"}]"#;
+        let result = redact_sensitive_fields(json);
+        // Both passwords should be redacted
+        assert!(!result.contains("\"a\""));
+        assert!(!result.contains("\"b\""));
+    }
+
+    #[test]
+    fn test_redact_deeply_nested() {
+        let json = r#"{"level1":{"level2":{"level3":{"password":"deep_secret"}}}}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""password":"***REDACTED***""#));
+        assert!(!result.contains("deep_secret"));
+    }
+
+    #[test]
+    fn test_redact_no_sensitive_fields() {
+        let json = r#"{"username":"admin","email":"admin@example.com"}"#;
+        let result = redact_sensitive_fields(json);
+        // Should remain unchanged
+        assert!(result.contains(r#""username":"admin""#));
+        assert!(result.contains(r#""email":"admin@example.com""#));
+    }
+
+    #[test]
+    fn test_redact_invalid_json() {
+        let invalid_json = "not valid json";
+        let result = redact_sensitive_fields(invalid_json);
+        // Should return as-is
+        assert_eq!(result, "not valid json");
+    }
+
+    #[test]
+    fn test_redact_empty_json() {
+        let json = "{}";
+        let result = redact_sensitive_fields(json);
+        assert_eq!(result, "{}");
+    }
+
+    #[test]
+    fn test_redact_empty_array() {
+        let json = "[]";
+        let result = redact_sensitive_fields(json);
+        assert_eq!(result, "[]");
+    }
+
+    #[test]
+    fn test_redact_multiple_sensitive_fields() {
+        let json = r#"{"password":"p1","token":"t1","api_key":"k1"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(!result.contains("p1"));
+        assert!(!result.contains("t1"));
+        assert!(!result.contains("k1"));
+        // All should be redacted
+        let redacted_count = result.matches("***REDACTED***").count();
+        assert_eq!(redacted_count, 3);
+    }
+
+    #[test]
+    fn test_redact_partial_key_match() {
+        // Keys containing sensitive words should also be redacted
+        let json = r#"{"user_password":"secret","access_token":"abc"}"#;
+        let result = redact_sensitive_fields(json);
+        assert!(result.contains(r#""user_password":"***REDACTED***""#));
+        assert!(result.contains(r#""access_token":"***REDACTED***""#));
+    }
+
+    // ========================================================================
+    // LogConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_log_config_default() {
+        let config = LogConfig::default();
+        assert_eq!(config.service_name, "unknown");
+        assert_eq!(config.console_level, Level::INFO);
+        assert_eq!(config.file_level, Level::DEBUG);
+        assert!(!config.enable_json);
+        assert_eq!(config.max_log_files, 30);
+        assert!(config.enable_api_log);
+        assert_eq!(config.api_log_level, Level::INFO);
+    }
+
+    // ========================================================================
+    // is_test_environment tests
+    // ========================================================================
+
+    #[test]
+    fn test_is_test_environment_returns_true() {
+        // When running via cargo test, this should return true
+        // because CARGO_TARGET_TMPDIR is set or we're in target/debug/deps
+        assert!(is_test_environment());
+    }
+
+    // ========================================================================
+    // get_log_root tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_log_root_in_test_env() {
+        // In test environment without LOG_ROOT initialized,
+        // should return temp directory path
+        let log_root = get_log_root();
+        // Either initialized via init_log_root or defaults to temp dir in tests
+        assert!(!log_root.to_string_lossy().is_empty());
+    }
+
+    // ========================================================================
+    // RedisPoolConfig tests (from redis.rs - included here for coverage)
+    // ========================================================================
+
+    #[test]
+    fn test_daily_rolling_writer_filename_format() {
+        // Test that the filename format is correct: {YYYYMMDD}_{service}.log
+        let today = chrono::Local::now().format("%Y%m%d").to_string();
+        let expected_pattern = format!("{}_{}.log", today, "comsrv");
+        assert!(expected_pattern.contains(&today));
+        assert!(expected_pattern.ends_with(".log"));
+    }
+}

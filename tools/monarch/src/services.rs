@@ -805,3 +805,230 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
     // Compare image IDs
     Ok(running_image_id != local_image_id)
 }
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // build_docker_compose_args() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_build_docker_compose_args_basic() {
+        let args = build_docker_compose_args("start", "", vec![]);
+        assert_eq!(args, vec!["start"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_with_flag() {
+        let args = build_docker_compose_args("rm", "-f", vec![]);
+        assert_eq!(args, vec!["rm", "-f"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_with_services() {
+        let args =
+            build_docker_compose_args("stop", "", vec!["comsrv".to_string(), "modsrv".to_string()]);
+        assert_eq!(args, vec!["stop", "comsrv", "modsrv"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_with_flag_and_services() {
+        let args =
+            build_docker_compose_args("up", "-d", vec!["redis".to_string(), "comsrv".to_string()]);
+        assert_eq!(args, vec!["up", "-d", "redis", "comsrv"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_filters_all() {
+        // "all" keyword should be filtered out
+        let args = build_docker_compose_args("stop", "", vec!["all".to_string()]);
+        assert_eq!(args, vec!["stop"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_filters_all_case_insensitive() {
+        // "ALL", "All", etc. should also be filtered
+        let args = build_docker_compose_args(
+            "stop",
+            "",
+            vec!["ALL".to_string(), "All".to_string(), "comsrv".to_string()],
+        );
+        assert_eq!(args, vec!["stop", "comsrv"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_mixed_all() {
+        // Mix of "all" and actual services
+        let args = build_docker_compose_args(
+            "restart",
+            "",
+            vec!["all".to_string(), "comsrv".to_string(), "ALL".to_string()],
+        );
+        assert_eq!(args, vec!["restart", "comsrv"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_preserves_order() {
+        let args = build_docker_compose_args(
+            "build",
+            "",
+            vec!["c".to_string(), "a".to_string(), "b".to_string()],
+        );
+        assert_eq!(args, vec!["build", "c", "a", "b"]);
+    }
+
+    #[test]
+    fn test_build_docker_compose_args_empty_flag() {
+        // Empty flag should not be added
+        let args = build_docker_compose_args("ps", "", vec!["comsrv".to_string()]);
+        assert_eq!(args, vec!["ps", "comsrv"]);
+    }
+
+    // ========================================================================
+    // ensure_shm_file_exists() - No direct test (side effects on filesystem)
+    // Instead, we test the logic conceptually
+    // ========================================================================
+
+    // Note: ensure_shm_file_exists() has filesystem side effects and uses
+    // a fixed path (/dev/shm/voltage-rtdb.shm), so it's not suitable for
+    // unit testing without mocking. Integration tests would be more appropriate.
+
+    // ========================================================================
+    // ServiceCommands Tests (command enum variant tests)
+    // ========================================================================
+
+    #[test]
+    fn test_service_commands_start_default() {
+        // Test that Start command can be created with empty services
+        let cmd = ServiceCommands::Start { services: vec![] };
+        match cmd {
+            ServiceCommands::Start { services } => {
+                assert!(services.is_empty());
+            },
+            _ => panic!("Expected Start command"),
+        }
+    }
+
+    #[test]
+    fn test_service_commands_stop_with_services() {
+        let cmd = ServiceCommands::Stop {
+            services: vec!["comsrv".to_string(), "modsrv".to_string()],
+        };
+        match cmd {
+            ServiceCommands::Stop { services } => {
+                assert_eq!(services.len(), 2);
+                assert_eq!(services[0], "comsrv");
+                assert_eq!(services[1], "modsrv");
+            },
+            _ => panic!("Expected Stop command"),
+        }
+    }
+
+    #[test]
+    fn test_service_commands_logs_defaults() {
+        let cmd = ServiceCommands::Logs {
+            service: "comsrv".to_string(),
+            follow: false,
+            tail: "100".to_string(),
+        };
+        match cmd {
+            ServiceCommands::Logs {
+                service,
+                follow,
+                tail,
+            } => {
+                assert_eq!(service, "comsrv");
+                assert!(!follow);
+                assert_eq!(tail, "100");
+            },
+            _ => panic!("Expected Logs command"),
+        }
+    }
+
+    #[test]
+    fn test_service_commands_refresh_smart_mode() {
+        let cmd = ServiceCommands::Refresh {
+            services: vec![],
+            pull: true,
+            smart: true,
+        };
+        match cmd {
+            ServiceCommands::Refresh {
+                services,
+                pull,
+                smart,
+            } => {
+                assert!(services.is_empty());
+                assert!(pull);
+                assert!(smart);
+            },
+            _ => panic!("Expected Refresh command"),
+        }
+    }
+
+    #[test]
+    fn test_service_commands_set_action() {
+        let cmd = ServiceCommands::SetAction {
+            instance_name: "pcs_01".to_string(),
+            point_id: "start".to_string(),
+            value: 1.0,
+            detailed: true,
+        };
+        match cmd {
+            ServiceCommands::SetAction {
+                instance_name,
+                point_id,
+                value,
+                detailed,
+            } => {
+                assert_eq!(instance_name, "pcs_01");
+                assert_eq!(point_id, "start");
+                assert!((value - 1.0).abs() < f64::EPSILON);
+                assert!(detailed);
+            },
+            _ => panic!("Expected SetAction command"),
+        }
+    }
+
+    #[test]
+    fn test_service_commands_routing_show() {
+        let cmd = ServiceCommands::RoutingShow {
+            route_type: "m2c".to_string(),
+            prefix: Some("2:A:".to_string()),
+            detailed: false,
+            limit: 50,
+        };
+        match cmd {
+            ServiceCommands::RoutingShow {
+                route_type,
+                prefix,
+                detailed,
+                limit,
+            } => {
+                assert_eq!(route_type, "m2c");
+                assert_eq!(prefix, Some("2:A:".to_string()));
+                assert!(!detailed);
+                assert_eq!(limit, 50);
+            },
+            _ => panic!("Expected RoutingShow command"),
+        }
+    }
+
+    #[test]
+    fn test_service_commands_clean_with_volumes() {
+        let cmd = ServiceCommands::Clean { volumes: true };
+        match cmd {
+            ServiceCommands::Clean { volumes } => {
+                assert!(volumes);
+            },
+            _ => panic!("Expected Clean command"),
+        }
+    }
+}

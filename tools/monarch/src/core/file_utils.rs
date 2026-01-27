@@ -246,3 +246,216 @@ pub fn set_database_permissions<P: AsRef<Path>>(path: P) -> Result<()> {
     }
     Ok(())
 }
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ========================================================================
+    // flatten_json() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_flatten_json_simple_object() {
+        let value = json!({
+            "name": "test",
+            "count": 42
+        });
+
+        let result = flatten_json(&value, None);
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("name").unwrap(), &json!("test"));
+        assert_eq!(result.get("count").unwrap(), &json!(42));
+    }
+
+    #[test]
+    fn test_flatten_json_nested_object() {
+        let value = json!({
+            "service": {
+                "name": "comsrv",
+                "port": 6001
+            }
+        });
+
+        let result = flatten_json(&value, None);
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("service.name").unwrap(), &json!("comsrv"));
+        assert_eq!(result.get("service.port").unwrap(), &json!(6001));
+    }
+
+    #[test]
+    fn test_flatten_json_deeply_nested() {
+        let value = json!({
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "value": "deep"
+                    }
+                }
+            }
+        });
+
+        let result = flatten_json(&value, None);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get("level1.level2.level3.value").unwrap(),
+            &json!("deep")
+        );
+    }
+
+    #[test]
+    fn test_flatten_json_with_prefix() {
+        let value = json!({
+            "host": "localhost",
+            "port": 8080
+        });
+
+        let result = flatten_json(&value, Some("api".to_string()));
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("api.host").unwrap(), &json!("localhost"));
+        assert_eq!(result.get("api.port").unwrap(), &json!(8080));
+    }
+
+    #[test]
+    fn test_flatten_json_mixed_types() {
+        let value = json!({
+            "string": "hello",
+            "number": 123,
+            "float": 1.234,
+            "boolean": true,
+            "null": null,
+            "array": [1, 2, 3]
+        });
+
+        let result = flatten_json(&value, None);
+
+        assert_eq!(result.len(), 6);
+        assert_eq!(result.get("string").unwrap(), &json!("hello"));
+        assert_eq!(result.get("number").unwrap(), &json!(123));
+        assert_eq!(result.get("float").unwrap(), &json!(1.234));
+        assert_eq!(result.get("boolean").unwrap(), &json!(true));
+        assert_eq!(result.get("null").unwrap(), &json!(null));
+        assert_eq!(result.get("array").unwrap(), &json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_flatten_json_empty_object() {
+        let value = json!({});
+
+        let result = flatten_json(&value, None);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_json_non_object_root() {
+        // Test with non-object values at root
+        let string_val = json!("hello");
+        let result = flatten_json(&string_val, Some("key".to_string()));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result.get("key").unwrap(), &json!("hello"));
+
+        let number_val = json!(42);
+        let result = flatten_json(&number_val, Some("num".to_string()));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result.get("num").unwrap(), &json!(42));
+    }
+
+    #[test]
+    fn test_flatten_json_non_object_root_no_prefix() {
+        // Non-object without prefix should return empty
+        let string_val = json!("hello");
+        let result = flatten_json(&string_val, None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_flatten_json_complex_config() {
+        // Simulate real config structure
+        let value = json!({
+            "service": {
+                "name": "comsrv",
+                "description": "Communication Service"
+            },
+            "api": {
+                "host": "0.0.0.0",
+                "port": 6001
+            },
+            "redis": {
+                "url": "redis://localhost:6379"
+            },
+            "logging": {
+                "level": "info",
+                "format": "json"
+            }
+        });
+
+        let result = flatten_json(&value, None);
+
+        assert_eq!(result.len(), 7);
+        assert_eq!(result.get("service.name").unwrap(), &json!("comsrv"));
+        assert_eq!(result.get("api.host").unwrap(), &json!("0.0.0.0"));
+        assert_eq!(result.get("api.port").unwrap(), &json!(6001));
+        assert_eq!(
+            result.get("redis.url").unwrap(),
+            &json!("redis://localhost:6379")
+        );
+        assert_eq!(result.get("logging.level").unwrap(), &json!("info"));
+    }
+
+    #[test]
+    fn test_flatten_json_special_keys() {
+        let value = json!({
+            "key.with.dots": "value1",
+            "key-with-dashes": "value2",
+            "key_with_underscores": "value3"
+        });
+
+        let result = flatten_json(&value, None);
+
+        // Note: keys with dots create ambiguity but should still work
+        assert_eq!(result.len(), 3);
+        assert_eq!(result.get("key.with.dots").unwrap(), &json!("value1"));
+        assert_eq!(result.get("key-with-dashes").unwrap(), &json!("value2"));
+        assert_eq!(
+            result.get("key_with_underscores").unwrap(),
+            &json!("value3")
+        );
+    }
+
+    // ========================================================================
+    // CsvRowError Tests
+    // ========================================================================
+
+    #[test]
+    fn test_csv_row_error_struct() {
+        let error = CsvRowError {
+            row_number: 5,
+            error: "Missing required field".to_string(),
+        };
+
+        assert_eq!(error.row_number, 5);
+        assert_eq!(error.error, "Missing required field");
+    }
+
+    #[test]
+    fn test_csv_row_error_header_row() {
+        // Row 0 indicates header error
+        let error = CsvRowError {
+            row_number: 0,
+            error: "Invalid header".to_string(),
+        };
+
+        assert_eq!(error.row_number, 0);
+    }
+}

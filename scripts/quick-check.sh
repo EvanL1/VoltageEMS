@@ -37,13 +37,38 @@ cargo clippy --all-targets --all-features -- -D warnings
 echo -e "${YELLOW}Running unit tests...${NC}"
 cargo test --workspace --lib
 
+# Check command line arguments
+RUN_INTEGRATION=false
+RUN_COVERAGE=false
+
+for arg in "$@"; do
+    case $arg in
+        --with-integration)
+            RUN_INTEGRATION=true
+            ;;
+        --with-coverage)
+            RUN_COVERAGE=true
+            ;;
+    esac
+done
+
 # Run integration tests (optional - requires Redis)
-if [ "$1" = "--with-integration" ]; then
+if [ "$RUN_INTEGRATION" = true ]; then
     echo -e "${YELLOW}Running integration tests...${NC}"
     cargo test --workspace --test '*'
 else
     echo -e "${YELLOW}Skipping integration tests (use --with-integration to run)${NC}"
     echo -e "${YELLOW}Integration tests require Redis${NC}"
+fi
+
+# Run coverage analysis (optional)
+if [ "$RUN_COVERAGE" = true ]; then
+    echo -e "${YELLOW}Running coverage analysis...${NC}"
+    if command -v cargo-llvm-cov &> /dev/null; then
+        cargo llvm-cov --workspace --lib --bins
+    else
+        echo -e "${RED}cargo-llvm-cov not installed. Run: cargo install cargo-llvm-cov${NC}"
+    fi
 fi
 
 # Check Frontend (Vue.js)
