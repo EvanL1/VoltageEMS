@@ -24,6 +24,7 @@ voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rules = { path = "../../libs/voltage-rules" }
+voltage-calc = { path = "../../libs/voltage-calc" }  # For RtdbStateStore (stateful function persistence)
 
 # Core dependencies (use voltage-common where possible)
 tokio = { workspace = true }

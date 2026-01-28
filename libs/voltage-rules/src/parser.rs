@@ -77,6 +77,7 @@ pub fn extract_rule_flow(full_json: &Value) -> Result<RuleFlow> {
                     "function-switch" => extract_switch_rule_node(data)?,
                     "action-changeValue" => extract_change_value_rule_node(data)?,
                     "action-calculation" => extract_calculation_rule_node(data)?,
+                    "action-periodDelta" => extract_period_delta_rule_node(data)?,
                     _ => {
                         tracing::warn!("Unknown node: {}", inner_type);
                         continue;
@@ -192,6 +193,101 @@ fn extract_calculation_rule_node(data: Option<&Value>) -> Result<RuleNode> {
         variables,
         rule,
         wires,
+    })
+}
+
+/// Extract action-periodDelta node as RuleNode::PeriodDelta
+///
+/// Vue Flow JSON format:
+/// ```json
+/// {
+///   "type": "action-periodDelta",
+///   "config": {
+///     "input": { "name": "X1", "instance": 1, "pointType": "measurement", "point": 9 },
+///     "output": { "name": "Y1", "instance": 1, "pointType": "measurement", "point": 101 },
+///     "period": "daily",
+///     "wires": { "default": ["next-node-id"] }
+///   }
+/// }
+/// ```
+fn extract_period_delta_rule_node(data: Option<&Value>) -> Result<RuleNode> {
+    let config = data
+        .and_then(|d| d.get("config"))
+        .ok_or_else(|| RuleError::ParseError("PeriodDelta node missing 'config'".to_string()))?;
+
+    // Extract input variable
+    let input = extract_single_rule_variable(config.get("input"), "input")?;
+
+    // Extract output variable
+    let output = extract_single_rule_variable(config.get("output"), "output")?;
+
+    // Extract period type
+    let period = config
+        .get("period")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| RuleError::ParseError("PeriodDelta node missing 'period'".to_string()))?
+        .to_string();
+
+    // Validate period type
+    if !["daily", "weekly", "monthly", "quarterly"].contains(&period.as_str()) {
+        return Err(RuleError::ParseError(format!(
+            "Invalid period type: '{}'. Must be one of: daily, weekly, monthly, quarterly",
+            period
+        )));
+    }
+
+    // Extract wires (default output)
+    let wires = extract_rule_wires_default(Some(config))?;
+
+    Ok(RuleNode::PeriodDelta {
+        input,
+        output,
+        period,
+        wires,
+    })
+}
+
+/// Extract a single RuleVariable from JSON value
+fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Result<RuleVariable> {
+    let var = value.ok_or_else(|| {
+        RuleError::ParseError(format!("PeriodDelta node missing '{}'", field_name))
+    })?;
+
+    let name = var
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| RuleError::ParseError(format!("{} variable missing 'name'", field_name)))?
+        .to_string();
+
+    // Support both "instance" and "instance_id" as numeric ID
+    let instance = var
+        .get("instance")
+        .or_else(|| var.get("instance_id"))
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok());
+
+    let point_type = var
+        .get("pointType")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let point = var
+        .get("point")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok());
+
+    let formula = var
+        .get("formula")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    Ok(RuleVariable {
+        name,
+        instance,
+        point_type,
+        point,
+        formula,
     })
 }
 

@@ -2019,6 +2019,7 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
+ "voltage-calc",
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
@@ -4061,6 +4062,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voltage-calc"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "chrono",
  "evalexpr",
  "regex",
@@ -4069,6 +4071,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "voltage-rtdb",
 ]
 
 [[package]]

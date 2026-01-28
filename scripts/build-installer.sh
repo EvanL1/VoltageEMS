@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build multi-architecture installer package for VoltageEMS
-# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=service1,service2,...]
+# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--with-swagger]
 #   VERSION: Version string (default: YYYYMMDD)
 #   ARCH: arm64 | amd64 (default: arm64)
 #   TARGET: Rust target triple (default based on ARCH)
 #   --services: Comma-separated list of services to include (optional, default: all)
+#   --with-swagger: Enable Swagger UI in modsrv (for API documentation)
 #
 # Service names: comsrv, modsrv, hissrv, apigateway, netsrv, alarmsrv, apps, redis, influxdb
 # Service groups: python/py (all Python services), rust (all Rust services)
@@ -15,6 +16,7 @@
 #   ./build-installer.sh v1.2.0 arm64 --services=python     # All Python services
 #   ./build-installer.sh v1.2.0 arm64 -s rust               # All Rust services
 #   ./build-installer.sh v1.2.0 arm64 -s netsrv,hissrv      # Specific Python services
+#   ./build-installer.sh v1.2.0 arm64 --with-swagger        # Build with Swagger UI enabled
 
 set -euo pipefail
 
@@ -40,6 +42,7 @@ VERSION=""
 ARCH=""
 TARGET=""
 SELECTED_SERVICES=""
+ENABLE_SWAGGER=0
 
 # Parse all arguments
 while [[ $# -gt 0 ]]; do
@@ -51,6 +54,10 @@ while [[ $# -gt 0 ]]; do
         -s|--services)
             SELECTED_SERVICES="$2"
             shift 2
+            ;;
+        --with-swagger)
+            ENABLE_SWAGGER=1
+            shift
             ;;
         *)
             if [[ -z "$VERSION" ]]; then
@@ -181,6 +188,11 @@ echo -e "Architecture: ${GREEN}$ARCH${NC}"
 echo -e "Target:       ${GREEN}$TARGET${NC}"
 echo -e "Platform:     ${GREEN}$DOCKER_PLATFORM${NC}"
 echo -e "CPU Cores:    ${GREEN}$CPU_CORES${NC}"
+if [[ "$ENABLE_SWAGGER" == "1" ]]; then
+    echo -e "Swagger UI:   ${GREEN}ENABLED${NC}"
+else
+    echo -e "Swagger UI:   ${YELLOW}disabled${NC}"
+fi
 if [[ -n "$SELECTED_SERVICES" ]]; then
     echo -e "Services:     ${YELLOW}$SELECTED_SERVICES (partial build)${NC}"
     echo -e "Images:       ${YELLOW}${!BUILD_IMAGES[@]}${NC}"
@@ -339,7 +351,16 @@ mkdir -p "$BUILD_DIR/docker"
 # Build Rust services if needed
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     echo -e "${BLUE}Building Rust services...${NC}"
-    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv -p modsrv
+
+    # Determine swagger feature for modsrv
+    if [[ "$ENABLE_SWAGGER" == "1" ]]; then
+        echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p modsrv --features swagger-ui
+    else
+        echo -e "${YELLOW}Building without Swagger UI (use --with-swagger to enable)${NC}"
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv -p modsrv
+    fi
 
     for service in comsrv modsrv; do
         if [[ ! -f "$ROOT_DIR/target/$TARGET/release/$service" ]]; then

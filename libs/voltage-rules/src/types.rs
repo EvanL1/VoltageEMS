@@ -117,6 +117,23 @@ pub enum RuleNode {
         /// Output wires
         wires: RuleWires,
     },
+
+    /// Period delta action node - calculates value change within a period
+    ///
+    /// Tracks cumulative values (like energy meters) and calculates the delta
+    /// within a specified period (daily, weekly, monthly, quarterly).
+    /// Handles counter resets and period rollovers automatically.
+    #[serde(rename = "action-periodDelta")]
+    PeriodDelta {
+        /// Input variable (source cumulative value, e.g., total charge energy)
+        input: RuleVariable,
+        /// Output variable (period delta result, e.g., daily charge energy)
+        output: RuleVariable,
+        /// Period type: "daily", "weekly", "monthly", "quarterly"
+        period: String,
+        /// Output wires
+        wires: RuleWires,
+    },
 }
 
 /// Rule wires - output connections

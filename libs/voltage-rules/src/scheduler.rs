@@ -19,6 +19,7 @@ use tokio::sync::RwLock;
 use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use voltage_calc::StateStore;
 use voltage_rtdb::traits::Rtdb;
 use voltage_rtdb::{RoutingCache, ShmNotifier, UnifiedReader, UnifiedWriter};
 
@@ -57,11 +58,15 @@ struct ScheduledRule {
 }
 
 /// Rule Scheduler - manages periodic rule execution
-pub struct RuleScheduler<R: Rtdb> {
+///
+/// Generic over `S: StateStore` for stateful function persistence:
+/// - `MemoryStateStore` (default): In-memory, lost on restart
+/// - `RtdbStateStore`: Redis-backed, persistent across restarts
+pub struct RuleScheduler<R: Rtdb, S: StateStore = voltage_calc::MemoryStateStore> {
     /// RTDB instance for reading/writing data
     rtdb: Arc<R>,
-    /// Rule executor instance (uses default MemoryStateStore)
-    executor: Arc<RuleExecutor<R, voltage_calc::MemoryStateStore>>,
+    /// Rule executor instance with configurable state store
+    executor: Arc<RuleExecutor<R, S>>,
     /// SQLite pool for rule persistence
     pool: SqlitePool,
     /// Cached rules with their trigger configs
@@ -74,8 +79,8 @@ pub struct RuleScheduler<R: Rtdb> {
     logger_manager: RuleLoggerManager,
 }
 
-impl<R: Rtdb + 'static> RuleScheduler<R> {
-    /// Create a new rule scheduler with configurable tick interval
+impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
+    /// Create a new rule scheduler with configurable tick interval (uses MemoryStateStore)
     ///
     /// # Arguments
     /// * `rtdb` - RTDB instance for reading/writing data
@@ -101,7 +106,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         }
     }
 
-    /// Create with UnifiedReader for two-tier priority reads
+    /// Create with UnifiedReader for two-tier priority reads (uses MemoryStateStore)
     ///
     /// Enables SharedMemory layer in the executor:
     /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
@@ -129,6 +134,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
     }
 
     /// Create with both UnifiedReader (for reads) and UnifiedWriter (for M2C actions)
+    /// (uses MemoryStateStore - state lost on restart)
     ///
     /// Enables full SHM two-tier architecture:
     /// - Reads: SharedMemory (~5μs) > Redis (~1ms)
@@ -154,7 +160,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         )
     }
 
-    /// Create with full SHM support including UDS notifier
+    /// Create with full SHM support including UDS notifier (uses MemoryStateStore)
     ///
     /// Enables complete M2C path:
     /// - SHM write (UnifiedWriter) for data
@@ -171,6 +177,56 @@ impl<R: Rtdb + 'static> RuleScheduler<R> {
         shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
     ) -> Self {
         let mut executor = RuleExecutor::new(Arc::clone(&rtdb), routing_cache);
+        if let Some(reader) = shared_reader {
+            executor = executor.with_shared_reader(reader);
+        }
+        if let Some(writer) = shm_action_writer {
+            executor = executor.with_shm_action_writer(writer);
+        }
+        if let Some(notifier) = shm_notifier {
+            executor = executor.with_shm_notifier(notifier);
+        }
+        Self {
+            rtdb,
+            executor: Arc::new(executor),
+            pool,
+            rules: Arc::new(RwLock::new(Vec::new())),
+            shutdown: CancellationToken::new(),
+            tick_ms,
+            logger_manager: RuleLoggerManager::new(log_root),
+        }
+    }
+}
+
+impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
+    /// Create with custom StateStore and full SHM support
+    ///
+    /// Use this constructor for persistent state storage (e.g., RtdbStateStore).
+    /// This ensures stateful functions like `period_delta()` retain their state
+    /// across service restarts.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let state_store = Arc::new(RtdbStateStore::new(rtdb.clone()));
+    /// let scheduler = RuleScheduler::with_state_store(
+    ///     rtdb, routing_cache, pool, tick_ms, log_root, state_store,
+    ///     shared_reader, shm_action_writer, shm_notifier,
+    /// );
+    /// ```
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_state_store(
+        rtdb: Arc<R>,
+        routing_cache: Arc<RoutingCache>,
+        pool: SqlitePool,
+        tick_ms: u64,
+        log_root: PathBuf,
+        state_store: Arc<S>,
+        shared_reader: Option<Arc<UnifiedReader>>,
+        shm_action_writer: Option<Arc<UnifiedWriter>>,
+        shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
+    ) -> Self {
+        let mut executor =
+            RuleExecutor::with_state_store(Arc::clone(&rtdb), routing_cache, state_store);
         if let Some(reader) = shared_reader {
             executor = executor.with_shared_reader(reader);
         }

@@ -20,6 +20,7 @@ use modsrv::{
     rule_routes::{create_rule_routes, RuleEngineState},
     Result, RuleScheduler, DEFAULT_TICK_MS,
 };
+use voltage_calc::RtdbStateStore;
 use voltage_rtdb::{is_shm_available, SharedConfig, UnifiedReader};
 
 #[tokio::main]
@@ -209,13 +210,16 @@ async fn main() -> Result<()> {
     // Create rule scheduler with two-tier priority (SharedMemory > Redis)
     // SHM writer enables M2C actions via shared memory (primary path)
     // ShmNotifier enables UDS event notification for immediate dispatch
+    // RtdbStateStore ensures stateful functions (period_delta, integrate, etc.) persist across restarts
     let rule_log_root = PathBuf::from("logs/modsrv");
-    let scheduler = Arc::new(RuleScheduler::with_shm_full(
+    let state_store = Arc::new(RtdbStateStore::new(Arc::clone(&rtdb)));
+    let scheduler = Arc::new(RuleScheduler::with_state_store(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
         tick_ms,
         rule_log_root,
+        state_store,
         shared_reader,
         shm_action_writer,
         shm_notifier,

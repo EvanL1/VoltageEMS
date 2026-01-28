@@ -508,6 +508,85 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         },
                     };
                 },
+                RuleNode::PeriodDelta {
+                    input,
+                    output,
+                    period,
+                    wires,
+                } => {
+                    // Read input variable (cumulative value like total energy)
+                    let input_vars = vec![input.clone()];
+                    let values_changed =
+                        match self.read_rule_variables(&input_vars, &mut values).await {
+                            Ok(changed) => changed,
+                            Err(e) => {
+                                result.error =
+                                    Some(format!("Failed to read input variable: {}", e));
+                                return Ok(result);
+                            },
+                        };
+
+                    // Snapshot values when entering this node
+                    let input_snapshot =
+                        snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
+                    result.variable_values = Arc::clone(&input_snapshot);
+
+                    // Get the input value
+                    let input_value = values.get(&input.name).copied().unwrap_or(0.0);
+
+                    // Create CalcEngine with rule_id as context (for stateful period_delta)
+                    let calc_engine =
+                        CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule.id));
+
+                    // Calculate period delta using builtin function
+                    // State key format: calc:state:rule_{id}:period_delta:{var_name}_{period}
+                    let state_key = format!(
+                        "{}:{}:{}",
+                        rule.id,
+                        input.instance.unwrap_or(0),
+                        input.point.unwrap_or(0)
+                    );
+                    let delta = match calc_engine
+                        .builtin()
+                        .period_delta(&state_key, input_value, period)
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(e) => {
+                            result.error = Some(format!("period_delta error: {}", e));
+                            return Ok(result);
+                        },
+                    };
+
+                    // Write delta to output variable
+                    let action = self.write_period_delta_result(output, delta, period).await;
+                    let node_actions = vec![action];
+                    result.actions_executed.push(action);
+
+                    // Update local values
+                    values.insert(output.name.clone(), delta);
+                    values_snapshot = None; // Invalidate cache
+
+                    // Record node execution detail
+                    result.node_details.insert(
+                        current_id.to_string(),
+                        NodeExecutionDetail {
+                            node_type: "periodDelta",
+                            input_values: input_snapshot,
+                            condition_results: None,
+                            matched_port: None,
+                            actions: Some(node_actions),
+                        },
+                    );
+
+                    current_id = match wires.default.first() {
+                        Some(next) => next.as_str(),
+                        None => {
+                            result.error = Some("PeriodDelta node has no output wire".to_string());
+                            return Ok(result);
+                        },
+                    };
+                },
             }
         }
 
@@ -986,6 +1065,73 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             target_type: "instance",
             target_id: instance_id,
             point_type: point_type_to_static(Some(point_type), "M"),
+            point_id: point,
+            value,
+            success,
+        }
+    }
+
+    /// Write period delta result to instance point
+    ///
+    /// Similar to write_calculation_result but specifically for PeriodDelta nodes.
+    /// Always writes to measurement points (period deltas are derived values).
+    async fn write_period_delta_result(
+        &self,
+        variable: &RuleVariable,
+        value: f64,
+        period: &str,
+    ) -> ActionResult {
+        let Some(instance_id) = variable.instance else {
+            tracing::error!(
+                "PeriodDelta output skipped: variable '{}' missing instance_id (period='{}')",
+                variable.name,
+                period
+            );
+            return ActionResult {
+                target_type: "instance",
+                target_id: 0,
+                point_type: "M",
+                point_id: 0,
+                value,
+                success: false,
+            };
+        };
+
+        let Some(point) = variable.point else {
+            tracing::error!(
+                "PeriodDelta output skipped: variable '{}' missing point_id (instance_id={}, period='{}')",
+                variable.name,
+                instance_id,
+                period
+            );
+            return ActionResult {
+                target_type: "instance",
+                target_id: instance_id,
+                point_type: "M",
+                point_id: 0,
+                value,
+                success: false,
+            };
+        };
+
+        // Period delta results are always measurement points (derived values)
+        let success = self
+            .write_measurement_point(instance_id, point, value)
+            .await
+            .is_ok();
+
+        tracing::debug!(
+            "PeriodDelta write: inst:{}:M:{} = {} (period={})",
+            instance_id,
+            point,
+            value,
+            period
+        );
+
+        ActionResult {
+            target_type: "instance",
+            target_id: instance_id,
+            point_type: "M",
             point_id: point,
             value,
             success,

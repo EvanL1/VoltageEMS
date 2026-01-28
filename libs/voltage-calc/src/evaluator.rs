@@ -66,6 +66,14 @@ impl<S: StateStore> CalcEngine<S> {
         }
     }
 
+    /// Get reference to built-in function executor
+    ///
+    /// Useful for direct access to stateful functions like period_delta
+    /// when not using the formula string API.
+    pub fn builtin(&self) -> &BuiltinFunctions<S> {
+        &self.builtin
+    }
+
     /// Evaluate a simple expression (no stateful functions)
     ///
     /// For expressions without integrate/moving_avg/rate_of_change,
