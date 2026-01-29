@@ -243,6 +243,9 @@ impl fmt::Display for ParsePointTypeError {
     }
 }
 
+#[cfg(feature = "std")]
+impl std::error::Error for ParsePointTypeError {}
+
 impl core::str::FromStr for PointType {
     type Err = ParsePointTypeError;
 

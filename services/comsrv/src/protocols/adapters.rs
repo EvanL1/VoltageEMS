@@ -33,3 +33,9 @@ pub mod gpio;
 
 #[cfg(feature = "dl645")]
 pub mod dl645;
+
+#[cfg(feature = "mqtt")]
+pub mod mqtt;
+
+#[cfg(feature = "http")]
+pub mod http;

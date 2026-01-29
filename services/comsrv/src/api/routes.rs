@@ -20,7 +20,7 @@ use crate::api::{
     handlers::health::*,
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
-        mapping_handlers::*, point_handlers::*, protocol_handlers::*,
+        mapping_handlers::*, network_handlers::*, point_handlers::*, protocol_handlers::*,
     },
 };
 use common::admin_api::{get_log_level, set_log_level};
@@ -165,7 +165,13 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
 
         // Admin endpoints
         common::admin_api::set_log_level,
-        common::admin_api::get_log_level
+        common::admin_api::get_log_level,
+
+        // Network configuration endpoints
+        crate::api::handlers::network_handlers::list_network_interfaces,
+        crate::api::handlers::network_handlers::get_network_interface,
+        crate::api::handlers::network_handlers::update_network_interface,
+        crate::api::handlers::network_handlers::apply_network_changes
     ),
     components(
         schemas(
@@ -214,12 +220,19 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
             crate::api::handlers::point_handlers::PointBatchError,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
-            common::admin_api::LogLevelResponse
+            common::admin_api::LogLevelResponse,
+            // Network configuration schemas
+            crate::api::handlers::network_handlers::NetworkInterfaceConfig,
+            crate::api::handlers::network_handlers::NetworkInterfaceList,
+            crate::api::handlers::network_handlers::NetworkConfigUpdateRequest,
+            crate::api::handlers::network_handlers::NetworkConfigUpdateResult,
+            crate::api::handlers::network_handlers::NetworkApplyResult
         )
     ),
     tags(
         (name = "comsrv", description = "Communication Service API"),
-        (name = "admin", description = "Administration and service management")
+        (name = "admin", description = "Administration and service management"),
+        (name = "network", description = "Network interface configuration")
     )
 )]
 pub struct ComsrvApiDoc;
@@ -308,6 +321,13 @@ pub fn create_api_routes_generic<R: Rtdb>(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
+        // Network configuration endpoints
+        .route("/api/network/interfaces", get(list_network_interfaces))
+        .route(
+            "/api/network/interfaces/{name}",
+            get(get_network_interface).put(update_network_interface),
+        )
+        .route("/api/network/apply", post(apply_network_changes))
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .with_state(state)
