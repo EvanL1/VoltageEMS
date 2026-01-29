@@ -6,6 +6,8 @@ pub mod data;
 pub mod diagnostics;
 pub mod error;
 pub mod file_logging;
+#[cfg(feature = "json-mapping")]
+pub mod json_mapper;
 pub mod logging;
 pub mod metadata;
 pub mod point;
@@ -17,6 +19,8 @@ pub use data::*;
 pub use diagnostics::{AtomicDiagnostics, DiagnosticsSnapshot};
 pub use error::{GatewayError, Result};
 pub use file_logging::{ChannelFileLogHandler, FileLogLevel};
+#[cfg(feature = "json-mapping")]
+pub use json_mapper::{JsonMapper, JsonMappingConfig, SharedJsonMapper};
 pub use metadata::{
     get_protocol_registry, DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
     ProtocolMetadata, ProtocolRegistry,
