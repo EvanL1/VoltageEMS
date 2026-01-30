@@ -4376,6 +4376,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "voltage-calc",
+ "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
 ]
