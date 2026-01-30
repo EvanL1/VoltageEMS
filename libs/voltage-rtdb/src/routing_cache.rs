@@ -652,6 +652,66 @@ pub struct RoutingCacheStats {
     pub c2c_count: usize,
 }
 
+// ============================================================================
+// Content Hash for Cross-Process Synchronization
+// ============================================================================
+
+impl RoutingCache {
+    /// Compute a content hash for routing cache synchronization
+    ///
+    /// This hash is used to detect routing configuration mismatches between
+    /// processes (e.g., comsrv and modsrv). When shared memory is created,
+    /// the hash is stored in the header. When opened, the hash is verified
+    /// to ensure both processes are using the same routing configuration.
+    ///
+    /// ## Hash Algorithm
+    /// Uses FxHash (fast, non-cryptographic) over:
+    /// - Sorted C2M entries: (channel_id, point_type, point_id) → (instance_id, point_id)
+    /// - Sorted M2C entries: (instance_id, point_type, point_id) → (channel_id, point_type, point_id)
+    ///
+    /// ## Determinism
+    /// The hash is deterministic: same routing content → same hash.
+    /// Uses sorted iteration to ensure order independence.
+    pub fn content_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = rustc_hash::FxHasher::default();
+
+        // Hash C2M entries in sorted order
+        // Convert PointType to u8 for sorting since PointType doesn't impl Ord
+        let c2m = self.c2m.load();
+        let mut c2m_entries: Vec<_> = c2m.iter().map(|(k, v)| (*k, *v)).collect();
+        c2m_entries.sort_by_key(|((ch_id, pt, pt_id), _)| (*ch_id, pt.to_u8(), *pt_id));
+
+        for ((ch_id, pt, pt_id), target) in c2m_entries {
+            ch_id.hash(&mut hasher);
+            pt.to_u8().hash(&mut hasher);
+            pt_id.hash(&mut hasher);
+            target.instance_id.hash(&mut hasher);
+            target.point_id.hash(&mut hasher);
+        }
+
+        // Hash M2C entries in sorted order
+        let m2c = self.m2c.load();
+        let mut m2c_entries: Vec<_> = m2c.iter().map(|(k, v)| (*k, *v)).collect();
+        m2c_entries.sort_by_key(|((inst_id, pt, pt_id), _)| (*inst_id, pt.to_u8(), *pt_id));
+
+        for ((inst_id, pt, pt_id), target) in m2c_entries {
+            inst_id.hash(&mut hasher);
+            pt.to_u8().hash(&mut hasher);
+            pt_id.hash(&mut hasher);
+            target.channel_id.hash(&mut hasher);
+            target.point_type.to_u8().hash(&mut hasher);
+            target.point_id.hash(&mut hasher);
+        }
+
+        // Note: C2C is not included in hash because it doesn't affect slot allocation.
+        // C2C routes are channel-to-channel forwarding rules that don't create new slots.
+
+        hasher.finish()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Tests can use unwrap for clarity
 mod tests {
@@ -908,5 +968,66 @@ mod tests {
             key.0 == 5 && key.1 == PointType::Adjustment && key.2 == 1 && target.channel_id == 1001
         });
         assert!(has_m2c_route);
+    }
+
+    // ========== Content Hash Tests ==========
+
+    #[test]
+    fn test_content_hash_deterministic() {
+        let mut c2m_data = HashMap::new();
+        c2m_data.insert("1001:T:1".to_string(), "5:M:10".to_string());
+        c2m_data.insert("1001:T:2".to_string(), "5:M:20".to_string());
+
+        let mut m2c_data = HashMap::new();
+        m2c_data.insert("5:A:1".to_string(), "1001:C:1".to_string());
+
+        // Create two caches with same data
+        let cache1 = RoutingCache::from_maps(c2m_data.clone(), m2c_data.clone(), HashMap::new());
+        let cache2 = RoutingCache::from_maps(c2m_data, m2c_data, HashMap::new());
+
+        // Hash should be identical
+        assert_eq!(cache1.content_hash(), cache2.content_hash());
+    }
+
+    #[test]
+    fn test_content_hash_differs_on_data_change() {
+        let mut c2m_data = HashMap::new();
+        c2m_data.insert("1001:T:1".to_string(), "5:M:10".to_string());
+
+        let cache1 = RoutingCache::from_maps(c2m_data, HashMap::new(), HashMap::new());
+
+        // Different data
+        let mut c2m_data2 = HashMap::new();
+        c2m_data2.insert("1001:T:1".to_string(), "6:M:10".to_string()); // Different instance_id
+
+        let cache2 = RoutingCache::from_maps(c2m_data2, HashMap::new(), HashMap::new());
+
+        // Hash should differ
+        assert_ne!(cache1.content_hash(), cache2.content_hash());
+    }
+
+    #[test]
+    fn test_content_hash_empty_cache() {
+        let cache = RoutingCache::new();
+        // Empty cache should still produce a valid hash
+        let hash = cache.content_hash();
+        // Just verify it produces a valid hash (any u64 is valid)
+        let _ = hash;
+    }
+
+    #[test]
+    fn test_content_hash_c2c_not_included() {
+        let mut c2m_data = HashMap::new();
+        c2m_data.insert("1001:T:1".to_string(), "5:M:10".to_string());
+
+        // Cache with C2C
+        let mut c2c_data = HashMap::new();
+        c2c_data.insert("1001:T:1".to_string(), "1002:T:1".to_string());
+
+        let cache1 = RoutingCache::from_maps(c2m_data.clone(), HashMap::new(), HashMap::new());
+        let cache2 = RoutingCache::from_maps(c2m_data, HashMap::new(), c2c_data);
+
+        // C2C should NOT affect hash (doesn't affect slot allocation)
+        assert_eq!(cache1.content_hash(), cache2.content_hash());
     }
 }

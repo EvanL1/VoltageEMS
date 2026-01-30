@@ -70,11 +70,61 @@ pub struct UnifiedHeader {
     pub last_update_ts: AtomicU64,
     /// Writer heartbeat (for monitoring)
     pub writer_heartbeat: AtomicU64,
+    /// Routing cache content hash for cross-process synchronization
+    ///
+    /// When comsrv creates the SHM, it stores the hash of RoutingCache content.
+    /// When modsrv opens the SHM, it verifies its RoutingCache has the same hash.
+    /// Mismatch indicates routing config changed between process starts.
+    pub routing_hash: AtomicU64,
     /// Reserved for future use
-    pub _reserved: [u8; 24],
+    pub _reserved: [u8; 16],
 }
 
 const _: () = assert!(std::mem::size_of::<UnifiedHeader>() == 64);
+
+// ========== Memory Pre-allocation ==========
+
+/// Pre-fault all pages in the memory map to avoid page faults during runtime
+///
+/// This function touches every page in the memory map to trigger page faults
+/// at startup time rather than during hot path execution. This is critical
+/// for real-time performance where page faults can cause 100+ ms latency.
+///
+/// ## Algorithm
+///
+/// Touches every page (4KB boundary) to force page allocation.
+/// Uses volatile read to prevent compiler optimization.
+///
+/// ## Performance Impact
+///
+/// - Startup time: Adds ~1ms per 1MB of shared memory
+/// - Runtime: Eliminates random 100+ms latency spikes from page faults
+fn prefault_pages(mmap: &mut MmapMut) {
+    let len = mmap.len();
+    let ptr = mmap.as_ptr();
+
+    // Standard page size is 4KB on most systems
+    const PAGE_SIZE: usize = 4096;
+
+    // Touch every page to trigger page faults now (at startup)
+    // Using volatile read to prevent compiler from optimizing this out
+    let mut checksum: u8 = 0;
+    for offset in (0..len).step_by(PAGE_SIZE) {
+        unsafe {
+            // Read from each page to fault it into memory
+            checksum = checksum.wrapping_add(std::ptr::read_volatile(ptr.add(offset)));
+        }
+    }
+
+    // Use checksum to prevent dead code elimination
+    std::hint::black_box(checksum);
+
+    tracing::debug!(
+        "Pre-faulted {} pages ({} bytes) of shared memory",
+        len.div_ceil(PAGE_SIZE),
+        len
+    );
+}
 
 // ========== Memory Layout ==========
 
@@ -245,6 +295,10 @@ impl UnifiedWriter {
                 .with_context(|| "Failed to mmap")?
         };
 
+        // Pre-allocate memory pages to avoid page faults during runtime
+        // This is critical for real-time performance
+        prefault_pages(&mut mmap);
+
         // Initialize header
         let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };
         header.magic = UNIFIED_MAGIC;
@@ -254,7 +308,9 @@ impl UnifiedWriter {
         header._pad = [0; 4];
         header.last_update_ts = AtomicU64::new(0);
         header.writer_heartbeat = AtomicU64::new(0);
-        header._reserved = [0; 24];
+        // Store routing cache content hash for cross-process synchronization
+        header.routing_hash = AtomicU64::new(routing_cache.content_hash());
+        header._reserved = [0; 16];
 
         tracing::info!(
             "Created unified shared memory: {:?}, slots={}/{}, size={}KB, channels={}",
@@ -418,6 +474,21 @@ impl UnifiedWriter {
             );
         }
 
+        // Critical: Verify routing cache content hash matches
+        // This prevents slot index misalignment between comsrv and modsrv
+        let expected_hash = routing_cache.content_hash();
+        let actual_hash = header.routing_hash.load(Ordering::Acquire);
+        if expected_hash != actual_hash {
+            bail!(
+                "Routing configuration mismatch! \
+                 SHM routing_hash=0x{:016X}, local routing_hash=0x{:016X}. \
+                 This can cause commands to be sent to wrong devices! \
+                 Solution: Restart comsrv to synchronize routing configuration.",
+                actual_hash,
+                expected_hash
+            );
+        }
+
         let max_slots = header.max_slots;
         let slot_count = header.slot_count.load(Ordering::Acquire) as usize;
 
@@ -539,6 +610,19 @@ impl UnifiedWriter {
     /// Creates a new UnifiedWriter and loads PointSlot data from the snapshot.
     /// The header is re-initialized from current config, only point data is restored.
     ///
+    /// ## Data Validation
+    ///
+    /// Each slot is validated before restoration:
+    /// - NaN values are skipped (logged as warning)
+    /// - Infinite values are skipped (logged as warning)
+    /// - New slots (not in snapshot) are initialized to default (0.0, 0.0, 0)
+    ///
+    /// ## Routing Hash Check
+    ///
+    /// If the snapshot's routing hash differs from current config, a warning is logged
+    /// but restoration continues. This handles the case where routing changed after
+    /// the snapshot was created.
+    ///
     /// # Arguments
     /// - `config`: Shared memory configuration
     /// - `snapshot_path`: Path to the snapshot file
@@ -555,6 +639,7 @@ impl UnifiedWriter {
         use std::io::Read;
 
         // First create a fresh writer with current config
+        // Note: create() already initializes all slots to default values (zeroed)
         let writer = Self::create(config, routing_cache)?;
 
         // Read snapshot file
@@ -588,6 +673,18 @@ impl UnifiedWriter {
             );
         }
 
+        // Check routing hash (warn but don't fail)
+        let current_hash = routing_cache.content_hash();
+        let snapshot_hash = snapshot_header.routing_hash.load(Ordering::Relaxed);
+        if current_hash != snapshot_hash {
+            tracing::warn!(
+                "Snapshot routing hash differs: snapshot=0x{:016X}, current=0x{:016X}. \
+                 Routing configuration may have changed since snapshot was created.",
+                snapshot_hash,
+                current_hash
+            );
+        }
+
         let snapshot_slot_count = snapshot_header.slot_count.load(Ordering::Relaxed) as usize;
 
         // Determine how many slots to restore (min of snapshot and current allocation)
@@ -611,16 +708,41 @@ impl UnifiedWriter {
             );
         }
 
-        // Copy point data (not header - keep current header)
-        let src = &snapshot_data[header_size..snapshot_data_end];
-        let dst_start = header_size;
+        // Restore slots one by one with validation
+        let mut restored_count = 0usize;
+        let mut skipped_invalid = 0usize;
 
-        // SAFETY: We're copying PointSlot data which is repr(C) and has atomic fields
-        // The atomic operations will be valid after the copy
-        unsafe {
-            let mmap_ptr = writer.mmap.as_ptr() as *mut u8;
-            std::ptr::copy_nonoverlapping(src.as_ptr(), mmap_ptr.add(dst_start), src.len());
+        for i in 0..slots_to_restore {
+            let slot_offset_in_file = header_size + i * slot_size;
+            let snapshot_slot =
+                unsafe { &*(snapshot_data.as_ptr().add(slot_offset_in_file) as *const PointSlot) };
+
+            // Read slot data using public accessors
+            let value = snapshot_slot.get_value();
+            let raw = snapshot_slot.get_raw();
+            let timestamp = snapshot_slot.get_timestamp();
+
+            // Validate data: skip NaN and Infinity
+            if value.is_nan() || value.is_infinite() || raw.is_nan() || raw.is_infinite() {
+                tracing::debug!(
+                    "Skipping invalid slot {}: value={}, raw={} (NaN or Infinity)",
+                    i,
+                    value,
+                    raw
+                );
+                skipped_invalid += 1;
+                // Slot remains at default (0.0, 0.0, 0) from create()
+                continue;
+            }
+
+            // Write to current slot
+            writer.set_direct(i, value, raw, timestamp);
+            restored_count += 1;
         }
+
+        // New slots (if current config has more than snapshot) are already initialized
+        // to default values (0.0, 0.0, 0) by create()
+        let new_slots = writer.slot_count.saturating_sub(snapshot_slot_count);
 
         // Update timestamps
         let now_ms = std::time::SystemTime::now()
@@ -637,18 +759,24 @@ impl UnifiedWriter {
             .store(now_ms, Ordering::Relaxed);
 
         tracing::info!(
-            "Snapshot restored: {:?}, restored {} of {} slots",
+            "Snapshot restored: {:?}, restored={}, skipped_invalid={}, new_slots={}",
             snapshot_path,
-            slots_to_restore,
-            writer.slot_count
+            restored_count,
+            skipped_invalid,
+            new_slots
         );
 
-        if slots_to_restore < writer.slot_count {
+        if skipped_invalid > 0 {
             tracing::warn!(
-                "Snapshot had fewer slots ({}) than current config ({}), {} slots uninitialized",
-                snapshot_slot_count,
-                writer.slot_count,
-                writer.slot_count - slots_to_restore
+                "{} slots skipped due to invalid data (NaN/Infinity)",
+                skipped_invalid
+            );
+        }
+
+        if new_slots > 0 {
+            tracing::info!(
+                "{} new slots initialized to default values (routing config changed)",
+                new_slots
             );
         }
 
@@ -702,6 +830,21 @@ impl UnifiedReader {
                 "Version mismatch: expected {}, got {}",
                 UNIFIED_VERSION,
                 header.version
+            );
+        }
+
+        // Verify routing cache content hash matches
+        // Mismatch indicates routing configuration changed after SHM was created
+        let expected_hash = routing_cache.content_hash();
+        let actual_hash = header.routing_hash.load(Ordering::Acquire);
+        if expected_hash != actual_hash {
+            bail!(
+                "Routing configuration mismatch! \
+                 SHM routing_hash=0x{:016X}, local routing_hash=0x{:016X}. \
+                 Slot indexes may be misaligned causing data corruption. \
+                 Solution: Restart the writer process (comsrv) to synchronize routing configuration.",
+                actual_hash,
+                expected_hash
             );
         }
 

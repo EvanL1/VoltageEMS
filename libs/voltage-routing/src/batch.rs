@@ -5,12 +5,15 @@
 //! for reuse across services.
 
 use anyhow::{Context, Result};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 use voltage_model::PointType;
 use voltage_rtdb::numfmt::{f64_to_bytes, precomputed};
 use voltage_rtdb::{KeySpaceConfig, RoutingCache, Rtdb, WriteBuffer};
+
+/// Type alias for C2C visited tracking (channel_id, point_type, point_id)
+type C2CVisited = FxHashSet<(u32, PointType, u32)>;
 
 use crate::MAX_C2C_CASCADE_DEPTH;
 
@@ -60,6 +63,8 @@ pub struct BatchRoutingResult {
     pub c2m_writes: usize,
     /// Number of C2C forwards processed
     pub c2c_forwards: usize,
+    /// Number of C2C cycles detected and skipped
+    pub cycles_detected: usize,
 }
 
 impl BatchRoutingResult {
@@ -68,16 +73,32 @@ impl BatchRoutingResult {
         self.channel_writes += other.channel_writes;
         self.c2m_writes += other.c2m_writes;
         self.c2c_forwards += other.c2c_forwards;
+        self.cycles_detected += other.cycles_detected;
     }
 }
 
 /// Write channel batch with C2M/C2C routing (optimized with itoa/ryu)
 ///
 /// Uses precomputed point ID pool and ryu for zero-allocation formatting.
+/// Includes C2C cycle detection to prevent A→B→A routing loops.
 pub async fn write_channel_batch<R>(
     rtdb: &R,
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
+) -> Result<BatchRoutingResult>
+where
+    R: Rtdb,
+{
+    let mut visited = C2CVisited::default();
+    write_channel_batch_impl(rtdb, routing_cache, updates, &mut visited).await
+}
+
+/// Internal implementation with cycle tracking
+async fn write_channel_batch_impl<R>(
+    rtdb: &R,
+    routing_cache: &RoutingCache,
+    updates: Vec<ChannelPointUpdate>,
+    visited: &mut C2CVisited,
 ) -> Result<BatchRoutingResult>
 where
     R: Rtdb,
@@ -117,6 +138,10 @@ where
             let raw_value = update.raw_value.unwrap_or(update.value);
             points_3layer.push((update.point_id, update.value, raw_value));
 
+            // Track source point for cycle detection (prevents A→B→A)
+            let source_key = (channel_id, point_type, update.point_id);
+            visited.insert(source_key);
+
             // C2M routing lookup - zero-allocation using structured key
             if let Some(target) =
                 routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
@@ -137,14 +162,31 @@ where
                 if let Some(target) =
                     routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
                 {
-                    c2c_forwards.push(ChannelPointUpdate {
-                        channel_id: target.channel_id,
-                        point_type: target.point_type,
-                        point_id: target.point_id,
-                        value: update.value,
-                        raw_value: update.raw_value,
-                        cascade_depth: update.cascade_depth + 1,
-                    });
+                    let target_key = (target.channel_id, target.point_type, target.point_id);
+
+                    // Cycle detection: check if we've already visited this target
+                    if visited.contains(&target_key) {
+                        warn!(
+                            "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
+                            channel_id,
+                            point_type,
+                            update.point_id,
+                            target.channel_id,
+                            target.point_type,
+                            target.point_id
+                        );
+                        result.cycles_detected += 1;
+                    } else {
+                        // Add to forwards (target will be marked visited when processed)
+                        c2c_forwards.push(ChannelPointUpdate {
+                            channel_id: target.channel_id,
+                            point_type: target.point_type,
+                            point_id: target.point_id,
+                            value: update.value,
+                            raw_value: update.raw_value,
+                            cascade_depth: update.cascade_depth + 1,
+                        });
+                    }
                 }
             }
         }
@@ -177,8 +219,13 @@ where
                 "Processing {} C2C forwards for channel {}",
                 forward_count, channel_id
             );
-            let sub_result =
-                Box::pin(write_channel_batch(rtdb, routing_cache, c2c_forwards)).await?;
+            let sub_result = Box::pin(write_channel_batch_impl(
+                rtdb,
+                routing_cache,
+                c2c_forwards,
+                visited,
+            ))
+            .await?;
             result.c2c_forwards += forward_count;
             result.merge(sub_result);
         }
@@ -191,6 +238,7 @@ where
 ///
 /// Uses precomputed point ID pool and ryu for zero-allocation formatting.
 /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture.
+/// Includes C2C cycle detection to prevent A→B→A routing loops.
 ///
 /// # Arguments
 /// * `write_buffer` - WriteBuffer for deferred Redis writes
@@ -200,6 +248,17 @@ pub fn write_channel_batch_buffered(
     write_buffer: &WriteBuffer,
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
+) -> BatchRoutingResult {
+    let mut visited = C2CVisited::default();
+    write_channel_batch_buffered_impl(write_buffer, routing_cache, updates, &mut visited)
+}
+
+/// Internal implementation with cycle tracking
+fn write_channel_batch_buffered_impl(
+    write_buffer: &WriteBuffer,
+    routing_cache: &RoutingCache,
+    updates: Vec<ChannelPointUpdate>,
+    visited: &mut C2CVisited,
 ) -> BatchRoutingResult {
     if updates.is_empty() {
         return BatchRoutingResult::default();
@@ -238,6 +297,10 @@ pub fn write_channel_batch_buffered(
             let raw_value = update.raw_value.unwrap_or(update.value);
             points_3layer.push((update.point_id, update.value, raw_value));
 
+            // Track source point for cycle detection (prevents A→B→A)
+            let source_key = (channel_id, point_type, update.point_id);
+            visited.insert(source_key);
+
             // C2M routing lookup - zero-allocation using structured key
             if let Some(target) =
                 routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
@@ -259,14 +322,31 @@ pub fn write_channel_batch_buffered(
                 if let Some(target) =
                     routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
                 {
-                    c2c_forwards.push(ChannelPointUpdate {
-                        channel_id: target.channel_id,
-                        point_type: target.point_type,
-                        point_id: target.point_id,
-                        value: update.value,
-                        raw_value: update.raw_value,
-                        cascade_depth: update.cascade_depth + 1,
-                    });
+                    let target_key = (target.channel_id, target.point_type, target.point_id);
+
+                    // Cycle detection: check if we've already visited this target
+                    if visited.contains(&target_key) {
+                        warn!(
+                            "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
+                            channel_id,
+                            point_type,
+                            update.point_id,
+                            target.channel_id,
+                            target.point_type,
+                            target.point_id
+                        );
+                        result.cycles_detected += 1;
+                    } else {
+                        // Add to forwards (target will be marked visited when processed)
+                        c2c_forwards.push(ChannelPointUpdate {
+                            channel_id: target.channel_id,
+                            point_type: target.point_type,
+                            point_id: target.point_id,
+                            value: update.value,
+                            raw_value: update.raw_value,
+                            cascade_depth: update.cascade_depth + 1,
+                        });
+                    }
                 }
             }
         }
@@ -297,8 +377,12 @@ pub fn write_channel_batch_buffered(
                 "Processing {} C2C forwards for channel {}",
                 forward_count, channel_id
             );
-            let sub_result =
-                write_channel_batch_buffered(write_buffer, routing_cache, c2c_forwards);
+            let sub_result = write_channel_batch_buffered_impl(
+                write_buffer,
+                routing_cache,
+                c2c_forwards,
+                visited,
+            );
             result.c2c_forwards += forward_count;
             result.merge(sub_result);
         }
@@ -311,6 +395,7 @@ pub fn write_channel_batch_buffered(
 ///
 /// Uses ChannelToSlotIndex to bypass C2M routing lookup during writes.
 /// Uses precomputed point ID pool and ryu for zero-allocation formatting.
+/// Includes C2C cycle detection to prevent A→B→A routing loops.
 ///
 /// # Architecture
 /// ```text
@@ -337,6 +422,26 @@ pub fn write_channel_batch_direct(
     write_buffer: &WriteBuffer,
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
+) -> BatchRoutingResult {
+    let mut visited = C2CVisited::default();
+    write_channel_batch_direct_impl(
+        shared_writer,
+        channel_index,
+        write_buffer,
+        routing_cache,
+        updates,
+        &mut visited,
+    )
+}
+
+/// Internal implementation with cycle tracking
+fn write_channel_batch_direct_impl(
+    shared_writer: &voltage_rtdb::UnifiedWriter,
+    channel_index: &voltage_rtdb::ChannelToSlotIndex,
+    write_buffer: &WriteBuffer,
+    routing_cache: &RoutingCache,
+    updates: Vec<ChannelPointUpdate>,
+    visited: &mut C2CVisited,
 ) -> BatchRoutingResult {
     if updates.is_empty() {
         return BatchRoutingResult::default();
@@ -375,6 +480,10 @@ pub fn write_channel_batch_direct(
             let raw_value = update.raw_value.unwrap_or(update.value);
             points_3layer.push((update.point_id, update.value, raw_value));
 
+            // Track source point for cycle detection (prevents A→B→A)
+            let source_key = (channel_id, point_type, update.point_id);
+            visited.insert(source_key);
+
             // ★ Direct shared memory write (fastest path)
             // Single write - UnifiedReader builds both channel and instance indexes from SlotMeta
             if let Some(slot_offset) = channel_index.lookup(channel_id, point_type, update.point_id)
@@ -405,14 +514,31 @@ pub fn write_channel_batch_direct(
                 if let Some(target) =
                     routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
                 {
-                    c2c_forwards.push(ChannelPointUpdate {
-                        channel_id: target.channel_id,
-                        point_type: target.point_type,
-                        point_id: target.point_id,
-                        value: update.value,
-                        raw_value: update.raw_value,
-                        cascade_depth: update.cascade_depth + 1,
-                    });
+                    let target_key = (target.channel_id, target.point_type, target.point_id);
+
+                    // Cycle detection: check if we've already visited this target
+                    if visited.contains(&target_key) {
+                        warn!(
+                            "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
+                            channel_id,
+                            point_type,
+                            update.point_id,
+                            target.channel_id,
+                            target.point_type,
+                            target.point_id
+                        );
+                        result.cycles_detected += 1;
+                    } else {
+                        // Add to forwards (target will be marked visited when processed)
+                        c2c_forwards.push(ChannelPointUpdate {
+                            channel_id: target.channel_id,
+                            point_type: target.point_type,
+                            point_id: target.point_id,
+                            value: update.value,
+                            raw_value: update.raw_value,
+                            cascade_depth: update.cascade_depth + 1,
+                        });
+                    }
                 }
             }
         }
@@ -441,12 +567,13 @@ pub fn write_channel_batch_direct(
             "Processing {} C2C forwards with direct write",
             forward_count
         );
-        let sub_result = write_channel_batch_direct(
+        let sub_result = write_channel_batch_direct_impl(
             shared_writer,
             channel_index,
             write_buffer,
             routing_cache,
             c2c_forwards,
+            visited,
         );
         result.c2c_forwards += forward_count;
         result.merge(sub_result);
@@ -483,15 +610,18 @@ mod tests {
             channel_writes: 10,
             c2m_writes: 5,
             c2c_forwards: 2,
+            cycles_detected: 1,
         };
         let r2 = BatchRoutingResult {
             channel_writes: 3,
             c2m_writes: 1,
             c2c_forwards: 1,
+            cycles_detected: 2,
         };
         r1.merge(r2);
         assert_eq!(r1.channel_writes, 13);
         assert_eq!(r1.c2m_writes, 6);
         assert_eq!(r1.c2c_forwards, 3);
+        assert_eq!(r1.cycles_detected, 3);
     }
 }

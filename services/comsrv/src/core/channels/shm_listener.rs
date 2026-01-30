@@ -26,7 +26,7 @@ use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
-use voltage_model::PointType;
+use voltage_model::{validate_value, PointType, ValidationConfig};
 use voltage_rtdb::{ShmNotification, UnifiedReader, DEFAULT_UDS_PATH};
 
 use crate::core::channels::types::ChannelCommand;
@@ -187,6 +187,19 @@ impl ShmCommandListener {
                 warn!(
                     "ShmListener: channel {} point {:?}:{} not found in SHM",
                     channel_id, point_type, point_id
+                );
+                return;
+            },
+        };
+
+        // Validate value before sending to device (prevents NaN/Infinity from reaching hardware)
+        let config = ValidationConfig::default();
+        let value = match validate_value(value, &config) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "ShmListener: invalid value for ch{}:{:?}:{}: {} - command discarded",
+                    channel_id, point_type, point_id, e
                 );
                 return;
             },

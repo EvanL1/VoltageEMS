@@ -15,6 +15,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
+use voltage_model::{sanitize_value, ValidationConfig};
 use voltage_routing::set_action_point;
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
@@ -882,7 +883,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         values: &HashMap<String, f64>,
     ) -> ActionResult {
         // Resolve the value to write
-        let resolved_value: f64 = if let Some(n) = assignment.value.as_f64() {
+        let raw_value: f64 = if let Some(n) = assignment.value.as_f64() {
             n
         } else if let Some(n) = assignment.value.as_i64() {
             n as f64
@@ -892,6 +893,18 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         } else {
             0.0
         };
+
+        // Sanitize value to prevent NaN/Infinity from reaching devices
+        let config = ValidationConfig::default();
+        let resolved_value = sanitize_value(raw_value, 0.0, &config);
+        if (raw_value - resolved_value).abs() > f64::EPSILON || raw_value.is_nan() {
+            tracing::warn!(
+                "Rule action value sanitized: {} → {} (variable '{}')",
+                raw_value,
+                resolved_value,
+                variable.name
+            );
+        }
 
         let Some(instance_id) = variable.instance else {
             tracing::error!(
@@ -974,9 +987,21 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     async fn write_calculation_result(
         &self,
         variable: &RuleVariable,
-        value: f64,
+        raw_value: f64,
         calc: &CalculationRule,
     ) -> ActionResult {
+        // Sanitize calculation result to prevent NaN/Infinity propagation
+        let config = ValidationConfig::default();
+        let value = sanitize_value(raw_value, 0.0, &config);
+        if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
+            tracing::warn!(
+                "Calc output '{}' sanitized: {} → {} (formula='{}')",
+                calc.output,
+                raw_value,
+                value,
+                calc.formula
+            );
+        }
         let Some(instance_id) = variable.instance else {
             tracing::error!(
                 "Calc output skipped: variable '{}' missing instance_id (output='{}')",
@@ -1078,9 +1103,21 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     async fn write_period_delta_result(
         &self,
         variable: &RuleVariable,
-        value: f64,
+        raw_value: f64,
         period: &str,
     ) -> ActionResult {
+        // Sanitize period delta result to prevent NaN/Infinity propagation
+        let config = ValidationConfig::default();
+        let value = sanitize_value(raw_value, 0.0, &config);
+        if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
+            tracing::warn!(
+                "PeriodDelta output '{}' sanitized: {} → {} (period='{}')",
+                variable.name,
+                raw_value,
+                value,
+                period
+            );
+        }
         let Some(instance_id) = variable.instance else {
             tracing::error!(
                 "PeriodDelta output skipped: variable '{}' missing instance_id (period='{}')",

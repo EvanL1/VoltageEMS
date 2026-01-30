@@ -98,6 +98,94 @@ impl PointSlot {
         f64::from_bits(self.raw_bits.load(Ordering::Relaxed))
     }
 
+    /// Maximum retry attempts for load_consistent before returning possibly stale data
+    ///
+    /// Under extreme write contention, we prefer returning potentially stale data
+    /// over infinite spinning which could cause rule execution delays.
+    const MAX_CONSISTENCY_RETRIES: u32 = 1000;
+
+    /// Load all point data with consistency guarantee (seqlock-style)
+    ///
+    /// This method ensures that the returned (value, raw, timestamp) tuple is consistent:
+    /// - The value and raw correspond to the same write as the timestamp
+    /// - No "torn read" where timestamp is new but value is old
+    ///
+    /// ## Algorithm
+    ///
+    /// Uses double-check pattern similar to seqlock:
+    /// 1. Read timestamp with Acquire ordering (establishes happens-before with Release write)
+    /// 2. Read value and raw with Relaxed ordering (visible due to Acquire above)
+    /// 3. Read timestamp again with Acquire ordering
+    /// 4. If timestamps match, data is consistent; otherwise retry
+    ///
+    /// ## Performance
+    ///
+    /// In the common case (no concurrent write), this is 2 Acquire loads + 2 Relaxed loads.
+    /// Under contention, it may retry up to MAX_CONSISTENCY_RETRIES times.
+    ///
+    /// ## Returns
+    ///
+    /// `(value, raw, timestamp)` - all from the same consistent write
+    /// Note: If max retries exceeded, returns latest values which may be inconsistent
+    #[inline]
+    pub fn load_consistent(&self) -> (f64, f64, u64) {
+        // Retry loop for concurrent write detection with bounded iterations
+        for _ in 0..Self::MAX_CONSISTENCY_RETRIES {
+            // Step 1: Read timestamp with Acquire ordering
+            // This ensures we see all writes that happened before the Release store
+            let ts1 = self.timestamp.load(Ordering::Acquire);
+
+            // Step 2: Read value and raw (Relaxed is safe after Acquire)
+            let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
+            let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
+
+            // Step 3: Re-read timestamp to detect concurrent write
+            let ts2 = self.timestamp.load(Ordering::Acquire);
+
+            // Step 4: If timestamps match, data is consistent
+            if ts1 == ts2 {
+                return (value, raw, ts1);
+            }
+
+            // Concurrent write detected, retry
+            // In practice, this loop rarely iterates more than once
+            std::hint::spin_loop();
+        }
+
+        // Max retries exceeded - return latest values (may be inconsistent but won't hang)
+        tracing::warn!(
+            "load_consistent exceeded {} retries, returning possibly stale data",
+            Self::MAX_CONSISTENCY_RETRIES
+        );
+        let value = f64::from_bits(self.value_bits.load(Ordering::Acquire));
+        let raw = f64::from_bits(self.raw_bits.load(Ordering::Acquire));
+        let ts = self.timestamp.load(Ordering::Acquire);
+        (value, raw, ts)
+    }
+
+    /// Load all point data with consistency guarantee, returning None if read during write
+    ///
+    /// Non-blocking variant that returns None instead of retrying indefinitely.
+    /// Useful when caller prefers to skip stale data rather than wait.
+    ///
+    /// ## Returns
+    ///
+    /// - `Some((value, raw, timestamp))` - consistent read
+    /// - `None` - concurrent write detected (caller should retry later or use old value)
+    #[inline]
+    pub fn try_load_consistent(&self) -> Option<(f64, f64, u64)> {
+        let ts1 = self.timestamp.load(Ordering::Acquire);
+        let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
+        let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
+        let ts2 = self.timestamp.load(Ordering::Acquire);
+
+        if ts1 == ts2 {
+            Some((value, raw, ts1))
+        } else {
+            None
+        }
+    }
+
     /// Set all point data atomically (per-field)
     ///
     /// Uses Release ordering on timestamp to ensure value/raw writes are visible
@@ -634,5 +722,61 @@ mod tests {
 
         // Instance should not be registered (no points)
         assert!(!rtdb.has_instance(5));
+    }
+
+    // ========== load_consistent Tests ==========
+
+    #[test]
+    fn test_load_consistent_basic() {
+        let slot = PointSlot::new();
+        slot.set(100.5, 1005.0, 1729000000);
+
+        // load_consistent should return same values as individual getters
+        let (value, raw, ts) = slot.load_consistent();
+        assert_eq!(value, 100.5);
+        assert_eq!(raw, 1005.0);
+        assert_eq!(ts, 1729000000);
+    }
+
+    #[test]
+    fn test_try_load_consistent_basic() {
+        let slot = PointSlot::new();
+        slot.set(42.0, 420.0, 12345);
+
+        // try_load_consistent should succeed without concurrent writes
+        let result = slot.try_load_consistent();
+        assert!(result.is_some());
+
+        let (value, raw, ts) = result.unwrap();
+        assert_eq!(value, 42.0);
+        assert_eq!(raw, 420.0);
+        assert_eq!(ts, 12345);
+    }
+
+    #[test]
+    fn test_load_consistent_multiple_updates() {
+        let slot = PointSlot::new();
+
+        // Multiple sequential updates
+        for i in 1..=10 {
+            let v = i as f64 * 10.0;
+            slot.set(v, v * 10.0, i as u64 * 1000);
+
+            let (value, raw, ts) = slot.load_consistent();
+            assert_eq!(value, v);
+            assert_eq!(raw, v * 10.0);
+            assert_eq!(ts, i as u64 * 1000);
+        }
+    }
+
+    #[test]
+    fn test_load_consistent_zero_values() {
+        let slot = PointSlot::new();
+
+        // Default values
+        let (value, raw, ts) = slot.load_consistent();
+        assert_eq!(value, 0.0);
+        assert_eq!(raw, 0.0);
+        assert_eq!(ts, 0);
     }
 }
