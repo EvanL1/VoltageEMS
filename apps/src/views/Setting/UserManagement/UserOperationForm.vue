@@ -34,7 +34,7 @@
         <!-- Status 独占一行，去除 inline 并设置宽00% -->
         <el-form-item
           v-if="mode === 'edit'"
-          label="Status:"
+          label="Enabled:"
           prop="is_active"
           class="user-form__status-row"
         >

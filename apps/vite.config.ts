@@ -66,7 +66,7 @@ export default defineConfig({
       '/alarmApi': {
         target: 'http://192.168.30.21:6007',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/alarmApi/, '/api'),
+        // rewrite: (path) => path.replace(/^\/alarmApi/, '/api'),
       },
       '/netApi': {
         target: 'http://192.168.30.21:6006',
