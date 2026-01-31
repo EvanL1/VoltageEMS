@@ -13,6 +13,9 @@ use crate::protocols::core::point::GpioAddress;
 #[cfg(feature = "can")]
 use crate::protocols::core::point::CanAddress;
 
+#[cfg(feature = "dl645")]
+use crate::protocols::core::point::Dl645Address;
+
 /// Parse a shorthand address string into a `ProtocolAddress`.
 ///
 /// # Address Formats
@@ -55,6 +58,10 @@ pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
         #[cfg(feature = "gpio")]
         if protocol.eq_ignore_ascii_case("gpio") {
             return parse_gpio_address(address);
+        }
+        #[cfg(feature = "dl645")]
+        if protocol.eq_ignore_ascii_case("dl645") {
+            return parse_dl645_address(address);
         }
         Err(GatewayError::Config(format!(
             "Unknown protocol: {}",
@@ -250,6 +257,19 @@ fn parse_gpio_address(address: &str) -> Result<ProtocolAddress> {
             }
         },
     }
+}
+
+/// Parse DL/T 645 address: "meter_addr:data_id"
+///
+/// Format:
+/// - meter_addr: 12-digit BCD meter address
+/// - data_id: 8-character hex data identifier
+///
+/// Example: "123456789012:00010000" for total positive active energy
+#[cfg(feature = "dl645")]
+fn parse_dl645_address(address: &str) -> Result<ProtocolAddress> {
+    let dl645_addr = Dl645Address::parse(address)?;
+    Ok(ProtocolAddress::Dl645(dl645_addr))
 }
 
 #[cfg(test)]

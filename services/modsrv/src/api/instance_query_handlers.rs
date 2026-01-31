@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 use utoipa::ToSchema;
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
 
 use crate::app_state::AppState;
@@ -599,7 +600,7 @@ pub async fn set_instance_measurement(
     let rtdb = &state.instance_manager.rtdb;
 
     // Build M value Hash key: inst:{id}:M
-    let key = crate::config::InstanceRedisKeys::measurement_hash(id);
+    let key = KeySpaceConfig::production_cached().instance_measurement_key(id);
 
     // Write to Redis Hash
     rtdb.hash_set(&key, &req.point_id, Bytes::from(req.value.to_string()))

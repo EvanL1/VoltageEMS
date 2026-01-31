@@ -7,10 +7,10 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
-use crate::config::InstanceRedisKeys;
 use crate::redis_state;
 
 use super::instance_manager::InstanceManager;
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
@@ -241,7 +241,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })?;
 
         for (point_id,) in measurement_points {
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_measurement_point_key(instance_id, &point_id.to_string());
             measurement_point_routings.insert(point_id, redis_key);
         }
 
@@ -259,7 +260,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
 
         for (point_id,) in action_points {
-            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_action_point_key(instance_id, &point_id.to_string());
             action_point_routings.insert(point_id, redis_key);
         }
 
@@ -331,7 +333,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })?;
 
         for (point_id,) in measurement_points {
-            let redis_key = InstanceRedisKeys::measurement(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_measurement_point_key(instance_id, &point_id.to_string());
             measurement_point_routings.insert(point_id, redis_key);
         }
 
@@ -349,7 +352,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
 
         for (point_id,) in action_points {
-            let redis_key = InstanceRedisKeys::action(instance_id, point_id);
+            let redis_key = KeySpaceConfig::production_cached()
+                .instance_action_point_key(instance_id, &point_id.to_string());
             action_point_routings.insert(point_id, redis_key);
         }
 

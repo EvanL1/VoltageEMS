@@ -21,3 +21,6 @@ pub use error::{ModelError, Result};
 pub use keyspace::KeySpaceConfig;
 pub use types::{PointRole, PointType};
 pub use validation::{validate_calculation_id, validate_instance_name, validate_product_name};
+
+// Re-export core types for compatibility
+pub use voltage_core::ParsePointTypeError;

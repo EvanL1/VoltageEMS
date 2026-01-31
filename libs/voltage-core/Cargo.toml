@@ -1,0 +1,24 @@
+[package]
+name = "voltage-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core types and codecs for VoltageEMS - no_std compatible for embedded firmware"
+license.workspace = true
+
+[features]
+default = ["std"]
+std = []
+# Enable serde serialization (std only, for configuration files)
+serde = ["dep:serde", "std"]
+# Enable JSON schema generation (std only, for OpenAPI)
+schema = ["dep:schemars", "std"]
+
+[dependencies]
+# no_std compatible dependencies
+heapless.workspace = true
+
+# Optional std dependencies
+serde = { version = "1.0", features = ["derive"], optional = true }
+schemars = { version = "0.8", optional = true }
+
+[dev-dependencies]

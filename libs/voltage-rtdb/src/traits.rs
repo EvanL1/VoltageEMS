@@ -5,6 +5,7 @@ use bytes::Bytes;
 use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
+use voltage_model::{KeySpaceConfig, PointType};
 
 /// Unified RTDB Storage Trait
 ///
@@ -375,7 +376,8 @@ pub trait Rtdb: Send + Sync + 'static {
         // Move format! into async block to avoid borrowing temporary across await
         let payload = payload_json.to_string();
         async move {
-            let key = format!("comsrv:{}:C:TODO", channel_id);
+            let keyspace = KeySpaceConfig::production_cached();
+            let key = keyspace.todo_queue_key(channel_id, PointType::Control);
             self.list_rpush(&key, Bytes::from(payload)).await
         }
     }
@@ -389,7 +391,8 @@ pub trait Rtdb: Send + Sync + 'static {
         // Move format! into async block to avoid borrowing temporary across await
         let payload = payload_json.to_string();
         async move {
-            let key = format!("comsrv:{}:A:TODO", channel_id);
+            let keyspace = KeySpaceConfig::production_cached();
+            let key = keyspace.todo_queue_key(channel_id, PointType::Adjustment);
             self.list_rpush(&key, Bytes::from(payload)).await
         }
     }

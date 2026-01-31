@@ -15,6 +15,7 @@ use rustyline::validate::Validator;
 use rustyline::{Editor, Helper};
 use std::io;
 use std::time::{Duration, Instant};
+use voltage_model::KeySpaceConfig;
 use voltage_rtdb::{default_shm_path, RoutingCache, SharedConfig, UnifiedReader};
 
 // TUI imports
@@ -770,13 +771,14 @@ fn refresh_point_data(
 /// eliminating the need to blindly scan ID ranges.
 fn collect_all_points(reader: &UnifiedReader, routing_cache: &RoutingCache) -> Vec<PointRow> {
     let mut rows = Vec::new();
+    let keyspace = KeySpaceConfig::production_cached();
 
     // Iterate over all registered instances
     for inst_id in reader.instance_ids(routing_cache) {
         // Measurement points
         reader.iter_instance_measurements(inst_id, routing_cache, |point_id, value| {
             rows.push(PointRow {
-                key: format!("inst:{}:M:{}", inst_id, point_id),
+                key: keyspace.instance_measurement_point_key(inst_id, &point_id.to_string()),
                 kind: "M",
                 value,
             });
@@ -784,7 +786,7 @@ fn collect_all_points(reader: &UnifiedReader, routing_cache: &RoutingCache) -> V
         // Action points
         reader.iter_instance_actions(inst_id, routing_cache, |point_id, value| {
             rows.push(PointRow {
-                key: format!("inst:{}:A:{}", inst_id, point_id),
+                key: keyspace.instance_action_point_key(inst_id, &point_id.to_string()),
                 kind: "A",
                 value,
             });

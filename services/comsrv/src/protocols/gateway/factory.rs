@@ -39,6 +39,11 @@ pub fn create_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         return create_gpio_channel(config);
     }
 
+    #[cfg(feature = "dl645")]
+    if protocol.eq_ignore_ascii_case("dl645") {
+        return create_dl645_channel(config);
+    }
+
     if protocol.eq_ignore_ascii_case("virtual") {
         return create_virtual_channel(config);
     }
@@ -186,6 +191,26 @@ fn create_gpio_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>
 
     // GpioChannel directly implements ChannelRuntime - no wrapper needed
     let channel = crate::protocols::adapters::gpio::GpioChannel::new(
+        channel_config,
+        config.id,
+        config.name.clone(),
+    );
+
+    Ok(Box::new(channel))
+}
+
+#[cfg(feature = "dl645")]
+fn create_dl645_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::dl645::Dl645ChannelParamsConfig;
+
+    // Parse parameters
+    let params: Dl645ChannelParamsConfig = serde_json::from_value(config.parameters.clone())
+        .map_err(|e| GatewayError::Config(format!("Invalid DL/T 645 parameters: {}", e)))?;
+
+    // Build channel config (no point config needed - uses hardcoded STANDARD_POINTS)
+    let channel_config = params.to_channel_config();
+
+    let channel = crate::protocols::adapters::dl645::Dl645Channel::new(
         channel_config,
         config.id,
         config.name.clone(),

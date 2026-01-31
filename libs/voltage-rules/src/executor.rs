@@ -562,10 +562,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             }
 
             // ★ Priority 2: Redis (~1ms) - remote fallback
+            let keyspace = KeySpaceConfig::production_cached();
             let key = if is_action {
-                format!("inst:{}:A", instance_id)
+                keyspace.instance_action_key(instance_id)
             } else {
-                format!("inst:{}:M", instance_id)
+                keyspace.instance_measurement_key(instance_id)
             };
 
             // Use precomputed pool for common point IDs (0-255) to avoid allocation

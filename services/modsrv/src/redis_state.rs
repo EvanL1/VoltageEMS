@@ -4,7 +4,6 @@
 //! control-plane read/write for instances/products, keeping business
 //! logic and type safety directly in Rust.
 
-use crate::config::InstanceRedisKeys;
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use common::RedisRoutingKeys;
@@ -260,7 +259,8 @@ pub async fn upsert_product<R>(redis: &R, product: &Product) -> Result<()>
 where
     R: Rtdb,
 {
-    let product_key = InstanceRedisKeys::product(&product.product_name);
+    let keyspace = KeySpaceConfig::production_cached();
+    let product_key = keyspace.product_key(&product.product_name);
     let now_ms = SystemTimeProvider.now_millis();
     let product_json = serde_json::to_string(product)?;
 
@@ -271,31 +271,31 @@ where
     redis.hash_mset(&product_key, fields).await?;
 
     redis
-        .sadd(InstanceRedisKeys::PRODUCT_INDEX, &product.product_name)
+        .sadd(keyspace.product_index_key(), &product.product_name)
         .await?;
 
     if let Some(parent) = &product.parent_name {
-        let parent_key = InstanceRedisKeys::product_children(parent);
+        let parent_key = keyspace.product_children_key(parent);
         redis.sadd(&parent_key, &product.product_name).await?;
     }
 
     write_point_definitions(
         redis,
-        &InstanceRedisKeys::product_measurements(&product.product_name),
+        &keyspace.product_measurements_key(&product.product_name),
         &product.measurements,
     )
     .await?;
 
     write_action_definitions(
         redis,
-        &InstanceRedisKeys::product_actions(&product.product_name),
+        &keyspace.product_actions_key(&product.product_name),
         &product.actions,
     )
     .await?;
 
     write_property_definitions(
         redis,
-        &InstanceRedisKeys::product_properties(&product.product_name),
+        &keyspace.product_properties_key(&product.product_name),
         &product.properties,
     )
     .await?;
@@ -387,39 +387,49 @@ pub async fn register_instance<R>(
     _measurement_mappings: &HashMap<u32, String>,
     _action_mappings: &HashMap<u32, String>,
     measurements: &[MeasurementPoint],
-    _actions: &[ActionPoint],
+    actions: &[ActionPoint],
     _parameters: Option<&HashMap<String, Value>>,
 ) -> Result<()>
 where
     R: Rtdb,
 {
+    let keyspace = KeySpaceConfig::production_cached();
+
     // ========================================================================
     // Redis = Real-time data only (SQLite = Single source of truth for config)
     // ========================================================================
     //
     // M Hash: Pre-initialized with all measurement points set to "0"
-    // A Hash: Created on-demand (Redis doesn't support Null values)
+    // A Hash: Pre-initialized with all action points set to "0" (consistent with M)
     // P (Properties): Cached in memory, not in Redis (config data, not real-time)
     // ========================================================================
 
     // 1. Initialize inst:{id}:M Hash with all measurement points set to 0
-    let m_key = InstanceRedisKeys::measurement_hash(instance_id);
+    let m_key = keyspace.instance_measurement_key(instance_id);
     for point in measurements {
         redis
             .hash_set(&m_key, &point.measurement_id.to_string(), Bytes::from("0"))
             .await?;
     }
 
-    // 2. Set inst:{id}:name for bidirectional lookup and aggregation queries
+    // 2. Initialize inst:{id}:A Hash with all action points set to 0
+    // 与 M 点保持一致：启动时预初始化，便于查询和验证 M2C 路由
+    let a_key = keyspace.instance_action_key(instance_id);
+    for action in actions {
+        redis
+            .hash_set(&a_key, &action.action_id.to_string(), Bytes::from("0"))
+            .await?;
+    }
+
+    // 3. Set inst:{id}:name for bidirectional lookup and aggregation queries
     redis
         .set(
-            &InstanceRedisKeys::instance_name(instance_id),
+            &keyspace.instance_name_key(instance_id),
             Bytes::from(instance_name.to_string()),
         )
         .await?;
 
-    // 3. Add reverse index: inst:name:index Hash for O(1) name→ID lookup
-    let keyspace = KeySpaceConfig::production_cached();
+    // 4. Add reverse index: inst:name:index Hash for O(1) name→ID lookup
     redis
         .hash_set(
             &keyspace.instance_name_index_key(),
@@ -437,11 +447,13 @@ pub async fn unregister_instance<R>(redis: &R, instance_id: u32, instance_name: 
 where
     R: Rtdb,
 {
+    let keyspace = KeySpaceConfig::production_cached();
+
     // Delete real-time data keys (Redis = real-time data only)
     let keys_to_delete = vec![
-        InstanceRedisKeys::measurement_hash(instance_id), // inst:{id}:M
-        InstanceRedisKeys::action_hash(instance_id),      // inst:{id}:A
-        InstanceRedisKeys::instance_name(instance_id),    // inst:{id}:name
+        keyspace.instance_measurement_key(instance_id), // inst:{id}:M
+        keyspace.instance_action_key(instance_id),      // inst:{id}:A
+        keyspace.instance_name_key(instance_id),        // inst:{id}:name
     ];
 
     for key in &keys_to_delete {
@@ -449,7 +461,6 @@ where
     }
 
     // Safety: SCAN and delete any remaining inst:{id}:* keys (for cleanup)
-    let keyspace = KeySpaceConfig::production_cached();
     let pattern = keyspace.instance_pattern(instance_id);
     let extra_keys = redis.scan_match(&pattern).await?;
     for key in &extra_keys {
@@ -505,7 +516,7 @@ where
     // 3. Update inst:{id}:name
     redis
         .set(
-            &InstanceRedisKeys::instance_name(instance_id),
+            &keyspace.instance_name_key(instance_id),
             Bytes::from(new_name.to_string()),
         )
         .await?;
@@ -573,7 +584,8 @@ pub async fn sync_measurement<R>(
 where
     R: Rtdb,
 {
-    let key = InstanceRedisKeys::measurement_hash(instance_id);
+    let keyspace = KeySpaceConfig::production_cached();
+    let key = keyspace.instance_measurement_key(instance_id);
     let now_ms = SystemTimeProvider.now_millis();
     // Use into_iter() to consume ownership and avoid cloning keys
     let mut fields: Vec<(String, Bytes)> = measurement
@@ -595,10 +607,12 @@ pub async fn get_instance_data<R>(
 where
     R: Rtdb,
 {
+    let keyspace = KeySpaceConfig::production_cached();
+
     match data_type {
         Some("measurement") => {
             // Return measurement data only
-            let key = InstanceRedisKeys::measurement_hash(instance_id);
+            let key = keyspace.instance_measurement_key(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
             // Build Map directly, skipping intermediate HashMap
             let mut map = Map::new();
@@ -614,7 +628,7 @@ where
         },
         Some("action") => {
             // Return control data only
-            let key = InstanceRedisKeys::action_hash(instance_id);
+            let key = keyspace.instance_action_key(instance_id);
             let data_bytes = redis.hash_get_all(&key).await?;
             // Build Map directly, skipping intermediate HashMap
             let mut map = Map::new();
@@ -630,8 +644,8 @@ where
         },
         None => {
             // Return both as structured data
-            let m_key = InstanceRedisKeys::measurement_hash(instance_id);
-            let a_key = InstanceRedisKeys::action_hash(instance_id);
+            let m_key = keyspace.instance_measurement_key(instance_id);
+            let a_key = keyspace.instance_action_key(instance_id);
 
             let m_data_bytes = redis.hash_get_all(&m_key).await?;
             let a_data_bytes = redis.hash_get_all(&a_key).await?;
@@ -873,5 +887,164 @@ mod tests {
             .await
             .unwrap();
         assert!(m2c_after.is_empty());
+    }
+
+    // ========== register_instance tests ==========
+
+    #[tokio::test]
+    async fn test_register_instance_initializes_m_and_a_hashes() {
+        use crate::config::{ActionPoint, MeasurementPoint};
+        use std::collections::HashMap;
+
+        let rtdb = create_test_rtdb();
+
+        // Create test measurement points
+        let measurements = vec![
+            MeasurementPoint {
+                measurement_id: 1,
+                name: "voltage".to_string(),
+                unit: Some("V".to_string()),
+                description: None,
+            },
+            MeasurementPoint {
+                measurement_id: 2,
+                name: "current".to_string(),
+                unit: Some("A".to_string()),
+                description: None,
+            },
+        ];
+
+        // Create test action points
+        let actions = vec![
+            ActionPoint {
+                action_id: 1,
+                name: "set_power".to_string(),
+                unit: Some("kW".to_string()),
+                description: None,
+            },
+            ActionPoint {
+                action_id: 2,
+                name: "set_voltage".to_string(),
+                unit: Some("V".to_string()),
+                description: None,
+            },
+            ActionPoint {
+                action_id: 3,
+                name: "enable".to_string(),
+                unit: None,
+                description: None,
+            },
+        ];
+
+        // Register instance
+        let instance_id = 42;
+        let instance_name = "test_instance";
+        register_instance(
+            &rtdb,
+            instance_id,
+            instance_name,
+            "TestProduct",
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &measurements,
+            &actions,
+            None,
+        )
+        .await
+        .expect("register_instance should succeed");
+
+        // Verify inst:{id}:M Hash was initialized
+        let keyspace = KeySpaceConfig::production_cached();
+        let m_key = keyspace.instance_measurement_key(instance_id);
+        let m_data = rtdb.hash_get_all(&m_key).await.unwrap();
+        assert_eq!(m_data.len(), 2, "M Hash should have 2 measurement points");
+        assert!(m_data.contains_key("1"), "M Hash should contain point 1");
+        assert!(m_data.contains_key("2"), "M Hash should contain point 2");
+
+        // Verify inst:{id}:A Hash was initialized (THIS IS THE NEW BEHAVIOR)
+        let a_key = keyspace.instance_action_key(instance_id);
+        let a_data = rtdb.hash_get_all(&a_key).await.unwrap();
+        assert_eq!(a_data.len(), 3, "A Hash should have 3 action points");
+        assert!(a_data.contains_key("1"), "A Hash should contain point 1");
+        assert!(a_data.contains_key("2"), "A Hash should contain point 2");
+        assert!(a_data.contains_key("3"), "A Hash should contain point 3");
+
+        // Verify all values are initialized to "0"
+        for (key, value) in &a_data {
+            assert_eq!(
+                value.as_ref(),
+                b"0",
+                "A Hash point {} should be initialized to '0'",
+                key
+            );
+        }
+
+        // Verify inst:{id}:name was set
+        let name_key = keyspace.instance_name_key(instance_id);
+        let name_value = rtdb.get(&name_key).await.unwrap();
+        assert!(name_value.is_some(), "inst:{{id}}:name should be set");
+        assert_eq!(name_value.unwrap().as_ref(), instance_name.as_bytes());
+
+        // Verify inst:name:index was set
+        let index_key = keyspace.instance_name_index_key();
+        let index_value = rtdb.hash_get(&index_key, instance_name).await.unwrap();
+        assert!(
+            index_value.is_some(),
+            "inst:name:index should contain entry"
+        );
+        assert_eq!(
+            index_value.unwrap().as_ref(),
+            instance_id.to_string().as_bytes()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_instance_with_empty_actions() {
+        use crate::config::{ActionPoint, MeasurementPoint};
+        use std::collections::HashMap;
+
+        let rtdb = create_test_rtdb();
+
+        let measurements = vec![MeasurementPoint {
+            measurement_id: 1,
+            name: "power".to_string(),
+            unit: Some("kW".to_string()),
+            description: None,
+        }];
+
+        // Empty actions (like Load device)
+        let actions: Vec<ActionPoint> = vec![];
+
+        let instance_id = 99;
+        register_instance(
+            &rtdb,
+            instance_id,
+            "load_device",
+            "Load",
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &measurements,
+            &actions,
+            None,
+        )
+        .await
+        .expect("register_instance should succeed");
+
+        // M Hash should have 1 point
+        let keyspace = KeySpaceConfig::production_cached();
+        let m_key = keyspace.instance_measurement_key(instance_id);
+        let m_data = rtdb.hash_get_all(&m_key).await.unwrap();
+        assert_eq!(m_data.len(), 1);
+
+        // A Hash should be empty (but the loop still runs, just 0 iterations)
+        let a_key = keyspace.instance_action_key(instance_id);
+        let a_data = rtdb.hash_get_all(&a_key).await.unwrap();
+        assert_eq!(
+            a_data.len(),
+            0,
+            "A Hash should be empty for devices with no actions"
+        );
     }
 }

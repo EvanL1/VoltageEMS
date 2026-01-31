@@ -347,6 +347,45 @@ impl KeySpaceConfig {
     pub fn route_action_prefix(instance_id: u32) -> String {
         format!("{}:A:", instance_id)
     }
+
+    // ============================================================
+    // Product-related keys (modsrv)
+    // ============================================================
+
+    /// Build product info key: modsrv:product:{product_name}
+    pub fn product_key(&self, product_name: &str) -> String {
+        format!("modsrv:product:{}", product_name)
+    }
+
+    /// Build product children set key: modsrv:product:{product_name}:children
+    pub fn product_children_key(&self, product_name: &str) -> String {
+        format!("modsrv:product:{}:children", product_name)
+    }
+
+    /// Build product measurements key: modsrv:product:{product_name}:measurements
+    pub fn product_measurements_key(&self, product_name: &str) -> String {
+        format!("modsrv:product:{}:measurements", product_name)
+    }
+
+    /// Build product actions key: modsrv:product:{product_name}:actions
+    pub fn product_actions_key(&self, product_name: &str) -> String {
+        format!("modsrv:product:{}:actions", product_name)
+    }
+
+    /// Build product properties key: modsrv:product:{product_name}:properties
+    pub fn product_properties_key(&self, product_name: &str) -> String {
+        format!("modsrv:product:{}:properties", product_name)
+    }
+
+    /// Product index set key: modsrv:products
+    pub fn product_index_key(&self) -> &'static str {
+        "modsrv:products"
+    }
+
+    /// Instance index set key: instance:index
+    pub fn instance_index_key(&self) -> &'static str {
+        "instance:index"
+    }
 }
 
 #[cfg(test)]
