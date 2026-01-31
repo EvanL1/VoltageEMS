@@ -14,15 +14,15 @@
                 clearable
                 :append-to="levelSelectRef"
               >
-                <el-option label="L1" :value="1" />
-                <el-option label="L2" :value="2" />
-                <el-option label="L3" :value="3" />
+                <el-option label="Critical Alarm" :value="1" />
+                <el-option label="Warning Alarm" :value="2" />
+                <el-option label="Info Alarm" :value="3" />
               </el-select>
             </el-form-item>
-            <el-form-item label="Switch:">
+            <el-form-item label="Enabled:">
               <el-select
                 v-model="filters.enabled"
-                placeholder="Please select switch"
+                placeholder="Please select enabled"
                 clearable
                 :append-to="levelSelectRef"
               >
@@ -62,42 +62,86 @@
           :data="tableData"
           class="rule-management__table-content"
           align="left"
-          table-layout="fixed"
         >
-          <el-table-column prop="id" label="Rule ID" show-overflow-tooltip />
-          <el-table-column prop="rule_name" label="Rule Name" show-overflow-tooltip />
-          <el-table-column prop="warning_level" label="Alarm Level">
+          <el-table-column
+            prop="id"
+            label="ID"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+            width="80"
+          />
+          <el-table-column
+            prop="rule_name"
+            label="Rule Name"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+            min-width="120"
+          />
+          <el-table-column prop="warning_level" label="Alarm Level" show-overflow-tooltip>
             <template #default="{ row }">
-              <img
-                :src="warningLevelList[row.warning_level as 1 | 2 | 3]"
-                class="rule-management__table-icon"
-                alt="level icon"
-              />
+              <span
+                class="rule-management__table-level-text"
+                :class="`alarm-level--${row.warning_level}`"
+              >
+                {{ warningLevelText[row.warning_level as 1 | 2 | 3] || '-' }}
+              </span>
             </template>
           </el-table-column>
-          <!-- <el-table-column prop="monitor_data" label="Monitor Data" show-overflow-tooltip>
+          <el-table-column
+            prop="monitor_data"
+            label="Monitor Data"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+            min-width="100"
+          >
             <template #default="{ row }">
-              {{ formatMonitorData(row) }}
+              <span class="table-ellipsis__text">{{ formatMonitorData(row) }}</span>
             </template>
-          </el-table-column> -->
-          <!-- <el-table-column prop="condition" label="Condition" show-overflow-tooltip>
+          </el-table-column>
+          <el-table-column
+            prop="condition"
+            label="Condition"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+            min-width="80"
+          >
             <template #default="{ row }">
-              {{ formatCondition(row) }}
+              <span class="table-ellipsis__text">{{ formatCondition(row) }}</span>
             </template>
-          </el-table-column> -->
+          </el-table-column>
           <!-- <el-table-column prop="notification" label="Notification" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ Array.isArray(row.notification) ? row.notification.join(', ') : row.notification }}
+          </template>
+        </el-table-column> -->
+          <el-table-column
+            prop="description"
+            label="Description"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+            min-width="120"
+          >
             <template #default="{ row }">
-              {{ Array.isArray(row.notification) ? row.notification.join(', ') : row.notification }}
+              <span class="table-ellipsis__text">{{ row.description || '-' }}</span>
             </template>
-          </el-table-column> -->
-          <el-table-column prop="created_at" label="Created At" show-overflow-tooltip>
           </el-table-column>
-          <el-table-column prop="enabled" label="Switch" show-overflow-tooltip>
+          <el-table-column
+            prop="created_at"
+            label="Created At"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+            min-width="120"
+          >
+            <template #default="{ row }">
+              <span class="table-ellipsis__text">{{ formatDateTime(row.created_at) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="enabled" label="Enabled" show-overflow-tooltip min-width="80">
             <template #default="{ row }">
               <el-switch :model-value="row.enabled" @change="handleSwitchChange(row)" />
             </template>
           </el-table-column>
-          <el-table-column label="Operation" fixed="right" v-permission="['Admin']">
+          <el-table-column label="Operation" fixed="right" v-permission="['Admin']" min-width="120">
             <template #default="{ row }">
               <div class="rule-management__operation">
                 <div class="rule-management__operation-item" @click="handleEdit(row)">
@@ -135,17 +179,14 @@
 </template>
 
 <script setup lang="ts">
-// 正确引入SVG图标，避免部署后图片加载不出
+// 正确引入SVG图标，避免部署后图片加载不出�?
 import tableRefreshIcon from '@/assets/icons/table-refresh.svg'
 import tableSearchIcon from '@/assets/icons/table-search.svg'
 import userAddIcon from '@/assets/icons/user-add.svg'
 import tableEditIcon from '@/assets/icons/table-edit.svg'
 import tableDeleteIcon from '@/assets/icons/table-delect.svg'
-import level1Icon from '@/assets/icons/home-alter-L1.svg'
-import level2Icon from '@/assets/icons/home-alter-L2.svg'
-import level3Icon from '@/assets/icons/home-alter-L3.svg'
 import RulesOperationForm from './RulesOperationForm.vue'
-import type { Operator, RuleInfo } from '@/types/controlManagement'
+import type { RuleInfo } from '@/types/ruleManagement'
 
 import { useTableData, type TableConfig } from '@/composables/useTableData'
 import { enableRule, disableRule } from '@/api/alarm'
@@ -155,10 +196,10 @@ const tableConfig: TableConfig = {
   deleteUrl: '/alarmApi/rules/{id}',
   defaultPageSize: 20,
 }
-const warningLevelList = {
-  1: level1Icon,
-  2: level2Icon,
-  3: level3Icon,
+const warningLevelText = {
+  1: 'Critical Alarm',
+  2: 'Warning Alarm',
+  3: 'Info Alarm',
 }
 const {
   loading,
@@ -182,7 +223,7 @@ const rulesOperationFormRef = ref()
 // 格式�?MonitorData
 const formatMonitorData = (row: RuleInfo) => {
   if (!row) return '-'
-  return [row.service_type, row.point_id, row.data_type]
+  return [row.service_type || 'comsrv', row.channel_id, row.data_type, row.point_id]
     .filter((v) => v !== null && v !== undefined && v !== '')
     .join(' / ')
 }
@@ -190,6 +231,24 @@ const formatMonitorData = (row: RuleInfo) => {
 const formatCondition = (row: RuleInfo) => {
   if (!row || !row.operator || row.value === null || row.value === undefined) return '-'
   return `${row.operator} ${row.value}`
+}
+
+// 格式化时间
+const formatDateTime = (dateTime: string | null | undefined): string => {
+  if (!dateTime) return '-'
+  try {
+    const date = new Date(dateTime)
+    if (isNaN(date.getTime())) return dateTime
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+  } catch {
+    return dateTime
+  }
 }
 
 // 添加规则
@@ -241,7 +300,7 @@ const handleRuleCancel = () => {
 
 <style scoped lang="scss">
 .voltage-class .rule-management {
-  position: relative; // 为对话框提供定位上下�?
+  position: relative;
   height: 100%;
   width: 100%;
   display: flex;
@@ -306,10 +365,10 @@ const handleRuleCancel = () => {
         }
       }
 
-      .rule-management__table-icon {
-        width: 0.46rem;
-        height: 0.2rem;
-        object-fit: contain;
+      .rule-management__table-level-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
     }
 
@@ -334,6 +393,31 @@ const handleRuleCancel = () => {
 
   :deep(.el-form--inline .el-form-item) {
     margin-bottom: 0.4rem !important;
+  }
+
+  :deep(.el-table .table-ellipsis .cell) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .table-ellipsis__text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .alarm-level--1 {
+    color: #da2d2c;
+  }
+
+  .alarm-level--2 {
+    color: #ff6e08;
+  }
+
+  .alarm-level--3 {
+    color: #fe9900;
   }
 }
 </style>

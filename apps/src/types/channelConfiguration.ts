@@ -18,6 +18,7 @@ export interface modbusTcpParams {
   retry_count?: number
   timeout_ms?: number
   max_batch_size: number
+  poll_interval_ms: number
 }
 export interface canParams {
   bitrate: number

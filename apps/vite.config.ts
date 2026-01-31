@@ -64,7 +64,7 @@ export default defineConfig({
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
       '/alarmApi': {
-        target: 'http://192.168.30.21:6002',
+        target: 'http://192.168.30.21:6007',
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, ''),
       },
@@ -108,7 +108,7 @@ export default defineConfig({
     preprocessorOptions: {
       scss: {
         // 如果需要全局 SCSS 变量，可以在这里添加
-        // additionalData: `@use "@/assets/styles/variables.scss" as *;`,
+        additionalData: `@use "@/assets/styles/element/theme-vars.scss" as *;`,
       },
     },
     postcss: {
@@ -152,46 +152,32 @@ export default defineConfig({
     sourcemap: false,
     // chunk 大小警告限制（KB）
     chunkSizeWarningLimit: 1000,
-    // 压缩配置
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        // drop_console: true, // 移除console
-        drop_debugger: true, // 移除debugger
-      },
-    },
+    // 压缩配置 - 使用 esbuild（更快且更稳定）
+    minify: 'esbuild',
+    // esbuild 默认不会移除 console，且压缩更安全
+    // 如果需要移除 console，可以添加：
+    // esbuildOptions: {
+    //   drop: ['console', 'debugger'],
+    // },
     // Rollup 配置 - 代码分割优化
     rollupOptions: {
       output: {
-        // 手动分割代码块
+        // 手动分割代码块 - 简化配置，避免模块加载顺序问题
         manualChunks: (id) => {
-          // node_modules 中的依赖单独打包
           if (id.includes('node_modules')) {
-            // Vue 核心库单独打包
-            if (id.includes('vue') && !id.includes('vue-router') && !id.includes('pinia')) {
-              return 'vue-core'
-            }
-            // Vue Router 单独打包
-            if (id.includes('vue-router')) {
-              return 'vue-router'
-            }
-            // Pinia 单独打包
-            if (id.includes('pinia')) {
-              return 'pinia'
-            }
-            // Element Plus 单独打包（体积较大）
-            if (id.includes('element-plus')) {
-              return 'element-plus'
-            }
-            // ECharts 单独打包（体积很大，约 700KB）
+            // 只分割真正大型且独立的库
+            // ECharts 体积大且相对独立
             if (id.includes('echarts')) {
               return 'echarts'
             }
-            // Vue Flow 相关包单独打包
-            if (id.includes('@vue-flow')) {
-              return 'vue-flow'
+            // Element Plus 体积大，但依赖 Vue
+            // 为了更好的缓存，仍然单独打包
+            // Rollup 会自动处理依赖顺序
+            if (id.includes('element-plus')) {
+              return 'element-plus'
             }
-            // 其他 node_modules 依赖
+            // 其他所有依赖打包到一起，确保加载顺序正确
+            // 包括 Vue、Vue Router、Pinia 等
             return 'vendor'
           }
         },

@@ -7,7 +7,7 @@
     .el-form-item {
       margin-bottom: $spacing-lg;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       margin-bottom: 0.2rem;
       // &:last-child {
       //   margin-bottom: 0;
@@ -124,6 +124,7 @@
     &.el-form--inline {
       .el-form-item {
         display: inline-flex;
+        align-items: flex-start;
         margin-bottom: 0.4rem;
         margin-right: 0.4rem;
         .el-form-item__label {

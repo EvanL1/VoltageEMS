@@ -12,9 +12,9 @@
                 clearable
                 placeholder="Please select level"
               >
-                <el-option label="L1" :value="1" />
-                <el-option label="L2" :value="2" />
-                <el-option label="L3" :value="3" />
+                <el-option label="Critical Alarm" :value="1" />
+                <el-option label="Warning Alarm" :value="2" />
+                <el-option label="Info Alarm" :value="3" />
               </el-select>
             </el-form-item>
           </el-form>
@@ -41,18 +41,41 @@
       <!-- 表格 -->
       <div class="alarm-records__table">
         <el-table :data="tableData" class="alarm-records__table-content">
-          <el-table-column prop="rule_name" label="Name" min-width="1.2rem" />
-          <el-table-column prop="channel_id" label="Channel ID" min-width="1.2rem" />
+          <el-table-column
+            prop="rule_name"
+            label="Name"
+            min-width="1.2rem"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+          />
+          <el-table-column
+            prop="channel_id"
+            label="Channel ID"
+            min-width="1.2rem"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+          />
           <el-table-column prop="warning_level" label="Level" min-width="1rem">
             <template #default="scope">
-              <img
-                :src="levelIconList[scope.row.warning_level as 1 | 2 | 3]"
-                class="alarm-records__table-icon"
-                alt="level icon"
-              />
+              <span
+                class="alarm-records__table-level-text"
+                :class="`alarm-level--${scope.row.warning_level}`"
+              >
+                {{ levelTextList[scope.row.warning_level as 1 | 2 | 3] || '-' }}
+              </span>
             </template>
           </el-table-column>
-          <el-table-column prop="triggered_at" label="Start Time" min-width="1.6rem" />
+          <el-table-column
+            prop="triggered_at"
+            label="Start Time"
+            min-width="1.6rem"
+            show-overflow-tooltip
+            class-name="table-ellipsis"
+          >
+            <template #default="{ row }">
+              <span class="table-ellipsis__text">{{ formatDateTime(row.triggered_at) }}</span>
+            </template>
+          </el-table-column>
         </el-table>
 
         <!-- 分页组件 -->
@@ -78,14 +101,10 @@ import { useTableData, type TableConfig } from '@/composables/useTableData'
 
 import reloadIcon from '@/assets/icons/table-refresh.svg'
 import searchIcon from '@/assets/icons/table-search.svg'
-import level1Icon from '@/assets/icons/home-alter-L1.svg'
-import level2Icon from '@/assets/icons/home-alter-L2.svg'
-import level3Icon from '@/assets/icons/home-alter-L3.svg'
-
-const levelIconList = {
-  1: level1Icon,
-  2: level2Icon,
-  3: level3Icon,
+const levelTextList = {
+  1: 'Critical Alarm',
+  2: 'Warning Alarm',
+  3: 'Info Alarm',
 }
 const toolbarLeftRef = ref<HTMLElement | null>(null)
 // 表格配置
@@ -107,6 +126,24 @@ const {
 } = useTableData<CurrentAlarmData>(tableConfig)
 
 filters.warning_level = null
+
+// 格式化时间
+const formatDateTime = (dateTime: string | null | undefined): string => {
+  if (!dateTime) return '-'
+  try {
+    const date = new Date(dateTime)
+    if (isNaN(date.getTime())) return dateTime
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+  } catch {
+    return dateTime
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -165,10 +202,10 @@ filters.warning_level = null
       height: calc(100% - 0.92rem);
       overflow-y: auto;
 
-      .alarm-records__table-icon {
-        width: 0.46rem;
-        height: 0.2rem;
-        object-fit: contain;
+      .alarm-records__table-level-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
     }
 
@@ -177,6 +214,31 @@ filters.warning_level = null
       display: flex;
       justify-content: flex-end;
     }
+  }
+
+  :deep(.el-table .table-ellipsis .cell) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .table-ellipsis__text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .alarm-level--1 {
+    color: #da2d2c;
+  }
+
+  .alarm-level--2 {
+    color: #ff6e08;
+  }
+
+  .alarm-level--3 {
+    color: #fe9900;
   }
 }
 </style>

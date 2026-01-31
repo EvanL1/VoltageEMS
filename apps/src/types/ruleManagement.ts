@@ -6,14 +6,15 @@ export type Operator = '>' | '>=' | '<' | '<=' | '=' | 'gt' | 'gte' | 'lt' | 'lt
 // 规则表单模型类型
 export interface RuleFormModel {
   rule_name: string
-  service_type: string | number | null
-  point_id: string | number | null
-  data_type: string | number | null
-  warning_level: string | number | null
+  service_type: string
+  channel_id: number | undefined
+  point_id: number | null
+  data_type: 'T' | 'S' | null
+  warning_level: number | null
   operator: Operator | null
   value: number | null
+  description?: string
   enabled: boolean
-  channel_id?: number
 }
 
 // 规则信息类型
@@ -21,10 +22,10 @@ export interface RuleInfo {
   id: number
   channel_id?: number
   rule_name: string
-  service_type: string | number | null
-  point_id: string | number | null
-  data_type: string | number | null
-  warning_level: string | number | null
+  service_type: string
+  point_id: number | null
+  data_type: 'T' | 'S' | null
+  warning_level: number | null
   operator: Operator | null
   value: number | null
   notification?: string[]

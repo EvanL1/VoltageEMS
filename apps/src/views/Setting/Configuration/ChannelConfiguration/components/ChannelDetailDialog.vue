@@ -143,7 +143,6 @@
                 <el-form-item
                   label="Max Batch Size:"
                   class="channel-detail__parameter-item"
-                  style="margin-right: 0"
                   prop="parameters.max_batch_size"
                 >
                   <span v-if="!isEditing" class="channel-detail__text">{{
@@ -158,6 +157,25 @@
                     :precision="0"
                     align="left"
                     placeholder="please enter max batch size (1-125)"
+                  />
+                </el-form-item>
+                <el-form-item
+                  label="Poll Interval (ms):"
+                  class="channel-detail__parameter-item"
+                  style="margin-right: 0"
+                  prop="parameters.poll_interval_ms"
+                >
+                  <span v-if="!isEditing" class="channel-detail__text">{{
+                    (form.parameters as any).poll_interval_ms
+                  }}</span>
+                  <el-input-number
+                    v-else
+                    v-model="(form.parameters as any).poll_interval_ms"
+                    :controls="false"
+                    :min="1"
+                    :precision="0"
+                    align="left"
+                    placeholder="please enter poll interval (ms)"
                   />
                 </el-form-item>
               </template>
@@ -409,7 +427,6 @@
                 <el-form-item
                   label="Max Batch Size:"
                   class="channel-detail__parameter-item"
-                  style="margin-right: 0"
                   prop="parameters.max_batch_size"
                 >
                   <span v-if="!isEditing" class="channel-detail__text">{{
@@ -426,10 +443,29 @@
                     placeholder="please enter max batch size (1-125)"
                   />
                 </el-form-item>
+                <el-form-item
+                  label="Poll Interval (ms):"
+                  class="channel-detail__parameter-item"
+                  style="margin-right: 0"
+                  prop="parameters.poll_interval_ms"
+                >
+                  <span v-if="!isEditing" class="channel-detail__text">{{
+                    (form.parameters as any).poll_interval_ms
+                  }}</span>
+                  <el-input-number
+                    v-else
+                    v-model="(form.parameters as any).poll_interval_ms"
+                    :controls="false"
+                    :min="1"
+                    :precision="0"
+                    align="left"
+                    placeholder="please enter poll interval (ms)"
+                  />
+                </el-form-item>
               </template>
 
               <template v-else-if="form.protocol === 'di_do'">
-                <el-form-item label="Driver:" class="channel-detail__parameter-item">
+                <el-form-item label="Driver:" class="channel-detail__parameter-item" prop="parameters.driver">
                   <span v-if="!isEditing" class="channel-detail__text">{{
                     (form.parameters as any).driver || '-'
                   }}</span>
@@ -443,6 +479,7 @@
                   label="GPIO Base Path:"
                   class="channel-detail__parameter-item"
                   style="margin-right: 0"
+                  prop="parameters.gpio_base_path"
                 >
                   <span v-if="!isEditing" class="channel-detail__text">{{
                     (form.parameters as any).gpio_base_path || '-'
@@ -457,6 +494,7 @@
                   label="DI Poll Interval (ms):"
                   class="channel-detail__parameter-item"
                   style="margin-right: 0"
+                  prop="parameters.di_poll_interval_ms"
                 >
                   <span v-if="!isEditing" class="channel-detail__text">{{
                     (form.parameters as any).di_poll_interval_ms
@@ -581,6 +619,32 @@
   </FormDialog>
 </template>
 
+<script lang="ts">
+// 协议默认值配置 - 必须在普通 script 块中定义，以便 defineProps 可以访问
+export const PROTOCOL_DEFAULTS = {
+  modbus_tcp: {
+    host: '127.0.0.1',
+    port: 502,
+    connect_timeout_ms: 5000,
+    read_timeout_ms: 3000,
+    max_batch_size: 64,
+    poll_interval_ms: 1000,
+  },
+  modbus_rtu: {
+    baud_rate: 9600,
+    connect_timeout_ms: 5000,
+    read_timeout_ms: 3000,
+    max_batch_size: 64,
+    poll_interval_ms: 1000,
+  },
+  di_do: {
+    driver: 'gpiod',
+    gpio_base_path: '/sys/class/gpio',
+    di_poll_interval_ms: 200,
+  },
+}
+</script>
+
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
@@ -617,11 +681,12 @@ const props = withDefaults(defineProps<Props>(), {
     enabled: false,
     parameters: {
       parameters: {
-        host: '',
-        port: 502,
-        connect_timeout_ms: 3000,
-        read_timeout_ms: 4000,
-        max_batch_size: 32,
+        host: PROTOCOL_DEFAULTS.modbus_tcp.host,
+        port: PROTOCOL_DEFAULTS.modbus_tcp.port,
+        connect_timeout_ms: PROTOCOL_DEFAULTS.modbus_tcp.connect_timeout_ms,
+        read_timeout_ms: PROTOCOL_DEFAULTS.modbus_tcp.read_timeout_ms,
+        max_batch_size: PROTOCOL_DEFAULTS.modbus_tcp.max_batch_size,
+        poll_interval_ms: PROTOCOL_DEFAULTS.modbus_tcp.poll_interval_ms,
       },
     },
     logging: {
@@ -731,6 +796,20 @@ const tcpRules: Record<string, any[]> = {
       trigger: 'change',
     },
   ],
+  'parameters.poll_interval_ms': [
+    { required: true, message: requiredMsg('Poll Interval (ms)'), trigger: 'blur' },
+    {
+      validator: (_: any, value: any, callback: any) => {
+        const num = Number(value)
+        if (!Number.isInteger(num) || num < 1) {
+          callback(new Error('Must be a positive integer'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change',
+    },
+  ],
   'logging.enabled': [{ required: true, message: requiredMsg('Logging Enabled'), trigger: 'change' }],
   'logging.level': [{ required: true, message: requiredMsg('Logging Level'), trigger: 'change' }],
 }
@@ -765,6 +844,20 @@ const rtuRules: Record<string, any[]> = {
       trigger: 'change',
     },
   ],
+  'parameters.poll_interval_ms': [
+    { required: true, message: requiredMsg('Poll Interval (ms)'), trigger: 'blur' },
+    {
+      validator: (_: any, value: any, callback: any) => {
+        const num = Number(value)
+        if (!Number.isInteger(num) || num < 1) {
+          callback(new Error('Must be a positive integer'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change',
+    },
+  ],
   'logging.enabled': [{ required: true, message: requiredMsg('Logging Enabled'), trigger: 'change' }],
   'logging.level': [{ required: true, message: requiredMsg('Logging Level'), trigger: 'change' }],
 }
@@ -786,6 +879,8 @@ const diDoRules: Record<string, any[]> = {
       trigger: 'change',
     },
   ],
+  'logging.enabled': [{ required: true, message: requiredMsg('Logging Enabled'), trigger: 'change' }],
+  'logging.level': [{ required: true, message: requiredMsg('Logging Level'), trigger: 'change' }],
 }
 const formRules = computed<Record<string, any[]>>(() => {
   if (!isEditing.value) return {}
@@ -804,11 +899,13 @@ watch(
     const hasParams = form.value.parameters && Object.keys(form.value.parameters || {}).length > 0
     if (protocolChanged || hasParams) {
       form.value.parameters = {} as any
-      // 如果是 modbus_tcp 或 modbus_rtu，设置 max_batch_size 默认值
-      if (protocol === 'modbus_tcp' || protocol === 'modbus_rtu') {
-        if (!form.value.parameters.max_batch_size) {
-          form.value.parameters.max_batch_size = 32
-        }
+      // 根据协议类型设置默认值
+      if (protocol === 'modbus_tcp') {
+        Object.assign(form.value.parameters, PROTOCOL_DEFAULTS.modbus_tcp)
+      } else if (protocol === 'modbus_rtu') {
+        Object.assign(form.value.parameters, PROTOCOL_DEFAULTS.modbus_rtu)
+      } else if (protocol === 'di_do') {
+        Object.assign(form.value.parameters, PROTOCOL_DEFAULTS.di_do)
       }
     }
     nextTick(() => {
@@ -919,7 +1016,7 @@ const open = async (id: number | undefined) => {
       protocol: 'modbus_tcp',
       enabled: false,
       parameters: {
-        max_batch_size: 32,
+        ...PROTOCOL_DEFAULTS.modbus_tcp,
       },
       logging: {
         enabled: true,
