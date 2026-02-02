@@ -1,15 +1,12 @@
-//! Channel management module (formerly comsrv-cli)
+//! Channel management module
 //!
-//! Provides functionality to manage communication channels
+//! Provides functionality to manage communication channels via HTTP API
 
 use anyhow::Result;
 use clap::Subcommand;
 use reqwest::Client;
 use serde_json::Value;
-use tracing::{info, warn};
-
-#[cfg(feature = "lib-mode")]
-use crate::{context::ServiceContext, lib_api};
+use tracing::info;
 
 #[derive(Subcommand)]
 pub enum ChannelCommands {
@@ -55,122 +52,52 @@ pub enum ChannelCommands {
     Health,
 }
 
-pub async fn handle_command(
-    cmd: ChannelCommands,
-    service_ctx: Option<&ServiceContext>,
-    base_url: Option<&str>,
-) -> Result<()> {
-    // Determine which mode to use
-    #[cfg(feature = "lib-mode")]
-    let use_lib_api = service_ctx.is_some();
-    #[cfg(not(feature = "lib-mode"))]
-    let use_lib_api = false;
+pub async fn handle_command(cmd: ChannelCommands, base_url: &str) -> Result<()> {
+    let client = ChannelClient::new(base_url)?;
 
-    if use_lib_api {
-        #[cfg(feature = "lib-mode")]
-        {
-            // Offline mode: use lib API
-            let ctx = service_ctx.expect("ServiceContext should be available in lib-mode");
-            let comsrv = ctx.comsrv()?;
-            let service = lib_api::channels::ChannelsService::new(comsrv);
-
-            match cmd {
-                ChannelCommands::List => {
-                    let channels = service.list().await?;
-                    println!("Channels: {}", serde_json::to_string_pretty(&channels)?);
-                },
-                ChannelCommands::Status { channel_id } => {
-                    let status = service.get_status(channel_id).await?;
-                    println!(
-                        "Channel {} status: {}",
-                        channel_id,
-                        serde_json::to_string_pretty(&status)?
-                    );
-                },
-                ChannelCommands::Control {
-                    channel_id,
-                    point_id,
-                    value,
-                } => {
-                    service.send_control(channel_id, point_id, value).await?;
-                    info!(
-                        "Control command sent to channel {} point {}",
-                        channel_id, point_id
-                    );
-                },
-                ChannelCommands::Adjust {
-                    channel_id,
-                    point_id,
-                    value,
-                } => {
-                    service.send_adjustment(channel_id, point_id, value).await?;
-                    info!(
-                        "Adjustment sent to channel {} point {}: {}",
-                        channel_id, point_id, value
-                    );
-                },
-                ChannelCommands::Reload => {
-                    let result = service.reload().await?;
-                    info!("Configuration reload: {}", result);
-                },
-                ChannelCommands::Health => {
-                    warn!("Health check not available in offline mode (lib API)");
-                },
-            }
-        }
-    } else {
-        // Online mode: use HTTP API
-        let url = base_url.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Base URL required for online mode. Please set COMSRV_URL or use --offline"
-            )
-        })?;
-        let client = ChannelClient::new(url)?;
-
-        match cmd {
-            ChannelCommands::List => {
-                let channels = client.list_channels().await?;
-                println!("Channels: {}", serde_json::to_string_pretty(&channels)?);
-            },
-            ChannelCommands::Status { channel_id } => {
-                let status = client.get_channel_status(channel_id).await?;
-                println!(
-                    "Channel {} status: {}",
-                    channel_id,
-                    serde_json::to_string_pretty(&status)?
-                );
-            },
-            ChannelCommands::Control {
+    match cmd {
+        ChannelCommands::List => {
+            let channels = client.list_channels().await?;
+            println!("Channels: {}", serde_json::to_string_pretty(&channels)?);
+        },
+        ChannelCommands::Status { channel_id } => {
+            let status = client.get_channel_status(channel_id).await?;
+            println!(
+                "Channel {} status: {}",
                 channel_id,
-                point_id,
-                value,
-            } => {
-                client.send_control(channel_id, point_id, value).await?;
-                info!(
-                    "Control command sent to channel {} point {}",
-                    channel_id, point_id
-                );
-            },
-            ChannelCommands::Adjust {
-                channel_id,
-                point_id,
-                value,
-            } => {
-                client.send_adjustment(channel_id, point_id, value).await?;
-                info!(
-                    "Adjustment sent to channel {} point {}: {}",
-                    channel_id, point_id, value
-                );
-            },
-            ChannelCommands::Reload => {
-                client.reload_config().await?;
-                info!("Configuration reloaded");
-            },
-            ChannelCommands::Health => {
-                let health = client.check_health().await?;
-                println!("Service health: {}", serde_json::to_string_pretty(&health)?);
-            },
-        }
+                serde_json::to_string_pretty(&status)?
+            );
+        },
+        ChannelCommands::Control {
+            channel_id,
+            point_id,
+            value,
+        } => {
+            client.send_control(channel_id, point_id, value).await?;
+            info!(
+                "Control command sent to channel {} point {}",
+                channel_id, point_id
+            );
+        },
+        ChannelCommands::Adjust {
+            channel_id,
+            point_id,
+            value,
+        } => {
+            client.send_adjustment(channel_id, point_id, value).await?;
+            info!(
+                "Adjustment sent to channel {} point {}: {}",
+                channel_id, point_id, value
+            );
+        },
+        ChannelCommands::Reload => {
+            client.reload_config().await?;
+            info!("Configuration reloaded");
+        },
+        ChannelCommands::Health => {
+            let health = client.check_health().await?;
+            println!("Service health: {}", serde_json::to_string_pretty(&health)?);
+        },
     }
 
     Ok(())
@@ -201,7 +128,7 @@ impl ChannelClient {
             Ok(response.json().await?)
         } else {
             Err(anyhow::anyhow!(
-                "Failed to get channels: {}",
+                "Failed to get channels: {} - ensure comsrv is running (monarch services start)",
                 response.status()
             ))
         }
@@ -254,7 +181,6 @@ impl ChannelClient {
 
     #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (safe for known valid JSON)
     async fn send_adjustment(&self, channel_id: u32, point_id: u32, value: f64) -> Result<()> {
-        // Align with service route: /api/channels/{channel_id}/points/{point_id}/adjustment
         let response = self
             .client
             .post(format!(

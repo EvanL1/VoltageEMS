@@ -1,15 +1,12 @@
 //! Rule management module
 //!
-//! Provides functionality to manage business rules
+//! Provides functionality to manage business rules via HTTP API
 
 use anyhow::Result;
 use clap::Subcommand;
 use reqwest::Client;
 use serde_json::Value;
-use tracing::{info, warn};
-
-#[cfg(feature = "lib-mode")]
-use crate::{context::ServiceContext, lib_api};
+use tracing::info;
 
 #[derive(Subcommand)]
 pub enum RuleCommands {
@@ -70,139 +67,66 @@ pub enum RuleCommands {
     },
 }
 
-pub async fn handle_command(
-    cmd: RuleCommands,
-    service_ctx: Option<&ServiceContext>,
-    base_url: Option<&str>,
-) -> Result<()> {
-    // Determine which mode to use
-    #[cfg(feature = "lib-mode")]
-    let use_lib_api = service_ctx.is_some();
-    #[cfg(not(feature = "lib-mode"))]
-    let use_lib_api = false;
+pub async fn handle_command(cmd: RuleCommands, base_url: &str) -> Result<()> {
+    let client = RuleClient::new(base_url)?;
 
-    if use_lib_api {
-        #[cfg(feature = "lib-mode")]
-        {
-            // Offline mode: use lib API
-            // Note: rules have been merged into modsrv
-            let ctx = service_ctx.expect("ServiceContext should be available in lib-mode");
-            let modsrv = ctx.modsrv()?;
-            let service = lib_api::rules::RulesService::new(modsrv);
+    match cmd {
+        RuleCommands::List { enabled } => {
+            let rules = client.list_rules().await?;
 
-            match cmd {
-                RuleCommands::List { enabled } => {
-                    let rules = service.list().await?;
-
-                    // Filter if needed
-                    let rules_filtered: Vec<_> = if enabled {
-                        rules.into_iter().filter(|r| r.enabled).collect()
-                    } else {
-                        rules
-                    };
-
-                    println!("Rules: {}", serde_json::to_string_pretty(&rules_filtered)?);
-                },
-                RuleCommands::Get { rule_id } => {
-                    let rule = service.get(rule_id).await?;
-                    println!(
-                        "Rule '{}': {}",
-                        rule_id,
-                        serde_json::to_string_pretty(&rule)?
-                    );
-                },
-                RuleCommands::Enable { rule_id } => {
-                    service.enable(rule_id).await?;
-                    info!("Rule '{}' enabled", rule_id);
-                },
-                RuleCommands::Disable { rule_id } => {
-                    service.disable(rule_id).await?;
-                    info!("Rule '{}' disabled", rule_id);
-                },
-                RuleCommands::Test { rule_id } => {
-                    warn!("Rule test: offline unsupported");
-                    println!("Rule ID: {}", rule_id);
-                },
-                RuleCommands::Execute { rule_id, force: _ } => {
-                    // Rule execution requires RTDB + routing_cache which monarch doesn't have
-                    warn!("Rule exec: offline unavailable, use modsrv API: POST /api/rules/{}/execute", rule_id);
-                },
-                RuleCommands::Executions { rule_id, limit } => {
-                    warn!("Exec history: offline unavailable");
-                    if let Some(id) = rule_id {
-                        println!("Rule ID: {}", id);
-                    }
-                    println!("Limit: {}", limit);
-                },
-            }
-        }
-    } else {
-        // Online mode: use HTTP API
-        let url = base_url.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Base URL required for online mode. Please set RULES_URL or use --offline"
-            )
-        })?;
-        let client = RuleClient::new(url)?;
-
-        match cmd {
-            RuleCommands::List { enabled } => {
-                let rules = client.list_rules().await?;
-
-                // Filter if needed - use into_iter to avoid cloning
-                let rules = if enabled {
-                    if let serde_json::Value::Array(arr) = rules {
-                        let filtered = arr
-                            .into_iter()
-                            .filter(|r| r.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false))
-                            .collect::<Vec<_>>();
-                        serde_json::Value::from(filtered)
-                    } else {
-                        rules
-                    }
+            // Filter if needed
+            let rules = if enabled {
+                if let serde_json::Value::Array(arr) = rules {
+                    let filtered = arr
+                        .into_iter()
+                        .filter(|r| r.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false))
+                        .collect::<Vec<_>>();
+                    serde_json::Value::from(filtered)
                 } else {
                     rules
-                };
+                }
+            } else {
+                rules
+            };
 
-                println!("Rules: {}", serde_json::to_string_pretty(&rules)?);
-            },
-            RuleCommands::Get { rule_id } => {
-                let rule = client.get_rule(rule_id).await?;
-                println!(
-                    "Rule '{}': {}",
-                    rule_id,
-                    serde_json::to_string_pretty(&rule)?
-                );
-            },
-            RuleCommands::Enable { rule_id } => {
-                client.enable_rule(rule_id).await?;
-                info!("Rule '{}' enabled", rule_id);
-            },
-            RuleCommands::Disable { rule_id } => {
-                client.disable_rule(rule_id).await?;
-                info!("Rule '{}' disabled", rule_id);
-            },
-            RuleCommands::Test { rule_id } => {
-                let result = client.test_rule(rule_id).await?;
-                println!(
-                    "Test result for rule '{}': {}",
-                    rule_id,
-                    serde_json::to_string_pretty(&result)?
-                );
-            },
-            RuleCommands::Execute { rule_id, force } => {
-                let result = client.execute_rule(rule_id, force).await?;
-                println!(
-                    "Execution result for rule '{}': {}",
-                    rule_id,
-                    serde_json::to_string_pretty(&result)?
-                );
-            },
-            RuleCommands::Executions { rule_id, limit } => {
-                let executions = client.list_executions(rule_id, limit).await?;
-                println!("Executions: {}", serde_json::to_string_pretty(&executions)?);
-            },
-        }
+            println!("Rules: {}", serde_json::to_string_pretty(&rules)?);
+        },
+        RuleCommands::Get { rule_id } => {
+            let rule = client.get_rule(rule_id).await?;
+            println!(
+                "Rule '{}': {}",
+                rule_id,
+                serde_json::to_string_pretty(&rule)?
+            );
+        },
+        RuleCommands::Enable { rule_id } => {
+            client.enable_rule(rule_id).await?;
+            info!("Rule '{}' enabled", rule_id);
+        },
+        RuleCommands::Disable { rule_id } => {
+            client.disable_rule(rule_id).await?;
+            info!("Rule '{}' disabled", rule_id);
+        },
+        RuleCommands::Test { rule_id } => {
+            let result = client.test_rule(rule_id).await?;
+            println!(
+                "Test result for rule '{}': {}",
+                rule_id,
+                serde_json::to_string_pretty(&result)?
+            );
+        },
+        RuleCommands::Execute { rule_id, force } => {
+            let result = client.execute_rule(rule_id, force).await?;
+            println!(
+                "Execution result for rule '{}': {}",
+                rule_id,
+                serde_json::to_string_pretty(&result)?
+            );
+        },
+        RuleCommands::Executions { rule_id, limit } => {
+            let executions = client.list_executions(rule_id, limit).await?;
+            println!("Executions: {}", serde_json::to_string_pretty(&executions)?);
+        },
     }
 
     Ok(())
@@ -233,7 +157,7 @@ impl RuleClient {
             Ok(response.json().await?)
         } else {
             Err(anyhow::anyhow!(
-                "Failed to list rules: {}",
+                "Failed to list rules: {} - ensure modsrv is running (monarch services start)",
                 response.status()
             ))
         }

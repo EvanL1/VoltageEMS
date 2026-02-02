@@ -9,13 +9,13 @@ voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rules = { path = "../../libs/voltage-rules" }
 voltage-model = { path = "../../libs/voltage-model" }
-# voltage-comlink removed - types moved to comsrv
 common = { path = "../../libs/common" }
 
-# Service libraries (lib mode)
-comsrv = { path = "../../services/comsrv", default-features = false, optional = true }
-modsrv = { path = "../../services/modsrv", default-features = false, optional = true }
-# rules have been merged into modsrv (port 6002)
+# Service crate dependencies (for config type definitions only)
+# These provide typed config structs for YAML/CSV parsing in core/ module.
+# Runtime communication uses HTTP APIs, not embedded lib code.
+comsrv = { path = "../../services/comsrv", default-features = false }
+modsrv = { path = "../../services/modsrv", default-features = false }
 
 # CLI
 clap = { workspace = true }
@@ -60,9 +60,7 @@ crossterm = "0.28"
 # HTTP client
 reqwest = { workspace = true }
 
-[features]
-default = ["lib-mode"]
-lib-mode = ["comsrv", "modsrv"]  # rules merged into modsrv
+# Features section removed - lib-mode eliminated in favor of HTTP-only mode
 
 [lints]
 workspace = true

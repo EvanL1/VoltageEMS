@@ -12,7 +12,7 @@ use common::{
     ConfigValidator as VoltageConfigValidator, GenericValidator, ValidationLevel, ValidationResult,
 };
 
-// Import config types from service libs (lib-mode)
+// Import config types from service crates (for type definitions only)
 use comsrv::core::config::ComsrvConfig;
 use modsrv::config::{ModsrvConfig, RulesConfig};
 

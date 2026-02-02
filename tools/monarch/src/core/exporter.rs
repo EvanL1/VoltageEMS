@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-// Import types from service libs (lib-mode)
+// Import config types from service crates (for type definitions only)
 use comsrv::core::config::{ChannelConfig, ChannelCore, ComsrvConfig};
 use modsrv::config::{ModsrvConfig, RuleConfig, RuleCore, RulesConfig};
 use voltage_model::product_lib;
