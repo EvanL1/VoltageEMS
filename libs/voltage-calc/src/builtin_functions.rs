@@ -4,8 +4,10 @@
 //! And stateless functions: scale, clamp, abs, min, max
 
 use crate::error::{CalcError, Result};
-use crate::state::{state_key, IntegrateState, MovingAvgState, RateOfChangeState, StateStore};
-use chrono::Utc;
+use crate::state::{
+    state_key, IntegrateState, MovingAvgState, PeriodDeltaState, RateOfChangeState, StateStore,
+};
+use chrono::{Datelike, Local, TimeZone, Utc};
 use std::sync::Arc;
 use tracing::debug;
 
@@ -195,6 +197,156 @@ impl<S: StateStore> BuiltinFunctions<S> {
         // This is a simplified implementation
         // In production, you'd want to iterate and delete all keys with the context prefix
         Ok(())
+    }
+
+    /// Execute period delta function
+    ///
+    /// Calculates the change (delta) of a cumulative value within a time period.
+    /// Useful for calculating energy consumption: daily kWh from total kWh counter.
+    ///
+    /// Period types:
+    /// - "daily": Resets at midnight local time
+    /// - "weekly": Resets at Monday midnight local time
+    /// - "monthly": Resets at 1st of month midnight
+    /// - "quarterly": Resets at Q1/Q2/Q3/Q4 start
+    ///
+    /// # Arguments
+    /// * `var_name` - Variable name for state tracking
+    /// * `value` - Current cumulative value (e.g., total kWh)
+    /// * `period` - Period type: "daily", "weekly", "monthly", "quarterly"
+    ///
+    /// # Returns
+    /// Delta value (current - snapshot), or 0.0 on first call
+    ///
+    /// # Counter Reset Handling
+    /// If value < snapshot (counter reset), snapshot is updated to current value
+    /// and delta is 0.0 for that call.
+    pub async fn period_delta(&self, var_name: &str, value: f64, period: &str) -> Result<f64> {
+        let key = state_key(
+            &self.context,
+            "period_delta",
+            &format!("{}_{}", var_name, period),
+        );
+        let now = Utc::now();
+
+        // Load existing state or create initial
+        let mut state = if let Some(data) = self.state_store.get(&key).await? {
+            serde_json::from_slice::<PeriodDeltaState>(&data)
+                .map_err(|e| CalcError::state(format!("Failed to deserialize state: {}", e)))?
+        } else {
+            // First call - initialize with current value and period start
+            let initial = PeriodDeltaState {
+                snapshot: value,
+                period_start_ts: Self::get_period_start(now, period),
+            };
+            let data = serde_json::to_vec(&initial)
+                .map_err(|e| CalcError::state(format!("Failed to serialize state: {}", e)))?;
+            self.state_store.set(&key, &data).await?;
+            return Ok(0.0); // First call returns 0
+        };
+
+        // Check if period has rotated
+        let current_period_start = Self::get_period_start(now, period);
+        if current_period_start > state.period_start_ts {
+            // New period - take new snapshot
+            debug!(
+                var = var_name,
+                period = period,
+                old_snapshot = state.snapshot,
+                new_snapshot = value,
+                "period_delta: period rotated"
+            );
+            state.snapshot = value;
+            state.period_start_ts = current_period_start;
+        }
+
+        // Handle counter reset (value decreased, likely meter reset)
+        if value < state.snapshot {
+            debug!(
+                var = var_name,
+                value = value,
+                snapshot = state.snapshot,
+                "period_delta: counter reset detected"
+            );
+            state.snapshot = value;
+        }
+
+        // Calculate delta
+        let delta = value - state.snapshot;
+
+        // Save updated state
+        let data = serde_json::to_vec(&state)
+            .map_err(|e| CalcError::state(format!("Failed to serialize state: {}", e)))?;
+        self.state_store.set(&key, &data).await?;
+
+        debug!(
+            var = var_name,
+            period = period,
+            value = value,
+            snapshot = state.snapshot,
+            delta = delta,
+            "period_delta"
+        );
+
+        Ok(delta)
+    }
+
+    /// Get the start timestamp of the current period in local timezone
+    ///
+    /// Returns Unix timestamp (seconds) for the start of:
+    /// - daily: midnight today
+    /// - weekly: Monday midnight of current week
+    /// - monthly: 1st of current month midnight
+    /// - quarterly: 1st of current quarter (Jan/Apr/Jul/Oct) midnight
+    fn get_period_start(now: chrono::DateTime<Utc>, period: &str) -> i64 {
+        let local = now.with_timezone(&Local);
+
+        match period {
+            "daily" => {
+                // Midnight of today in local timezone
+                local
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .and_then(|dt| Local.from_local_datetime(&dt).single())
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or_else(|| now.timestamp())
+            },
+            "weekly" => {
+                // Monday midnight of current week
+                let days_since_monday = local.weekday().num_days_from_monday() as i64;
+                let monday = local - chrono::Duration::days(days_since_monday);
+                monday
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .and_then(|dt| Local.from_local_datetime(&dt).single())
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or_else(|| now.timestamp())
+            },
+            "monthly" => {
+                // 1st of current month midnight
+                local
+                    .with_day(1)
+                    .and_then(|dt| dt.date_naive().and_hms_opt(0, 0, 0))
+                    .and_then(|dt| Local.from_local_datetime(&dt).single())
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or_else(|| now.timestamp())
+            },
+            "quarterly" => {
+                // 1st of current quarter (Jan=1, Apr=4, Jul=7, Oct=10)
+                let quarter_month = ((local.month() - 1) / 3) * 3 + 1;
+                local
+                    .with_month(quarter_month)
+                    .and_then(|dt| dt.with_day(1))
+                    .and_then(|dt| dt.date_naive().and_hms_opt(0, 0, 0))
+                    .and_then(|dt| Local.from_local_datetime(&dt).single())
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or_else(|| now.timestamp())
+            },
+            _ => {
+                // Unknown period - use current timestamp (effectively no period tracking)
+                now.timestamp()
+            },
+        }
     }
 }
 

@@ -26,6 +26,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tracing::debug;
+use voltage_modbus::logging::{
+    CallbackLogger, LogCallback, LogLevel as VoltageLogLevel, LoggingMode,
+};
 use voltage_modbus::{DeviceLimits, ModbusClient, ModbusTcpClient};
 
 #[cfg(feature = "modbus")]
@@ -36,6 +39,7 @@ use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, ErrorContext, LogContext, LoggableProtocol,
+    ModbusTransportType, PacketDirection, PacketMetadata,
 };
 use crate::protocols::core::metadata::{
     DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
@@ -57,6 +61,72 @@ use async_trait::async_trait;
 // Type alias for grouped points: (slave_id, function_code) -> Arc<Vec<PointConfig>>
 // Arc wrapping enables O(1) clone when releasing lock for async I/O
 type GroupedPoints = HashMap<(u8, u8), Arc<Vec<PointConfig>>>;
+
+// ============================================================================
+// Raw Packet Logging Bridge
+// ============================================================================
+
+/// Parse hex string to bytes (e.g., "00 01 00 00 00 06 01 03" -> [0, 1, 0, 0, 0, 6, 1, 3])
+fn parse_hex_string(hex: &str) -> Option<Vec<u8>> {
+    hex.split_whitespace()
+        .map(|s| u8::from_str_radix(s, 16).ok())
+        .collect()
+}
+
+/// Extract raw packet data from Modbus TCP ADU.
+///
+/// TCP ADU format: [Trans(2)][Proto(2)][Len(2)][Unit(1)][FC(1)][Data...]
+/// Returns (slave_id, function_code) from the packet.
+fn extract_modbus_metadata(data: &[u8]) -> (u8, u8) {
+    if data.len() >= 8 {
+        (data[6], data[7]) // Unit ID and Function Code
+    } else {
+        (0, 0)
+    }
+}
+
+/// Create a CallbackLogger that bridges voltage_modbus logs to comsrv's LogContext.
+///
+/// The callback parses raw packet data from log messages and forwards to log_raw_packet().
+fn create_modbus_logger(
+    log_context: Arc<LogContext>,
+    transport: ModbusTransportType,
+) -> CallbackLogger {
+    let callback: LogCallback = Box::new(move |_level, message| {
+        // Parse raw packet from message format: "Modbus Request -> Raw: XX XX XX..."
+        // or "Modbus Response <- Raw: XX XX XX..."
+        if let Some(raw_start) = message.find("Raw: ") {
+            let hex_str = &message[raw_start + 5..];
+
+            // Determine direction
+            let direction = if message.contains("->") {
+                PacketDirection::Send
+            } else {
+                PacketDirection::Receive
+            };
+
+            // Parse hex to bytes
+            if let Some(data) = parse_hex_string(hex_str) {
+                let (slave_id, function_code) = extract_modbus_metadata(&data);
+
+                // Create metadata
+                let metadata = PacketMetadata::Modbus {
+                    transport,
+                    slave_id,
+                    function_code,
+                };
+
+                // Spawn async task to log (fire-and-forget, since callback is sync)
+                let ctx = log_context.clone();
+                tokio::spawn(async move {
+                    ctx.log_raw_packet(direction, data, metadata).await;
+                });
+            }
+        }
+    });
+
+    CallbackLogger::with_mode(Some(callback), VoltageLogLevel::Info, LoggingMode::Raw)
+}
 
 // ============================================================================
 // Strongly-typed mapping configs for JSON deserialization
@@ -182,7 +252,7 @@ pub struct ModbusChannelParamsConfig {
     #[serde(default = "default_io_timeout_ms")]
     pub io_timeout_ms: u64,
 
-    /// Maximum registers per batch read (default: 125).
+    /// Maximum registers per batch read (default: 64).
     #[serde(default = "default_max_batch_size_config")]
     pub max_batch_size: u16,
 
@@ -208,7 +278,7 @@ fn default_io_timeout_ms() -> u64 {
 }
 
 fn default_max_batch_size_config() -> u16 {
-    125
+    64
 }
 
 fn default_max_gap_config() -> u16 {
@@ -254,7 +324,7 @@ impl ModbusChannelParamsConfig {
 }
 
 /// Default maximum registers per batch read
-const DEFAULT_MAX_BATCH_SIZE: u16 = 125;
+const DEFAULT_MAX_BATCH_SIZE: u16 = 64;
 
 /// Default maximum gap between registers to allow merging
 const DEFAULT_MAX_GAP: u16 = 10;
@@ -1160,7 +1230,7 @@ impl HasMetadata for ModbusChannel {
                 "connect_timeout_ms": 5000,
                 "read_timeout_ms": 3000,
                 "polling_interval_ms": 1000,
-                "max_batch_size": 125,
+                "max_batch_size": 64,
                 "max_reconnect_attempts": 5
             }),
             parameters: vec![
@@ -1208,9 +1278,9 @@ impl HasMetadata for ModbusChannel {
                 ParameterMetadata::optional(
                     "max_batch_size",
                     "Max Batch Size",
-                    "Maximum registers per batch read (max 125)",
+                    "Maximum registers per batch read (default 64, max 125)",
                     ParameterType::Integer,
-                    serde_json::json!(125),
+                    serde_json::json!(64),
                 ),
                 ParameterMetadata::optional(
                     "max_reconnect_attempts",
@@ -1489,11 +1559,16 @@ impl ProtocolCapabilities for ModbusChannel {
 
 impl LoggableProtocol for ModbusChannel {
     fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
-        // Create a new LogContext with the handler
-        let new_ctx = LogContext::new(self.channel_id)
-            .with_handler(handler)
-            .with_config(self.log_context.config().clone());
-        self.log_context = Arc::new(new_ctx);
+        // Use Arc::get_mut pattern to update in-place when possible,
+        // avoiding LogContext recreation and potential loss of file handlers
+        if let Some(ctx) = Arc::get_mut(&mut self.log_context) {
+            ctx.set_handler(handler);
+        } else {
+            // Other references exist, must clone and update
+            let mut new_ctx = (*self.log_context).clone();
+            new_ctx.set_handler(handler);
+            self.log_context = Arc::new(new_ctx);
+        }
     }
 
     fn set_log_config(&mut self, config: ChannelLogConfig) {
@@ -1559,13 +1634,16 @@ impl ProtocolClient for ModbusChannel {
             )),
         };
 
-        // Create client based on connection mode
+        // Create client based on connection mode (with raw packet logging)
         let connect_result = match self.config.connection_mode {
             ConnectionMode::Tcp => {
-                // TCP connection
-                match ModbusTcpClient::from_address(
+                // TCP connection with logging
+                let logger =
+                    create_modbus_logger(self.log_context.clone(), ModbusTransportType::Tcp);
+                match ModbusTcpClient::with_logging(
                     &self.config.address,
                     self.config.connect_timeout,
+                    Some(logger),
                 )
                 .await
                 {
@@ -1575,8 +1653,14 @@ impl ProtocolClient for ModbusChannel {
             },
             #[cfg(feature = "modbus")]
             ConnectionMode::Rtu => {
-                // RTU serial connection
-                match ModbusRtuClient::new(&self.config.rtu_device, self.config.baud_rate) {
+                // RTU serial connection with logging
+                let logger =
+                    create_modbus_logger(self.log_context.clone(), ModbusTransportType::Rtu);
+                match ModbusRtuClient::with_logging(
+                    &self.config.rtu_device,
+                    self.config.baud_rate,
+                    Some(logger),
+                ) {
                     Ok(client) => Ok(ModbusClientWrapper::Rtu(client)),
                     Err(e) => Err(GatewayError::Connection(e.to_string())),
                 }
@@ -2072,6 +2156,18 @@ impl ChannelRuntime for ModbusChannel {
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
         <Self as Protocol>::diagnostics(self).await
+    }
+
+    fn connection_state(&self) -> ConnectionState {
+        <Self as Protocol>::connection_state(self)
+    }
+
+    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
+        <Self as LoggableProtocol>::set_log_handler(self, handler);
+    }
+
+    fn set_log_config(&mut self, config: ChannelLogConfig) {
+        <Self as LoggableProtocol>::set_log_config(self, config);
     }
 }
 

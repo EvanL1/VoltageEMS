@@ -26,6 +26,7 @@ pub mod api {
         pub mod control_handlers;
         pub mod health;
         pub mod mapping_handlers;
+        pub mod network_handlers;
         pub mod point_handlers;
         pub mod protocol_handlers;
     }

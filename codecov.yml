@@ -1,0 +1,92 @@
+# Codecov 配置
+# https://docs.codecov.io/docs/codecov-yaml
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+
+  status:
+    project:
+      default:
+        # 整体项目覆盖率目标
+        target: 70%
+        threshold: 2%
+        # 不阻塞 PR，仅报告
+        informational: true
+
+    patch:
+      default:
+        # 新增代码的覆盖率要求
+        target: 80%
+        threshold: 5%
+        informational: true
+
+# 忽略的文件/目录
+ignore:
+  - "tools/monarch/**"      # CLI 工具难以测试
+  - "libs/firmware/**"      # 嵌入式代码无法在 CI 测试
+  - "**/tests/**"           # 测试文件本身
+  - "**/*_test.rs"          # 测试模块
+  - "**/benches/**"         # 性能测试
+
+# 按组件分组报告
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+
+# 组件定义（按服务/库分组）
+flags:
+  comsrv:
+    paths:
+      - services/comsrv/
+    carryforward: true
+
+  modsrv:
+    paths:
+      - services/modsrv/
+    carryforward: true
+
+  voltage-core:
+    paths:
+      - libs/voltage-core/
+    carryforward: true
+
+  voltage-rtdb:
+    paths:
+      - libs/voltage-rtdb/
+    carryforward: true
+
+  voltage-routing:
+    paths:
+      - libs/voltage-routing/
+    carryforward: true
+
+  voltage-rules:
+    paths:
+      - libs/voltage-rules/
+    carryforward: true
+
+  common:
+    paths:
+      - libs/common/
+    carryforward: true
+
+# 注释配置
+comment:
+  layout: "header, diff, flags, components"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+# PR 注释中的文件覆盖率变化
+parsers:
+  gcov:
+    branch_detection:
+      conditional: true
+      loop: true
+      method: false
+      macro: false

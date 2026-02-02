@@ -110,7 +110,17 @@ impl RawPtrShm {
     }
 }
 
+// SAFETY: RawPtrShm can be safely sent across threads because:
+// - The raw pointer points to a fixed memory region (e.g., shared SRAM)
+//   whose lifetime is independent of the RawPtrShm instance
+// - The memory region is established at system startup and remains valid
+// - No thread-local state is used
 unsafe impl Send for RawPtrShm {}
+
+// SAFETY: RawPtrShm can be safely shared between threads because:
+// - The shared memory protocol uses atomic-compatible operations for slot access
+// - Each slot has independent validity flags checked before read/write
+// - The hardware memory region supports concurrent access from firmware and Linux
 unsafe impl Sync for RawPtrShm {}
 
 impl ShmOps for RawPtrShm {

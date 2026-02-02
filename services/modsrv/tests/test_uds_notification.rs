@@ -52,7 +52,8 @@ async fn test_uds_notification_roundtrip() {
     assert!(notifier.is_connected(), "Notifier should be connected");
 
     // 4. 发送 Control 通知
-    notifier.notify(1001, PointType::Control, 42).await.unwrap();
+    let result = notifier.notify(1001, PointType::Control, 42).await;
+    assert!(result.uds_sent, "UDS notification should be sent");
 
     // 5. 验证接收
     let received = tokio::time::timeout(Duration::from_secs(1), rx.recv())
@@ -69,10 +70,8 @@ async fn test_uds_notification_roundtrip() {
     );
 
     // 6. 发送 Adjustment 通知
-    notifier
-        .notify(2002, PointType::Adjustment, 99)
-        .await
-        .unwrap();
+    let result = notifier.notify(2002, PointType::Adjustment, 99).await;
+    assert!(result.uds_sent, "UDS notification should be sent");
 
     let received = tokio::time::timeout(Duration::from_secs(1), rx.recv())
         .await
@@ -123,10 +122,8 @@ async fn test_uds_latency_under_5ms() {
     let mut latencies = vec![];
     for i in 0..100u32 {
         let start = Instant::now();
-        notifier
-            .notify(1001, PointType::Adjustment, i)
-            .await
-            .unwrap();
+        let result = notifier.notify(1001, PointType::Adjustment, i).await;
+        assert!(result.uds_sent, "UDS notification should be sent");
         let recv_time = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("Timeout")
@@ -170,12 +167,13 @@ async fn test_uds_graceful_degradation() {
         "Should not be connected to non-existent socket"
     );
 
-    // 发送通知应该静默成功（因为 stream 为 None）
+    // 发送通知应该静默成功（因为 stream 为 None，会使用 fallback/disabled）
     let mut notifier = notifier;
     let result = notifier.notify(1001, PointType::Control, 1).await;
+    // When not connected, UDS is disabled - notify still "succeeds" but doesn't send
     assert!(
-        result.is_ok(),
-        "notify() should succeed even when not connected"
+        !result.uds_sent || result.disabled,
+        "notify() should indicate not sent or disabled when not connected"
     );
 }
 
@@ -213,7 +211,8 @@ async fn test_uds_batch_notifications() {
         } else {
             PointType::Adjustment
         };
-        notifier.notify(1000 + i, point_type, i * 10).await.unwrap();
+        let result = notifier.notify(1000 + i, point_type, i * 10).await;
+        assert!(result.uds_sent, "UDS notification {} should be sent", i);
     }
 
     // 验证接收

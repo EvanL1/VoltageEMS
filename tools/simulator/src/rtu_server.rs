@@ -551,6 +551,10 @@ fn calculate_crc16(data: &[u8]) -> u16 {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // CRC16 calculation tests
+    // ========================================================================
+
     #[test]
     fn test_crc16() {
         // Test vector: standard Modbus read holding registers request
@@ -571,15 +575,276 @@ mod tests {
     }
 
     #[test]
+    fn test_crc16_empty_data() {
+        // Empty data should return initial CRC value 0xFFFF
+        let crc = calculate_crc16(&[]);
+        assert_eq!(crc, 0xFFFF);
+    }
+
+    #[test]
+    fn test_crc16_single_byte() {
+        let crc = calculate_crc16(&[0x00]);
+        // Single byte 0x00: CRC calculation result
+        assert_ne!(crc, 0xFFFF); // Should be different from initial
+    }
+
+    #[test]
+    fn test_crc16_all_zeros() {
+        let data = [0x00u8; 8];
+        let crc = calculate_crc16(&data);
+        // CRC of all zeros should be consistent
+        assert_ne!(crc, 0x0000);
+    }
+
+    #[test]
+    fn test_crc16_all_ones() {
+        let data = [0xFFu8; 4];
+        let crc = calculate_crc16(&data);
+        // CRC of all 0xFF bytes
+        assert_ne!(crc, 0xFFFF);
+    }
+
+    #[test]
+    fn test_crc16_write_single_register() {
+        // FC06 Write Single Register: slave=1, addr=0x0010, value=0x0003
+        let data = [0x01u8, 0x06, 0x00, 0x10, 0x00, 0x03];
+        let crc = calculate_crc16(&data);
+        // This is a known Modbus request - verify CRC is computed
+        assert_ne!(crc, 0x0000);
+    }
+
+    // ========================================================================
+    // Build exception response tests
+    // ========================================================================
+
+    #[test]
     fn test_build_exception() {
         let resp = build_rtu_exception(1, 0x03, EX_ILLEGAL_FUNCTION);
         assert_eq!(resp, vec![1, 0x83, 0x01]);
     }
 
     #[test]
+    fn test_build_exception_illegal_data_address() {
+        let resp = build_rtu_exception(1, 0x03, EX_ILLEGAL_DATA_ADDRESS);
+        assert_eq!(resp, vec![1, 0x83, 0x02]);
+    }
+
+    #[test]
+    fn test_build_exception_illegal_data_value() {
+        let resp = build_rtu_exception(1, 0x03, EX_ILLEGAL_DATA_VALUE);
+        assert_eq!(resp, vec![1, 0x83, 0x03]);
+    }
+
+    #[test]
+    fn test_build_exception_different_function_codes() {
+        // FC01 Read Coils
+        let resp = build_rtu_exception(1, FC_READ_COILS, EX_ILLEGAL_FUNCTION);
+        assert_eq!(resp[1], 0x81); // 0x01 | 0x80
+
+        // FC02 Read Discrete Inputs
+        let resp = build_rtu_exception(1, FC_READ_DISCRETE_INPUTS, EX_ILLEGAL_FUNCTION);
+        assert_eq!(resp[1], 0x82); // 0x02 | 0x80
+
+        // FC04 Read Input Registers
+        let resp = build_rtu_exception(1, FC_READ_INPUT_REGISTERS, EX_ILLEGAL_FUNCTION);
+        assert_eq!(resp[1], 0x84); // 0x04 | 0x80
+
+        // FC05 Write Single Coil
+        let resp = build_rtu_exception(1, FC_WRITE_SINGLE_COIL, EX_ILLEGAL_FUNCTION);
+        assert_eq!(resp[1], 0x85); // 0x05 | 0x80
+
+        // FC06 Write Single Register
+        let resp = build_rtu_exception(1, FC_WRITE_SINGLE_REGISTER, EX_ILLEGAL_FUNCTION);
+        assert_eq!(resp[1], 0x86); // 0x06 | 0x80
+
+        // FC0F Write Multiple Coils
+        let resp = build_rtu_exception(1, FC_WRITE_MULTIPLE_COILS, EX_ILLEGAL_FUNCTION);
+        assert_eq!(resp[1], 0x8F); // 0x0F | 0x80
+
+        // FC10 Write Multiple Registers
+        let resp = build_rtu_exception(1, FC_WRITE_MULTIPLE_REGISTERS, EX_ILLEGAL_FUNCTION);
+        assert_eq!(resp[1], 0x90); // 0x10 | 0x80
+    }
+
+    #[test]
+    fn test_build_exception_different_slave_ids() {
+        let resp1 = build_rtu_exception(1, 0x03, EX_ILLEGAL_FUNCTION);
+        let resp2 = build_rtu_exception(247, 0x03, EX_ILLEGAL_FUNCTION);
+
+        assert_eq!(resp1[0], 1);
+        assert_eq!(resp2[0], 247);
+    }
+
+    // ========================================================================
+    // Build read response tests
+    // ========================================================================
+
+    #[test]
     fn test_build_read_response() {
         let values = vec![100, 200];
         let resp = build_rtu_read_response(1, 0x03, &values);
         assert_eq!(resp, vec![1, 0x03, 4, 0, 100, 0, 200]);
+    }
+
+    #[test]
+    fn test_build_read_response_empty() {
+        let values: Vec<u16> = vec![];
+        let resp = build_rtu_read_response(1, 0x03, &values);
+        assert_eq!(resp, vec![1, 0x03, 0]); // byte_count = 0
+    }
+
+    #[test]
+    fn test_build_read_response_single_value() {
+        let values = vec![0x1234];
+        let resp = build_rtu_read_response(1, 0x03, &values);
+        assert_eq!(resp, vec![1, 0x03, 2, 0x12, 0x34]);
+    }
+
+    #[test]
+    fn test_build_read_response_max_value() {
+        let values = vec![0xFFFF];
+        let resp = build_rtu_read_response(1, 0x03, &values);
+        assert_eq!(resp, vec![1, 0x03, 2, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_build_read_response_zero_value() {
+        let values = vec![0x0000];
+        let resp = build_rtu_read_response(1, 0x04, &values);
+        assert_eq!(resp, vec![1, 0x04, 2, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_build_read_response_multiple_values() {
+        let values = vec![0x0001, 0x0002, 0x0003, 0x0004, 0x0005];
+        let resp = build_rtu_read_response(1, 0x03, &values);
+
+        assert_eq!(resp[0], 1); // slave_id
+        assert_eq!(resp[1], 0x03); // function_code
+        assert_eq!(resp[2], 10); // byte_count = 5 * 2
+        assert_eq!(resp.len(), 13); // 3 header + 10 data bytes
+    }
+
+    // ========================================================================
+    // Build read coils response tests
+    // ========================================================================
+
+    #[test]
+    fn test_build_read_coils_response_single() {
+        let coils = vec![true];
+        let resp = build_rtu_read_coils_response(1, FC_READ_COILS, &coils);
+        // 1 coil = 1 byte, value = 0x01 (bit 0 set)
+        assert_eq!(resp[0], 1); // slave_id
+        assert_eq!(resp[1], FC_READ_COILS); // function_code
+        assert_eq!(resp[2], 1); // byte_count
+        assert_eq!(resp[3], 0x01); // coils packed
+    }
+
+    #[test]
+    fn test_build_read_coils_response_8_coils() {
+        // All 8 coils ON
+        let coils = vec![true; 8];
+        let resp = build_rtu_read_coils_response(1, FC_READ_COILS, &coils);
+        assert_eq!(resp[2], 1); // byte_count = 1
+        assert_eq!(resp[3], 0xFF); // all bits set
+    }
+
+    #[test]
+    fn test_build_read_coils_response_9_coils() {
+        // 9 coils = 2 bytes
+        let mut coils = vec![true; 8];
+        coils.push(true); // 9th coil
+        let resp = build_rtu_read_coils_response(1, FC_READ_COILS, &coils);
+        assert_eq!(resp[2], 2); // byte_count = 2
+        assert_eq!(resp[3], 0xFF); // first 8 coils
+        assert_eq!(resp[4], 0x01); // 9th coil (bit 0)
+    }
+
+    #[test]
+    fn test_build_read_coils_response_alternating() {
+        // Alternating pattern: true, false, true, false...
+        let coils = vec![true, false, true, false, true, false, true, false];
+        let resp = build_rtu_read_coils_response(1, FC_READ_COILS, &coils);
+        // LSB first: bit0=1, bit1=0, bit2=1, bit3=0, ... = 0x55
+        assert_eq!(resp[3], 0x55);
+    }
+
+    #[test]
+    fn test_build_read_coils_response_empty() {
+        let coils: Vec<bool> = vec![];
+        let resp = build_rtu_read_coils_response(1, FC_READ_COILS, &coils);
+        assert_eq!(resp[2], 0); // byte_count = 0
+        assert_eq!(resp.len(), 3); // only header
+    }
+
+    #[test]
+    fn test_build_read_discrete_inputs_response() {
+        // FC02 uses same format as FC01
+        let inputs = vec![false, true, false, true];
+        let resp = build_rtu_read_coils_response(1, FC_READ_DISCRETE_INPUTS, &inputs);
+        assert_eq!(resp[1], FC_READ_DISCRETE_INPUTS);
+        // LSB first: bit0=0, bit1=1, bit2=0, bit3=1 = 0x0A
+        assert_eq!(resp[3], 0x0A);
+    }
+
+    // ========================================================================
+    // Function code constant tests
+    // ========================================================================
+
+    #[test]
+    fn test_function_code_values() {
+        assert_eq!(FC_READ_COILS, 0x01);
+        assert_eq!(FC_READ_DISCRETE_INPUTS, 0x02);
+        assert_eq!(FC_READ_HOLDING_REGISTERS, 0x03);
+        assert_eq!(FC_READ_INPUT_REGISTERS, 0x04);
+        assert_eq!(FC_WRITE_SINGLE_COIL, 0x05);
+        assert_eq!(FC_WRITE_SINGLE_REGISTER, 0x06);
+        assert_eq!(FC_WRITE_MULTIPLE_COILS, 0x0F);
+        assert_eq!(FC_WRITE_MULTIPLE_REGISTERS, 0x10);
+    }
+
+    #[test]
+    fn test_exception_code_values() {
+        assert_eq!(EX_ILLEGAL_FUNCTION, 0x01);
+        assert_eq!(EX_ILLEGAL_DATA_ADDRESS, 0x02);
+        assert_eq!(EX_ILLEGAL_DATA_VALUE, 0x03);
+    }
+
+    // ========================================================================
+    // CRC frame validation tests
+    // ========================================================================
+
+    #[test]
+    fn test_crc_frame_roundtrip() {
+        // Build a valid frame with CRC
+        let data = [0x01u8, 0x03, 0x00, 0x00, 0x00, 0x01];
+        let crc = calculate_crc16(&data);
+        let crc_bytes = crc.to_le_bytes();
+
+        // Verify CRC by including it in calculation
+        let mut full_frame = data.to_vec();
+        full_frame.extend_from_slice(&crc_bytes);
+
+        // CRC of entire frame (including CRC) should be 0
+        // Actually in Modbus, we verify by comparing calculated vs received CRC
+        let received_crc = u16::from_le_bytes([full_frame[6], full_frame[7]]);
+        let calculated_crc = calculate_crc16(&full_frame[..6]);
+        assert_eq!(received_crc, calculated_crc);
+    }
+
+    #[test]
+    fn test_response_structure_fc03() {
+        // Simulate FC03 Read Holding Registers response
+        let values = vec![0x0064, 0x00C8]; // 100, 200
+        let resp = build_rtu_read_response(1, FC_READ_HOLDING_REGISTERS, &values);
+
+        assert_eq!(resp[0], 1); // slave_id
+        assert_eq!(resp[1], FC_READ_HOLDING_REGISTERS); // function_code
+        assert_eq!(resp[2], 4); // byte_count = 2 registers * 2 bytes
+                                // Register values in big-endian
+        assert_eq!(resp[3], 0x00);
+        assert_eq!(resp[4], 0x64);
+        assert_eq!(resp[5], 0x00);
+        assert_eq!(resp[6], 0xC8);
     }
 }

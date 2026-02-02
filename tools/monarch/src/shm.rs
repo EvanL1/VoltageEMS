@@ -910,3 +910,433 @@ fn draw_dashboard(
 
     f.render_stateful_widget(table, chunks[1], &mut state.table_state.clone());
 }
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // parse_key() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_key_instance_measurement() {
+        let key = parse_key("inst:5:M:10").unwrap();
+        match key {
+            ShmKey::Instance {
+                instance_id,
+                point_type,
+                point_id,
+            } => {
+                assert_eq!(instance_id, 5);
+                assert_eq!(point_type, 0); // Measurement
+                assert_eq!(point_id, 10);
+            },
+            _ => panic!("Expected Instance key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_instance_action() {
+        let key = parse_key("inst:100:A:200").unwrap();
+        match key {
+            ShmKey::Instance {
+                instance_id,
+                point_type,
+                point_id,
+            } => {
+                assert_eq!(instance_id, 100);
+                assert_eq!(point_type, 1); // Action
+                assert_eq!(point_id, 200);
+            },
+            _ => panic!("Expected Instance key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_instance_lowercase() {
+        // Test case insensitivity
+        let key = parse_key("inst:1:m:2").unwrap();
+        match key {
+            ShmKey::Instance { point_type, .. } => {
+                assert_eq!(point_type, 0); // Measurement
+            },
+            _ => panic!("Expected Instance key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_channel_telemetry() {
+        let key = parse_key("ch:1001:T:5").unwrap();
+        match key {
+            ShmKey::Channel {
+                channel_id,
+                point_type,
+                point_id,
+            } => {
+                assert_eq!(channel_id, 1001);
+                assert_eq!(point_type, PointType::Telemetry);
+                assert_eq!(point_id, 5);
+            },
+            _ => panic!("Expected Channel key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_channel_signal() {
+        let key = parse_key("ch:2002:S:10").unwrap();
+        match key {
+            ShmKey::Channel {
+                channel_id,
+                point_type,
+                point_id,
+            } => {
+                assert_eq!(channel_id, 2002);
+                assert_eq!(point_type, PointType::Signal);
+                assert_eq!(point_id, 10);
+            },
+            _ => panic!("Expected Channel key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_channel_control() {
+        let key = parse_key("ch:3003:C:15").unwrap();
+        match key {
+            ShmKey::Channel { point_type, .. } => {
+                assert_eq!(point_type, PointType::Control);
+            },
+            _ => panic!("Expected Channel key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_channel_adjustment() {
+        let key = parse_key("ch:4004:A:20").unwrap();
+        match key {
+            ShmKey::Channel { point_type, .. } => {
+                assert_eq!(point_type, PointType::Adjustment);
+            },
+            _ => panic!("Expected Channel key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_channel_lowercase() {
+        let key = parse_key("ch:1:t:2").unwrap();
+        match key {
+            ShmKey::Channel { point_type, .. } => {
+                assert_eq!(point_type, PointType::Telemetry);
+            },
+            _ => panic!("Expected Channel key"),
+        }
+    }
+
+    #[test]
+    fn test_parse_key_invalid_format() {
+        // Missing parts
+        assert!(parse_key("inst:5").is_err());
+        assert!(parse_key("ch:1001").is_err());
+        assert!(parse_key("inst").is_err());
+
+        // Wrong prefix
+        assert!(parse_key("invalid:5:M:10").is_err());
+
+        // Invalid IDs
+        assert!(parse_key("inst:abc:M:10").is_err());
+        assert!(parse_key("ch:1001:T:xyz").is_err());
+
+        // Invalid role/type
+        assert!(parse_key("inst:5:X:10").is_err());
+        assert!(parse_key("ch:1001:Z:5").is_err());
+    }
+
+    #[test]
+    fn test_parse_key_empty_string() {
+        assert!(parse_key("").is_err());
+    }
+
+    // ========================================================================
+    // ShmKey Display Tests
+    // ========================================================================
+
+    #[test]
+    fn test_shm_key_display_instance_measurement() {
+        let key = ShmKey::Instance {
+            instance_id: 5,
+            point_type: 0,
+            point_id: 10,
+        };
+        assert_eq!(format!("{}", key), "inst:5:M:10");
+    }
+
+    #[test]
+    fn test_shm_key_display_instance_action() {
+        let key = ShmKey::Instance {
+            instance_id: 100,
+            point_type: 1,
+            point_id: 200,
+        };
+        assert_eq!(format!("{}", key), "inst:100:A:200");
+    }
+
+    #[test]
+    fn test_shm_key_display_channel_telemetry() {
+        let key = ShmKey::Channel {
+            channel_id: 1001,
+            point_type: PointType::Telemetry,
+            point_id: 5,
+        };
+        assert_eq!(format!("{}", key), "ch:1001:T:5");
+    }
+
+    #[test]
+    fn test_shm_key_display_channel_signal() {
+        let key = ShmKey::Channel {
+            channel_id: 2002,
+            point_type: PointType::Signal,
+            point_id: 10,
+        };
+        assert_eq!(format!("{}", key), "ch:2002:S:10");
+    }
+
+    #[test]
+    fn test_shm_key_display_channel_control() {
+        let key = ShmKey::Channel {
+            channel_id: 3003,
+            point_type: PointType::Control,
+            point_id: 15,
+        };
+        assert_eq!(format!("{}", key), "ch:3003:C:15");
+    }
+
+    #[test]
+    fn test_shm_key_display_channel_adjustment() {
+        let key = ShmKey::Channel {
+            channel_id: 4004,
+            point_type: PointType::Adjustment,
+            point_id: 20,
+        };
+        assert_eq!(format!("{}", key), "ch:4004:A:20");
+    }
+
+    #[test]
+    fn test_shm_key_roundtrip() {
+        // Test that Display -> parse_key roundtrips correctly
+        let original = ShmKey::Instance {
+            instance_id: 42,
+            point_type: 0,
+            point_id: 123,
+        };
+        let displayed = format!("{}", original);
+        let parsed = parse_key(&displayed).unwrap();
+
+        match parsed {
+            ShmKey::Instance {
+                instance_id,
+                point_type,
+                point_id,
+            } => {
+                assert_eq!(instance_id, 42);
+                assert_eq!(point_type, 0);
+                assert_eq!(point_id, 123);
+            },
+            _ => panic!("Roundtrip failed"),
+        }
+    }
+
+    // ========================================================================
+    // complete_command() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_complete_command_empty() {
+        let (start, matches) = complete_command("");
+        assert_eq!(start, 0);
+        assert_eq!(matches.len(), 6); // GET, INFO, WATCH, HELP, QUIT, EXIT
+    }
+
+    #[test]
+    fn test_complete_command_partial_g() {
+        let (start, matches) = complete_command("G");
+        assert_eq!(start, 0);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].replacement, "GET");
+    }
+
+    #[test]
+    fn test_complete_command_partial_q() {
+        let (start, matches) = complete_command("Q");
+        assert_eq!(start, 0);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].replacement, "QUIT");
+    }
+
+    #[test]
+    fn test_complete_command_partial_e() {
+        let (start, matches) = complete_command("E");
+        assert_eq!(start, 0);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].replacement, "EXIT");
+    }
+
+    #[test]
+    fn test_complete_command_case_insensitive() {
+        let (_, matches_upper) = complete_command("G");
+        let (_, matches_lower) = complete_command("g");
+        assert_eq!(matches_upper.len(), matches_lower.len());
+    }
+
+    #[test]
+    fn test_complete_command_no_match() {
+        let (start, matches) = complete_command("XYZ");
+        assert_eq!(start, 0);
+        assert!(matches.is_empty());
+    }
+
+    // ========================================================================
+    // complete_key() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_complete_key_empty() {
+        let (start, matches) = complete_key("", 0);
+        assert_eq!(start, 0);
+        assert_eq!(matches.len(), 2); // inst:, ch:
+    }
+
+    #[test]
+    fn test_complete_key_partial_inst() {
+        let (start, matches) = complete_key("in", 5);
+        assert_eq!(start, 5);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].replacement, "inst:");
+    }
+
+    #[test]
+    fn test_complete_key_partial_ch() {
+        let (start, matches) = complete_key("c", 5);
+        assert_eq!(start, 5);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].replacement, "ch:");
+    }
+
+    #[test]
+    fn test_complete_key_instance_role() {
+        let (start, matches) = complete_key("inst:5:", 5);
+        assert_eq!(start, 5);
+        assert_eq!(matches.len(), 2); // M, A
+        assert!(matches.iter().any(|m| m.replacement.contains("M:")));
+        assert!(matches.iter().any(|m| m.replacement.contains("A:")));
+    }
+
+    #[test]
+    fn test_complete_key_channel_type() {
+        let (start, matches) = complete_key("ch:1001:", 5);
+        assert_eq!(start, 5);
+        assert_eq!(matches.len(), 4); // T, S, C, A
+        assert!(matches.iter().any(|m| m.replacement.contains("T:")));
+        assert!(matches.iter().any(|m| m.replacement.contains("S:")));
+        assert!(matches.iter().any(|m| m.replacement.contains("C:")));
+        assert!(matches.iter().any(|m| m.replacement.contains("A:")));
+    }
+
+    // ========================================================================
+    // format_epoch_secs() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_format_epoch_secs_midnight() {
+        // Midnight UTC
+        assert_eq!(format_epoch_secs(0), "00:00:00 UTC");
+    }
+
+    #[test]
+    fn test_format_epoch_secs_noon() {
+        // 12:00:00 UTC (43200 seconds into the day)
+        assert_eq!(format_epoch_secs(43200), "12:00:00 UTC");
+    }
+
+    #[test]
+    fn test_format_epoch_secs_end_of_day() {
+        // 23:59:59 UTC (86399 seconds into the day)
+        assert_eq!(format_epoch_secs(86399), "23:59:59 UTC");
+    }
+
+    #[test]
+    fn test_format_epoch_secs_wraps_days() {
+        // 86400 seconds = 1 day, should wrap to 00:00:00
+        assert_eq!(format_epoch_secs(86400), "00:00:00 UTC");
+    }
+
+    #[test]
+    fn test_format_epoch_secs_multi_day() {
+        // 90061 seconds = 1 day + 1 hour + 1 minute + 1 second
+        // Should be 01:01:01 UTC (wrapping days)
+        assert_eq!(format_epoch_secs(90061), "01:01:01 UTC");
+    }
+
+    #[test]
+    fn test_format_epoch_secs_padding() {
+        // 3661 seconds = 01:01:01, check zero padding
+        assert_eq!(format_epoch_secs(3661), "01:01:01 UTC");
+    }
+
+    // ========================================================================
+    // DashboardState Tests
+    // ========================================================================
+
+    #[test]
+    fn test_dashboard_state_new() {
+        let state = DashboardState::new();
+        assert!(state.points.is_empty());
+        assert_eq!(state.scroll_offset, 0);
+        assert_eq!(state.last_instance_count, 0);
+        assert_eq!(state.last_channel_count, 0);
+    }
+
+    #[test]
+    fn test_dashboard_state_scroll_up() {
+        let mut state = DashboardState::new();
+        state.scroll_offset = 5;
+
+        state.scroll_up();
+        assert_eq!(state.scroll_offset, 4);
+
+        // Should not go below 0
+        state.scroll_offset = 0;
+        state.scroll_up();
+        assert_eq!(state.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_dashboard_state_scroll_down() {
+        let mut state = DashboardState::new();
+
+        state.scroll_down(10);
+        assert_eq!(state.scroll_offset, 1);
+
+        state.scroll_offset = 8;
+        state.scroll_down(10);
+        assert_eq!(state.scroll_offset, 9);
+
+        // Should not exceed max - 1
+        state.scroll_offset = 9;
+        state.scroll_down(10);
+        assert_eq!(state.scroll_offset, 9);
+    }
+
+    #[test]
+    fn test_dashboard_state_scroll_down_empty() {
+        let mut state = DashboardState::new();
+
+        // With max = 0, should stay at 0
+        state.scroll_down(0);
+        assert_eq!(state.scroll_offset, 0);
+    }
+}

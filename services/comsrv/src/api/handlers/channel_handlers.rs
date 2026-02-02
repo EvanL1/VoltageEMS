@@ -233,11 +233,8 @@ pub async fn get_channel_status<R: Rtdb>(
             .unwrap_or_else(|| (format!("Channel {id_u16}"), "Unknown".to_string()));
 
         let channel_status = entry.get_status().await;
-        let is_running = entry.is_connected().await;
-        let diagnostics = entry
-            .get_diagnostics(id_u16)
-            .await
-            .unwrap_or_else(|_| serde_json::json!({}));
+        let is_running = entry.is_connected();
+        let diagnostics = entry.get_diagnostics(id_u16);
 
         let status = ChannelStatusDto {
             id: id_u16,
@@ -399,10 +396,7 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
     let manager = &state.channel_manager;
     let (connected, last_update, statistics) = if let Some(entry) = manager.get_channel(id_u16) {
         let status = entry.get_status().await;
-        let diag = entry
-            .get_diagnostics(id_u16)
-            .await
-            .unwrap_or_else(|_| serde_json::json!({}));
+        let diag = entry.get_diagnostics(id_u16);
         (
             status.is_connected,
             DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),

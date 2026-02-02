@@ -429,7 +429,7 @@ where
         )
         .await?;
 
-    // 4. Add reverse index: inst:name:index Hash for O(1) name→ID lookup
+    // 6. Add reverse index: inst:name:index Hash for O(1) name→ID lookup
     redis
         .hash_set(
             &keyspace.instance_name_index_key(),

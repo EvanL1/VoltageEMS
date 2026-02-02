@@ -82,6 +82,78 @@ impl StateStore for NullStateStore {
     }
 }
 
+// === Redis-backed state store for production ===
+
+use bytes::Bytes;
+use std::sync::Arc;
+use voltage_rtdb::Rtdb;
+
+use crate::error::CalcError;
+
+/// Redis-backed state store using Rtdb trait
+///
+/// This provides persistent storage for stateful functions like `integrate()`,
+/// `moving_avg()`, `rate_of_change()`, and `period_delta()`.
+///
+/// # Performance
+/// - Typical latency: ~1ms per operation
+/// - For high-frequency calls, consider using MemoryStateStore with periodic sync
+///
+/// # Example
+/// ```ignore
+/// use voltage_rtdb::RedisRtdb;
+/// use voltage_calc::state::RtdbStateStore;
+///
+/// let rtdb = Arc::new(RedisRtdb::new(redis_pool).await?);
+/// let state_store = RtdbStateStore::new(rtdb);
+/// ```
+pub struct RtdbStateStore<R: Rtdb> {
+    rtdb: Arc<R>,
+}
+
+impl<R: Rtdb> RtdbStateStore<R> {
+    /// Create a new Redis-backed state store
+    pub fn new(rtdb: Arc<R>) -> Self {
+        Self { rtdb }
+    }
+}
+
+impl<R: Rtdb> StateStore for RtdbStateStore<R> {
+    fn get(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send {
+        let rtdb = self.rtdb.clone();
+        let key = key.to_string();
+        async move {
+            match rtdb.get(&key).await {
+                Ok(Some(bytes)) => Ok(Some(bytes.to_vec())),
+                Ok(None) => Ok(None),
+                Err(e) => Err(CalcError::state(format!("Redis get failed: {}", e))),
+            }
+        }
+    }
+
+    fn set(&self, key: &str, value: &[u8]) -> impl Future<Output = Result<()>> + Send {
+        let rtdb = self.rtdb.clone();
+        let key = key.to_string();
+        let value = Bytes::copy_from_slice(value);
+        async move {
+            rtdb.set(&key, value)
+                .await
+                .map_err(|e| CalcError::state(format!("Redis set failed: {}", e)))
+        }
+    }
+
+    fn delete(&self, key: &str) -> impl Future<Output = Result<()>> + Send {
+        let rtdb = self.rtdb.clone();
+        let key = key.to_string();
+        async move {
+            rtdb.del(&key)
+                .await
+                .map(|_| ()) // Ignore the bool return value
+                .map_err(|e| CalcError::state(format!("Redis del failed: {}", e)))
+        }
+    }
+}
+
 // === State data structures for built-in functions ===
 
 /// Integrate function state
@@ -140,6 +212,18 @@ pub struct RateOfChangeState {
     pub last_ts: f64,
     /// Last value
     pub last_value: f64,
+}
+
+/// Period delta function state
+///
+/// Tracks the snapshot value at the start of each period (daily, weekly, monthly, quarterly)
+/// to calculate the delta (change) within the current period.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeriodDeltaState {
+    /// Snapshot value at period start (cumulative counter reading)
+    pub snapshot: f64,
+    /// Period start timestamp (Unix seconds)
+    pub period_start_ts: i64,
 }
 
 /// Helper function to create state key

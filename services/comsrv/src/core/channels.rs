@@ -8,7 +8,7 @@ pub mod channel_manager; // Channel lifecycle manager (includes ChannelEntry, Ch
 pub mod shm_listener; // UDS event-driven command listener (lower latency than polling)
 pub mod shm_poller; // SHM-based command polling (fallback, higher latency)
 pub mod traits; // Core traits and type definitions (re-exports from types)
-pub mod trigger; // Command trigger for storage and synchronization
+
 pub mod types; // Channel communication types (owned by comsrv)
 
 // Configuration conversion and protocol factory (split from former bridge.rs)
@@ -23,7 +23,6 @@ pub use crate::core::config::FourRemote;
 pub use channel_manager::{ChannelEntry, ChannelManager, ChannelMetadata, ChannelStats};
 pub use shm_listener::ShmCommandListener;
 pub use shm_poller::ShmCommandPoller;
-pub use trigger::{CommandStatus, CommandTrigger, CommandTriggerConfig, ControlCommand};
 
 // Re-export converters
 #[cfg(feature = "modbus")]

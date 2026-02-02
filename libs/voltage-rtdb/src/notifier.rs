@@ -2,6 +2,14 @@
 //!
 //! modsrv 使用此模块向 comsrv 发送 M2C 命令通知。
 //! 支持优雅降级：连接失败时不阻塞，仅禁用通知。
+//!
+//! ## 可靠性增强
+//!
+//! `notify()` 返回 `NotifyResult` 而非简单的 `io::Result<()>`，
+//! 允许调用方区分：
+//! - 成功发送 (`uds_sent = true`)
+//! - 降级到轮询 (`fallback_used = true`)
+//! - 完全禁用 (`disabled = true`)
 
 use std::io;
 use std::path::Path;
@@ -16,6 +24,57 @@ use crate::notification::ShmNotification;
 
 /// UDS 默认路径
 pub const DEFAULT_UDS_PATH: &str = "/tmp/voltage-m2c.sock";
+
+// ============================================================================
+// NotifyResult - 通知结果状态
+// ============================================================================
+
+/// UDS 通知结果
+///
+/// 提供详细的发送状态，允许调用方根据状态采取措施。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NotifyResult {
+    /// UDS 发送成功
+    pub uds_sent: bool,
+    /// 降级到轮询备份（UDS 发送失败）
+    pub fallback_used: bool,
+    /// 通知完全禁用（路径为空或未配置）
+    pub disabled: bool,
+}
+
+impl NotifyResult {
+    /// 检查是否成功发送（通过 UDS）
+    #[inline]
+    pub fn is_success(&self) -> bool {
+        self.uds_sent
+    }
+
+    /// 检查是否需要立即轮询（降级情况）
+    #[inline]
+    pub fn needs_immediate_poll(&self) -> bool {
+        self.fallback_used
+    }
+}
+
+// ============================================================================
+// UdsHealth - 连接健康状态
+// ============================================================================
+
+/// UDS 连接健康状态
+#[derive(Debug, Clone)]
+pub enum UdsHealth {
+    /// 已连接
+    Connected,
+    /// 已断开
+    Disconnected {
+        /// 断开时间
+        since: Option<Instant>,
+        /// 当前退避时间（毫秒）
+        backoff_ms: u64,
+    },
+    /// 已禁用（路径为空）
+    Disabled,
+}
 
 /// SHM 命令通知发送器
 ///
@@ -102,12 +161,37 @@ impl ShmNotifier {
     ///
     /// 如果未连接，会尝试重连（使用指数退避）。
     /// 发送失败时最多重试 3 次，全部失败后标记断开，下次调用时触发重连。
+    ///
+    /// ## 返回值
+    ///
+    /// 返回 `NotifyResult` 而非 `io::Result<()>`，允许调用方区分：
+    /// - `uds_sent = true`: UDS 发送成功，命令将通过低延迟路径处理
+    /// - `fallback_used = true`: UDS 失败，降级到轮询备份（延迟增加）
+    /// - `disabled = true`: 通知功能完全禁用
+    ///
+    /// ## 使用示例
+    ///
+    /// ```rust,ignore
+    /// let result = notifier.notify(channel_id, point_type, point_id).await;
+    /// if result.needs_immediate_poll() {
+    ///     // UDS 失败，可能需要触发立即轮询
+    ///     poller.trigger_immediate_check();
+    /// }
+    /// ```
     pub async fn notify(
         &mut self,
         channel_id: u32,
         point_type: PointType,
         point_id: u32,
-    ) -> io::Result<()> {
+    ) -> NotifyResult {
+        // 如果路径为空，通知被禁用
+        if self.path.is_empty() {
+            return NotifyResult {
+                disabled: true,
+                ..Default::default()
+            };
+        }
+
         // 如果未连接，尝试重连
         self.try_reconnect().await;
 
@@ -123,7 +207,10 @@ impl ShmNotifier {
                             "ShmNotifier: sent notification channel={} type={:?} point={}",
                             channel_id, point_type, point_id
                         );
-                        return Ok(());
+                        return NotifyResult {
+                            uds_sent: true,
+                            ..Default::default()
+                        };
                     },
                     Err(e) if attempt < Self::MAX_RETRIES - 1 => {
                         warn!(
@@ -136,19 +223,31 @@ impl ShmNotifier {
                     Err(e) => {
                         // 所有重试都失败，标记断开
                         warn!(
-                            "ShmNotifier: all {} retries failed, marking disconnected: {}",
+                            "ShmNotifier: all {} retries failed for ch{}:{}:{}, \
+                             falling back to poller: {}",
                             Self::MAX_RETRIES,
+                            channel_id,
+                            point_type.as_str(),
+                            point_id,
                             e
                         );
                         self.stream = None;
                         self.last_connect_attempt = Some(Instant::now());
-                        // 不返回错误，允许降级到 TODO 队列
-                        return Ok(());
+                        // 返回降级状态，让调用方可以触发立即轮询
+                        return NotifyResult {
+                            fallback_used: true,
+                            ..Default::default()
+                        };
                     },
                 }
             }
         }
-        Ok(())
+
+        // 未连接且重连失败，返回降级状态
+        NotifyResult {
+            fallback_used: true,
+            ..Default::default()
+        }
     }
 
     /// 尝试重连（如果断开且退避时间已过）
@@ -182,17 +281,57 @@ impl ShmNotifier {
     }
 
     /// 发送预构建的通知（带自动重连）
-    pub async fn notify_raw(&mut self, notification: &ShmNotification) -> io::Result<()> {
+    ///
+    /// 返回 `NotifyResult`，与 `notify()` 行为一致。
+    pub async fn notify_raw(&mut self, notification: &ShmNotification) -> NotifyResult {
+        // 如果路径为空，通知被禁用
+        if self.path.is_empty() {
+            return NotifyResult {
+                disabled: true,
+                ..Default::default()
+            };
+        }
+
         self.try_reconnect().await;
 
         if let Some(ref mut stream) = self.stream {
-            if let Err(e) = stream.write_all(&notification.to_bytes()).await {
-                warn!("ShmNotifier: send_raw failed, marking disconnected: {}", e);
-                self.stream = None;
-                self.last_connect_attempt = Some(Instant::now());
+            match stream.write_all(&notification.to_bytes()).await {
+                Ok(_) => {
+                    return NotifyResult {
+                        uds_sent: true,
+                        ..Default::default()
+                    };
+                },
+                Err(e) => {
+                    warn!("ShmNotifier: send_raw failed, marking disconnected: {}", e);
+                    self.stream = None;
+                    self.last_connect_attempt = Some(Instant::now());
+                },
             }
         }
-        Ok(())
+
+        NotifyResult {
+            fallback_used: true,
+            ..Default::default()
+        }
+    }
+
+    /// 检查 UDS 连接健康状态
+    ///
+    /// 用于监控和诊断。
+    pub fn health_check(&self) -> UdsHealth {
+        if self.path.is_empty() {
+            return UdsHealth::Disabled;
+        }
+
+        if self.stream.is_some() {
+            UdsHealth::Connected
+        } else {
+            UdsHealth::Disconnected {
+                since: self.last_connect_attempt,
+                backoff_ms: self.backoff_ms,
+            }
+        }
     }
 
     /// 手动强制重新连接（绕过退避机制）
@@ -228,8 +367,11 @@ mod tests {
         let mut notifier = ShmNotifier::disabled();
         assert!(!notifier.is_connected());
 
-        // 应该静默成功
-        notifier.notify(1001, PointType::Control, 0).await.unwrap();
+        // 禁用的 notifier 应返回 disabled = true
+        let result = notifier.notify(1001, PointType::Control, 0).await;
+        assert!(result.disabled);
+        assert!(!result.uds_sent);
+        assert!(!result.fallback_used);
     }
 
     #[tokio::test]
@@ -240,5 +382,48 @@ mod tests {
 
         // 连接失败，但返回禁用的 notifier 而不是错误
         assert!(!notifier.is_connected());
+    }
+
+    #[tokio::test]
+    async fn test_notify_result_helpers() {
+        // 成功
+        let success = NotifyResult {
+            uds_sent: true,
+            ..Default::default()
+        };
+        assert!(success.is_success());
+        assert!(!success.needs_immediate_poll());
+
+        // 降级
+        let fallback = NotifyResult {
+            fallback_used: true,
+            ..Default::default()
+        };
+        assert!(!fallback.is_success());
+        assert!(fallback.needs_immediate_poll());
+
+        // 禁用
+        let disabled = NotifyResult {
+            disabled: true,
+            ..Default::default()
+        };
+        assert!(!disabled.is_success());
+        assert!(!disabled.needs_immediate_poll());
+    }
+
+    #[tokio::test]
+    async fn test_health_check() {
+        // 禁用状态
+        let notifier = ShmNotifier::disabled();
+        assert!(matches!(notifier.health_check(), UdsHealth::Disabled));
+
+        // 断开状态
+        let notifier = ShmNotifier::connect("/tmp/nonexistent-test-socket.sock")
+            .await
+            .unwrap();
+        assert!(matches!(
+            notifier.health_check(),
+            UdsHealth::Disconnected { .. }
+        ));
     }
 }

@@ -52,6 +52,7 @@
 //! | `integrate` | `integrate(var)` or `integrate(var, factor)` | Time integral, auto-calculates Δt |
 //! | `moving_avg` | `moving_avg(var, window)` | Sliding window average |
 //! | `rate_of_change` | `rate_of_change(var)` | Rate of change dv/dt |
+//! | `period_delta` | `period_delta(var, period)` | Delta within period (daily/weekly/monthly/quarterly) |
 //!
 //! ## Stateless (sync)
 //!
@@ -73,7 +74,7 @@ pub mod state;
 // Re-exports for convenience
 pub use error::{CalcError, Result};
 pub use evaluator::CalcEngine;
-pub use state::{MemoryStateStore, NullStateStore, StateStore};
+pub use state::{MemoryStateStore, NullStateStore, RtdbStateStore, StateStore};
 
 // Re-export stateless functions for direct use
 pub use builtin_functions::{abs, clamp, max, min, round, scale, sign};

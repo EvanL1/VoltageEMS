@@ -23,6 +23,7 @@ pub use loader::{load_routing_maps, RoutingMaps};
 pub use voltage_rtdb::RoutingCache;
 
 use anyhow::{Context, Result};
+use voltage_model::{validate_value, ValidationConfig};
 use voltage_rtdb::Rtdb;
 
 /// Status string for successful operations
@@ -97,6 +98,17 @@ pub async fn set_action_point<R>(
 where
     R: Rtdb,
 {
+    // Validate value before M2C routing (prevents NaN/Infinity from reaching devices)
+    let validation_config = ValidationConfig::default();
+    let value = validate_value(value, &validation_config).map_err(|e| {
+        anyhow::anyhow!(
+            "M2C data validation failed for inst:{}:A:{}: {}",
+            instance_id,
+            point_id,
+            e
+        )
+    })?;
+
     let config = voltage_rtdb::KeySpaceConfig::production_cached();
 
     // Lookup M2C routing target (zero-allocation path when point_id is numeric)
@@ -171,16 +183,15 @@ where
         // Only notify if SHM write succeeded (avoid duplicate notifications via TODO queue)
         if shm_written {
             if let Some(notifier) = notifier {
-                if let Err(e) = notifier
+                let notify_result = notifier
                     .notify(channel_id, point_type_enum, comsrv_point_id)
-                    .await
-                {
-                    tracing::warn!(
-                        "UDS notify failed for ch{}:{:?}:{}: {}",
+                    .await;
+                if notify_result.fallback_used {
+                    tracing::debug!(
+                        "UDS notify used fallback for ch{}:{:?}:{}",
                         channel_id,
                         point_type_enum,
-                        comsrv_point_id,
-                        e
+                        comsrv_point_id
                     );
                 }
             }
@@ -474,6 +485,70 @@ mod tests {
     }
 
     // ========================================================================
+    // C2C Cycle Detection Tests
+    // ========================================================================
+
+    /// Create a routing cache with A→B→A cycle
+    fn create_routing_cache_with_c2c_cycle() -> Arc<RoutingCache> {
+        let mut c2c_data = HashMap::new();
+        // A→B: channel 1001:T:1 -> channel 2001:T:1
+        c2c_data.insert("1001:T:1".to_string(), "2001:T:1".to_string());
+        // B→A: channel 2001:T:1 -> channel 1001:T:1 (creates cycle)
+        c2c_data.insert("2001:T:1".to_string(), "1001:T:1".to_string());
+        Arc::new(RoutingCache::from_maps(
+            HashMap::new(),
+            HashMap::new(),
+            c2c_data,
+        ))
+    }
+
+    #[tokio::test]
+    async fn test_c2c_cycle_detection() {
+        let rtdb = create_test_rtdb();
+        // A→B→A cycle configured
+        let routing_cache = create_routing_cache_with_c2c_cycle();
+
+        // Start from channel A
+        let updates = vec![ChannelPointUpdate::new(
+            1001,
+            PointType::Telemetry,
+            1,
+            100.0,
+        )];
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        // Should forward A→B but detect cycle when B tries to forward back to A
+        assert!(stats.c2c_forwards > 0, "Should have some forwards");
+        assert!(
+            stats.cycles_detected > 0,
+            "Should detect A→B→A cycle and skip"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_c2c_no_cycle_without_loop() {
+        let rtdb = create_test_rtdb();
+        // Simple A→B route (no cycle)
+        let routing_cache = create_routing_cache_with_c2c();
+
+        let updates = vec![ChannelPointUpdate::new(
+            1001,
+            PointType::Telemetry,
+            1,
+            100.0,
+        )];
+
+        let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
+
+        assert!(result.is_ok());
+        let stats = result.unwrap();
+        assert_eq!(stats.cycles_detected, 0, "No cycle should be detected");
+    }
+
+    // ========================================================================
     // ChannelPointUpdate Tests
     // ========================================================================
 
@@ -507,12 +582,14 @@ mod tests {
             channel_writes: 10,
             c2m_writes: 5,
             c2c_forwards: 2,
+            cycles_detected: 0,
         };
 
         let result2 = BatchRoutingResult {
             channel_writes: 3,
             c2m_writes: 1,
             c2c_forwards: 1,
+            cycles_detected: 1,
         };
 
         result1.merge(result2);
@@ -520,6 +597,7 @@ mod tests {
         assert_eq!(result1.channel_writes, 13);
         assert_eq!(result1.c2m_writes, 6);
         assert_eq!(result1.c2c_forwards, 3);
+        assert_eq!(result1.cycles_detected, 1);
     }
 
     // ========================================================================

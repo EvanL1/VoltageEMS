@@ -216,14 +216,15 @@ pub struct SharedConfig {
 
 impl Default for SharedConfig {
     fn default() -> Self {
-        // Use 65536 as default ("practically unlimited")
-        // mmap uses virtual address space; only accessed pages load into physical RAM
-        // Large values don't waste memory but eliminate capacity limit concerns
+        // Use reasonable defaults that balance capacity with file size
+        // max_slots = max_channels * max_points_per_channel = 1024 * 65536 = 67,108,864
+        // shm_size ≈ 64 + 67,108,864 * 32 ≈ 2GB (reasonable for most deployments)
+        // Note: mmap uses sparse files, only accessed pages load into physical RAM
         Self {
             path: default_shm_path(),
-            max_instances: 65536,
+            max_instances: 1024,
             max_points_per_instance: 65536,
-            max_channels: 65536,
+            max_channels: 1024,
             max_points_per_channel: 65536,
             // Snapshot defaults
             snapshot_path: None,
