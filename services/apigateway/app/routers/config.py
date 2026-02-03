@@ -18,6 +18,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Body
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,16 @@ UPGRADE_STATUS_FILE = UPGRADE_DIR / "upgrade_status.json"
 # Docker Socket 路径（需要在 docker-compose.yml 中挂载）
 DOCKER_SOCKET = Path("/var/run/docker.sock")
 
+# ============================================================================
 # 上传中断标志（全局状态）
+# ============================================================================
+# 设计说明：
+# - 这是为单用户场景设计的全局标志，用于中断正在进行的 .run 文件上传
+# - 不支持并发上传：同一时间只能有一个升级任务运行
+# - 如果需要支持多用户并发，应改用 upload_sessions: dict[str, bool] 隔离每个会话
+# ============================================================================
 _upload_abort_flag = False
+_upload_in_progress = False  # 标记是否有上传正在进行
 
 
 def _ensure_upgrade_dir():
@@ -62,6 +71,21 @@ def _check_upgrade_dir_available():
         return False, f"升级目录无写入权限（需要在宿主机上执行: sudo chmod 777 {UPGRADE_DIR}）"
     
     return True, None
+
+
+def _cleanup_temp_file(file_path: str):
+    """
+    后台任务：删除临时文件
+    
+    Args:
+        file_path: 临时文件路径
+    """
+    try:
+        if os.path.exists(file_path):
+            os.unlink(file_path)
+            logger.debug(f"临时文件已清理: {file_path}")
+    except Exception as e:
+        logger.warning(f"清理临时文件失败: {file_path}, 错误: {e}")
 
 
 @router.get("/export", response_class=FileResponse)
@@ -126,7 +150,7 @@ async def export_config():
                 path=temp_file.name,
                 filename="monarchedge_config_export.zip",
                 media_type="application/zip",
-                background=None  # 不在后台删除，让操作系统处理临时文件
+                background=BackgroundTask(_cleanup_temp_file, temp_file.name)
             )
             
         except Exception as e:
@@ -511,6 +535,14 @@ async def upload_and_run_upgrade(
             )
         
         # 检查是否已有升级在运行
+        global _upload_in_progress
+        if _upload_in_progress:
+            return {
+                "success": False,
+                "message": "An upload is already in progress (single user mode)",
+                "data": {"status": "busy"}
+            }
+        
         current_status = _read_upgrade_status()
         if current_status.get("status") == "running":
             return {
@@ -547,9 +579,10 @@ async def upload_and_run_upgrade(
                 logger.warning(f"删除 {item.name} 时出错: {e}")
         logger.info("升级目录已清空")
         
-        # 重置中断标志
+        # 重置中断标志并标记上传开始
         global _upload_abort_flag
         _upload_abort_flag = False
+        _upload_in_progress = True
         
         # 保存升级包到持久化目录（使用流式写入）
         upgrade_file_path = UPGRADE_DIR / file.filename
@@ -741,6 +774,9 @@ async def upload_and_run_upgrade(
                 "log_file": str(UPGRADE_LOG_FILE)
             })
             
+            # 重置上传标志
+            _upload_in_progress = False
+            
             return {
                 "success": True,
                 "message": "Upgrade task started",
@@ -762,8 +798,10 @@ async def upload_and_run_upgrade(
             raise
         
     except HTTPException:
+        _upload_in_progress = False  # 重置标志
         raise
     except Exception as e:
+        _upload_in_progress = False  # 重置标志
         logger.error(f"上传并运行升级包异常: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
