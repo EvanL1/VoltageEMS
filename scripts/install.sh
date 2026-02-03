@@ -115,6 +115,7 @@ declare -A TARBALL_TO_IMAGE=(
     ["voltage-influxdb.tar.gz"]="influxdb:3-core"
     ["python-services.tar.gz"]="voltageems-ss:latest"
     ["apps.tar.gz"]="voltage-apps:latest"
+    ["alpine.tar.gz"]="alpine:latest"
 )
 
 # Image to container mapping
@@ -690,7 +691,7 @@ if command -v docker &> /dev/null; then
 
             # Smart load: only load images that have changed
             # Process in specific order to handle dependencies
-            tarball_list=(docker/voltageems.tar.gz docker/python-services.tar.gz docker/voltage-redis.tar.gz docker/voltage-influxdb.tar.gz docker/apps.tar.gz)
+            tarball_list=(docker/voltageems.tar.gz docker/python-services.tar.gz docker/voltage-redis.tar.gz docker/voltage-influxdb.tar.gz docker/apps.tar.gz docker/alpine.tar.gz)
 
             tarball_idx=0
             for tarball in "${tarball_list[@]}"; do
@@ -944,14 +945,14 @@ if command -v docker &> /dev/null; then
 
         # Verify loaded images
         echo "Verifying loaded images..."
-        # NOTE: voltage-apps:latest is optional
-        for image_name in voltageems:latest redis:8-alpine influxdb:3-core voltageems-ss:latest voltage-apps:latest; do
+        # NOTE: voltage-apps:latest and alpine:latest are optional
+        for image_name in voltageems:latest redis:8-alpine influxdb:3-core voltageems-ss:latest voltage-apps:latest alpine:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
                 echo -e "${GREEN}present${NC} (created: $CREATED)"
             else
-                if [[ "$image_name" == "voltage-apps:latest" ]]; then
+                if [[ "$image_name" == "voltage-apps:latest" ]] || [[ "$image_name" == "alpine:latest" ]]; then
                     echo -e "${YELLOW}missing (optional, skipping)${NC}"
                 else
                     echo -e "${RED}missing!${NC}"
@@ -992,13 +993,14 @@ fi
 # Create all necessary directories
 echo "Creating installation directories..."
 $SUDO mkdir -p "$INSTALL_DIR"/data
+$SUDO mkdir -p "$INSTALL_DIR"/upgrade  # 升级目录（用于在线升级功能）
 
 # Create log directories (permissions will be set after user detection)
 echo "Creating log directories..."
-$SUDO mkdir -p "$LOG_DIR"
+$SUDO mkdir -p "$LOG_DIR" 2>/dev/null || true
 # Create log directories for all services
 for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
-    $SUDO mkdir -p "$LOG_DIR/$service"
+    $SUDO mkdir -p "$LOG_DIR/$service" 2>/dev/null || true
 done
 
 # Install scripts directory (utility scripts)
@@ -1102,32 +1104,51 @@ if [[ -f "$DB_FILE" ]]; then
         case $DB_OPTION in
             1)
                 echo -e "${YELLOW}Running safe schema upgrade...${NC}"
-                migrate_points_tables "$DB_FILE"  # Prepare tables for migration
-                monarch init  # IF NOT EXISTS ensures safety
-                restore_migrated_data "$DB_FILE"  # Restore data after schema update
-                echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
+                # Check if monarch command is available (not available in Python-only upgrades)
+                if command -v monarch >/dev/null 2>&1; then
+                    migrate_points_tables "$DB_FILE"  # Prepare tables for migration
+                    monarch init  # IF NOT EXISTS ensures safety
+                    restore_migrated_data "$DB_FILE"  # Restore data after schema update
+                    echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
+                else
+                    echo -e "${BLUE}ℹ Monarch CLI not available (Python-only update), skipping schema upgrade${NC}"
+                    echo -e "${BLUE}  Note: Run 'monarch init' manually if needed${NC}"
+                fi
                 ;;
             2)
                 echo -e "${BLUE}Skipped database initialization${NC}"
                 ;;
             *)
                 echo -e "${YELLOW}Invalid option. Using safe upgrade (option 1)...${NC}"
-                migrate_points_tables "$DB_FILE"
-                monarch init
-                restore_migrated_data "$DB_FILE"
+                if command -v monarch >/dev/null 2>&1; then
+                    migrate_points_tables "$DB_FILE"
+                    monarch init
+                    restore_migrated_data "$DB_FILE"
+                else
+                    echo -e "${BLUE}ℹ Monarch CLI not available, skipping schema upgrade${NC}"
+                fi
                 ;;
         esac
     else
         # Empty database file
         echo "Empty database file detected, initializing..."
-        monarch init
+        if command -v monarch >/dev/null 2>&1; then
+            monarch init
+        else
+            echo -e "${BLUE}ℹ Monarch CLI not available, skipping database initialization${NC}"
+        fi
     fi
 else
     # No database - first installation
     echo "Creating new database..."
     $SUDO touch "$DB_FILE"
     $SUDO chown $ACTUAL_USER:docker "$DB_FILE" 2>/dev/null || true
-    monarch init
+    if command -v monarch >/dev/null 2>&1; then
+        monarch init
+    else
+        echo -e "${BLUE}ℹ Monarch CLI not available (Python-only package), skipping database initialization${NC}"
+        echo -e "${BLUE}  Note: Run 'monarch init' manually after installation${NC}"
+    fi
 fi
 
 # Set permissions using docker group for secure access
@@ -1169,6 +1190,7 @@ $SUDO chmod 755 "$INSTALL_DIR" 2>/dev/null || true
 $SUDO chmod -R 775 "$INSTALL_DIR/data" 2>/dev/null || true
 $SUDO chmod -R 775 "$INSTALL_DIR/config" 2>/dev/null || true
 $SUDO chmod -R 775 "$INSTALL_DIR/config.template" 2>/dev/null || true
+$SUDO chmod -R 777 "$INSTALL_DIR/upgrade" 2>/dev/null || true  # 升级目录需要容器写入权限
 $SUDO chmod -R 777 "$LOG_DIR" 2>/dev/null || true
 
 # Fix symlink ownership if exists

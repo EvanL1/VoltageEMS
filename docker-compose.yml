@@ -147,7 +147,9 @@ services:
     image: voltageems-ss:latest
     container_name: voltageems-apigateway
     network_mode: host
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    # 使用 docker 组以便访问 Docker Socket（升级功能需要）
+    # 格式: UID:docker_gid，其中 docker_gid 通常是 999
+    user: "${HOST_UID:-1000}:${DOCKER_GID:-999}"
     environment:
       - SERVICE_NAME=apigateway
       - SERVICE_PORT=6005
@@ -162,6 +164,8 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}/config/apigateway:/app/config
       - ${VOLTAGE_BASE_PATH:-./data}/data:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
+      - /opt/MonarchEdge:/opt/MonarchEdge  # 持久化目录（用于升级）
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker Socket（用于升级时控制容器）
     depends_on:
       voltage-redis:
         condition: service_healthy
