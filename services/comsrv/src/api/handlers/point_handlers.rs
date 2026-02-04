@@ -2467,21 +2467,55 @@ async fn process_create_operation<R: Rtdb>(
     }
 
     // Extract protocol_mapping before deserialization (not part of Point structs)
-    let protocol_mapping_json: Option<String> = item
-        .data
-        .get("protocol_mapping")
-        .map(|v| serde_json::to_string(v).unwrap_or_default());
+    // Check if the field was explicitly provided in the request (even if null)
+    let has_protocol_mapping_field = item.data.get("protocol_mapping").is_some();
+    let protocol_mapping_json: Option<String> = item.data.get("protocol_mapping").and_then(|v| {
+        // Handle explicit null or empty object: return None to clear the mapping
+        // This is consistent with sqlite_loader.rs which filters out null/{}/""
+        if v.is_null() || v.as_object().is_some_and(|o| o.is_empty()) {
+            None
+        } else {
+            Some(serde_json::to_string(v).unwrap_or_default())
+        }
+    });
 
     // Deserialize and insert based on point type
+    // Using ON CONFLICT ... DO UPDATE (UPSERT) to preserve protocol_mappings when not provided
     match point_type_upper.as_str() {
         "T" => {
             let point: TelemetryPoint = serde_json::from_value(data_with_id)
                 .map_err(|e| format!("Invalid telemetry point data: {}", e))?;
 
             let sql = if item.force {
-                "INSERT OR REPLACE INTO telemetry_points
-                 (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                if has_protocol_mapping_field {
+                    // Request provided protocol_mapping (even if null) - update it
+                    "INSERT INTO telemetry_points
+                     (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       scale = excluded.scale,
+                       offset = excluded.offset,
+                       unit = excluded.unit,
+                       data_type = excluded.data_type,
+                       reverse = excluded.reverse,
+                       description = excluded.description,
+                       protocol_mappings = excluded.protocol_mappings"
+                } else {
+                    // Request did not provide protocol_mapping - preserve existing value
+                    "INSERT INTO telemetry_points
+                     (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       scale = excluded.scale,
+                       offset = excluded.offset,
+                       unit = excluded.unit,
+                       data_type = excluded.data_type,
+                       reverse = excluded.reverse,
+                       description = excluded.description"
+                    // protocol_mappings NOT included - preserves existing value
+                }
             } else {
                 "INSERT INTO telemetry_points
                  (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
@@ -2508,9 +2542,26 @@ async fn process_create_operation<R: Rtdb>(
                 .map_err(|e| format!("Invalid signal point data: {}", e))?;
 
             let sql = if item.force {
-                "INSERT OR REPLACE INTO signal_points
-                 (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+                if has_protocol_mapping_field {
+                    "INSERT INTO signal_points
+                     (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       unit = excluded.unit,
+                       reverse = excluded.reverse,
+                       description = excluded.description,
+                       protocol_mappings = excluded.protocol_mappings"
+                } else {
+                    "INSERT INTO signal_points
+                     (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       unit = excluded.unit,
+                       reverse = excluded.reverse,
+                       description = excluded.description"
+                }
             } else {
                 "INSERT INTO signal_points
                  (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
@@ -2536,9 +2587,32 @@ async fn process_create_operation<R: Rtdb>(
             // Note: control_points table has same schema as telemetry_points
             // ControlPoint's control-specific fields (control_type, on_value, etc.) are not persisted
             let sql = if item.force {
-                "INSERT OR REPLACE INTO control_points
-                 (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                if has_protocol_mapping_field {
+                    "INSERT INTO control_points
+                     (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       scale = excluded.scale,
+                       offset = excluded.offset,
+                       unit = excluded.unit,
+                       reverse = excluded.reverse,
+                       data_type = excluded.data_type,
+                       description = excluded.description,
+                       protocol_mappings = excluded.protocol_mappings"
+                } else {
+                    "INSERT INTO control_points
+                     (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       scale = excluded.scale,
+                       offset = excluded.offset,
+                       unit = excluded.unit,
+                       reverse = excluded.reverse,
+                       data_type = excluded.data_type,
+                       description = excluded.description"
+                }
             } else {
                 "INSERT INTO control_points
                  (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
@@ -2571,9 +2645,32 @@ async fn process_create_operation<R: Rtdb>(
                 .map_err(|e| format!("Invalid adjustment point data: {}", e))?;
 
             let sql = if item.force {
-                "INSERT OR REPLACE INTO adjustment_points
-                 (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                if has_protocol_mapping_field {
+                    "INSERT INTO adjustment_points
+                     (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       scale = excluded.scale,
+                       offset = excluded.offset,
+                       unit = excluded.unit,
+                       reverse = excluded.reverse,
+                       data_type = excluded.data_type,
+                       description = excluded.description,
+                       protocol_mappings = excluded.protocol_mappings"
+                } else {
+                    "INSERT INTO adjustment_points
+                     (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(channel_id, point_id) DO UPDATE SET
+                       signal_name = excluded.signal_name,
+                       scale = excluded.scale,
+                       offset = excluded.offset,
+                       unit = excluded.unit,
+                       reverse = excluded.reverse,
+                       data_type = excluded.data_type,
+                       description = excluded.description"
+                }
             } else {
                 "INSERT INTO adjustment_points
                  (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)

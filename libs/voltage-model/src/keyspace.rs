@@ -226,6 +226,25 @@ impl KeySpaceConfig {
         format!("{}:{}:name", self.inst_prefix, instance_id)
     }
 
+    /// Build channel name key: comsrv:{channel_id}:name
+    ///
+    /// Stores the human-readable name of a channel for API/frontend access.
+    /// This key is set when a channel is created and updated when the channel name changes.
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// let config = KeySpaceConfig::production();
+    /// assert_eq!(config.channel_name_key(1001), "comsrv:1001:name");
+    ///
+    /// let test_config = KeySpaceConfig::test();
+    /// assert_eq!(test_config.channel_name_key(1001), "test:comsrv:1001:name");
+    /// ```
+    pub fn channel_name_key(&self, channel_id: u32) -> String {
+        format!("{}:{}:name", self.data_prefix, channel_id)
+    }
+
     /// Build instance status key: inst:{instance_id}:status
     pub fn instance_status_key(&self, instance_id: u32) -> String {
         format!("{}:{}:status", self.inst_prefix, instance_id)
@@ -525,6 +544,17 @@ mod tests {
             test_config.instance_name_index_key(),
             "test:inst:name:index"
         );
+    }
+
+    #[test]
+    fn test_channel_name_key() {
+        let config = KeySpaceConfig::production();
+        assert_eq!(config.channel_name_key(1001), "comsrv:1001:name");
+        assert_eq!(config.channel_name_key(1), "comsrv:1:name");
+
+        // Test environment
+        let test_config = KeySpaceConfig::test();
+        assert_eq!(test_config.channel_name_key(1001), "test:comsrv:1001:name");
     }
 
     #[test]

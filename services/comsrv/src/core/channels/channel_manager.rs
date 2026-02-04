@@ -1128,6 +1128,24 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             debug!("Ch{} registered with SHM poller", channel_id);
         }
 
+        // 6. Write channel name to Redis for API/frontend access
+        // Redis is a cache layer - write failure only logs warning, doesn't block creation
+        let keyspace = voltage_model::KeySpaceConfig::production_cached();
+        let name_key = keyspace.channel_name_key(channel_id);
+        let channel_name = channel_config.name();
+        if let Err(e) = self
+            .rtdb
+            .set(&name_key, bytes::Bytes::from(channel_name.to_string()))
+            .await
+        {
+            warn!(
+                "Ch{} failed to write name to Redis ({}): {}",
+                channel_id, name_key, e
+            );
+        } else {
+            debug!("Ch{} name written to Redis: {}", channel_id, name_key);
+        }
+
         info!("Ch{} created ({})", channel_id, protocol_name);
         Ok(entry)
     }
@@ -1607,6 +1625,19 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                         warn!("Ch{} bitmap lock poisoned: {}", channel_id, e);
                     },
                 }
+            }
+
+            // 7. Delete channel name from Redis
+            // Redis is a cache layer - delete failure only logs warning
+            let keyspace = voltage_model::KeySpaceConfig::production_cached();
+            let name_key = keyspace.channel_name_key(channel_id);
+            if let Err(e) = self.rtdb.del(&name_key).await {
+                warn!(
+                    "Ch{} failed to delete name from Redis ({}): {}",
+                    channel_id, name_key, e
+                );
+            } else {
+                debug!("Ch{} name deleted from Redis: {}", channel_id, name_key);
             }
 
             info!("Ch{} removed (graceful shutdown)", channel_id);

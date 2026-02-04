@@ -1128,6 +1128,28 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
         "stopped".to_string()
     };
 
+    // Update channel name in Redis if name changed
+    // This ensures Redis cache is consistent even for MetadataOnly changes
+    if name_changed {
+        let keyspace = voltage_model::KeySpaceConfig::production_cached();
+        let name_key = keyspace.channel_name_key(id);
+        if let Err(e) = state
+            .rtdb
+            .set(&name_key, bytes::Bytes::from(name.clone()))
+            .await
+        {
+            // Redis is cache layer - log warning but don't fail the request
+            tracing::warn!(
+                "Ch{} failed to update name in Redis ({}): {}",
+                id,
+                name_key,
+                e
+            );
+        } else {
+            tracing::debug!("Ch{} name updated in Redis: {}", id, name_key);
+        }
+    }
+
     // Use the final description after applying updates (or keep previous if not provided)
     let result = crate::dto::ChannelCrudResult {
         core: ChannelCore {
