@@ -1128,25 +1128,29 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
         "stopped".to_string()
     };
 
-    // Update channel name in Redis if name changed
+    // Update channel name in Redis hash if name changed
     // This ensures Redis cache is consistent even for MetadataOnly changes
     if name_changed {
         let keyspace = voltage_model::KeySpaceConfig::production_cached();
-        let name_key = keyspace.channel_name_key(id);
+        let channels_key = keyspace.channels_hash_key();
         if let Err(e) = state
             .rtdb
-            .set(&name_key, bytes::Bytes::from(name.clone()))
+            .hash_set(
+                &channels_key,
+                &id.to_string(),
+                bytes::Bytes::from(name.clone()),
+            )
             .await
         {
             // Redis is cache layer - log warning but don't fail the request
             tracing::warn!(
-                "Ch{} failed to update name in Redis ({}): {}",
+                "Ch{} failed to update name in Redis hash ({}): {}",
                 id,
-                name_key,
+                channels_key,
                 e
             );
         } else {
-            tracing::debug!("Ch{} name updated in Redis: {}", id, name_key);
+            tracing::debug!("Ch{} name updated in Redis hash: {}", id, channels_key);
         }
     }
 
@@ -1393,7 +1397,36 @@ pub async fn delete_channel_handler<R: Rtdb>(
         AppError::internal_error(format!("Failed to begin transaction: {}", e))
     })?;
 
-    // 2. Delete channel from database within transaction
+    // 2. Delete related records from dependent tables (foreign key constraints)
+    let related_tables = [
+        "telemetry_points",
+        "signal_points",
+        "control_points",
+        "adjustment_points",
+        "json_point_mappings",
+        "point_mappings",
+        "measurement_routing",
+        "action_routing",
+    ];
+
+    for table in &related_tables {
+        let query = format!("DELETE FROM {} WHERE channel_id = ?", table);
+        let result = sqlx::query(&query).bind(id as i64).execute(&mut *tx).await;
+
+        match result {
+            Ok(r) => {
+                if r.rows_affected() > 0 {
+                    tracing::debug!("Ch{} deleted {} rows from {}", id, r.rows_affected(), table);
+                }
+            },
+            Err(e) => {
+                // Table may not exist, log and continue
+                tracing::debug!("Table {} delete skipped: {}", table, e);
+            },
+        }
+    }
+
+    // 3. Delete channel from database
     let result = sqlx::query("DELETE FROM channels WHERE channel_id = ?")
         .bind(id as i64)
         .execute(&mut *tx)
@@ -1413,14 +1446,14 @@ pub async fn delete_channel_handler<R: Rtdb>(
         )));
     }
 
-    // 3. Commit transaction BEFORE removing runtime channel
+    // 4. Commit transaction BEFORE removing runtime channel
     // This ensures database consistency is preserved
     tx.commit().await.map_err(|e| {
         tracing::error!("Ch{} delete tx commit: {}", id, e);
         AppError::internal_error(format!("Failed to commit transaction: {}", e))
     })?;
 
-    // 4. Remove from runtime (best effort - doesn't affect data consistency)
+    // 5. Remove from runtime (best effort - doesn't affect data consistency)
     // Even if this fails, the channel is gone from database which is the source of truth
     {
         // Direct access without RwLock (lock-free)

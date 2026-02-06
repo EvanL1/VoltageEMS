@@ -254,6 +254,10 @@ impl ChannelFileLogHandler {
     }
 
     /// Format a raw packet event as log line.
+    ///
+    /// Output format:
+    /// - TCP: `>>> modbus [TID=D596] [slave=2 fc=0x03 @100-163] [87B] D5 96 ...`
+    /// - RTU: `>>> modbus [slave=2 fc=0x03 @100-163] [12B] 02 03 ...`
     fn format_raw_packet(
         &self,
         direction: &PacketDirection,
@@ -273,9 +277,31 @@ impl ChannelFileLogHandler {
             PacketMetadata::Modbus {
                 slave_id,
                 function_code,
+                transaction_id,
+                start_address,
+                quantity,
                 ..
             } => {
-                format!("modbus [slave={} fc=0x{:02X}]", slave_id, function_code)
+                let mut info = String::with_capacity(64);
+
+                // TID (TCP only)
+                if let Some(tid) = transaction_id {
+                    let _ = write!(info, "[TID={:04X}] ", tid);
+                }
+
+                // Base info: slave and function code
+                let _ = write!(info, "[slave={} fc=0x{:02X}", slave_id, function_code);
+
+                // Address range (if available)
+                if let (Some(start), Some(qty)) = (start_address, quantity) {
+                    if *qty > 0 {
+                        let end = start.saturating_add(qty.saturating_sub(1));
+                        let _ = write!(info, " @{}-{}", start, end);
+                    }
+                }
+
+                info.push(']');
+                format!("modbus {}", info)
             },
             PacketMetadata::Iec104 {
                 asdu_type,
@@ -305,7 +331,7 @@ impl ChannelFileLogHandler {
             PacketMetadata::Other { protocol } => protocol.clone(),
         };
 
-        // Format: >>> modbus [slave=1 fc=0x03] [12B] 00 01 00 00 00 06 01 03 00 64 00 0A
+        // Format: >>> modbus [TID=D596] [slave=1 fc=0x03 @100-163] [12B] 00 01 ...
         let _ = write!(line, "{} {} [{}B] ", arrow, proto_info, data.len());
 
         // Append hex data
@@ -410,7 +436,7 @@ impl ChannelFileLogHandler {
     /// Check if the event should be logged based on the level.
     ///
     /// Log level mapping:
-    /// - **Info**: Errors, connections, disconnections, control writes (key events only)
+    /// - **Info**: Errors, connections, disconnections, control writes, **point values** (key events)
     /// - **Debug**: All of Info + raw packets, poll cycles, state changes, reconnects
     fn should_log(&self, event: &ChannelLogEvent) -> bool {
         let level = self.level(); // Atomic read for hot-reload support
@@ -421,6 +447,7 @@ impl ChannelFileLogHandler {
             ChannelLogEvent::Disconnected { .. } => true,
             ChannelLogEvent::ControlWrite { .. } => true, // Control commands are important
             ChannelLogEvent::AdjustmentWrite { .. } => true, // Adjustment commands are important
+            ChannelLogEvent::PointValues { .. } => true,  // Point values at Info level
 
             // Debug level only (verbose logging)
             ChannelLogEvent::RawPacket { .. } => level == FileLogLevel::Debug,
@@ -430,6 +457,64 @@ impl ChannelFileLogHandler {
             ChannelLogEvent::ReconnectSuccess { .. } => level == FileLogLevel::Debug,
             ChannelLogEvent::ReadOperation { .. } => level == FileLogLevel::Debug,
         }
+    }
+
+    /// Format a log line with optional group ID prefix.
+    ///
+    /// If group_id is Some, prepends `[G001] ` to the line.
+    fn format_with_group_id(&self, group_id: Option<u32>, line: &str) -> String {
+        if let Some(gid) = group_id {
+            format!("[G{:03}] {}", gid % 1000, line)
+        } else {
+            line.to_string()
+        }
+    }
+
+    /// Format point values grouped by type.
+    ///
+    /// Returns multiple log lines, one per point type present in the values.
+    /// Format: `[T] 1001:23.5, 1002:45.2` or `[S] 2001:1, 2002:0!` (! = bad quality)
+    fn format_point_values_by_type(
+        &self,
+        values: &[super::logging::PointValueSummary],
+    ) -> Vec<String> {
+        use std::collections::HashMap;
+        use std::fmt::Write;
+        use voltage_model::PointType;
+
+        // Group by point type
+        let mut by_type: HashMap<PointType, Vec<&super::logging::PointValueSummary>> =
+            HashMap::new();
+        for v in values {
+            by_type.entry(v.point_type).or_default().push(v);
+        }
+
+        let mut lines = Vec::new();
+
+        // Process types in consistent order: T, S, C, A
+        let type_order = [
+            (PointType::Telemetry, "T"),
+            (PointType::Signal, "S"),
+            (PointType::Control, "C"),
+            (PointType::Adjustment, "A"),
+        ];
+
+        for (pt, tag) in type_order {
+            if let Some(points) = by_type.get(&pt) {
+                let mut line = format!("[{}] ", tag);
+                for (i, v) in points.iter().enumerate() {
+                    if i > 0 {
+                        line.push_str(", ");
+                    }
+                    // Format: id:value (quality bad = !)
+                    let quality_mark = if v.quality.is_good() { "" } else { "!" };
+                    let _ = write!(line, "{}:{}{}", v.id, v.value, quality_mark);
+                }
+                lines.push(line);
+            }
+        }
+
+        lines
     }
 }
 
@@ -446,8 +531,12 @@ impl ChannelLogHandler for ChannelFileLogHandler {
                 direction,
                 data,
                 metadata,
+                group_id,
                 ..
-            } => self.format_raw_packet(direction, data, metadata),
+            } => {
+                let packet_line = self.format_raw_packet(direction, data, metadata);
+                self.format_with_group_id(*group_id, &packet_line)
+            },
 
             ChannelLogEvent::Error { error, context, .. } => self.format_error(error, context),
 
@@ -539,6 +628,17 @@ impl ChannelLogHandler for ChannelFileLogHandler {
                 // Skip detailed read operations in file log
                 return;
             },
+
+            ChannelLogEvent::PointValues {
+                values, group_id, ..
+            } => {
+                // Point values: output multiple lines, one per type
+                for line in self.format_point_values_by_type(values) {
+                    let formatted = self.format_with_group_id(*group_id, &line);
+                    self.write_log(channel_id, &formatted);
+                }
+                return; // Already handled, skip the generic write_log below
+            },
         };
 
         self.write_log(channel_id, &line);
@@ -613,6 +713,7 @@ mod tests {
                 0x00, 0x01, 0x00, 0x00, 0x00, 0x06, 0x01, 0x03, 0x00, 0x64, 0x00, 0x0A,
             ],
             metadata: PacketMetadata::modbus_tcp(1, 0x03),
+            group_id: None,
         };
 
         handler.on_log(1, event).await;

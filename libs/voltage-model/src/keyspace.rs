@@ -226,23 +226,26 @@ impl KeySpaceConfig {
         format!("{}:{}:name", self.inst_prefix, instance_id)
     }
 
-    /// Build channel name key: comsrv:{channel_id}:name
+    /// Build channels hash key: comsrv:channels
     ///
-    /// Stores the human-readable name of a channel for API/frontend access.
-    /// This key is set when a channel is created and updated when the channel name changes.
+    /// Stores all channel ID→name mappings in a single hash for efficient lookup.
+    /// - HSET: 设置单个 channel 名称
+    /// - HDEL: 删除单个 channel
+    /// - HGETALL: 获取所有 ID→名称映射
+    /// - HKEYS: 获取所有 channel ID
     ///
     /// # Examples
     /// ```
     /// use voltage_model::KeySpaceConfig;
     ///
     /// let config = KeySpaceConfig::production();
-    /// assert_eq!(config.channel_name_key(1001), "comsrv:1001:name");
+    /// assert_eq!(config.channels_hash_key(), "comsrv:channels");
     ///
     /// let test_config = KeySpaceConfig::test();
-    /// assert_eq!(test_config.channel_name_key(1001), "test:comsrv:1001:name");
+    /// assert_eq!(test_config.channels_hash_key(), "test:comsrv:channels");
     /// ```
-    pub fn channel_name_key(&self, channel_id: u32) -> String {
-        format!("{}:{}:name", self.data_prefix, channel_id)
+    pub fn channels_hash_key(&self) -> String {
+        format!("{}:channels", self.data_prefix)
     }
 
     /// Build instance status key: inst:{instance_id}:status
@@ -547,14 +550,13 @@ mod tests {
     }
 
     #[test]
-    fn test_channel_name_key() {
+    fn test_channels_hash_key() {
         let config = KeySpaceConfig::production();
-        assert_eq!(config.channel_name_key(1001), "comsrv:1001:name");
-        assert_eq!(config.channel_name_key(1), "comsrv:1:name");
+        assert_eq!(config.channels_hash_key(), "comsrv:channels");
 
         // Test environment
         let test_config = KeySpaceConfig::test();
-        assert_eq!(test_config.channel_name_key(1001), "test:comsrv:1001:name");
+        assert_eq!(test_config.channels_hash_key(), "test:comsrv:channels");
     }
 
     #[test]

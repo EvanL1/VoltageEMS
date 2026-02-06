@@ -178,6 +178,64 @@ impl ReconnectHelper {
         debug!("Connection marked as disconnected");
     }
 
+    /// Record a reconnection attempt manually (for use without execute_reconnect)
+    ///
+    /// Returns true if the attempt is allowed, false if max attempts already reached.
+    /// This method checks the limit BEFORE incrementing, consistent with execute_reconnect.
+    pub fn record_attempt(&mut self) -> bool {
+        // Check if maximum retry attempts reached BEFORE incrementing
+        if self.policy.max_attempts > 0 && self.context.current_attempt >= self.policy.max_attempts
+        {
+            self.context.connection_state = ReconnectState::Failed;
+            warn!(
+                "Maximum reconnection attempts ({}) exceeded",
+                self.policy.max_attempts
+            );
+            return false;
+        }
+
+        // Increment attempt counter
+        self.context.current_attempt += 1;
+        self.stats.total_attempts += 1;
+        self.context.last_attempt = Some(Instant::now());
+        self.context.connection_state = ReconnectState::Reconnecting;
+
+        info!(
+            "Reconnection attempt {}/{}",
+            self.context.current_attempt,
+            if self.policy.max_attempts == 0 {
+                "∞".to_string()
+            } else {
+                self.policy.max_attempts.to_string()
+            }
+        );
+        true
+    }
+
+    /// Mark a reconnection attempt as failed (for manual use)
+    pub fn record_failure(&mut self) {
+        self.stats.failed_reconnects += 1;
+        if self.policy.max_attempts > 0 && self.context.current_attempt >= self.policy.max_attempts
+        {
+            self.context.connection_state = ReconnectState::Failed;
+            debug!(
+                "Reconnection attempt {} failed, max attempts reached",
+                self.context.current_attempt
+            );
+        } else {
+            self.context.connection_state = ReconnectState::Disconnected;
+            debug!(
+                "Reconnection attempt {}/{} failed, will retry",
+                self.context.current_attempt,
+                if self.policy.max_attempts == 0 {
+                    "∞".to_string()
+                } else {
+                    self.policy.max_attempts.to_string()
+                }
+            );
+        }
+    }
+
     /// Calculate the next retry delay with exponential backoff
     pub fn calculate_next_delay(&self) -> Duration {
         let attempt = self.context.current_attempt.saturating_sub(1);
@@ -399,5 +457,105 @@ mod tests {
         assert_eq!(helper.context.connection_state, ReconnectState::Connected);
         assert_eq!(helper.context.current_attempt, 0);
         assert_eq!(helper.stats.successful_reconnects, 1);
+    }
+
+    #[tokio::test]
+    async fn test_record_attempt_manual() {
+        let policy = ReconnectPolicy {
+            max_attempts: 3,
+            initial_delay: Duration::from_millis(10),
+            max_delay: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let mut helper = ReconnectHelper::new(policy);
+
+        // First attempt - should succeed
+        assert!(helper.record_attempt());
+        assert_eq!(helper.context.current_attempt, 1);
+        assert_eq!(
+            helper.context.connection_state,
+            ReconnectState::Reconnecting
+        );
+
+        // Simulate failure
+        helper.record_failure();
+        assert_eq!(
+            helper.context.connection_state,
+            ReconnectState::Disconnected
+        );
+        assert_eq!(helper.stats.failed_reconnects, 1);
+
+        // Second attempt - should succeed
+        assert!(helper.record_attempt());
+        assert_eq!(helper.context.current_attempt, 2);
+
+        // Simulate failure again
+        helper.record_failure();
+        assert_eq!(helper.stats.failed_reconnects, 2);
+
+        // Third attempt - should succeed
+        assert!(helper.record_attempt());
+        assert_eq!(helper.context.current_attempt, 3);
+
+        // Fourth attempt - should fail (max_attempts = 3)
+        assert!(!helper.record_attempt());
+        assert_eq!(helper.context.connection_state, ReconnectState::Failed);
+    }
+
+    #[tokio::test]
+    async fn test_unlimited_attempts() {
+        let policy = ReconnectPolicy {
+            max_attempts: 0, // Unlimited
+            initial_delay: Duration::from_millis(10),
+            max_delay: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let mut helper = ReconnectHelper::new(policy);
+
+        // Should always return true for unlimited attempts
+        for i in 1..=100 {
+            assert!(helper.record_attempt());
+            assert_eq!(helper.context.current_attempt, i);
+            helper.record_failure();
+        }
+
+        // State should still be Disconnected, not Failed
+        assert_eq!(
+            helper.context.connection_state,
+            ReconnectState::Disconnected
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_connected_resets_state() {
+        let policy = ReconnectPolicy {
+            max_attempts: 3,
+            initial_delay: Duration::from_millis(10),
+            max_delay: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let mut helper = ReconnectHelper::new(policy);
+
+        // Simulate 2 failed attempts
+        helper.record_attempt();
+        helper.record_failure();
+        helper.record_attempt();
+        assert_eq!(helper.context.current_attempt, 2);
+
+        // Successful connection resets attempt count
+        helper.mark_connected();
+        assert_eq!(helper.context.current_attempt, 0);
+        assert_eq!(helper.context.connection_state, ReconnectState::Connected);
+
+        // Next disconnection should start from attempt 1 again
+        helper.mark_disconnected();
+        helper.record_attempt();
+        assert_eq!(helper.context.current_attempt, 1);
     }
 }

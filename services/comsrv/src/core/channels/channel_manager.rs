@@ -17,6 +17,7 @@ use crate::protocols::core::logging::{
     ChannelLogConfig, ChannelLogHandler, CompositeLogHandler, LogEventType, TracingLogHandler,
 };
 use crate::protocols::gateway::ChannelRuntime;
+use crate::runtime::reconnect::{ReconnectHelper, ReconnectPolicy, ReconnectState};
 
 /// Maximum number of channel slots (pre-allocated for O(1) access)
 /// Channel IDs must be < MAX_CHANNELS
@@ -179,6 +180,41 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         let cached_diagnostics = Arc::new(ArcSwapOption::empty());
         let cached_diagnostics_clone = Arc::clone(&cached_diagnostics);
 
+        // Parse reconnection policy from channel parameters
+        // Supports: reconnect_max_attempts, reconnect_initial_delay_ms,
+        //           reconnect_max_delay_ms, reconnect_backoff_multiplier
+        let reconnect_policy = {
+            let params = &channel_config.parameters;
+
+            let max_attempts = params
+                .get("reconnect_max_attempts")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(0); // 0 = unlimited
+
+            let initial_delay_ms = params
+                .get("reconnect_initial_delay_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1000);
+
+            let max_delay_ms = params
+                .get("reconnect_max_delay_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(60000);
+
+            let backoff_multiplier = params
+                .get("reconnect_backoff_multiplier")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(2.0);
+
+            ReconnectPolicy::from_config(
+                max_attempts,
+                initial_delay_ms,
+                max_delay_ms,
+                backoff_multiplier,
+            )
+        };
+
         // Spawn the unified channel task
         let store_clone = Arc::clone(&store);
         let task_handle = tokio::spawn(async move {
@@ -192,6 +228,7 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
                 cached_state_clone,
                 cached_diagnostics_clone,
                 log_handler,
+                reconnect_policy,
             )
             .await;
         });
@@ -428,11 +465,15 @@ async fn run_unified_channel_task<R: Rtdb>(
     cached_state: Arc<AtomicU8>,
     cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
     log_handler: Arc<dyn ChannelLogHandler>,
+    reconnect_policy: ReconnectPolicy,
 ) {
     info!(
-        "Ch{} unified task started (interval: {}ms)",
-        channel_id, poll_interval_ms
+        "Ch{} unified task started (interval: {}ms, reconnect: max_attempts={}, initial_delay={:?})",
+        channel_id, poll_interval_ms, reconnect_policy.max_attempts, reconnect_policy.initial_delay
     );
+
+    // Create reconnection helper for auto-reconnect functionality
+    let mut reconnect_helper = ReconnectHelper::new(reconnect_policy);
 
     // Helper to update cached connection state
     let update_cached_state = |state: &dyn ChannelRuntime, cache: &AtomicU8| {
@@ -467,6 +508,9 @@ async fn run_unified_channel_task<R: Rtdb>(
 
     // Track previous error count to detect new errors
     let mut prev_error_count: u64 = 0;
+
+    // Track failed state log frequency (per-channel, not static)
+    let mut failed_log_tick_counter: u32 = 0;
 
     loop {
         // Use biased select to prioritize commands over polling
@@ -593,7 +637,100 @@ async fn run_unified_channel_task<R: Rtdb>(
 
             // Priority 3: Periodic polling
             _ = interval.tick() => {
-                // Poll data using ChannelRuntime interface
+                // Step 1: Check connection state before polling
+                let conn_state = protocol.connection_state();
+
+                if !conn_state.is_connected() {
+                    // Channel is disconnected - check if we should attempt reconnection
+                    match reconnect_helper.connection_state() {
+                        ReconnectState::Failed => {
+                            // Max retry attempts reached, log periodically (every 60 ticks)
+                            failed_log_tick_counter += 1;
+                            if failed_log_tick_counter.is_multiple_of(60) {
+                                warn!(
+                                    "Ch{} reconnection failed (max attempts reached), \
+                                     manual intervention required (disable/enable)",
+                                    channel_id
+                                );
+                            }
+                            // Update cached state and skip this tick
+                            update_cached_state(protocol.as_ref(), &cached_state);
+                            continue;
+                        }
+                        ReconnectState::Reconnecting => {
+                            // Already reconnecting, wait for completion
+                            continue;
+                        }
+                        ReconnectState::Connected => {
+                            // Connection lost unexpectedly - helper state is stale
+                            warn!("Ch{} connection lost unexpectedly", channel_id);
+                            reconnect_helper.mark_disconnected();
+                            // Fall through to attempt reconnection
+                            if !reconnect_helper.record_attempt() {
+                                update_cached_state(protocol.as_ref(), &cached_state);
+                                continue;
+                            }
+
+                            // First attempt: immediate reconnect (no delay)
+                            info!("Ch{} attempting immediate reconnect", channel_id);
+                            match protocol.connect().await {
+                                Ok(()) => {
+                                    info!("Ch{} reconnected successfully", channel_id);
+                                    reconnect_helper.mark_connected();
+                                    failed_log_tick_counter = 0; // Reset counter on success
+                                }
+                                Err(e) => {
+                                    warn!("Ch{} reconnect failed: {}", channel_id, e);
+                                    reconnect_helper.record_failure();
+                                }
+                            }
+                            update_cached_state(protocol.as_ref(), &cached_state);
+                            continue;
+                        }
+                        ReconnectState::Disconnected => {
+                            // Already tracking disconnection, continue retry sequence
+                            if !reconnect_helper.record_attempt() {
+                                update_cached_state(protocol.as_ref(), &cached_state);
+                                continue;
+                            }
+
+                            // Calculate delay with exponential backoff (skip delay for first attempt)
+                            let current_attempt = reconnect_helper.stats().total_attempts;
+                            if current_attempt > 1 {
+                                let delay = reconnect_helper.calculate_next_delay();
+                                info!(
+                                    "Ch{} waiting {:?} before reconnect attempt",
+                                    channel_id, delay
+                                );
+                                tokio::time::sleep(delay).await;
+                            }
+
+                            // Attempt reconnection
+                            info!("Ch{} attempting reconnect", channel_id);
+                            match protocol.connect().await {
+                                Ok(()) => {
+                                    info!("Ch{} reconnected successfully", channel_id);
+                                    reconnect_helper.mark_connected();
+                                    failed_log_tick_counter = 0; // Reset counter on success
+                                }
+                                Err(e) => {
+                                    warn!("Ch{} reconnect failed: {}", channel_id, e);
+                                    reconnect_helper.record_failure();
+                                }
+                            }
+                            update_cached_state(protocol.as_ref(), &cached_state);
+                            continue;
+                        }
+                    }
+                }
+
+                // Step 2: Connected - only reset counter if it was non-zero (avoid unnecessary updates)
+                if reconnect_helper.connection_state() != ReconnectState::Connected {
+                    reconnect_helper.mark_connected();
+                    failed_log_tick_counter = 0;
+                }
+
+                // Step 3: Poll data using ChannelRuntime interface
                 let result: PollResult = protocol.poll_once().await;
 
                 // Log partial failures from poll result (only when failures exist)
@@ -1128,22 +1265,29 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             debug!("Ch{} registered with SHM poller", channel_id);
         }
 
-        // 6. Write channel name to Redis for API/frontend access
+        // 6. Write channel name to Redis hash for API/frontend access
         // Redis is a cache layer - write failure only logs warning, doesn't block creation
         let keyspace = voltage_model::KeySpaceConfig::production_cached();
-        let name_key = keyspace.channel_name_key(channel_id);
+        let channels_key = keyspace.channels_hash_key();
         let channel_name = channel_config.name();
         if let Err(e) = self
             .rtdb
-            .set(&name_key, bytes::Bytes::from(channel_name.to_string()))
+            .hash_set(
+                &channels_key,
+                &channel_id.to_string(),
+                bytes::Bytes::from(channel_name.to_string()),
+            )
             .await
         {
             warn!(
-                "Ch{} failed to write name to Redis ({}): {}",
-                channel_id, name_key, e
+                "Ch{} failed to write name to Redis hash ({}): {}",
+                channel_id, channels_key, e
             );
         } else {
-            debug!("Ch{} name written to Redis: {}", channel_id, name_key);
+            debug!(
+                "Ch{} name written to Redis hash: {}",
+                channel_id, channels_key
+            );
         }
 
         info!("Ch{} created ({})", channel_id, protocol_name);
@@ -1627,17 +1771,24 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 }
             }
 
-            // 7. Delete channel name from Redis
+            // 7. Delete channel name from Redis hash
             // Redis is a cache layer - delete failure only logs warning
             let keyspace = voltage_model::KeySpaceConfig::production_cached();
-            let name_key = keyspace.channel_name_key(channel_id);
-            if let Err(e) = self.rtdb.del(&name_key).await {
+            let channels_key = keyspace.channels_hash_key();
+            if let Err(e) = self
+                .rtdb
+                .hash_del(&channels_key, &channel_id.to_string())
+                .await
+            {
                 warn!(
-                    "Ch{} failed to delete name from Redis ({}): {}",
-                    channel_id, name_key, e
+                    "Ch{} failed to delete name from Redis hash ({}): {}",
+                    channel_id, channels_key, e
                 );
             } else {
-                debug!("Ch{} name deleted from Redis: {}", channel_id, name_key);
+                debug!(
+                    "Ch{} name deleted from Redis hash: {}",
+                    channel_id, channels_key
+                );
             }
 
             info!("Ch{} removed (graceful shutdown)", channel_id);
