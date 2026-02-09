@@ -78,10 +78,10 @@ async fn main() -> Result<()> {
 
         // Helper to load usize value from service_config
         async fn load_usize(pool: &sqlx::SqlitePool, key: &str) -> Option<usize> {
-            sqlx::query_scalar::<_, String>(&format!(
-                "SELECT value FROM service_config WHERE service_name = 'global' AND key = '{}'",
-                key
-            ))
+            sqlx::query_scalar::<_, String>(
+                "SELECT value FROM service_config WHERE service_name = 'global' AND key = ?",
+            )
+            .bind(key)
             .fetch_optional(pool)
             .await
             .ok()
