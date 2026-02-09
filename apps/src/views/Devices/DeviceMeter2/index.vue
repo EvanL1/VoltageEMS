@@ -1,7 +1,6 @@
 <template>
   <div class="voltage-class pv__content">
     <div class="devices-pv__tables">
-      <div class="update-time">Update Time: {{ updateTime }}</div>
       <LoadingBg :loading="globalStore.loading">
         <div class="devices-pv__tables-content">
           <DeviceMonitoringTable :leftTableData="leftTableData" :rightTableData="rightTableData" />
@@ -25,7 +24,6 @@ const globalStore = useGlobalStore()
 
 const leftTableData = ref<LeftTableItem[]>([])
 const rightTableData = ref<RightTableItem[]>([])
-const updateTime = ref('')
 
 // 初始化数据：通过 API 获取点位数据（暂时使用通道 3，与 DieselGenerator 相同）
 onMounted(async () => {
@@ -39,13 +37,14 @@ onMounted(async () => {
           name: p.signal_name || '',
           unit: p.unit || '',
           value: null,
+          updateTime: null,
         })) || []
       rightTableData.value =
         data.signal?.map((p) => ({
           pointId: p.point_id,
           name: p.signal_name || '',
           status: null,
-          updateTime: '',
+          updateTime: null,
         })) || []
     }
   } catch (err) {
@@ -62,41 +61,41 @@ useWebSocket(
     interval: 1000,
   },
   {
-    onBatchDataUpdate: (data: any, timestamp?: string) => {
-      if (timestamp) {
-        // 处理时间戳：可能是ISO字符串或Unix时间戳（秒级）字符串
-        const timestampNum = Number(timestamp)
-        if (!isNaN(timestampNum) && timestampNum > 0) {
-          // 如果是数字字符串，判断是秒级还是毫秒级
-          // 如果小于1e12，认为是秒级，需要乘以1000
-          updateTime.value = new Date(timestampNum < 1e12 ? timestampNum * 1000 : timestampNum).toLocaleString()
-        } else {
-          // 尝试作为ISO字符串解析
-          updateTime.value = new Date(timestamp).toLocaleString()
-        }
-      } else {
-        updateTime.value = ''
-      }
-      const channel3TData = data.updates.find(
+    onBatchDataUpdate: (data: any) => {
+      // 处理通道3的T类型数据（左侧表格）
+      const channel3TUpdate = data.updates?.find(
         (item: any) => item.channel_id === 3 && item.data_type === 'T',
-      )?.values
-      if (channel3TData) {
+      )
+      if (channel3TUpdate) {
+        const values = channel3TUpdate.values || {}
+        const timestamps = channel3TUpdate.ts || {}
         leftTableData.value.forEach((item) => {
-          const pointValue = channel3TData[item.pointId]
+          const pointValue = values[String(item.pointId)]
+          const pointTimestamp = timestamps[String(item.pointId)]
           if (pointValue !== undefined && pointValue !== null) {
             item.value = pointValue
           }
+          if (pointTimestamp !== undefined && pointTimestamp !== null) {
+            item.updateTime = pointTimestamp
+          }
         })
       }
-      const channel3SData = data.updates.find(
+      
+      // 处理通道3的S类型数据（右侧表格）
+      const channel3SUpdate = data.updates?.find(
         (item: any) => item.channel_id === 3 && item.data_type === 'S',
-      )?.values
-      if (channel3SData) {
+      )
+      if (channel3SUpdate) {
+        const values = channel3SUpdate.values || {}
+        const timestamps = channel3SUpdate.ts || {}
         rightTableData.value.forEach((item) => {
-          const pointValue = channel3SData[item.pointId]
+          const pointValue = values[String(item.pointId)]
+          const pointTimestamp = timestamps[String(item.pointId)]
           if (pointValue !== undefined && pointValue !== null) {
             item.status = pointValue
-            item.updateTime = updateTime.value
+          }
+          if (pointTimestamp !== undefined && pointTimestamp !== null) {
+            item.updateTime = pointTimestamp
           }
         })
       }
@@ -114,11 +113,6 @@ useWebSocket(
     width: 100%;
     height: 100%;
     gap: 0.2rem;
-    .update-time {
-      text-align: right;
-      margin: 0.1rem 0;
-      color: #fff;
-    }
 
     .devices-pv__tables-content {
       width: 100%;
