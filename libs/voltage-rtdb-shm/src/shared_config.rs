@@ -9,7 +9,6 @@
 //! - **ChannelToSlotIndex**: Pre-computed direct mapping from channel points to SHM slots
 //! - **Utility functions**: `default_shm_path()`, `is_shm_available()`, `timestamp_ms()`
 
-use crate::vec_impl::PointSlot;
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -270,16 +269,14 @@ pub fn timestamp_ms() -> u64 {
 /// - After: ~50ns (single hash lookup)
 #[derive(Debug)]
 pub struct ChannelToSlotIndex {
-    /// (channel_id, point_type, point_id) → slot byte offset
+    /// (channel_id, point_type, point_id) → slot index (0-based)
     index: FxHashMap<(u32, PointType, u32), usize>,
-    /// Cached data_offset from SharedHeader
-    data_offset: usize,
     /// Statistics
     mapped_count: usize,
 }
 
 impl ChannelToSlotIndex {
-    /// Look up slot offset for a channel point
+    /// Look up slot index for a channel point
     ///
     /// # Arguments
     /// * `channel_id` - Channel identifier
@@ -287,7 +284,7 @@ impl ChannelToSlotIndex {
     /// * `point_id` - Point identifier within the channel
     ///
     /// # Returns
-    /// Byte offset of the slot in shared memory, or None if not mapped
+    /// Slot index (0-based) for `UnifiedWriter::set_direct`, or None if not mapped
     #[inline]
     pub fn lookup(&self, channel_id: u32, point_type: PointType, point_id: u32) -> Option<usize> {
         self.index.get(&(channel_id, point_type, point_id)).copied()
@@ -303,15 +300,10 @@ impl ChannelToSlotIndex {
         self.mapped_count == 0
     }
 
-    /// Get data offset
-    pub fn data_offset(&self) -> usize {
-        self.data_offset
-    }
-
     /// Build from UnifiedWriter's channel_layouts
     ///
     /// This method creates a ChannelToSlotIndex from the unified shared memory format.
-    /// The data_offset is Header size (64 bytes), slots are indexed via ChannelLayout.
+    /// Stores slot indices (0-based) that map directly to `UnifiedWriter::set_direct`.
     ///
     /// # Arguments
     /// * `writer` - UnifiedWriter with registered channel points
@@ -319,10 +311,7 @@ impl ChannelToSlotIndex {
     /// # Returns
     /// ChannelToSlotIndex with pre-computed mappings
     pub fn from_unified_writer(writer: &crate::unified_shm::UnifiedWriter) -> Self {
-        use crate::unified_shm::slot_offset;
-
         let mut index = FxHashMap::default();
-        let data_offset = slot_offset(); // Header size (64 bytes)
         let layouts = writer.channel_layouts();
 
         // Iterate through all channels and their layouts
@@ -344,10 +333,8 @@ impl ChannelToSlotIndex {
                 let count = layout.type_counts[type_idx as usize];
                 for point_id in 0..count {
                     if let Some(slot) = layout.slot(type_idx, point_id) {
-                        // Calculate byte offset: data_offset + slot * sizeof(PointSlot)
-                        let slot_byte_offset =
-                            data_offset + slot * std::mem::size_of::<PointSlot>();
-                        index.insert((channel_id as u32, point_type, point_id), slot_byte_offset);
+                        // Store slot index directly (used by set_direct)
+                        index.insert((channel_id as u32, point_type, point_id), slot);
                     }
                 }
             }
@@ -355,13 +342,12 @@ impl ChannelToSlotIndex {
 
         let mapped_count = index.len();
         info!(
-            "ChannelToSlotIndex built from UnifiedWriter: {} direct mappings, data_offset={}",
-            mapped_count, data_offset
+            "ChannelToSlotIndex built from UnifiedWriter: {} direct mappings",
+            mapped_count
         );
 
         Self {
             index,
-            data_offset,
             mapped_count,
         }
     }

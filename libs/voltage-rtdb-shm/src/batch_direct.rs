@@ -118,9 +118,8 @@ fn write_channel_batch_direct_impl(
 
             // Direct shared memory write (fastest path)
             // Single write - UnifiedReader builds both channel and instance indexes from SlotMeta
-            if let Some(slot_offset) = channel_index.lookup(channel_id, point_type, update.point_id)
-            {
-                shared_writer.set_direct(slot_offset, update.value, raw_value, timestamp_ms);
+            if let Some(slot) = channel_index.lookup(channel_id, point_type, update.point_id) {
+                shared_writer.set_direct(slot, update.value, raw_value, timestamp_ms);
                 result.channel_writes += 1;
             }
 

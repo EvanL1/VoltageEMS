@@ -615,11 +615,11 @@ impl RedisClient {
         for field in fields {
             cmd.arg(field);
         }
-        let result: i32 = cmd
+        let result: i64 = cmd
             .query_async(&mut *conn)
             .await
             .with_context(|| format!("Failed to HDEL multiple fields from key: {}", key))?;
-        Ok(result as usize)
+        Ok(result.max(0) as usize)
     }
 
     /// Execute multiple HMSET operations in a single pipeline (pure Redis, no Lua)
