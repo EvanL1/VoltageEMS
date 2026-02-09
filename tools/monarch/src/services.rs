@@ -7,8 +7,6 @@ use clap::Subcommand;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use voltage_model::KeySpaceConfig;
-use voltage_rtdb::Rtdb;
 
 #[derive(Subcommand)]
 pub enum ServiceCommands {
@@ -91,52 +89,15 @@ pub enum ServiceCommands {
         #[arg(short, long)]
         smart: bool,
     },
-
-    /// Execute action with M2C routing (Unified Entry Point)
-    #[command(about = "Execute action point with automatic M2C routing")]
-    SetAction {
-        /// Instance name (e.g., pcs_01, battery_01)
-        instance_name: String,
-        /// Action point ID
-        point_id: String,
-        /// Value to set
-        value: f64,
-        /// Show detailed routing information
-        #[arg(short, long)]
-        detailed: bool,
-    },
-
-    /// Show routing table entries
-    #[command(about = "Display routing table (C2M, M2C, C2C) from cache")]
-    RoutingShow {
-        /// Routing type to display (c2m, m2c, c2c, or all)
-        #[arg(short = 't', long, default_value = "all")]
-        route_type: String,
-        /// Optional prefix filter (e.g., "2:T:", "23:A:")
-        #[arg(short, long)]
-        prefix: Option<String>,
-        /// Show detailed routing information
-        #[arg(short, long)]
-        detailed: bool,
-        /// Limit number of results (0 = no limit)
-        #[arg(short, long, default_value = "100")]
-        limit: usize,
-    },
 }
 
-pub async fn handle_command(
-    cmd: ServiceCommands,
-    service_ctx: Option<&crate::context::ServiceContext>,
-) -> Result<()> {
+pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
     match cmd {
         ServiceCommands::Start { services } => {
             // IMPORTANT: Ensure SHM file exists before Docker starts
             // Docker bind mount creates directory if source doesn't exist!
             ensure_shm_file_exists();
 
-            // Default docker-compose up behavior: recreate containers if config changed
-            // NOTE: This does NOT auto-recreate when only the image ID changes.
-            // Use `monarch services refresh --smart` to detect and apply image updates.
             let mut args = vec!["up".to_string(), "-d".to_string()];
 
             // Filter out "all" keyword and add specific service names
@@ -155,7 +116,6 @@ pub async fn handle_command(
             println!("Services stopped");
         },
         ServiceCommands::Restart { services } => {
-            // Ensure SHM file exists before restart
             ensure_shm_file_exists();
 
             let args = build_docker_compose_args("restart", "", services);
@@ -163,7 +123,6 @@ pub async fn handle_command(
             println!("Services restarted");
         },
         ServiceCommands::Status { services } => {
-            // Filter out "all" keyword (zero-allocation comparison)
             let filtered_services: Vec<&String> = services
                 .iter()
                 .filter(|s| !s.eq_ignore_ascii_case("all"))
@@ -201,10 +160,8 @@ pub async fn handle_command(
             // Determine which services to reload
             let services_to_reload =
                 if services.is_empty() || services.iter().any(|s| s.to_lowercase() == "all") {
-                    // Reload all hot-reload capable services
                     hot_reload_services.clone()
                 } else {
-                    // Filter out "all" and use the provided services
                     services
                         .iter()
                         .filter(|s| s.to_lowercase() != "all")
@@ -216,7 +173,6 @@ pub async fn handle_command(
             for service in services_to_reload {
                 match service {
                     "comsrv" => {
-                        // Use HTTP client to reload comsrv configuration
                         let client = reqwest::Client::builder().no_proxy().build()?;
                         let response = client
                             .post("http://localhost:6001/api/channels/reload")
@@ -264,11 +220,9 @@ pub async fn handle_command(
             pull,
             smart,
         } => {
-            // Ensure SHM file exists before refresh
             ensure_shm_file_exists();
 
             if smart {
-                // Smart mode: Only recreate containers if images actually changed
                 println!("Refreshing services with smart mode...");
                 println!("Detecting image changes...");
 
@@ -281,7 +235,7 @@ pub async fn handle_command(
                 // Check if voltage-redis image has changed
                 let redis_changed = check_container_image_changed("voltage-redis")?;
 
-                // Check if Rust services have changed (voltageems-comsrv, voltageems-modsrv)
+                // Check if Rust services have changed
                 let rust_services_changed = if target_services.is_empty() {
                     check_container_image_changed("voltageems-comsrv")?
                         || check_container_image_changed("voltageems-modsrv")?
@@ -356,7 +310,7 @@ pub async fn handle_command(
                     println!("✓ Redis image unchanged (no recreation needed)");
                 }
 
-                // Handle Rust services (comsrv, modsrv)
+                // Handle Rust services
                 if rust_services_changed {
                     println!("\nRecreating Rust services...");
                     execute_docker_compose(&["up", "-d", "--force-recreate", "comsrv", "modsrv"])?;
@@ -365,7 +319,7 @@ pub async fn handle_command(
                     println!("✓ Rust services unchanged (no recreation needed)");
                 }
 
-                // Handle Python services (hissrv, apigateway, netsrv, alarmsrv)
+                // Handle Python services
                 if python_services_changed {
                     println!("\nRecreating Python services...");
                     execute_docker_compose(&[
@@ -382,7 +336,7 @@ pub async fn handle_command(
                     println!("✓ Python services unchanged (no recreation needed)");
                 }
 
-                // Handle frontend (apps)
+                // Handle frontend
                 if frontend_changed {
                     println!("\nRecreating frontend...");
                     execute_docker_compose(&["up", "-d", "--force-recreate", "apps"])?;
@@ -415,7 +369,7 @@ pub async fn handle_command(
 
                 println!("\nSmart refresh completed successfully");
             } else {
-                // Legacy mode: Force recreate all (original behavior)
+                // Legacy mode: Force recreate all
                 println!("Refreshing services with latest images (force mode)...");
 
                 let target_services: Vec<String> = services
@@ -468,204 +422,11 @@ pub async fn handle_command(
                 println!("Services refreshed successfully");
             }
         },
-        ServiceCommands::SetAction {
-            instance_name,
-            point_id,
-            value,
-            detailed,
-        } => {
-            // Direct library call to execute action with M2C routing
-            println!("Executing action point with automatic M2C routing...");
-            println!("  Instance: {}", instance_name);
-            println!("  Point ID: {}", point_id);
-            println!("  Value: {}", value);
-
-            // Get ModsrvContext which has RoutingCache and Rtdb
-            let ctx = service_ctx
-                .ok_or_else(|| anyhow::anyhow!("Service context required for set-action command"))?
-                .modsrv()?;
-
-            // Resolve instance name to ID
-            let keyspace = KeySpaceConfig::production_cached();
-            let instance_id_bytes = ctx
-                .rtdb
-                .hash_get(&keyspace.instance_name_index_key(), &instance_name)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Instance '{}' not found", instance_name))?;
-            let instance_id = String::from_utf8_lossy(&instance_id_bytes)
-                .parse::<u32>()
-                .map_err(|e| anyhow::anyhow!("Invalid instance ID: {}", e))?;
-
-            // Execute action routing using shared library (direct call)
-            let outcome = voltage_routing::set_action_point(
-                ctx.rtdb.as_ref(),
-                ctx.instance_manager.routing_cache(),
-                instance_id,
-                &point_id,
-                value,
-                None, // SHM writer - Redis-only for CLI
-                None, // UDS notifier - not needed for CLI
-            )
-            .await?;
-
-            // Display results
-            if outcome.routed {
-                println!("\n✓ Action executed and routed successfully");
-                println!(
-                    "  Route result: {}",
-                    outcome.route_result.unwrap_or_else(|| "N/A".to_string())
-                );
-
-                if detailed {
-                    if let Some(ctx) = outcome.route_context {
-                        println!("\nRouting Context:");
-                        println!("  Channel ID: {}", ctx.channel_id);
-                        println!("  Point Type: {}", ctx.point_type);
-                        println!("  ComSrv Point ID: {}", ctx.comsrv_point_id);
-                        println!("  Queue Key: {}", ctx.queue_key);
-                    }
-                }
-            } else {
-                println!("\n⚠ Action executed but no routing found");
-                println!("  (This instance/point may not be mapped to any channel)");
-            }
-        },
-        ServiceCommands::RoutingShow {
-            route_type,
-            prefix,
-            detailed,
-            limit,
-        } => {
-            // Get ModsrvContext which has RoutingCache
-            let ctx = service_ctx
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Service context required for routing-show command")
-                })?
-                .modsrv()?;
-
-            let routing_cache = ctx.instance_manager.routing_cache();
-            let stats = routing_cache.stats();
-
-            // Determine prefix filter (empty string means no filter)
-            let filter_prefix = prefix.as_deref().unwrap_or("");
-
-            // Collect routes based on type (eq_ignore_ascii_case avoids to_lowercase allocation)
-            // Note: Arc<str> converted to String for display (CLI is not a hot path)
-            let all_routes: Vec<(String, String, &str)> = if route_type.eq_ignore_ascii_case("c2m")
-            {
-                routing_cache
-                    .get_c2m_by_prefix(filter_prefix)
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string(), "C2M"))
-                    .collect()
-            } else if route_type.eq_ignore_ascii_case("m2c") {
-                routing_cache
-                    .get_m2c_by_prefix(filter_prefix)
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string(), "M2C"))
-                    .collect()
-            } else if route_type.eq_ignore_ascii_case("c2c") {
-                routing_cache
-                    .get_c2c_by_prefix(filter_prefix)
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string(), "C2C"))
-                    .collect()
-            } else if route_type.eq_ignore_ascii_case("all") {
-                // Chain iterators to avoid multiple extend() calls
-                routing_cache
-                    .get_c2m_by_prefix(filter_prefix)
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string(), "C2M"))
-                    .chain(
-                        routing_cache
-                            .get_m2c_by_prefix(filter_prefix)
-                            .into_iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string(), "M2C")),
-                    )
-                    .chain(
-                        routing_cache
-                            .get_c2c_by_prefix(filter_prefix)
-                            .into_iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string(), "C2C")),
-                    )
-                    .collect()
-            } else {
-                return Err(anyhow::anyhow!(
-                    "Invalid route type '{}'. Must be one of: c2m, m2c, c2c, all",
-                    route_type
-                ));
-            };
-
-            // Apply limit
-            let total_count = all_routes.len();
-            let limited_routes: Vec<_> = if limit > 0 {
-                all_routes.into_iter().take(limit).collect()
-            } else {
-                all_routes
-            };
-
-            // Print summary
-            println!("=== Routing Cache Summary ===\n");
-            println!("C2M Routes (Channel → Model): {} entries", stats.c2m_count);
-            println!("M2C Routes (Model → Channel): {} entries", stats.m2c_count);
-            println!(
-                "C2C Routes (Channel → Channel): {} entries",
-                stats.c2c_count
-            );
-            let total_routes = stats.c2m_count + stats.m2c_count + stats.c2c_count;
-            println!("Total: {} routes\n", total_routes);
-
-            if prefix.is_some() {
-                println!("Filter: Prefix = '{}'\n", filter_prefix);
-            }
-
-            // Print detailed breakdown if requested
-            if detailed {
-                println!("--- Routing Cache Details ---");
-                println!("Total Capacity: {} entries", total_routes);
-                if total_count > limited_routes.len() {
-                    println!(
-                        "Showing: {} of {} matching routes (limited by --limit {})",
-                        limited_routes.len(),
-                        total_count,
-                        limit
-                    );
-                } else {
-                    println!("Showing: {} matching routes", limited_routes.len());
-                }
-                println!();
-            }
-
-            // Print routing table
-            if limited_routes.is_empty() {
-                println!("⚠ No routing entries found");
-                if prefix.is_some() {
-                    println!("  (Try removing the --prefix filter or using a different prefix)");
-                }
-            } else {
-                println!("=== Routing Table ===");
-                println!("{:<8} {:<30} → {:<30}", "Type", "Source", "Target");
-                println!("{}", "─".repeat(72));
-
-                for (source, target, route_type) in limited_routes {
-                    println!("{:<8} {:<30} → {:<30}", route_type, source, target);
-                }
-
-                if total_count > limit && limit > 0 {
-                    println!();
-                    println!(
-                        "... and {} more entries (use --limit 0 to show all)",
-                        total_count - limit
-                    );
-                }
-            }
-        },
     }
     Ok(())
 }
 
 /// Ensure shared memory file exists (not directory)
-/// Docker bind mount creates directory if source doesn't exist!
 fn ensure_shm_file_exists() {
     let shm_path = Path::new("/dev/shm/voltage-rtdb.shm");
 
@@ -693,9 +454,6 @@ fn build_docker_compose_args(command: &str, flag: &str, services: Vec<String>) -
         args.push(flag.to_string());
     }
 
-    // Filter out "all" keyword - when services list is empty or contains "all",
-    // docker-compose will operate on all services by default
-    // Optimization: eq_ignore_ascii_case avoids to_lowercase() allocation per item
     let filtered_services: Vec<String> = services
         .into_iter()
         .filter(|s| !s.eq_ignore_ascii_case("all"))
@@ -706,7 +464,6 @@ fn build_docker_compose_args(command: &str, flag: &str, services: Vec<String>) -
 }
 
 fn execute_docker_compose(args: &[&str]) -> Result<()> {
-    // Determine the docker-compose.yml location
     let compose_file = if std::path::Path::new("/opt/MonarchEdge/docker-compose.yml").exists() {
         "/opt/MonarchEdge/docker-compose.yml"
     } else if std::path::Path::new("docker-compose.yml").exists() {
@@ -727,12 +484,10 @@ fn execute_docker_compose(args: &[&str]) -> Result<()> {
         .unwrap_or(false);
 
     let output = if use_v2 {
-        // Use Docker Compose V2 (docker compose)
         let mut full_args = vec!["compose", "-f", compose_file];
         full_args.extend(args);
         Command::new("docker").args(&full_args).output()?
     } else {
-        // Fall back to Docker Compose V1 (docker-compose)
         let mut v1_args = vec!["-f", compose_file];
         v1_args.extend(args);
         Command::new("docker-compose").args(&v1_args).output()?
@@ -755,9 +510,7 @@ fn execute_docker_compose_str(args: &[String]) -> Result<()> {
 }
 
 /// Check if a container's image has changed compared to the local image
-/// Returns true if container doesn't exist OR image has changed
 fn check_container_image_changed(container_name: &str) -> Result<bool> {
-    // Get the image ID currently used by the running container
     let running_image_output = Command::new("docker")
         .args(["inspect", container_name, "--format={{.Image}}"])
         .output();
@@ -767,29 +520,23 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
             String::from_utf8_lossy(&output.stdout).trim().to_string()
         },
         _ => {
-            // Container doesn't exist or error occurred
-            return Ok(true); // Assume needs update
+            return Ok(true); // Container doesn't exist, assume needs update
         },
     };
 
     // Determine the image name from container name
-    // Map container names to their corresponding image names
     let image_name = if container_name == "voltage-redis" {
         "voltage-redis:latest".to_string()
     } else if container_name == "voltage-influxdb" {
         "influxdb:3-core".to_string()
     } else if container_name.starts_with("voltageems-") {
-        // Rust services: voltageems-comsrv, voltageems-modsrv
         "voltageems:latest".to_string()
     } else if container_name.starts_with("voltage-") {
-        // Python services and frontend: voltage-hissrv, voltage-apigateway,
-        // voltage-netsrv, voltage-alarmsrv, voltage-apps
         format!("{}:latest", container_name)
     } else {
         return Ok(false); // Unknown container, assume no change
     };
 
-    // Get the image ID of the local image
     let local_image_output = Command::new("docker")
         .args(["images", &image_name, "--format={{.ID}}"])
         .output()?;
@@ -802,7 +549,6 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
         .trim()
         .to_string();
 
-    // Compare image IDs
     Ok(running_image_id != local_image_id)
 }
 
@@ -814,10 +560,6 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-
-    // ========================================================================
-    // build_docker_compose_args() Tests
-    // ========================================================================
 
     #[test]
     fn test_build_docker_compose_args_basic() {
@@ -839,22 +581,13 @@ mod tests {
     }
 
     #[test]
-    fn test_build_docker_compose_args_with_flag_and_services() {
-        let args =
-            build_docker_compose_args("up", "-d", vec!["redis".to_string(), "comsrv".to_string()]);
-        assert_eq!(args, vec!["up", "-d", "redis", "comsrv"]);
-    }
-
-    #[test]
     fn test_build_docker_compose_args_filters_all() {
-        // "all" keyword should be filtered out
         let args = build_docker_compose_args("stop", "", vec!["all".to_string()]);
         assert_eq!(args, vec!["stop"]);
     }
 
     #[test]
     fn test_build_docker_compose_args_filters_all_case_insensitive() {
-        // "ALL", "All", etc. should also be filtered
         let args = build_docker_compose_args(
             "stop",
             "",
@@ -864,70 +597,13 @@ mod tests {
     }
 
     #[test]
-    fn test_build_docker_compose_args_mixed_all() {
-        // Mix of "all" and actual services
-        let args = build_docker_compose_args(
-            "restart",
-            "",
-            vec!["all".to_string(), "comsrv".to_string(), "ALL".to_string()],
-        );
-        assert_eq!(args, vec!["restart", "comsrv"]);
-    }
-
-    #[test]
-    fn test_build_docker_compose_args_preserves_order() {
-        let args = build_docker_compose_args(
-            "build",
-            "",
-            vec!["c".to_string(), "a".to_string(), "b".to_string()],
-        );
-        assert_eq!(args, vec!["build", "c", "a", "b"]);
-    }
-
-    #[test]
-    fn test_build_docker_compose_args_empty_flag() {
-        // Empty flag should not be added
-        let args = build_docker_compose_args("ps", "", vec!["comsrv".to_string()]);
-        assert_eq!(args, vec!["ps", "comsrv"]);
-    }
-
-    // ========================================================================
-    // ensure_shm_file_exists() - No direct test (side effects on filesystem)
-    // Instead, we test the logic conceptually
-    // ========================================================================
-
-    // Note: ensure_shm_file_exists() has filesystem side effects and uses
-    // a fixed path (/dev/shm/voltage-rtdb.shm), so it's not suitable for
-    // unit testing without mocking. Integration tests would be more appropriate.
-
-    // ========================================================================
-    // ServiceCommands Tests (command enum variant tests)
-    // ========================================================================
-
-    #[test]
     fn test_service_commands_start_default() {
-        // Test that Start command can be created with empty services
         let cmd = ServiceCommands::Start { services: vec![] };
         match cmd {
             ServiceCommands::Start { services } => {
                 assert!(services.is_empty());
             },
             _ => panic!("Expected Start command"),
-        }
-    }
-
-    #[test]
-    fn test_service_commands_stop_with_services() {
-        let cmd = ServiceCommands::Stop {
-            services: vec!["comsrv".to_string(), "modsrv".to_string()],
-        };
-        match cmd {
-            ServiceCommands::Stop { services } => {
-                assert_eq!(services.len(), 2);
-                assert_eq!(services[0], "comsrv");
-                assert_eq!(services[1], "modsrv");
-            },
-            _ => panic!("Expected Stop command"),
         }
     }
 
@@ -970,54 +646,6 @@ mod tests {
                 assert!(smart);
             },
             _ => panic!("Expected Refresh command"),
-        }
-    }
-
-    #[test]
-    fn test_service_commands_set_action() {
-        let cmd = ServiceCommands::SetAction {
-            instance_name: "pcs_01".to_string(),
-            point_id: "start".to_string(),
-            value: 1.0,
-            detailed: true,
-        };
-        match cmd {
-            ServiceCommands::SetAction {
-                instance_name,
-                point_id,
-                value,
-                detailed,
-            } => {
-                assert_eq!(instance_name, "pcs_01");
-                assert_eq!(point_id, "start");
-                assert!((value - 1.0).abs() < f64::EPSILON);
-                assert!(detailed);
-            },
-            _ => panic!("Expected SetAction command"),
-        }
-    }
-
-    #[test]
-    fn test_service_commands_routing_show() {
-        let cmd = ServiceCommands::RoutingShow {
-            route_type: "m2c".to_string(),
-            prefix: Some("2:A:".to_string()),
-            detailed: false,
-            limit: 50,
-        };
-        match cmd {
-            ServiceCommands::RoutingShow {
-                route_type,
-                prefix,
-                detailed,
-                limit,
-            } => {
-                assert_eq!(route_type, "m2c");
-                assert_eq!(prefix, Some("2:A:".to_string()));
-                assert!(!detailed);
-                assert_eq!(limit, 50);
-            },
-            _ => panic!("Expected RoutingShow command"),
         }
     }
 

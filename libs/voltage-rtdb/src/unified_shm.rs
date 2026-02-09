@@ -82,50 +82,6 @@ pub struct UnifiedHeader {
 
 const _: () = assert!(std::mem::size_of::<UnifiedHeader>() == 64);
 
-// ========== Memory Pre-allocation ==========
-
-/// Pre-fault all pages in the memory map to avoid page faults during runtime
-///
-/// This function touches every page in the memory map to trigger page faults
-/// at startup time rather than during hot path execution. This is critical
-/// for real-time performance where page faults can cause 100+ ms latency.
-///
-/// ## Algorithm
-///
-/// Touches every page (4KB boundary) to force page allocation.
-/// Uses volatile read to prevent compiler optimization.
-///
-/// ## Performance Impact
-///
-/// - Startup time: Adds ~1ms per 1MB of shared memory
-/// - Runtime: Eliminates random 100+ms latency spikes from page faults
-fn prefault_pages(mmap: &mut MmapMut) {
-    let len = mmap.len();
-    let ptr = mmap.as_ptr();
-
-    // Standard page size is 4KB on most systems
-    const PAGE_SIZE: usize = 4096;
-
-    // Touch every page to trigger page faults now (at startup)
-    // Using volatile read to prevent compiler from optimizing this out
-    let mut checksum: u8 = 0;
-    for offset in (0..len).step_by(PAGE_SIZE) {
-        unsafe {
-            // Read from each page to fault it into memory
-            checksum = checksum.wrapping_add(std::ptr::read_volatile(ptr.add(offset)));
-        }
-    }
-
-    // Use checksum to prevent dead code elimination
-    std::hint::black_box(checksum);
-
-    tracing::debug!(
-        "Pre-faulted {} pages ({} bytes) of shared memory",
-        len.div_ceil(PAGE_SIZE),
-        len
-    );
-}
-
 // ========== Memory Layout ==========
 
 /// Calculate file size for given max_slots
@@ -294,10 +250,6 @@ impl UnifiedWriter {
                 .map_mut(&file)
                 .with_context(|| "Failed to mmap")?
         };
-
-        // Pre-allocate memory pages to avoid page faults during runtime
-        // This is critical for real-time performance
-        prefault_pages(&mut mmap);
 
         // Initialize header
         let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };

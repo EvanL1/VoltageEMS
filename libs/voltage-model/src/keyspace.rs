@@ -226,6 +226,28 @@ impl KeySpaceConfig {
         format!("{}:{}:name", self.inst_prefix, instance_id)
     }
 
+    /// Build channels hash key: comsrv:channels
+    ///
+    /// Stores all channel ID→name mappings in a single hash for efficient lookup.
+    /// - HSET: 设置单个 channel 名称
+    /// - HDEL: 删除单个 channel
+    /// - HGETALL: 获取所有 ID→名称映射
+    /// - HKEYS: 获取所有 channel ID
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// let config = KeySpaceConfig::production();
+    /// assert_eq!(config.channels_hash_key(), "comsrv:channels");
+    ///
+    /// let test_config = KeySpaceConfig::test();
+    /// assert_eq!(test_config.channels_hash_key(), "test:comsrv:channels");
+    /// ```
+    pub fn channels_hash_key(&self) -> String {
+        format!("{}:channels", self.data_prefix)
+    }
+
     /// Build instance status key: inst:{instance_id}:status
     pub fn instance_status_key(&self, instance_id: u32) -> String {
         format!("{}:{}:status", self.inst_prefix, instance_id)
@@ -525,6 +547,16 @@ mod tests {
             test_config.instance_name_index_key(),
             "test:inst:name:index"
         );
+    }
+
+    #[test]
+    fn test_channels_hash_key() {
+        let config = KeySpaceConfig::production();
+        assert_eq!(config.channels_hash_key(), "comsrv:channels");
+
+        // Test environment
+        let test_config = KeySpaceConfig::test();
+        assert_eq!(test_config.channels_hash_key(), "test:comsrv:channels");
     }
 
     #[test]

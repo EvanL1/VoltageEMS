@@ -562,39 +562,29 @@ pub enum Dnp3PointType {
 
 /// Data format for protocol values.
 ///
-/// Supports multiple serde aliases for flexibility in JSON configs:
+/// Supports case-insensitive deserialization with multiple aliases:
 /// - `uint16` / `u16`, `int16` / `i16`, etc.
 /// - `float32` / `f32` / `float`, `float64` / `f64` / `double`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum DataFormat {
     /// Boolean.
-    #[serde(alias = "boolean")]
     Bool,
     /// Unsigned 16-bit integer.
     #[default]
-    #[serde(alias = "u16")]
     UInt16,
     /// Signed 16-bit integer.
-    #[serde(alias = "i16")]
     Int16,
     /// Unsigned 32-bit integer.
-    #[serde(alias = "u32")]
     UInt32,
     /// Signed 32-bit integer.
-    #[serde(alias = "i32")]
     Int32,
     /// Unsigned 64-bit integer.
-    #[serde(alias = "u64")]
     UInt64,
     /// Signed 64-bit integer.
-    #[serde(alias = "i64")]
     Int64,
     /// 32-bit floating point.
-    #[serde(alias = "f32", alias = "float")]
     Float32,
     /// 64-bit floating point.
-    #[serde(alias = "f64", alias = "double")]
     Float64,
     /// String (fixed length).
     String,
@@ -620,6 +610,50 @@ impl DataFormat {
             Self::UInt64 | Self::Int64 | Self::Float64 => 8,
             Self::String => 16, // Default
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for DataFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct DataFormatVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for DataFormatVisitor {
+            type Value = DataFormat;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a data format string like 'int32', 'uint16', 'float32', etc.")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<DataFormat, E>
+            where
+                E: serde::de::Error,
+            {
+                match value.to_lowercase().as_str() {
+                    "bool" | "boolean" => Ok(DataFormat::Bool),
+                    "uint16" | "u16" => Ok(DataFormat::UInt16),
+                    "int16" | "i16" => Ok(DataFormat::Int16),
+                    "uint32" | "u32" => Ok(DataFormat::UInt32),
+                    "int32" | "i32" => Ok(DataFormat::Int32),
+                    "uint64" | "u64" => Ok(DataFormat::UInt64),
+                    "int64" | "i64" => Ok(DataFormat::Int64),
+                    "float32" | "f32" | "float" => Ok(DataFormat::Float32),
+                    "float64" | "f64" | "double" => Ok(DataFormat::Float64),
+                    "string" => Ok(DataFormat::String),
+                    _ => Err(serde::de::Error::unknown_variant(
+                        value,
+                        &[
+                            "bool", "uint16", "int16", "uint32", "int32", "uint64", "int64",
+                            "float32", "float64", "string",
+                        ],
+                    )),
+                }
+            }
+        }
+
+        deserializer.deserialize_str(DataFormatVisitor)
     }
 }
 
@@ -763,5 +797,22 @@ mod tests {
         assert_eq!(DataFormat::UInt16.register_count(), 1);
         assert_eq!(DataFormat::Float32.register_count(), 2);
         assert_eq!(DataFormat::Float64.register_count(), 4);
+    }
+
+    #[test]
+    fn test_data_format_case_insensitive() {
+        let formats = vec![
+            ("\"int32\"", DataFormat::Int32),
+            ("\"Int32\"", DataFormat::Int32),
+            ("\"INT32\"", DataFormat::Int32),
+            ("\"i32\"", DataFormat::Int32),
+            ("\"float32\"", DataFormat::Float32),
+            ("\"Float32\"", DataFormat::Float32),
+        ];
+
+        for (json, expected) in formats {
+            let result: DataFormat = serde_json::from_str(json).unwrap();
+            assert_eq!(result, expected, "Failed for {}", json);
+        }
     }
 }

@@ -35,6 +35,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use voltage_model::PointType;
+
+use crate::protocols::core::data::Value;
+use crate::protocols::core::quality::Quality;
 use crate::protocols::core::{
     AdjustmentCommand, ConnectionState, ControlCommand, ReadRequest, ReadResponse, WriteResult,
 };
@@ -89,6 +93,15 @@ pub enum PacketMetadata {
         slave_id: u8,
         /// Function code.
         function_code: u8,
+        /// Transaction ID (TCP only, None for RTU).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        transaction_id: Option<u16>,
+        /// Start register address (for read/write operations).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        start_address: Option<u16>,
+        /// Number of registers/coils (quantity).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        quantity: Option<u16>,
     },
 
     /// IEC 60870-5-104 packet metadata.
@@ -133,21 +146,75 @@ pub enum PacketMetadata {
 }
 
 impl PacketMetadata {
-    /// Create Modbus TCP metadata.
+    /// Create Modbus TCP metadata (basic, for backward compatibility).
     pub fn modbus_tcp(slave_id: u8, function_code: u8) -> Self {
         Self::Modbus {
             transport: ModbusTransportType::Tcp,
             slave_id,
             function_code,
+            transaction_id: None,
+            start_address: None,
+            quantity: None,
         }
     }
 
-    /// Create Modbus RTU metadata.
+    /// Create Modbus TCP metadata with full details.
+    ///
+    /// # Arguments
+    /// - `slave_id`: Unit/slave ID
+    /// - `function_code`: Modbus function code
+    /// - `transaction_id`: TCP transaction ID from MBAP header
+    /// - `start_address`: Starting register address
+    /// - `quantity`: Number of registers/coils
+    pub fn modbus_tcp_full(
+        slave_id: u8,
+        function_code: u8,
+        transaction_id: u16,
+        start_address: u16,
+        quantity: u16,
+    ) -> Self {
+        Self::Modbus {
+            transport: ModbusTransportType::Tcp,
+            slave_id,
+            function_code,
+            transaction_id: Some(transaction_id),
+            start_address: Some(start_address),
+            quantity: Some(quantity),
+        }
+    }
+
+    /// Create Modbus RTU metadata (basic, for backward compatibility).
     pub fn modbus_rtu(slave_id: u8, function_code: u8) -> Self {
         Self::Modbus {
             transport: ModbusTransportType::Rtu,
             slave_id,
             function_code,
+            transaction_id: None,
+            start_address: None,
+            quantity: None,
+        }
+    }
+
+    /// Create Modbus RTU metadata with address details.
+    ///
+    /// # Arguments
+    /// - `slave_id`: Unit/slave ID
+    /// - `function_code`: Modbus function code
+    /// - `start_address`: Starting register address
+    /// - `quantity`: Number of registers/coils
+    pub fn modbus_rtu_full(
+        slave_id: u8,
+        function_code: u8,
+        start_address: u16,
+        quantity: u16,
+    ) -> Self {
+        Self::Modbus {
+            transport: ModbusTransportType::Rtu,
+            slave_id,
+            function_code,
+            transaction_id: None, // RTU has no TID
+            start_address: Some(start_address),
+            quantity: Some(quantity),
         }
     }
 
@@ -205,6 +272,18 @@ pub enum ErrorContext {
     WriteAdjustment,
     /// Error during polling.
     Polling,
+    /// Error during polling a specific register segment.
+    ///
+    /// Contains the start and end register addresses that failed.
+    /// This provides precise diagnostics for identifying which
+    /// device registers are causing communication failures.
+    #[serde(rename = "polling_segment")]
+    PollingSegment {
+        /// Start register address.
+        start: u16,
+        /// End register address (inclusive).
+        end: u16,
+    },
     /// Protocol-level error.
     Protocol,
     /// Unknown error context.
@@ -219,8 +298,67 @@ impl std::fmt::Display for ErrorContext {
             Self::WriteControl => write!(f, "write_control"),
             Self::WriteAdjustment => write!(f, "write_adjustment"),
             Self::Polling => write!(f, "polling"),
+            Self::PollingSegment { start, end } => write!(f, "polling @{}-{}", start, end),
             Self::Protocol => write!(f, "protocol"),
             Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+// ============================================================================
+// Point Value Summary (for Info-level logging)
+// ============================================================================
+
+/// Lightweight point value summary for logging.
+///
+/// This struct avoids cloning the full `DataPoint` by storing only the essential
+/// fields needed for log output. The value is pre-converted to a string to
+/// avoid repeated formatting.
+#[derive(Debug, Clone)]
+pub struct PointValueSummary {
+    /// Point ID.
+    pub id: u32,
+    /// Point type (T/S/C/A).
+    pub point_type: PointType,
+    /// Value as string (pre-formatted for logging).
+    /// Boolean values are formatted as "1"/"0" instead of "true"/"false".
+    pub value: String,
+    /// Data quality.
+    pub quality: Quality,
+}
+
+impl PointValueSummary {
+    /// Create a summary from a DataPoint's components.
+    ///
+    /// Boolean values are converted to "1"/"0" for compact display.
+    pub fn new(id: u32, point_type: PointType, value: &Value, quality: Quality) -> Self {
+        let value_str = match value {
+            Value::Bool(b) => {
+                if *b {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
+            },
+            Value::Float(f) => {
+                // Format floats without unnecessary trailing zeros
+                if f.fract() == 0.0 {
+                    format!("{:.0}", f)
+                } else {
+                    format!("{:.2}", f)
+                }
+            },
+            Value::Integer(i) => i.to_string(),
+            Value::String(s) => s.clone(),
+            Value::Bytes(b) => format!("[{}B]", b.len()),
+            Value::Null => "null".to_string(),
+        };
+
+        Self {
+            id,
+            point_type,
+            value: value_str,
+            quality,
         }
     }
 }
@@ -355,6 +493,30 @@ pub enum ChannelLogEvent {
         data: Vec<u8>,
         /// Protocol-specific metadata.
         metadata: PacketMetadata,
+        /// Group ID for correlating related packets and point values.
+        ///
+        /// When set, allows matching request packets, response packets,
+        /// and parsed point values in the log output.
+        group_id: Option<u32>,
+    },
+
+    /// Point values collected from poll cycle (Info level).
+    ///
+    /// This event is logged at Info level to provide operational visibility
+    /// into actual point values without requiring Debug-level verbosity.
+    /// It is designed to be logged per-group for correlation with raw packets.
+    PointValues {
+        /// Event timestamp.
+        timestamp: SystemTime,
+        /// Collected point values (lightweight summaries).
+        values: Vec<PointValueSummary>,
+        /// Total points in this batch (may equal values.len()).
+        total_points: usize,
+        /// Group ID for correlating with raw packets.
+        ///
+        /// When set, matches the group_id from the RawPacket events
+        /// that produced these values.
+        group_id: Option<u32>,
     },
 }
 
@@ -373,6 +535,7 @@ impl ChannelLogEvent {
             Self::ReconnectSuccess { timestamp, .. } => *timestamp,
             Self::StateChanged { timestamp, .. } => *timestamp,
             Self::RawPacket { timestamp, .. } => *timestamp,
+            Self::PointValues { timestamp, .. } => *timestamp,
         }
     }
 
@@ -390,6 +553,7 @@ impl ChannelLogEvent {
             Self::ReconnectSuccess { .. } => "reconnect_success",
             Self::StateChanged { .. } => "state_changed",
             Self::RawPacket { .. } => "raw_packet",
+            Self::PointValues { .. } => "point_values",
         }
     }
 }
@@ -424,6 +588,8 @@ pub enum LogEventType {
     StateChanged,
     /// Raw packet events.
     RawPacket,
+    /// Point values events (Info level).
+    PointValues,
 }
 
 impl LogEventType {
@@ -442,12 +608,15 @@ impl LogEventType {
             ReconnectSuccess,
             StateChanged,
             RawPacket,
+            PointValues,
         ]
         .into_iter()
         .collect()
     }
 
     /// Get default event types (excludes high-frequency events).
+    ///
+    /// Includes `PointValues` for operational visibility at Info level.
     pub fn default_set() -> HashSet<LogEventType> {
         use LogEventType::*;
         [
@@ -459,6 +628,7 @@ impl LogEventType {
             ReconnectAttempt,
             ReconnectSuccess,
             StateChanged,
+            PointValues, // Info level: point values for operational monitoring
         ]
         .into_iter()
         .collect()
@@ -705,6 +875,7 @@ impl ChannelLogConfig {
                 }
                 LogEventType::RawPacket
             },
+            ChannelLogEvent::PointValues { .. } => LogEventType::PointValues,
         };
 
         self.enabled_events.contains(&event_type)
@@ -1321,12 +1492,30 @@ impl LogContext {
         .await;
     }
 
-    /// Log a raw packet event.
+    /// Log a raw packet event (without group ID, for backward compatibility).
     pub async fn log_raw_packet(
+        &self,
+        direction: PacketDirection,
+        data: Vec<u8>,
+        metadata: PacketMetadata,
+    ) {
+        self.log_raw_packet_with_group(direction, data, metadata, None)
+            .await;
+    }
+
+    /// Log a raw packet event with optional group ID.
+    ///
+    /// # Arguments
+    /// - `direction`: Send or Receive
+    /// - `data`: Raw packet bytes
+    /// - `metadata`: Protocol-specific metadata
+    /// - `group_id`: Optional group ID for correlating packets and values
+    pub async fn log_raw_packet_with_group(
         &self,
         direction: PacketDirection,
         mut data: Vec<u8>,
         metadata: PacketMetadata,
+        group_id: Option<u32>,
     ) {
         if !self.config.should_log_raw_packets() {
             return;
@@ -1342,6 +1531,57 @@ impl LogContext {
             direction,
             data,
             metadata,
+            group_id,
+        })
+        .await;
+    }
+
+    /// Log point values immediately (without group ID, for backward compatibility).
+    ///
+    /// This method is designed to be called after each group of points is read,
+    /// so that in Debug mode, point values appear immediately after the
+    /// corresponding raw packet logs, providing better correlation.
+    ///
+    /// The method takes a slice of tuples `(id, point_type, value, quality)` to avoid
+    /// requiring `DataPoint` to be in scope and to allow flexibility in the caller.
+    pub async fn log_point_values_immediate(&self, points: &[(u32, PointType, Value, Quality)]) {
+        self.log_point_values_with_group(points, None).await;
+    }
+
+    /// Log point values immediately with optional group ID.
+    ///
+    /// # Arguments
+    /// - `points`: Slice of (id, point_type, value, quality) tuples
+    /// - `group_id`: Optional group ID for correlating with raw packets
+    pub async fn log_point_values_with_group(
+        &self,
+        points: &[(u32, PointType, Value, Quality)],
+        group_id: Option<u32>,
+    ) {
+        // Fast path: skip if PointValues logging is disabled
+        if !self.config.is_enabled(LogEventType::PointValues) {
+            return;
+        }
+
+        if points.is_empty() {
+            return;
+        }
+
+        // Convert to summaries
+        let values: Vec<PointValueSummary> = points
+            .iter()
+            .map(|(id, point_type, value, quality)| {
+                PointValueSummary::new(*id, *point_type, value, *quality)
+            })
+            .collect();
+
+        let total_points = values.len();
+
+        self.log(ChannelLogEvent::PointValues {
+            timestamp: SystemTime::now(),
+            values,
+            total_points,
+            group_id,
         })
         .await;
     }
@@ -1410,11 +1650,12 @@ mod tests {
     #[test]
     fn test_log_event_type_sets() {
         let all = LogEventType::all();
-        assert_eq!(all.len(), 11);
+        assert_eq!(all.len(), 12); // +1 for PointValues
 
         let default_set = LogEventType::default_set();
         assert!(!default_set.contains(&LogEventType::PollCycle));
         assert!(default_set.contains(&LogEventType::Error));
+        assert!(default_set.contains(&LogEventType::PointValues)); // Info level includes PointValues
     }
 
     #[tokio::test]
