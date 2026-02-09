@@ -45,11 +45,12 @@ class EdgeDataClient:
             source: 数据源名称，默认"inst"
             
         Returns:
-            通道数据字典
+            通道数据字典，包含 values 和 ts (如果有时间戳)
         """
         try:
             # data_type 直接使用字符串，无需转换
             key = f"{source}:{channel_id}:{data_type}"
+            ts_key = f"{source}:{channel_id}:{data_type}:ts"
             
             # 首先检查键的类型
             key_type = await self.redis_client.type(key)
@@ -117,10 +118,77 @@ class EdgeDataClient:
                     str_value = value.decode('utf-8') if isinstance(value, bytes) else str(value)
                     result[str_point_id] = str_value
             
-            return result
+            # 获取时间戳数据
+            ts_data = await self._get_timestamp_data(ts_key)
+            
+            # 返回包含values和可选ts的字典
+            return_value = {"values": result}
+            if ts_data:
+                return_value["ts"] = ts_data
+            
+            return return_value
             
         except Exception as e:
             logger.error(f"获取数据源[{source}]数据失败 {key}: {e}")
+            return {}
+    
+    async def _get_timestamp_data(self, ts_key: str) -> Dict[str, int]:
+        """获取时间戳数据
+        
+        Args:
+            ts_key: 时间戳键名
+            
+        Returns:
+            时间戳字典
+        """
+        try:
+            # 检查时间戳键的类型
+            ts_key_type = await self.redis_client.type(ts_key)
+            ts_key_type_str = ts_key_type.decode('utf-8') if isinstance(ts_key_type, bytes) else str(ts_key_type)
+            
+            if ts_key_type_str == 'none':
+                logger.debug(f"时间戳键不存在: {ts_key}")
+                return {}
+            
+            ts_data = None
+            if ts_key_type_str == 'hash':
+                # 使用HGETALL读取hash类型
+                logger.debug(f"使用HGETALL读取时间戳数据: {ts_key}")
+                ts_data = await self.redis_client.hgetall(ts_key)
+            elif ts_key_type_str == 'string':
+                # 使用GET读取string类型，然后尝试解析JSON
+                logger.debug(f"使用GET读取时间戳数据: {ts_key}")
+                raw_ts_data = await self.redis_client.get(ts_key)
+                if raw_ts_data:
+                    try:
+                        ts_data = json.loads(raw_ts_data)
+                        if not isinstance(ts_data, dict):
+                            logger.warning(f"时间戳键 {ts_key} 的数据不是字典格式")
+                            return {}
+                    except json.JSONDecodeError:
+                        logger.warning(f"时间戳键 {ts_key} 的JSON数据解析失败")
+                        return {}
+            
+            if not ts_data:
+                return {}
+            
+            # 转换时间戳数据类型
+            ts_result = {}
+            for point_id, timestamp in ts_data.items():
+                try:
+                    # 确保键是字符串
+                    str_point_id = point_id.decode('utf-8') if isinstance(point_id, bytes) else str(point_id)
+                    # 确保时间戳是整数（毫秒）
+                    str_timestamp = timestamp.decode('utf-8') if isinstance(timestamp, bytes) else str(timestamp)
+                    ts_result[str_point_id] = int(str_timestamp)
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"时间戳数据类型转换失败 {point_id}={timestamp}: {e}")
+                    continue
+            
+            return ts_result
+            
+        except Exception as e:
+            logger.error(f"获取时间戳数据失败 {ts_key}: {e}")
             return {}
     
     async def get_comsrv_data(self, channel_id: int, data_type: str) -> Dict[str, Any]:
