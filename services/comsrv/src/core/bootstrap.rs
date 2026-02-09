@@ -98,7 +98,7 @@ pub fn initialize_logging(
         console_level,
         file_level: tracing::Level::DEBUG,
         enable_json: false,
-        max_log_files: 365,
+        max_log_files: 30,
         enable_api_log: true,
         api_log_level: tracing::Level::INFO,
     };

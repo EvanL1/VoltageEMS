@@ -39,7 +39,8 @@ def setup_logging():
     log_file = os.path.join(log_dir, 'apigateway.log')
     try:
         os.makedirs(log_dir, exist_ok=True)
-        handlers.append(logging.FileHandler(log_file))
+        from logging.handlers import RotatingFileHandler
+        handlers.append(RotatingFileHandler(log_file, maxBytes=20 * 1024 * 1024, backupCount=5))
     except (OSError, PermissionError):
         # File logging not available, use stdout only
         pass

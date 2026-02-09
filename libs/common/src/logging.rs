@@ -731,7 +731,7 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
 
     // Start background compression task after logging the initialization
     // Move the values since config is no longer needed
-    start_log_compression_task(config.log_dir, config.service_name);
+    start_log_compression_task(config.log_dir, config.service_name, config.max_log_files);
 
     Ok(())
 }
@@ -909,7 +909,7 @@ use tokio::time::{interval, Duration};
 /// Start background log compression task
 ///
 /// The task handle is stored internally and can be stopped via `shutdown_logging_tasks()`.
-pub fn start_log_compression_task(log_dir: PathBuf, service_name: String) {
+pub fn start_log_compression_task(log_dir: PathBuf, service_name: String, max_log_files: usize) {
     let handle = tokio::spawn(async move {
         // Initial delay of 1 minute to let service fully start
         tokio::time::sleep(Duration::from_secs(60)).await;
@@ -919,7 +919,7 @@ pub fn start_log_compression_task(log_dir: PathBuf, service_name: String) {
 
         loop {
             interval.tick().await;
-            if let Err(e) = compress_old_logs(&log_dir, &service_name).await {
+            if let Err(e) = compress_old_logs(&log_dir, &service_name, max_log_files).await {
                 tracing::error!("Log compression error for {}: {}", service_name, e);
             }
         }
@@ -929,13 +929,16 @@ pub fn start_log_compression_task(log_dir: PathBuf, service_name: String) {
     store_logging_task_handle(handle);
 }
 
-/// Compress log files older than 7 days, delete compressed logs older than 365 days
+/// Compress log files older than 1 day, delete compressed logs older than `max_log_files` days.
+/// Also cleans up channel logs under `{log_dir}/channels/`.
 async fn compress_old_logs(
     log_dir: &Path,
     service_name: &str,
+    max_log_files: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::{Duration, SystemTime};
 
+    let retention = Duration::from_secs((max_log_files as u64) * 86400);
     let mut entries = tokio::fs::read_dir(log_dir).await?;
 
     while let Some(entry) = entries.next_entry().await? {
@@ -946,9 +949,12 @@ async fn compress_old_logs(
         };
 
         // Skip non-log files (check both regular and API log patterns)
-        // New format: {YYYYMMDD}_{service}.log or {YYYYMMDD}_{service}_api.log
-        let is_regular_log =
-            file_name.contains(&format!("_{}.log", service_name)) && !file_name.contains("_api");
+        // Regular: {YYYYMMDD}_{service}.log or {YYYYMMDD}_{service}.N.log (size-rotated)
+        // API: {YYYYMMDD}_{service}_api.log
+        let service_pattern = format!("_{}", service_name);
+        let is_regular_log = file_name.contains(&service_pattern)
+            && file_name.ends_with(".log")
+            && !file_name.contains("_api");
         let is_api_log = file_name.contains(&format!("_{}_api.log", service_name));
 
         if !is_regular_log && !is_api_log && !file_name.ends_with(".log.gz") {
@@ -968,15 +974,84 @@ async fn compress_old_logs(
                 tracing::debug!("Compressed: {}", file_name);
             }
         } else {
-            // Delete compressed logs older than 365 days
-            if age > Duration::from_secs(365 * 86400) {
+            // Delete compressed logs older than max_log_files days
+            if age > retention {
                 tokio::fs::remove_file(&path).await?;
-                tracing::debug!("Deleted: {}", file_name);
+                tracing::info!(
+                    "Deleted old log: {} (age: {} days)",
+                    file_name,
+                    age.as_secs() / 86400
+                );
             }
         }
     }
 
+    // Clean up channel logs (comsrv writes per-channel daily logs here)
+    let channels_dir = log_dir.join("channels");
+    if channels_dir.exists() {
+        cleanup_channel_logs(&channels_dir, max_log_files).await;
+    }
+
     Ok(())
+}
+
+/// Clean up old channel log files under `logs/{service}/channels/`.
+///
+/// Compresses files older than 1 day, deletes `.gz` files beyond retention.
+async fn cleanup_channel_logs(channels_dir: &Path, max_log_files: usize) {
+    use std::time::{Duration, SystemTime};
+
+    let retention = Duration::from_secs((max_log_files as u64) * 86400);
+    let Ok(mut channel_dirs) = tokio::fs::read_dir(channels_dir).await else {
+        return;
+    };
+
+    while let Ok(Some(channel_entry)) = channel_dirs.next_entry().await {
+        let channel_path = channel_entry.path();
+        if !channel_path.is_dir() {
+            continue;
+        }
+
+        let Ok(mut log_files) = tokio::fs::read_dir(&channel_path).await else {
+            continue;
+        };
+
+        while let Ok(Some(file_entry)) = log_files.next_entry().await {
+            let file_path = file_entry.path();
+            let file_name = file_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            if !file_name.ends_with(".log") && !file_name.ends_with(".log.gz") {
+                continue;
+            }
+
+            let Ok(metadata) = tokio::fs::metadata(&file_path).await else {
+                continue;
+            };
+            let Ok(modified) = metadata.modified() else {
+                continue;
+            };
+            let Ok(age) = SystemTime::now().duration_since(modified) else {
+                continue;
+            };
+
+            if !file_name.ends_with(".gz") {
+                // Compress channel logs older than 1 day
+                if age > Duration::from_secs(86400) && compress_file(&file_path).await.is_ok() {
+                    let _ = tokio::fs::remove_file(&file_path).await;
+                    tracing::debug!("Compressed channel log: {}", file_name);
+                }
+            } else {
+                // Delete compressed channel logs beyond retention
+                if age > retention {
+                    let _ = tokio::fs::remove_file(&file_path).await;
+                    tracing::debug!("Deleted old channel log: {}", file_name);
+                }
+            }
+        }
+    }
 }
 
 /// Compress a single file
