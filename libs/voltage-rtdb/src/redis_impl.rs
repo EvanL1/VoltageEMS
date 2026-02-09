@@ -38,10 +38,6 @@ impl RedisRtdb {
 }
 
 impl Rtdb for RedisRtdb {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn get<'a>(&'a self, key: &'a str) -> Result<Option<Bytes>> {
         let value: Option<String> = self.client.get(key).await.map_err(|e| anyhow::anyhow!(e))?;
         Ok(value.map(Bytes::from))
@@ -254,13 +250,6 @@ impl Rtdb for RedisRtdb {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    async fn time_millis(&self) -> Result<i64> {
-        self.client
-            .time_millis()
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
-    }
-
     async fn pipeline_hash_mset(&self, operations: crate::traits::HashMsetOps) -> Result<()> {
         if operations.is_empty() {
             return Ok(());
@@ -365,36 +354,6 @@ mod tests {
 
         // Cleanup
         rtdb.del("test:list").await.unwrap();
-    }
-
-    #[tokio::test]
-    #[ignore = "Requires Redis connection"]
-    async fn test_redis_rtdb_todo_queues() {
-        let rtdb = RedisRtdb::new("redis://localhost:6379")
-            .await
-            .expect("Failed to connect to Redis");
-
-        // Enqueue into per-channel queues
-        rtdb.enqueue_control(1001, r#"{"cmd":"c1"}"#).await.unwrap();
-        rtdb.enqueue_adjustment(1001, r#"{"cmd":"a1"}"#)
-            .await
-            .unwrap();
-
-        // Pop using list operations
-        let c_key = "comsrv:1001:C:TODO";
-        let a_key = "comsrv:1001:A:TODO";
-
-        let action1 = rtdb.list_lpop(c_key).await.unwrap();
-        assert!(action1.is_some());
-        let action1 = action1.unwrap();
-        let s1 = std::str::from_utf8(action1.as_ref()).unwrap();
-        assert!(s1.contains("c1"));
-
-        let action2 = rtdb.list_lpop(a_key).await.unwrap();
-        assert!(action2.is_some());
-        let action2 = action2.unwrap();
-        let s2 = std::str::from_utf8(action2.as_ref()).unwrap();
-        assert!(s2.contains("a1"));
     }
 
     #[tokio::test]

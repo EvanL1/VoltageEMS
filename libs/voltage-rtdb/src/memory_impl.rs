@@ -12,7 +12,6 @@ use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// In-memory RTDB implementation with concurrent access support
 ///
@@ -132,10 +131,6 @@ impl Rtdb for MemoryRtdb {
         };
 
         async move { Ok(new_value) }
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 
     fn hash_set(
@@ -505,14 +500,6 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(new_value) }
     }
 
-    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send + '_ {
-        let result = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .map_err(|e| anyhow::anyhow!("System time error: {}", e));
-        async move { result }
-    }
-
     fn pipeline_hash_mset(
         &self,
         operations: crate::traits::HashMsetOps,
@@ -624,31 +611,6 @@ mod tests {
         rtdb.list_trim("test:list", 0, 0).await.unwrap();
         let range = rtdb.list_range("test:list", 0, -1).await.unwrap();
         assert_eq!(range.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_memory_rtdb_todo_queues() {
-        let rtdb = MemoryRtdb::new();
-
-        // Enqueue control/adjustment into per-channel queues
-        rtdb.enqueue_control(1001, r#"{"cmd":"c1"}"#).await.unwrap();
-        rtdb.enqueue_adjustment(1001, r#"{"cmd":"a1"}"#)
-            .await
-            .unwrap();
-
-        // Verify queue contents by popping from keys
-        let c_key = "comsrv:1001:C:TODO";
-        let a_key = "comsrv:1001:A:TODO";
-
-        let c1 = rtdb.list_lpop(c_key).await.unwrap();
-        assert_eq!(c1, Some(Bytes::from(r#"{"cmd":"c1"}"#)));
-
-        let a1 = rtdb.list_lpop(a_key).await.unwrap();
-        assert_eq!(a1, Some(Bytes::from(r#"{"cmd":"a1"}"#)));
-
-        // Now empty
-        let empty = rtdb.list_lpop(a_key).await.unwrap();
-        assert_eq!(empty, None);
     }
 
     #[tokio::test]
@@ -923,29 +885,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
-    async fn test_time_millis_operation() {
-        let rtdb = MemoryRtdb::new();
-
-        // Test time_millis returns a reasonable value
-        let time1 = rtdb.time_millis().await.unwrap();
-        assert!(time1 > 0);
-
-        // Test time progresses (sleep for a bit)
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        let time2 = rtdb.time_millis().await.unwrap();
-        assert!(time2 > time1);
-
-        // Verify time is in milliseconds since UNIX_EPOCH
-        let now_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        let time_secs = time2 / 1000;
-        assert!(time_secs >= now_secs - 1 && time_secs <= now_secs + 1);
-    }
-
-    #[tokio::test]
     async fn test_stats_includes_set_count() {
         let rtdb = MemoryRtdb::new();
 
@@ -1166,36 +1105,5 @@ mod tests {
             "Expected 1000.0, got {}",
             result
         );
-    }
-
-    // ========== Dual-Mode Write Tests (Init vs Runtime) ==========
-
-    #[tokio::test]
-    async fn test_write_point_init_mode() {
-        let rtdb = MemoryRtdb::new();
-
-        // Write Instance Action point (Init mode)
-        rtdb.write_point_init("inst:1:A", 10, 100.0).await.unwrap();
-
-        // Verify: value is written (100.0 may be stored as "100" or "100.0")
-        let value = rtdb.hash_get("inst:1:A", "10").await.unwrap();
-        let value_str = String::from_utf8(value.unwrap().to_vec()).unwrap();
-        let value_f64: f64 = value_str.parse().unwrap();
-        assert_eq!(value_f64, 100.0);
-
-        // Verify: timestamp is 0
-        let ts = rtdb.hash_get("inst:1:A", "ts:10").await.unwrap();
-        assert_eq!(ts, Some(Bytes::from("0")));
-
-        // Verify: no TODO queue written (any possible TODO key should not exist)
-        let todo_keys = ["comsrv:1001:A:TODO", "comsrv:1001:C:TODO"];
-        for key in &todo_keys {
-            let data = rtdb.list_range(key, 0, -1).await.unwrap();
-            assert_eq!(
-                data.len(),
-                0,
-                "No TODO queue should be triggered in init mode"
-            );
-        }
     }
 }
