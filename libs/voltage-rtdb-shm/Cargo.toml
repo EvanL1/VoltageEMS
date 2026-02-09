@@ -9,8 +9,12 @@ crate-type = ["rlib"]
 
 [dependencies]
 voltage-model = { path = "../voltage-model" }
+voltage-rtdb = { path = "../voltage-rtdb" }
+voltage-routing = { path = "../voltage-routing" }
+bytes = { workspace = true }
 parking_lot = { workspace = true }
 rustc-hash = { workspace = true }
+anyhow = { workspace = true }
 memmap2 = "0.9"
 arc-swap = "1.7"
 tokio = { workspace = true }

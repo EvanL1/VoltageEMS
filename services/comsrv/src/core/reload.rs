@@ -369,7 +369,7 @@ impl<R: Rtdb> ChannelManager<R> {
     /// independently of channel reload operations.
     pub async fn reload_routing_cache(
         sqlite_pool: &sqlx::SqlitePool,
-        routing_cache: &Arc<voltage_rtdb::RoutingCache>,
+        routing_cache: &Arc<voltage_routing::RoutingCache>,
     ) -> anyhow::Result<(usize, usize, usize)> {
         use tracing::debug;
 

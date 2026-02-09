@@ -13,7 +13,8 @@ use crate::routing_loader::{
 };
 
 use super::instance_manager::InstanceManager;
-use voltage_rtdb::{Rtdb, SharedSlotRef};
+use voltage_rtdb::Rtdb;
+use voltage_rtdb_shm::SharedSlotRef;
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Create or update routing for a single measurement point (UPSERT)
@@ -37,7 +38,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let instance_name = sqlx::query_scalar::<_, String>(
             "SELECT instance_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -58,7 +59,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 updated_at = CURRENT_TIMESTAMP
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(instance_name)
         .bind(request.channel_id)
         .bind(request.four_remote.map(|fr| fr.as_str()))
@@ -130,7 +131,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let instance_name = sqlx::query_scalar::<_, String>(
             "SELECT instance_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -151,7 +152,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 updated_at = CURRENT_TIMESTAMP
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(instance_name)
         .bind(point_id)
         .bind(request.channel_id)
@@ -169,7 +170,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let result = sqlx::query(
             "DELETE FROM measurement_routing WHERE instance_id = ? AND measurement_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(point_id)
         .execute(&self.pool)
         .await?;
@@ -219,7 +220,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub async fn delete_action_routing(&self, instance_id: u32, point_id: u32) -> Result<u64> {
         let result =
             sqlx::query("DELETE FROM action_routing WHERE instance_id = ? AND action_id = ?")
-                .bind(instance_id as i32)
+                .bind(instance_id as i64)
                 .bind(point_id)
                 .execute(&self.pool)
                 .await?;
@@ -242,7 +243,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             "#,
         )
         .bind(enabled)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(point_id)
         .execute(&self.pool)
         .await?;
@@ -265,7 +266,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             "#,
         )
         .bind(enabled)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(point_id)
         .execute(&self.pool)
         .await?;
@@ -287,7 +288,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ORDER BY channel_id, channel_type, channel_point_id
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
@@ -305,7 +306,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ORDER BY action_id
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
@@ -447,12 +448,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub async fn delete_all_routing(&self, instance_id: u32) -> Result<(u64, u64)> {
         let measurement_result =
             sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
-                .bind(instance_id as i32)
+                .bind(instance_id as i64)
                 .execute(&self.pool)
                 .await?;
 
         let action_result = sqlx::query("DELETE FROM action_routing WHERE instance_id = ?")
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&self.pool)
             .await?;
 
@@ -497,7 +498,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use voltage_rtdb::{helpers::create_test_rtdb, RoutingCache};
+    use voltage_routing::RoutingCache;
+    use voltage_rtdb::helpers::create_test_rtdb;
 
     // Helper: Create test database with full modsrv schema
     async fn create_test_database() -> (TempDir, SqlitePool) {

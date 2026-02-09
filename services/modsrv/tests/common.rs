@@ -319,7 +319,7 @@ pub mod helpers {
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_id = ?)",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(pool)
         .await?;
 
@@ -369,8 +369,8 @@ pub mod helpers {
 pub mod routing {
     use super::*;
     use bytes::Bytes;
+    use voltage_routing::RoutingCache;
     use voltage_rtdb::MemoryRtdb;
-    use voltage_rtdb::RoutingCache;
     use voltage_rtdb::Rtdb;
 
     /// Create test environment with M2C routing configuration

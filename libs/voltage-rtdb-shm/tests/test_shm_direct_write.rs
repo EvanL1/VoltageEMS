@@ -10,7 +10,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
-use voltage_rtdb::{ChannelToSlotIndex, RoutingCache, SharedConfig, UnifiedReader, UnifiedWriter};
+use voltage_routing::RoutingCache;
+use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, UnifiedReader, UnifiedWriter};
 
 // ============================================================================
 // Test Helpers

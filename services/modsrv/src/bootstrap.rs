@@ -199,7 +199,7 @@ where
 pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     _rtdb: Arc<voltage_rtdb::RedisRtdb>,
-    routing_cache: Arc<voltage_rtdb::RoutingCache>,
+    routing_cache: Arc<voltage_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::MemoryRtdb>>> {
     // Create MemoryRtdb for testing (ignore the injected RedisRtdb)
@@ -220,7 +220,7 @@ pub async fn setup_instance_manager(
 pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     rtdb: Arc<voltage_rtdb::RedisRtdb>,
-    routing_cache: Arc<voltage_rtdb::RoutingCache>,
+    routing_cache: Arc<voltage_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::RedisRtdb>>> {
     // RTDB is a pure storage abstraction
@@ -382,7 +382,7 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
 /// * `Err(anyhow::Error)` - Database or parsing errors
 pub async fn refresh_routing_cache(
     sqlite_pool: &SqlitePool,
-    routing_cache: &Arc<voltage_rtdb::RoutingCache>,
+    routing_cache: &Arc<voltage_routing::RoutingCache>,
 ) -> anyhow::Result<usize> {
     debug!("Refreshing routes");
 
@@ -438,7 +438,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         let c2m_len = maps.c2m.len();
         let m2c_len = maps.m2c.len();
 
-        let cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
+        let cache = Arc::new(voltage_routing::RoutingCache::from_maps(
             maps.c2m, maps.m2c, maps.c2c,
         ));
 

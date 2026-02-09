@@ -17,9 +17,11 @@ use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
 use voltage_model::{sanitize_value, ValidationConfig};
 use voltage_routing::set_action_point;
+use voltage_routing::RoutingCache;
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{KeySpaceConfig, RoutingCache, ShmNotifier, UnifiedReader};
+use voltage_rtdb::KeySpaceConfig;
+use voltage_rtdb_shm::{ShmNotifier, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
 #[inline]
@@ -202,7 +204,7 @@ pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     /// Optional UnifiedReader for cross-process zero-copy reads
     shared_reader: Option<Arc<UnifiedReader>>,
     /// Optional UnifiedWriter for M2C via shared memory
-    shm_action_writer: Option<Arc<voltage_rtdb::UnifiedWriter>>,
+    shm_action_writer: Option<Arc<voltage_rtdb_shm::UnifiedWriter>>,
     /// Optional ShmNotifier for UDS event notification (M2C low-latency path)
     shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
 }
@@ -255,7 +257,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     ///
     /// When enabled, action outputs are written to SHM in addition to Redis.
     /// SHM serves as the primary path for comsrv's ShmCommandPoller.
-    pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> Self {
+    pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> Self {
         self.shm_action_writer = Some(writer);
         self
     }
@@ -940,20 +942,12 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         // Use voltage_routing to set the action point
         // Use precomputed pool for common point IDs (0-255)
         let point_str = precomputed::get_point_id_str_or_alloc(point);
-        // SHM writer enables direct M2C via shared memory (primary path)
-        // Lock notifier for mutable access during async call
-        let mut notifier_guard = match &self.shm_notifier {
-            Some(n) => Some(n.lock().await),
-            None => None,
-        };
         let routed = match set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_id,
             &point_str,
             resolved_value,
-            self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-            notifier_guard.as_deref_mut(),
         )
         .await
         {
@@ -1047,20 +1041,12 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 // Use M2C routing for action points
                 // Use precomputed pool for common point IDs (0-255)
                 let point_str = precomputed::get_point_id_str_or_alloc(point);
-                // SHM writer enables direct M2C via shared memory
-                // Lock notifier for mutable access during async call
-                let mut notifier_guard = match &self.shm_notifier {
-                    Some(n) => Some(n.lock().await),
-                    None => None,
-                };
                 match set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
                     instance_id,
                     &point_str,
                     value,
-                    self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-                    notifier_guard.as_deref_mut(),
                 )
                 .await
                 {

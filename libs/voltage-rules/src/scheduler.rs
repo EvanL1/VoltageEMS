@@ -20,8 +20,9 @@ use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use voltage_calc::StateStore;
+use voltage_routing::RoutingCache;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{RoutingCache, ShmNotifier, UnifiedReader, UnifiedWriter};
+use voltage_rtdb_shm::{ShmNotifier, UnifiedReader, UnifiedWriter};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;

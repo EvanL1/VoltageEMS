@@ -28,7 +28,8 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower::ServiceExt;
-use voltage_rtdb::{MemoryRtdb, RoutingCache};
+use voltage_routing::RoutingCache;
+use voltage_rtdb::MemoryRtdb;
 use voltage_rules::RuleScheduler;
 
 /// Create test SQLite database with rules schema

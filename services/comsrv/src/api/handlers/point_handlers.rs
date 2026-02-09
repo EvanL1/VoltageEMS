@@ -2968,7 +2968,7 @@ mod cache_tests {
 
     use crate::api::routes::AppState;
     use crate::core::channels::ChannelManager;
-    use voltage_rtdb::RoutingCache;
+    use voltage_routing::RoutingCache;
 
     /// Helper: Create in-memory SQLite pool for testing
     async fn create_test_sqlite_pool() -> sqlx::SqlitePool {

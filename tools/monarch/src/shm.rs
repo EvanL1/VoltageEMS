@@ -16,7 +16,8 @@ use rustyline::{Editor, Helper};
 use std::io;
 use std::time::{Duration, Instant};
 use voltage_model::KeySpaceConfig;
-use voltage_rtdb::{default_shm_path, RoutingCache, SharedConfig, UnifiedReader};
+use voltage_routing::RoutingCache;
+use voltage_rtdb_shm::{default_shm_path, SharedConfig, UnifiedReader};
 
 // TUI imports
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -396,7 +397,7 @@ fn print_info(reader: &UnifiedReader, routing_cache: &RoutingCache) {
 
     // Writer heartbeat
     let heartbeat = reader.writer_heartbeat();
-    let heartbeat_age = voltage_rtdb::shared_impl::timestamp_ms().saturating_sub(heartbeat);
+    let heartbeat_age = voltage_rtdb_shm::timestamp_ms().saturating_sub(heartbeat);
     let alive = reader.is_writer_alive(5000);
     let status = if alive {
         format!("{} ({}ms ago)", "alive".green(), heartbeat_age)
@@ -838,7 +839,7 @@ fn draw_dashboard(
 ) {
     let alive = reader.is_writer_alive(5000);
     let heartbeat = reader.writer_heartbeat();
-    let heartbeat_age = voltage_rtdb::shared_impl::timestamp_ms().saturating_sub(heartbeat);
+    let heartbeat_age = voltage_rtdb_shm::timestamp_ms().saturating_sub(heartbeat);
 
     // Layout: status bar + data table
     let chunks = Layout::default()

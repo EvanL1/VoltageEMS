@@ -670,6 +670,7 @@ dependencies = [
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
+ "voltage-rtdb-shm",
  "voltage-schema-macro",
  "voltage_iec104",
  "voltage_j1939",
@@ -2052,6 +2053,7 @@ dependencies = [
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
+ "voltage-rtdb-shm",
  "voltage-rules",
  "voltage-schema-macro",
 ]
@@ -2083,6 +2085,7 @@ dependencies = [
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
+ "voltage-rtdb-shm",
  "voltage-rules",
 ]
 
@@ -4324,6 +4327,7 @@ name = "voltage-routing"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "itoa",
  "rustc-hash",
@@ -4341,34 +4345,31 @@ name = "voltage-rtdb"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arc-swap",
  "bytes",
  "dashmap",
  "itoa",
- "memmap2",
  "parking_lot",
  "redis",
  "regex",
- "rustc-hash",
  "ryu",
  "serde",
  "serde_json",
  "serial_test",
- "tempfile",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
  "uuid",
  "voltage-infra",
  "voltage-model",
- "voltage-rtdb-shm",
 ]
 
 [[package]]
 name = "voltage-rtdb-shm"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "arc-swap",
+ "bytes",
  "memmap2",
  "parking_lot",
  "rustc-hash",
@@ -4376,6 +4377,8 @@ dependencies = [
  "tokio",
  "tracing",
  "voltage-model",
+ "voltage-routing",
+ "voltage-rtdb",
 ]
 
 [[package]]
@@ -4397,6 +4400,7 @@ dependencies = [
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
+ "voltage-rtdb-shm",
 ]
 
 [[package]]

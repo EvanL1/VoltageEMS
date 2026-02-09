@@ -46,7 +46,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let product_name = sqlx::query_scalar::<_, String>(
             "SELECT product_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -96,7 +96,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ORDER BY mp.measurement_id
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(&product_name)
         .fetch_all(&self.pool)
         .await?
@@ -169,7 +169,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ORDER BY ap.action_id
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(&product_name)
         .fetch_all(&self.pool)
         .await?
@@ -214,7 +214,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // Get instance metadata (product_name, properties)
         let instance_row: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT product_name, properties FROM instances WHERE instance_id = ?")
-                .bind(instance_id as i32)
+                .bind(instance_id as i64)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| anyhow!("Failed to load instance {} metadata: {}", instance_id, e))?;
@@ -375,32 +375,44 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // Redis TODO queue remains as fallback
         // UDS notifier enables event-driven dispatch (~1-2ms latency)
 
-        // Acquire notifier lock if available (OnceLock + tokio Mutex for async context)
-        // Use timeout to prevent blocking in high-concurrency scenarios
-        let mut notifier_guard = match self.shm_notifier.get() {
-            Some(n) => {
-                match tokio::time::timeout(Duration::from_millis(100), n.lock()).await {
-                    Ok(guard) => Some(guard),
-                    Err(_) => {
-                        warn!("ShmNotifier lock timeout, falling back to TODO queue");
-                        None // 超时，降级到 TODO 队列
-                    },
-                }
-            },
-            None => None,
-        };
-        let notifier_ref = notifier_guard.as_deref_mut();
-
         let outcome = voltage_routing::set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_id,
             action_id,
             value,
-            self.shm_action_writer.get().map(|w| w.as_ref()),
-            notifier_ref,
         )
         .await?;
+
+        // SHM direct write + UDS notification (primary M2C path, low-latency)
+        // RouteContext provides numeric fields for efficient SHM writes
+        if let Some(ctx) = &outcome.route_context {
+            // Write action value to shared memory (zero-copy IPC)
+            if let Some(writer) = self.shm_action_writer.get() {
+                writer.set_action(
+                    ctx.target_channel_id,
+                    ctx.target_point_type,
+                    ctx.target_point_id,
+                    value,
+                    ctx.timestamp_ms as u64,
+                );
+            }
+            // UDS notification for event-driven dispatch (~1-2ms latency)
+            if let Some(notifier_lock) = self.shm_notifier.get() {
+                match tokio::time::timeout(Duration::from_millis(100), notifier_lock.lock()).await {
+                    Ok(mut guard) => {
+                        if let Some(pt) = voltage_model::PointType::from_u8(ctx.target_point_type) {
+                            let _ = guard
+                                .notify(ctx.target_channel_id, pt, ctx.target_point_id)
+                                .await;
+                        }
+                    },
+                    Err(_) => {
+                        warn!("ShmNotifier lock timeout, relying on TODO queue");
+                    },
+                }
+            }
+        }
 
         if outcome.routed {
             debug!(
@@ -439,7 +451,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let product_name = sqlx::query_scalar::<_, String>(
             "SELECT product_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -487,7 +499,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE mp.product_name = ? AND mp.measurement_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(&product_name)
         .bind(point_id)
         .fetch_one(&self.pool)
@@ -534,7 +546,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let product_name = sqlx::query_scalar::<_, String>(
             "SELECT product_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -582,7 +594,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE ap.product_name = ? AND ap.action_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(&product_name)
         .bind(point_id)
         .fetch_one(&self.pool)

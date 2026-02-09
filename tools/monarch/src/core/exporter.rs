@@ -739,7 +739,7 @@ impl ConfigExporter {
                     name,
                     description,
                     enabled,
-                    priority: priority as u32,
+                    priority: u32::try_from(priority).unwrap_or(0),
                 },
                 flow_json,
             };

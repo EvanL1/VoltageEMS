@@ -13,21 +13,16 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
-rustc-hash = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
-memmap2 = "0.9"  # Shared memory mmap support (Round 115)
-arc-swap = "1.7"  # Lock-free atomic pointer swap for RoutingCache (Round 121)
 itoa = { workspace = true }  # High-performance u32 to string (Round 129)
 ryu = { workspace = true }   # High-performance f64 to string (Round 129)
-# Removed: async-trait (replaced by native impl Trait), chrono (unused), uuid (test-only)
 
 # Core dependencies for keyspace
 voltage-model = { path = "../voltage-model" }
-voltage-rtdb-shm = { path = "../voltage-rtdb-shm" }
 
 # Optional dependencies
 voltage-infra = { path = "../voltage-infra", optional = true, default-features = false, features = ["redis"] }
@@ -42,7 +37,6 @@ memory-backend = []
 tokio = { workspace = true }
 serial_test = "3.0"
 uuid = { workspace = true }  # Only used in tests
-tempfile = "3.10"  # Temp directories for ring buffer tests
 
 [lints]
 workspace = true

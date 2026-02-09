@@ -7,7 +7,7 @@
 //!
 //! - **Rtdb trait**: Core trait for realtime database operations
 //! - **KeySpaceConfig**: Redis key naming configuration
-//! - **RoutingCache**: In-memory routing table cache
+//! - **WriteBuffer**: Deferred batch write buffer
 
 pub mod traits;
 
@@ -15,20 +15,6 @@ pub mod traits;
 pub mod redis_impl;
 
 pub mod memory_impl;
-
-// SHM modules are now in voltage-rtdb-shm crate, re-exported here for backward compatibility
-pub use voltage_rtdb_shm::instance_index;
-pub use voltage_rtdb_shm::notification;
-pub use voltage_rtdb_shm::notifier;
-pub use voltage_rtdb_shm::ring_buffer;
-pub use voltage_rtdb_shm::slot_bitmap;
-pub use voltage_rtdb_shm::vec_impl;
-
-pub mod shared_impl;
-
-pub mod unified_shm;
-
-pub mod snapshot;
 
 pub mod error;
 
@@ -38,18 +24,13 @@ pub mod time;
 
 pub mod write_buffer;
 
-pub mod routing_cache;
-
 pub mod numfmt;
-
-pub mod channel_index;
 
 // Re-exports
 pub use bytes::Bytes;
 pub use traits::Rtdb;
 
-// KeySpace (canonical location: voltage_model) and Routing exports
-pub use routing_cache::{C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats};
+// KeySpace (canonical location: voltage_model)
 pub use voltage_model::KeySpaceConfig;
 
 #[cfg(feature = "redis-backend")]
@@ -57,41 +38,9 @@ pub use redis_impl::RedisRtdb;
 
 pub use memory_impl::{MemoryRtdb, MemoryStats};
 
-// Shared memory public API (only types needed by external crates)
-pub use shared_impl::{default_shm_path, is_shm_available, ChannelToSlotIndex, SharedConfig};
-
-// Unified shared memory (simplified architecture: Header + PointSlots only)
-pub use unified_shm::{
-    allocate_layouts, calculate_file_size, ChannelLayout, UnifiedHeader, UnifiedReader,
-    UnifiedWriter, UNIFIED_MAGIC, UNIFIED_VERSION,
-};
-
-// UDS event notification (M2C command notification via Unix Domain Socket)
-pub use voltage_rtdb_shm::notification::ShmNotification;
-pub use voltage_rtdb_shm::notifier::{NotifyResult, ShmNotifier, UdsHealth, DEFAULT_UDS_PATH};
-
-// Snapshot management (periodic saves, graceful shutdown)
-pub use snapshot::{snapshot_exists, snapshot_info, SnapshotConfig, SnapshotInfo, SnapshotManager};
-
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
 
-// Ring buffer (high-frequency data recording)
-pub use voltage_rtdb_shm::ring_buffer::{
-    current_timestamp_us, DataPoint, HighFreqRingBuffer, RingBufferConfig, SharedRingBuffer,
-};
-
 pub use time::{FixedTimeProvider, SystemTimeProvider, TimeProvider};
-
-// Slot bitmap for dynamic allocation (unified pool architecture)
-pub use voltage_rtdb_shm::slot_bitmap::{
-    BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader,
-};
-
-// Channel index for dynamic channel management
-pub use channel_index::{ChannelIndex, DynamicChannelLayout};
-
-// Instance index for dynamic instance management with shared slots
-pub use voltage_rtdb_shm::instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 
 pub use write_buffer::{
     WriteBuffer, WriteBufferConfig, WriteBufferStats, WriteBufferStatsSnapshot,

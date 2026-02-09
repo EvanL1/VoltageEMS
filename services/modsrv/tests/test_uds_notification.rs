@@ -16,7 +16,7 @@ use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use voltage_model::PointType;
-use voltage_rtdb::{ShmNotification, ShmNotifier};
+use voltage_rtdb_shm::{ShmNotification, ShmNotifier};
 
 mod common;
 
@@ -255,8 +255,6 @@ async fn test_dual_channel_fallback_to_todo() {
         23,   // instance_id
         "1",  // point_id
         99.0, // value
-        None, // shm_writer
-        None, // notifier - UDS 不可用
     )
     .await
     .unwrap();

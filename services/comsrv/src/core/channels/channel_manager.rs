@@ -45,8 +45,9 @@ use crate::core::channels::shm_poller::ShmCommandPoller;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
 use crate::store::RedisDataStore;
-use voltage_rtdb::{
-    ChannelIndex, ChannelToSlotIndex, Rtdb, SlotBitmap, UnifiedReader, UnifiedWriter,
+use voltage_rtdb::Rtdb;
+use voltage_rtdb_shm::{
+    ChannelIndex, ChannelToSlotIndex, SlotBitmap, UnifiedReader, UnifiedWriter,
 };
 
 // ============================================================================
@@ -805,7 +806,7 @@ pub struct ChannelManager<R: Rtdb> {
     /// Shared RTDB (Redis or Memory for testing)
     rtdb: Arc<R>,
     /// Routing cache for C2M/M2C routing (public for reload operations)
-    pub routing_cache: Arc<voltage_rtdb::RoutingCache>,
+    pub routing_cache: Arc<voltage_routing::RoutingCache>,
     /// SQLite connection pool for configuration loading
     sqlite_pool: Option<sqlx::SqlitePool>,
     /// Shared memory writer for zero-copy cross-process data sharing (optional)
@@ -915,7 +916,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     }
 
     /// Create new channel manager
-    pub fn new(rtdb: Arc<R>, routing_cache: Arc<voltage_rtdb::RoutingCache>) -> Self {
+    pub fn new(rtdb: Arc<R>, routing_cache: Arc<voltage_routing::RoutingCache>) -> Self {
         Self {
             channels: Self::create_channel_slots(),
             active_channel_ids: DashSet::new(),
@@ -937,7 +938,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Create channel manager with SQLite pool
     pub fn with_sqlite_pool(
         rtdb: Arc<R>,
-        routing_cache: Arc<voltage_rtdb::RoutingCache>,
+        routing_cache: Arc<voltage_routing::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
     ) -> Self {
         Self {
@@ -971,7 +972,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Note: Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub fn with_shared_memory(
         rtdb: Arc<R>,
-        routing_cache: Arc<voltage_rtdb::RoutingCache>,
+        routing_cache: Arc<voltage_routing::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
         shared_writer: Option<Arc<UnifiedWriter>>,
         channel_index: Option<Arc<ChannelToSlotIndex>>,
@@ -1098,7 +1099,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     }
 
     /// Get SlotBitmap stats (for monitoring)
-    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb::BitmapStats> {
+    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
         self.slot_bitmap
             .as_ref()
             .and_then(|b| b.read().ok().map(|guard| guard.stats()))
@@ -1147,7 +1148,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .await?;
 
         // Branch based on protocol type - create ChannelEntry directly
-        let entry = match protocol_name.as_str() {
+        let entry = match &*protocol_name {
             "virtual" => {
                 // Protocol path: Use protocols::VirtualChannel with RedisDataStore
                 self.create_virtual_channel_impl(channel_id, &runtime_config, base_config)
@@ -2161,8 +2162,8 @@ mod tests {
     use voltage_rtdb::helpers::create_test_rtdb;
 
     /// Create test routing cache for unit tests
-    fn create_test_routing_cache() -> Arc<voltage_rtdb::RoutingCache> {
-        Arc::new(voltage_rtdb::RoutingCache::new())
+    fn create_test_routing_cache() -> Arc<voltage_routing::RoutingCache> {
+        Arc::new(voltage_routing::RoutingCache::new())
     }
 
     #[tokio::test]

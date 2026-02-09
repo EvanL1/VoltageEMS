@@ -18,8 +18,8 @@ use modsrv::instance_manager::InstanceManager;
 use modsrv::product_loader::{CreateInstanceRequest, ProductLoader};
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_routing::RoutingCache;
 use voltage_rtdb::MemoryRtdb;
-use voltage_rtdb::RoutingCache;
 
 // ============================================================================
 // Test Fixtures

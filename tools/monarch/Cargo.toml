@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+voltage-rtdb-shm = { path = "../../libs/voltage-rtdb-shm" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rules = { path = "../../libs/voltage-rules" }
 voltage-model = { path = "../../libs/voltage-model" }

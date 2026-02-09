@@ -261,15 +261,12 @@ impl Rtdb for RedisRtdb {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    async fn pipeline_hash_mset(
-        &self,
-        operations: Vec<(String, Vec<(String, Bytes)>)>,
-    ) -> Result<()> {
+    async fn pipeline_hash_mset(&self, operations: crate::traits::HashMsetOps) -> Result<()> {
         if operations.is_empty() {
             return Ok(());
         }
 
-        // Convert Bytes to String for the client (let compiler infer complex type)
+        // Convert Arc<str> + Bytes to (String, String) for the Redis client
         let string_operations: Result<Vec<_>> = operations
             .into_iter()
             .map(|(key, fields)| {
@@ -279,7 +276,7 @@ impl Rtdb for RedisRtdb {
                         let s = std::str::from_utf8(v.as_ref())
                             .context("UTF-8 conversion failed")?
                             .to_owned();
-                        Ok((f, s))
+                        Ok((f.to_string(), s))
                     })
                     .collect();
                 Ok((key, string_fields?))

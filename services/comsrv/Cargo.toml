@@ -19,6 +19,7 @@ errors = { path = "../../libs/errors", features = ["axum-support"] }
 voltage-model = { path = "../../libs/voltage-model" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+voltage-rtdb-shm = { path = "../../libs/voltage-rtdb-shm" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 
 # Protocol libraries
@@ -70,6 +71,7 @@ tower-http = { workspace = true }
 
 # Data structures
 dashmap = { workspace = true }
+itoa = { workspace = true }  # Stack-allocated integer formatting
 arc-swap = "1.7"
 bytes = { workspace = true }
 

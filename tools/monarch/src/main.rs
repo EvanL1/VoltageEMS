@@ -699,7 +699,26 @@ async fn run_db_checks(db_path: &Path) -> Result<bool> {
     Ok(has_errors)
 }
 
+/// Allowed table/column combinations for duplicate checks (SQL injection prevention)
+const ALLOWED_DUPLICATE_CHECKS: &[(&str, &str)] = &[
+    ("channels", "channel_id"),
+    ("instances", "instance_id"),
+    ("rules", "id"),
+];
+
 async fn check_duplicates(pool: &sqlx::SqlitePool, table: &str, id_column: &str) -> Result<bool> {
+    // Validate table/column against allowlist to prevent SQL injection
+    if !ALLOWED_DUPLICATE_CHECKS
+        .iter()
+        .any(|(t, c)| *t == table && *c == id_column)
+    {
+        anyhow::bail!(
+            "Invalid table/column for duplicate check: {}/{}",
+            table,
+            id_column
+        );
+    }
+
     let query = format!(
         "SELECT {}, COUNT(*) as count FROM {} GROUP BY {} HAVING count > 1",
         id_column, table, id_column
@@ -725,7 +744,20 @@ async fn check_duplicates(pool: &sqlx::SqlitePool, table: &str, id_column: &str)
     }
 }
 
+/// Allowed tables for point duplicate checks
+const ALLOWED_POINT_TABLES: &[&str] = &[
+    "telemetry_points",
+    "signal_points",
+    "control_points",
+    "adjustment_points",
+];
+
 async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str) -> Result<bool> {
+    // Validate table against allowlist to prevent SQL injection
+    if !ALLOWED_POINT_TABLES.contains(&table) {
+        anyhow::bail!("Invalid table for point duplicate check: {}", table);
+    }
+
     let query = format!(
         "SELECT channel_id, point_id, COUNT(*) as count FROM {} GROUP BY channel_id, point_id HAVING count > 1",
         table

@@ -13,7 +13,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use voltage_model::{validate_instance_name, KeySpaceConfig};
-use voltage_rtdb::{InstanceIndex, Rtdb, SlotBitmap};
+use voltage_rtdb::Rtdb;
+use voltage_rtdb_shm::{InstanceIndex, SlotBitmap};
 
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 
@@ -55,7 +56,7 @@ fn build_instance_from_row(row: (u32, String, String, Option<String>, String)) -
 pub struct InstanceManager<R: Rtdb> {
     pub pool: SqlitePool,
     pub rtdb: Arc<R>,
-    pub(crate) routing_cache: Arc<voltage_rtdb::RoutingCache>,
+    pub(crate) routing_cache: Arc<voltage_routing::RoutingCache>,
     pub(crate) product_loader: Arc<ProductLoader>,
     /// Instance name → instance_id cache (for fast API lookups)
     pub(crate) name_cache: DashMap<String, u16>,
@@ -70,21 +71,21 @@ pub struct InstanceManager<R: Rtdb> {
     /// When set, M2C commands go directly to SHM (primary path)
     /// Redis TODO queue remains as fallback
     /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
-    pub(crate) shm_action_writer: std::sync::OnceLock<Arc<voltage_rtdb::UnifiedWriter>>,
+    pub(crate) shm_action_writer: std::sync::OnceLock<Arc<voltage_rtdb_shm::UnifiedWriter>>,
     // ========== UDS Notifier (Event-driven M2C) ==========
     /// ShmNotifier for sending UDS notifications to comsrv
     /// When SHM write succeeds, send notification to trigger immediate dispatch
     /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
     /// Protected by tokio Mutex for async &mut access
     pub(crate) shm_notifier:
-        std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>>,
+        std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>>,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     pub fn new(
         pool: SqlitePool,
         rtdb: Arc<R>,
-        routing_cache: Arc<voltage_rtdb::RoutingCache>,
+        routing_cache: Arc<voltage_routing::RoutingCache>,
         product_loader: Arc<ProductLoader>,
     ) -> Self {
         Self {
@@ -127,7 +128,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Uses OnceLock for delayed initialization - can be called after
     /// Arc<InstanceManager> is created. Returns true if set successfully,
     /// false if already set.
-    pub fn set_shm_action_writer(&self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> bool {
+    pub fn set_shm_action_writer(&self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> bool {
         self.shm_action_writer.set(writer).is_ok()
     }
 
@@ -142,7 +143,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// false if already set.
     pub fn set_shm_notifier(
         &self,
-        notifier: Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>,
+        notifier: Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>,
     ) -> bool {
         self.shm_notifier.set(notifier).is_ok()
     }
@@ -153,17 +154,24 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Get SlotBitmap stats (for monitoring)
-    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb::BitmapStats> {
-        self.slot_bitmap
-            .as_ref()
-            .and_then(|b| b.read().ok().map(|guard| guard.stats()))
+    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
+        self.slot_bitmap.as_ref().and_then(|b| match b.read() {
+            Ok(guard) => Some(guard.stats()),
+            Err(_poisoned) => {
+                #[cfg(debug_assertions)]
+                tracing::error!(
+                    "slot_bitmap RwLock poisoned - a thread panicked while holding the lock"
+                );
+                None
+            },
+        })
     }
 
     /// Get the routing cache reference
     ///
     /// Returns a reference to the shared routing cache for use in API handlers
     /// that need to refresh the cache after routing management operations.
-    pub fn routing_cache(&self) -> &Arc<voltage_rtdb::RoutingCache> {
+    pub fn routing_cache(&self) -> &Arc<voltage_routing::RoutingCache> {
         &self.routing_cache
     }
 
@@ -281,7 +289,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             VALUES (?, ?, ?, ?)
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(&req.instance_name)
         .bind(&req.product_name)
         .bind(&properties_json)
@@ -303,15 +311,16 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Build point routing maps for Redis registration (generate Redis keys)
         // Note: Routing configuration is managed by routing_loader.rs, not stored here
+        let mut ibuf = itoa::Buffer::new();
         for point in &product.measurements {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point.measurement_id.to_string());
+                .instance_measurement_point_key(instance_id, ibuf.format(point.measurement_id));
             measurement_point_routings.insert(point.measurement_id, redis_key);
         }
 
         for point in &product.actions {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point.action_id.to_string());
+                .instance_action_point_key(instance_id, ibuf.format(point.action_id));
             action_point_routings.insert(point.action_id, redis_key);
         }
 
@@ -581,7 +590,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             r#"SELECT COUNT(*) FROM instances WHERE instance_name = ? AND instance_id != ?"#,
         )
         .bind(new_name)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -597,21 +606,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             r#"UPDATE instances SET instance_name = ?, updated_at = CURRENT_TIMESTAMP WHERE instance_id = ?"#,
         )
         .bind(new_name)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .execute(&mut *tx)
         .await?;
 
         // Update measurement_routing table (redundant field)
         sqlx::query(r#"UPDATE measurement_routing SET instance_name = ? WHERE instance_id = ?"#)
             .bind(new_name)
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&mut *tx)
             .await?;
 
         // Update action_routing table (redundant field)
         sqlx::query(r#"UPDATE action_routing SET instance_name = ? WHERE instance_id = ?"#)
             .bind(new_name)
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&mut *tx)
             .await?;
 
@@ -651,7 +660,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -672,13 +681,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
+        let mut ibuf = itoa::Buffer::new();
         for (point_id,) in measurement_points {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point_id.to_string());
+                .instance_measurement_point_key(instance_id, ibuf.format(point_id));
             measurement_point_routings.insert(point_id, redis_key);
         }
 
@@ -690,13 +700,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
         for (point_id,) in action_points {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point_id.to_string());
+                .instance_action_point_key(instance_id, ibuf.format(point_id));
             action_point_routings.insert(point_id, redis_key);
         }
 
@@ -738,11 +748,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Group measurements by instance_id
         let mut measurement_routings: HashMap<u32, HashMap<u32, String>> = HashMap::new();
+        let mut ibuf = itoa::Buffer::new();
         for (instance_id, point_id) in all_measurements {
             let instance_id = instance_id as u32;
             let point_id = point_id as u32;
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point_id.to_string());
+                .instance_measurement_point_key(instance_id, ibuf.format(point_id));
             measurement_routings
                 .entry(instance_id)
                 .or_default()
@@ -755,7 +766,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             let instance_id = instance_id as u32;
             let point_id = point_id as u32;
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point_id.to_string());
+                .instance_action_point_key(instance_id, ibuf.format(point_id));
             action_routings
                 .entry(instance_id)
                 .or_default()
@@ -770,7 +781,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // 1. Query instance_name before deletion (needed for Redis cleanup and logging)
         let instance_name: String =
             sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
-                .bind(instance_id as i32)
+                .bind(instance_id as i64)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -789,7 +800,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // 3. Delete from SQLite within transaction (cascade will handle point routings)
         let result = sqlx::query("DELETE FROM instances WHERE instance_id = ?")
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&mut *tx)
             .await;
 

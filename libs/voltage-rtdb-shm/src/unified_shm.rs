@@ -27,8 +27,7 @@
 //! - **Vec index**: O(1) array access, faster than HashMap
 //! - **Routing is permission**: Runtime DashMap, not data synchronization
 
-use crate::routing_cache::RoutingCache;
-use crate::shared_impl::SharedConfig;
+use crate::shared_config::SharedConfig;
 use crate::vec_impl::PointSlot;
 use anyhow::{bail, Context, Result};
 use memmap2::{Mmap, MmapMut, MmapOptions};
@@ -37,6 +36,7 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use voltage_model::PointType;
+use voltage_routing::routing_cache::RoutingCache;
 
 // ========== Constants ==========
 
@@ -244,6 +244,8 @@ impl UnifiedWriter {
             .with_context(|| "Failed to set file size")?;
 
         // Memory map
+        // SAFETY: File was just created/truncated with the correct size.
+        // We have exclusive write access (single writer design).
         let mut mmap = unsafe {
             MmapOptions::new()
                 .len(file_size)
@@ -251,7 +253,8 @@ impl UnifiedWriter {
                 .with_context(|| "Failed to mmap")?
         };
 
-        // Initialize header
+        // SAFETY: mmap region is at least size_of::<UnifiedHeader>() (64 bytes).
+        // UnifiedHeader is #[repr(C, align(64))], and mmap base is page-aligned.
         let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };
         header.magic = UNIFIED_MAGIC;
         header.version = UNIFIED_VERSION;
@@ -285,13 +288,23 @@ impl UnifiedWriter {
     /// Get header reference
     #[inline]
     fn header(&self) -> &UnifiedHeader {
+        // SAFETY: mmap region starts with a valid UnifiedHeader written by create().
+        // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
         unsafe { &*(self.mmap.as_ptr() as *const UnifiedHeader) }
     }
 
     /// Get PointSlot at index
     #[inline]
     fn slot_at(&self, index: usize) -> &PointSlot {
-        debug_assert!(index < self.slot_count);
+        assert!(
+            index < self.slot_count,
+            "slot_at: index {} out of bounds (slot_count={})",
+            index,
+            self.slot_count
+        );
+        // SAFETY: index is bounds-checked above. PointSlot is #[repr(C, align(32))].
+        // slot_offset() returns size_of::<UnifiedHeader>() which is correctly aligned.
+        // The mmap region is sized to hold header + max_slots * size_of::<PointSlot>().
         unsafe {
             let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
             &*ptr.add(index)
@@ -333,7 +346,12 @@ impl UnifiedWriter {
     /// Direct write to slot index (for hot path)
     #[inline]
     pub fn set_direct(&self, slot: usize, value: f64, raw: f64, timestamp_ms: u64) {
-        debug_assert!(slot < self.slot_count);
+        assert!(
+            slot < self.slot_count,
+            "set_direct: slot {} out of bounds (slot_count={})",
+            slot,
+            self.slot_count
+        );
         self.slot_at(slot).set(value, raw, timestamp_ms);
         self.header()
             .writer_heartbeat
@@ -403,13 +421,16 @@ impl UnifiedWriter {
             .open(path)
             .with_context(|| format!("Failed to open {:?} for actions", path))?;
 
+        // SAFETY: File exists and was created by the primary writer (comsrv).
+        // We validate magic/version/routing_hash immediately after mapping.
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
                 .with_context(|| "Failed to mmap for actions")?
         };
 
-        // Validate header
+        // SAFETY: mmap is at least page-sized (>= 64 bytes for header).
+        // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
         let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
         if header.magic != UNIFIED_MAGIC {
             bail!(
@@ -448,8 +469,10 @@ impl UnifiedWriter {
         let (channel_layouts, calculated_slots) = allocate_layouts(routing_cache);
 
         if calculated_slots != slot_count {
-            tracing::warn!(
-                "Slot count mismatch: file={}, calculated={}. Using file value.",
+            bail!(
+                "Slot count mismatch: file={}, calculated={}. \
+                 This indicates allocate_layouts() produced different results between comsrv and modsrv. \
+                 Solution: Restart both services to synchronize.",
                 slot_count,
                 calculated_slots
             );
@@ -607,6 +630,8 @@ impl UnifiedWriter {
             bail!("Snapshot file too small: {} bytes", snapshot_data.len());
         }
 
+        // SAFETY: snapshot_data.len() >= size_of::<UnifiedHeader>() (checked above).
+        // UnifiedHeader is #[repr(C)] with no padding invariants.
         let snapshot_header = unsafe { &*(snapshot_data.as_ptr() as *const UnifiedHeader) };
 
         if snapshot_header.magic != UNIFIED_MAGIC {
@@ -666,6 +691,9 @@ impl UnifiedWriter {
 
         for i in 0..slots_to_restore {
             let slot_offset_in_file = header_size + i * slot_size;
+            // SAFETY: slot_offset_in_file + size_of::<PointSlot>() <= snapshot_data_end,
+            // which was bounds-checked against snapshot_data.len() above.
+            // PointSlot is #[repr(C, align(32))].
             let snapshot_slot =
                 unsafe { &*(snapshot_data.as_ptr().add(slot_offset_in_file) as *const PointSlot) };
 
@@ -699,7 +727,7 @@ impl UnifiedWriter {
         // Update timestamps
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("System time before UNIX epoch")
+            .unwrap_or(std::time::Duration::ZERO)
             .as_millis() as u64;
         writer
             .header()
@@ -762,13 +790,16 @@ impl UnifiedReader {
             .open(path)
             .with_context(|| format!("Failed to open {:?}", path))?;
 
+        // SAFETY: File exists and was created by the primary writer (comsrv).
+        // We validate magic/version/routing_hash immediately after mapping.
         let mmap = unsafe {
             MmapOptions::new()
                 .map(&file)
                 .with_context(|| "Failed to mmap")?
         };
 
-        // Validate header
+        // SAFETY: mmap is at least page-sized (>= 64 bytes for header).
+        // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
         let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
         if header.magic != UNIFIED_MAGIC {
             bail!(
@@ -808,8 +839,10 @@ impl UnifiedReader {
 
         // Verify slot count matches
         if calculated_slots != slot_count {
-            tracing::warn!(
-                "Slot count mismatch: file={}, calculated={}. Using file value.",
+            bail!(
+                "Slot count mismatch: file={}, calculated={}. \
+                 This indicates allocate_layouts() produced different results. \
+                 Solution: Restart the writer process (comsrv) to synchronize.",
                 slot_count,
                 calculated_slots
             );
@@ -841,13 +874,22 @@ impl UnifiedReader {
     /// Get header reference
     #[inline]
     fn header(&self) -> &UnifiedHeader {
+        // SAFETY: mmap was validated in open() — magic, version, and routing_hash checked.
+        // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
         unsafe { &*(self.mmap.as_ptr() as *const UnifiedHeader) }
     }
 
     /// Get PointSlot at index
     #[inline]
     fn slot_at(&self, index: usize) -> &PointSlot {
-        debug_assert!(index < self.slot_count);
+        assert!(
+            index < self.slot_count,
+            "slot_at: index {} out of bounds (slot_count={})",
+            index,
+            self.slot_count
+        );
+        // SAFETY: index is bounds-checked above. PointSlot is #[repr(C, align(32))].
+        // The mmap region was validated in open() and sized for header + slot_count slots.
         unsafe {
             let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
             &*ptr.add(index)
@@ -1024,7 +1066,7 @@ impl UnifiedReader {
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("System time before UNIX epoch")
+            .unwrap_or(std::time::Duration::ZERO)
             .as_millis() as u64;
         now.saturating_sub(heartbeat) < timeout_ms
     }

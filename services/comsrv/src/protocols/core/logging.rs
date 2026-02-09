@@ -1241,6 +1241,20 @@ impl ChannelLogHandler for TracingLogHandler {
                     "Connection state changed"
                 );
             },
+            ChannelLogEvent::PointValues {
+                total_points,
+                group_id,
+                ..
+            } => {
+                // Point values already logged to channel files in compact format.
+                // Only emit a trace-level summary to keep the main log clean.
+                trace!(
+                    channel_id = channel_id,
+                    total_points = total_points,
+                    group_id = ?group_id,
+                    "Point values collected"
+                );
+            },
             _ => {
                 debug!(channel_id = channel_id, event = ?event, "Channel event");
             },

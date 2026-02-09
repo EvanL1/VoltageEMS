@@ -5,7 +5,12 @@ use bytes::Bytes;
 use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::Arc;
 use voltage_model::{KeySpaceConfig, PointType};
+
+/// Batched hash-mset operations: Vec of (key, Vec of (field, value))
+/// Field names use `Arc<str>` to avoid heap allocation on the hot path.
+pub type HashMsetOps = Vec<(String, Vec<(Arc<str>, Bytes)>)>;
 
 /// Unified RTDB Storage Trait
 ///
@@ -321,7 +326,7 @@ pub trait Rtdb: Send + Sync + 'static {
     /// * `Err` if any operation fails
     fn pipeline_hash_mset(
         &self,
-        operations: Vec<(String, Vec<(String, Bytes)>)>,
+        operations: HashMsetOps,
     ) -> impl Future<Output = Result<()>> + Send + '_;
 
     // ========== Convenience Operations (with default implementations) ==========

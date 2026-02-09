@@ -254,7 +254,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use voltage_rtdb::RoutingCache;
+    /// use voltage_routing::RoutingCache;
     /// use std::collections::HashMap;
     ///
     /// let c2m_data: HashMap<String, String> = HashMap::new(); // load from SQLite
@@ -344,7 +344,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use voltage_rtdb::RoutingCache;
+    /// use voltage_routing::RoutingCache;
     /// use std::collections::HashMap;
     ///
     /// let mut c2m = HashMap::new();
@@ -367,7 +367,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use voltage_rtdb::RoutingCache;
+    /// use voltage_routing::RoutingCache;
     /// use voltage_model::PointType;
     /// use std::collections::HashMap;
     ///
@@ -398,7 +398,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use voltage_rtdb::RoutingCache;
+    /// use voltage_routing::RoutingCache;
     /// use voltage_model::PointType;
     /// use std::collections::HashMap;
     ///
@@ -437,7 +437,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use voltage_rtdb::RoutingCache;
+    /// use voltage_routing::RoutingCache;
     /// use voltage_model::PointType;
     /// use std::collections::HashMap;
     ///
@@ -462,7 +462,7 @@ impl RoutingCache {
     ///
     /// ## Example
     /// ```rust
-    /// use voltage_rtdb::RoutingCache;
+    /// use voltage_routing::RoutingCache;
     /// use voltage_model::PointType;
     /// use std::collections::HashMap;
     ///

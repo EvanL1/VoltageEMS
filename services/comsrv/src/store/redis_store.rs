@@ -31,10 +31,9 @@ use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
 use voltage_model::{KeySpaceConfig, PointType};
-use voltage_routing::ChannelPointUpdate;
-use voltage_rtdb::{
-    ChannelToSlotIndex, RoutingCache, Rtdb, UnifiedWriter, WriteBuffer, WriteBufferConfig,
-};
+use voltage_routing::{ChannelPointUpdate, RoutingCache};
+use voltage_rtdb::{Rtdb, WriteBuffer, WriteBufferConfig};
+use voltage_rtdb_shm::{ChannelToSlotIndex, UnifiedWriter};
 
 /// Redis-backed data store for VoltageEMS.
 ///
@@ -190,7 +189,19 @@ impl<R: Rtdb> RedisDataStore<R> {
 
         for point in batch.iter() {
             // Use explicit point_type and id (no decoding needed)
-            let value = point.value.as_f64().unwrap_or(0.0);
+            let value = match point.value.as_f64() {
+                Some(v) => v,
+                None => {
+                    trace!(
+                        "Ch{} [{:?}] Point {}: non-numeric value {:?}, defaulting to 0.0",
+                        channel_id,
+                        point.point_type,
+                        point.id,
+                        point.value
+                    );
+                    0.0
+                },
+            };
 
             // Use trace! to avoid flooding logs - only visible with RUST_LOG=trace
             trace!(
@@ -250,7 +261,7 @@ impl<R: Rtdb> RedisDataStore<R> {
         let _stats = if let (Some(writer), Some(index)) = (&self.shared_writer, &self.channel_index)
         {
             // Fast path: direct shared memory write with pre-computed channel → slot mapping
-            voltage_routing::write_channel_batch_direct(
+            voltage_rtdb_shm::write_channel_batch_direct(
                 writer,
                 index,
                 &self.write_buffer,
@@ -280,8 +291,9 @@ impl<R: Rtdb> RedisDataStore<R> {
         channel_id: u32,
         point_id: u32,
     ) -> ProtocolResult<Option<DataPoint>> {
-        // Convert point_id to string once outside the loop (avoids 4 allocations)
-        let point_id_str = point_id.to_string();
+        // Convert point_id on the stack (zero heap allocation)
+        let mut ibuf = itoa::Buffer::new();
+        let point_id_str = ibuf.format(point_id);
 
         // Try to read from each point type
         for point_type in [
@@ -292,7 +304,7 @@ impl<R: Rtdb> RedisDataStore<R> {
         ] {
             let key = self.key_config.channel_key(channel_id, point_type);
 
-            if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, &point_id_str).await {
+            if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, point_id_str).await {
                 let value_str = String::from_utf8_lossy(&value_bytes);
                 if let Ok(value) = value_str.parse::<f64>() {
                     return Ok(Some(DataPoint::new(point_id, point_type, value)));
@@ -369,6 +381,7 @@ impl<R: Rtdb> RedisDataStore<R> {
             PointType::Adjustment,
         ] {
             let key = self.key_config.channel_key(channel_id, point_type);
+            // Ignore: best-effort cleanup — channel is being removed, stale keys are harmless
             let _ = self.rtdb.del(&key).await;
         }
 

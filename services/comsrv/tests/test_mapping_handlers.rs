@@ -259,7 +259,7 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client.clone()));
 
     // Create routing cache (empty for integration test)
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
 
     // Create channel manager (lock-free)
     let channel_manager = Arc::new(comsrv::ChannelManager::new(rtdb, routing_cache));

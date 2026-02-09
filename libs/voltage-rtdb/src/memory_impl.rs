@@ -108,7 +108,7 @@ impl Rtdb for MemoryRtdb {
             // Parse current value (default to 0.0 if invalid, matching Redis behavior)
             let current: f64 = match std::str::from_utf8(entry.as_ref()) {
                 Ok(s) => s.parse().unwrap_or_else(|_| {
-                    tracing::trace!(
+                    tracing::warn!(
                         key = %key_owned,
                         value = %s,
                         "incrbyfloat: failed to parse value as f64, defaulting to 0.0"
@@ -116,7 +116,7 @@ impl Rtdb for MemoryRtdb {
                     0.0
                 }),
                 Err(_) => {
-                    tracing::trace!(
+                    tracing::warn!(
                         key = %key_owned,
                         "incrbyfloat: value is not valid UTF-8, defaulting to 0.0"
                     );
@@ -477,7 +477,7 @@ impl Rtdb for MemoryRtdb {
             // Parse current value (default to 0 if invalid, matching Redis HINCRBY behavior)
             let current: i64 = match std::str::from_utf8(entry.as_ref()) {
                 Ok(s) => s.parse().unwrap_or_else(|_| {
-                    tracing::trace!(
+                    tracing::warn!(
                         key = %key_owned,
                         field = %field_owned,
                         value = %s,
@@ -486,7 +486,7 @@ impl Rtdb for MemoryRtdb {
                     0
                 }),
                 Err(_) => {
-                    tracing::trace!(
+                    tracing::warn!(
                         key = %key_owned,
                         field = %field_owned,
                         "hincrby: value is not valid UTF-8, defaulting to 0"
@@ -515,7 +515,7 @@ impl Rtdb for MemoryRtdb {
 
     fn pipeline_hash_mset(
         &self,
-        operations: Vec<(String, Vec<(String, Bytes)>)>,
+        operations: crate::traits::HashMsetOps,
     ) -> impl Future<Output = Result<()>> + Send + '_ {
         // For in-memory implementation, just execute each HSET sequentially
         // This is efficient since it's all in-memory with no network overhead
@@ -523,7 +523,7 @@ impl Rtdb for MemoryRtdb {
             if !fields.is_empty() {
                 let hash = self.hash_store.entry(key).or_default();
                 for (field, value) in fields {
-                    hash.insert(field, value);
+                    hash.insert(field.to_string(), value);
                 }
             }
         }

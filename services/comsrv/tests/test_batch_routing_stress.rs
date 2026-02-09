@@ -12,9 +12,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use voltage_model::PointType;
+use voltage_routing::RoutingCache;
 use voltage_routing::{write_channel_batch, ChannelPointUpdate};
 use voltage_rtdb::Rtdb;
-use voltage_rtdb::{KeySpaceConfig, MemoryRtdb, RoutingCache};
+use voltage_rtdb::{KeySpaceConfig, MemoryRtdb};
 
 /// Creates a memory RTDB for testing
 fn create_test_rtdb() -> Arc<MemoryRtdb> {

@@ -14,7 +14,7 @@ use common::{fixtures, helpers, TestEnv};
 use modsrv::instance_manager::InstanceManager;
 use modsrv::product_loader::{CreateInstanceRequest, ProductLoader};
 use std::sync::Arc;
-use voltage_rtdb::RoutingCache;
+use voltage_routing::RoutingCache;
 
 #[tokio::test]
 async fn test_create_instance_full_flow() -> Result<()> {

@@ -37,10 +37,8 @@ use comsrv::{
     shutdown_services, wait_for_shutdown,
 };
 use voltage_routing::load_routing_maps;
-use voltage_rtdb::{
-    is_shm_available, snapshot_exists, ChannelToSlotIndex, SharedConfig, SnapshotConfig,
-    SnapshotManager, UnifiedWriter,
-};
+use voltage_rtdb_shm::{is_shm_available, snapshot_exists, SnapshotConfig, SnapshotManager};
+use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, UnifiedWriter};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -133,7 +131,7 @@ async fn main() -> VoltageResult<()> {
 
         info!("Loaded routing cache: {} total routes", maps.total_routes());
 
-        Arc::new(voltage_rtdb::RoutingCache::from_maps(
+        Arc::new(voltage_routing::RoutingCache::from_maps(
             maps.c2m, maps.m2c, maps.c2c,
         ))
     };
@@ -290,7 +288,7 @@ async fn main() -> VoltageResult<()> {
     // This allows event-driven M2C dispatch with ~1-2ms latency
     let (shm_listener_shutdown_tx, shm_listener_shutdown_rx) = tokio::sync::watch::channel(false);
     let unified_reader = if shared_writer.is_some() {
-        match voltage_rtdb::UnifiedReader::open(&SharedConfig::default(), &routing_cache) {
+        match voltage_rtdb_shm::UnifiedReader::open(&SharedConfig::default(), &routing_cache) {
             Ok(reader) => {
                 info!("UnifiedReader opened for event-driven M2C dispatch");
                 Some(Arc::new(reader))

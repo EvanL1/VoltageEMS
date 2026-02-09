@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 use voltage_model::{validate_value, PointType, ValidationConfig};
-use voltage_rtdb::{ShmNotification, UnifiedReader, DEFAULT_UDS_PATH};
+use voltage_rtdb_shm::{ShmNotification, UnifiedReader, DEFAULT_UDS_PATH};
 
 use crate::core::channels::types::ChannelCommand;
 
