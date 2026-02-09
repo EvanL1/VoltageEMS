@@ -185,43 +185,7 @@ pub mod fixtures {
         Ok(())
     }
 
-    /// Create test product points
-    #[allow(dead_code)]
-    pub async fn create_test_product_points(pool: &SqlitePool, product_name: &str) -> Result<()> {
-        // Measurement points (M)
-        for i in 1..=3 {
-            sqlx::query(
-                r#"
-                INSERT INTO measurement_points (product_name, measurement_id, name, unit)
-                VALUES (?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i)
-            .bind(format!("M{}", i))
-            .bind("kW")
-            .execute(pool)
-            .await?;
-        }
-
-        // Action points (A)
-        for i in 1..=2 {
-            sqlx::query(
-                r#"
-                INSERT INTO action_points (product_name, action_id, name, unit)
-                VALUES (?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i)
-            .bind(format!("A{}", i))
-            .bind("kW")
-            .execute(pool)
-            .await?;
-        }
-
-        Ok(())
-    }
+    // Note: create_test_product_points() removed - product points are now compile-time constants
 
     /// Create test instance properties
     #[allow(dead_code)]
@@ -232,81 +196,9 @@ pub mod fixtures {
         props
     }
 
-    /// Create a complete test product with measurements, actions, and properties
-    #[allow(dead_code)]
-    pub async fn create_complete_test_product(
-        pool: &SqlitePool,
-        product_name: &str,
-        parent_name: Option<&str>,
-        num_measurements: u32,
-        num_actions: u32,
-        num_properties: i32,
-    ) -> Result<()> {
-        // Insert product
-        sqlx::query(
-            r#"
-            INSERT INTO products (product_name, parent_name)
-            VALUES (?, ?)
-            "#,
-        )
-        .bind(product_name)
-        .bind(parent_name)
-        .execute(pool)
-        .await?;
-
-        // Insert measurements
-        for i in 1..=num_measurements {
-            sqlx::query(
-                r#"
-                INSERT INTO measurement_points (product_name, measurement_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i as i32)
-            .bind(format!("Measurement_{}", i))
-            .bind("kW")
-            .bind(format!("Test measurement {}", i))
-            .execute(pool)
-            .await?;
-        }
-
-        // Insert actions
-        for i in 1..=num_actions {
-            sqlx::query(
-                r#"
-                INSERT INTO action_points (product_name, action_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i as i32)
-            .bind(format!("Action_{}", i))
-            .bind(None::<String>)
-            .bind(format!("Test action {}", i))
-            .execute(pool)
-            .await?;
-        }
-
-        // Insert properties
-        for i in 1..=num_properties {
-            sqlx::query(
-                r#"
-                INSERT INTO property_templates (product_name, property_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i)
-            .bind(format!("Property_{}", i))
-            .bind("unit")
-            .bind(format!("Test property {}", i))
-            .execute(pool)
-            .await?;
-        }
-
-        Ok(())
-    }
+    // Note: create_complete_test_product() removed - product definitions are now
+    // compile-time constants from voltage-model crate. Tests should use built-in
+    // products (Battery, PCS, etc.) instead of inserting into ghost tables.
 }
 
 /// Test helper functions
@@ -342,23 +234,15 @@ pub mod helpers {
         sqlx::query("DELETE FROM instance_point_routings")
             .execute(pool)
             .await?;
-        sqlx::query("DELETE FROM instances").execute(pool).await?;
-        sqlx::query("DELETE FROM measurement_points")
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM action_points")
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM property_templates")
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM products").execute(pool).await?;
         sqlx::query("DELETE FROM measurement_routing")
             .execute(pool)
             .await?;
         sqlx::query("DELETE FROM action_routing")
             .execute(pool)
             .await?;
+        sqlx::query("DELETE FROM instances").execute(pool).await?;
+        // Note: measurement_points, action_points, property_templates, products
+        // tables no longer exist - product definitions are compile-time constants
         Ok(())
     }
 }

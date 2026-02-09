@@ -27,12 +27,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         Ok(data)
     }
 
-    /// Get instance point definitions from Redis (metadata, not real-time values)
     /// Load instance points with routing configuration (runtime merge)
     ///
-    /// This method performs a JOIN query to combine:
-    /// - Product point templates (from measurement_points/action_points tables)
-    /// - Instance-specific routing (from measurement_routing/action_routing tables)
+    /// Two-step query + in-memory merge:
+    /// 1. Product point definitions from built-in products (compile-time constants)
+    /// 2. Routing data from measurement_routing/action_routing tables (real tables)
+    /// 3. Merge in application layer using HashMap
     pub async fn load_instance_points(
         &self,
         instance_id: u32,
@@ -42,7 +42,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     )> {
         use crate::dto::{InstanceActionPoint, InstanceMeasurementPoint, PointRouting};
 
-        // 1. Get product_name from instance
+        // 1. Get product_name and product definition
         let product_name = sqlx::query_scalar::<_, String>(
             "SELECT product_name FROM instances WHERE instance_id = ?",
         )
@@ -51,166 +51,130 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
-        // 2. JOIN query for measurement points (Product template + Instance routing)
-        // Also JOIN channels and point tables to get display names
-        let measurements = sqlx::query_as::<
-            _,
-            (
-                u32,
-                String,
-                Option<String>,
-                Option<String>, // Point fields: measurement_id, name, unit, description
-                Option<i32>,
-                Option<String>,
-                Option<u32>,
-                Option<bool>, // Routing fields: channel_id, channel_type, channel_point_id, enabled
-                Option<String>, // channel_name (from channels table)
-                Option<String>, // channel_point_name (from telemetry_points/signal_points)
-            ),
-        >(
-            r#"
-            SELECT
-                mp.measurement_id,
-                mp.name,
-                mp.unit,
-                mp.description,
-                mr.channel_id,
-                mr.channel_type,
-                mr.channel_point_id,
-                mr.enabled,
-                c.name AS channel_name,
-                COALESCE(tp.signal_name, sp.signal_name) AS channel_point_name
-            FROM measurement_points mp
-            LEFT JOIN measurement_routing mr
-                ON mr.instance_id = ? AND mr.measurement_id = mp.measurement_id
-            LEFT JOIN channels c ON c.channel_id = mr.channel_id
-            LEFT JOIN telemetry_points tp
-                ON tp.channel_id = mr.channel_id
-                AND tp.point_id = mr.channel_point_id
-                AND mr.channel_type = 'T'
-            LEFT JOIN signal_points sp
-                ON sp.channel_id = mr.channel_id
-                AND sp.point_id = mr.channel_point_id
-                AND mr.channel_type = 'S'
-            WHERE mp.product_name = ?
-            ORDER BY mp.measurement_id
-            "#,
-        )
-        .bind(instance_id as i64)
-        .bind(&product_name)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .map(
-            |(idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname)| {
-                InstanceMeasurementPoint {
-                    measurement_id: idx,
-                    name,
-                    unit,
-                    description: desc,
-                    routing: match (ctype, enabled) {
-                        (Some(t), Some(e)) => Some(PointRouting {
-                            channel_id: cid,
-                            channel_type: Some(t),
-                            channel_point_id: cpid,
-                            enabled: e,
-                            channel_name: cname,
-                            channel_point_name: cpname,
-                        }),
-                        _ => None,
-                    },
-                }
-            },
-        )
-        .collect();
+        let product = self
+            .product_loader
+            .get_product(&product_name)
+            .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
 
-        // 3. JOIN query for action points (Product template + Instance routing)
-        // Also JOIN channels and point tables to get display names
-        let actions = sqlx::query_as::<
+        // 2. Query routing data from real tables (parallel)
+        let m_routing_query = sqlx::query_as::<
             _,
             (
-                u32,
-                String,
-                Option<String>,
-                Option<String>, // Point fields: action_id, name, unit, description
-                Option<i32>,
-                Option<String>,
-                Option<u32>,
-                Option<bool>, // Routing fields: channel_id, channel_type, channel_point_id, enabled
-                Option<String>, // channel_name (from channels table)
-                Option<String>, // channel_point_name (from control_points/adjustment_points)
+                u32,        // measurement_id
+                Option<i32>,    // channel_id
+                Option<String>, // channel_type
+                Option<u32>,    // channel_point_id
+                Option<bool>,   // enabled
+                Option<String>, // channel_name
+                Option<String>, // channel_point_name
             ),
         >(
-            r#"
-            SELECT
-                ap.action_id,
-                ap.name,
-                ap.unit,
-                ap.description,
-                ar.channel_id,
-                ar.channel_type,
-                ar.channel_point_id,
-                ar.enabled,
-                c.name AS channel_name,
-                COALESCE(cp.signal_name, ajp.signal_name) AS channel_point_name
-            FROM action_points ap
-            LEFT JOIN action_routing ar
-                ON ar.instance_id = ? AND ar.action_id = ap.action_id
-            LEFT JOIN channels c ON c.channel_id = ar.channel_id
-            LEFT JOIN control_points cp
-                ON cp.channel_id = ar.channel_id
-                AND cp.point_id = ar.channel_point_id
-                AND ar.channel_type = 'C'
-            LEFT JOIN adjustment_points ajp
-                ON ajp.channel_id = ar.channel_id
-                AND ajp.point_id = ar.channel_point_id
-                AND ar.channel_type = 'A'
-            WHERE ap.product_name = ?
-            ORDER BY ap.action_id
-            "#,
+            r#"SELECT mr.measurement_id, mr.channel_id, mr.channel_type, mr.channel_point_id, mr.enabled,
+                    c.name AS channel_name,
+                    COALESCE(tp.signal_name, sp.signal_name) AS channel_point_name
+               FROM measurement_routing mr
+               LEFT JOIN channels c ON c.channel_id = mr.channel_id
+               LEFT JOIN telemetry_points tp ON tp.channel_id = mr.channel_id AND tp.point_id = mr.channel_point_id AND mr.channel_type = 'T'
+               LEFT JOIN signal_points sp ON sp.channel_id = mr.channel_id AND sp.point_id = mr.channel_point_id AND mr.channel_type = 'S'
+               WHERE mr.instance_id = ?"#,
         )
         .bind(instance_id as i64)
-        .bind(&product_name)
-        .fetch_all(&self.pool)
-        .await?
-        .into_iter()
-        .map(
-            |(idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname)| {
-                InstanceActionPoint {
-                    action_id: idx,
-                    name,
-                    unit,
-                    description: desc,
-                    routing: match (ctype, enabled) {
+        .fetch_all(&self.pool);
+
+        let a_routing_query = sqlx::query_as::<
+            _,
+            (
+                u32,        // action_id
+                Option<i32>,    // channel_id
+                Option<String>, // channel_type
+                Option<u32>,    // channel_point_id
+                Option<bool>,   // enabled
+                Option<String>, // channel_name
+                Option<String>, // channel_point_name
+            ),
+        >(
+            r#"SELECT ar.action_id, ar.channel_id, ar.channel_type, ar.channel_point_id, ar.enabled,
+                    c.name AS channel_name,
+                    COALESCE(cp.signal_name, ajp.signal_name) AS channel_point_name
+               FROM action_routing ar
+               LEFT JOIN channels c ON c.channel_id = ar.channel_id
+               LEFT JOIN control_points cp ON cp.channel_id = ar.channel_id AND cp.point_id = ar.channel_point_id AND ar.channel_type = 'C'
+               LEFT JOIN adjustment_points ajp ON ajp.channel_id = ar.channel_id AND ajp.point_id = ar.channel_point_id AND ar.channel_type = 'A'
+               WHERE ar.instance_id = ?"#,
+        )
+        .bind(instance_id as i64)
+        .fetch_all(&self.pool);
+
+        let (m_routing_rows, a_routing_rows) = tokio::try_join!(m_routing_query, a_routing_query)?;
+
+        // 3. Merge: product point definitions + routing data
+        let m_routing_map: HashMap<u32, _> = m_routing_rows.into_iter().map(|r| (r.0, r)).collect();
+
+        let measurements = product
+            .measurements
+            .iter()
+            .map(|mp| {
+                let routing = m_routing_map.get(&mp.measurement_id).and_then(
+                    |(_, cid, ctype, cpid, enabled, cname, cpname)| match (ctype, enabled) {
                         (Some(t), Some(e)) => Some(PointRouting {
-                            channel_id: cid,
-                            channel_type: Some(t),
-                            channel_point_id: cpid,
-                            enabled: e,
-                            channel_name: cname,
-                            channel_point_name: cpname,
+                            channel_id: *cid,
+                            channel_type: Some(t.clone()),
+                            channel_point_id: *cpid,
+                            enabled: *e,
+                            channel_name: cname.clone(),
+                            channel_point_name: cpname.clone(),
                         }),
                         _ => None,
                     },
+                );
+                InstanceMeasurementPoint {
+                    measurement_id: mp.measurement_id,
+                    name: mp.name.clone(),
+                    unit: mp.unit.clone(),
+                    description: mp.description.clone(),
+                    routing,
                 }
-            },
-        )
-        .collect();
+            })
+            .collect();
+
+        let a_routing_map: HashMap<u32, _> = a_routing_rows.into_iter().map(|r| (r.0, r)).collect();
+
+        let actions = product
+            .actions
+            .iter()
+            .map(|ap| {
+                let routing = a_routing_map.get(&ap.action_id).and_then(
+                    |(_, cid, ctype, cpid, enabled, cname, cpname)| match (ctype, enabled) {
+                        (Some(t), Some(e)) => Some(PointRouting {
+                            channel_id: *cid,
+                            channel_type: Some(t.clone()),
+                            channel_point_id: *cpid,
+                            enabled: *e,
+                            channel_name: cname.clone(),
+                            channel_point_name: cpname.clone(),
+                        }),
+                        _ => None,
+                    },
+                );
+                InstanceActionPoint {
+                    action_id: ap.action_id,
+                    name: ap.name.clone(),
+                    unit: ap.unit.clone(),
+                    description: ap.description.clone(),
+                    routing,
+                }
+            })
+            .collect();
 
         Ok((measurements, actions))
     }
 
-    /// Get instance points (SQLite = Single source of truth)
+    /// Get instance points (built-in product definitions = single source of truth)
     pub async fn get_instance_points(
         &self,
         instance_id: u32,
         data_type: Option<&str>,
     ) -> Result<serde_json::Value> {
-        // ========================================================================
-        // SQLite = Single source of truth (Redis = real-time data only)
-        // Query point definitions directly from SQLite instead of Redis cache
-        // ========================================================================
-
         // Get instance metadata (product_name, properties)
         let instance_row: Option<(String, Option<String>)> =
             sqlx::query_as("SELECT product_name, properties FROM instances WHERE instance_id = ?")
@@ -225,53 +189,37 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         let properties_json = properties_json.unwrap_or_else(|| "{}".to_string());
 
+        // Get product from built-in definitions (compile-time constants)
+        let product = self
+            .product_loader
+            .get_product(&product_name)
+            .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
+
         match data_type {
             Some("measurement") => {
-                // Query measurement points from SQLite
-                let measurements: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
-                    "SELECT signal_name, data_type, scale, offset, unit
-                     FROM measurement_points WHERE product_name = ?",
-                )
-                .bind(&product_name)
-                .fetch_all(&self.pool)
-                .await?;
-
                 let mut result = serde_json::Map::new();
-                for (signal_name, data_type, scale, offset, unit) in measurements {
+                for m in &product.measurements {
                     let point = serde_json::json!({
-                        "signal_name": &signal_name,
-                        "data_type": data_type,
-                        "scale": scale,
-                        "offset": offset,
-                        "unit": unit
+                        "measurement_id": m.measurement_id,
+                        "name": &m.name,
+                        "unit": &m.unit,
+                        "description": &m.description
                     });
-                    result.insert(signal_name, point);
+                    result.insert(m.name.clone(), point);
                 }
-
                 Ok(serde_json::Value::Object(result))
             },
             Some("action") => {
-                // Query action points from SQLite
-                let actions: Vec<(String, String, f64, f64, String)> = sqlx::query_as(
-                    "SELECT signal_name, data_type, scale, offset, unit
-                     FROM action_points WHERE product_name = ?",
-                )
-                .bind(&product_name)
-                .fetch_all(&self.pool)
-                .await?;
-
                 let mut result = serde_json::Map::new();
-                for (signal_name, data_type, scale, offset, unit) in actions {
+                for a in &product.actions {
                     let point = serde_json::json!({
-                        "signal_name": &signal_name,
-                        "data_type": data_type,
-                        "scale": scale,
-                        "offset": offset,
-                        "unit": unit
+                        "action_id": a.action_id,
+                        "name": &a.name,
+                        "unit": &a.unit,
+                        "description": &a.description
                     });
-                    result.insert(signal_name, point);
+                    result.insert(a.name.clone(), point);
                 }
-
                 Ok(serde_json::Value::Object(result))
             },
             Some("property") => {
@@ -288,45 +236,26 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             },
             None => {
                 // Return all three: measurements, actions, properties
-                // Query measurements and actions in parallel using tokio::try_join!
-                let measurements_query = sqlx::query_as::<_, (String, String, f64, f64, String)>(
-                    "SELECT signal_name, data_type, scale, offset, unit
-                     FROM measurement_points WHERE product_name = ?",
-                )
-                .bind(&product_name)
-                .fetch_all(&self.pool);
-
-                let actions_query = sqlx::query_as::<_, (String, String, f64, f64, String)>(
-                    "SELECT signal_name, data_type, scale, offset, unit
-                     FROM action_points WHERE product_name = ?",
-                )
-                .bind(&product_name)
-                .fetch_all(&self.pool);
-
-                let (measurements, actions) = tokio::try_join!(measurements_query, actions_query)?;
-
                 let mut m_map = serde_json::Map::new();
-                for (signal_name, data_type, scale, offset, unit) in measurements {
+                for m in &product.measurements {
                     let point = serde_json::json!({
-                        "signal_name": &signal_name,
-                        "data_type": data_type,
-                        "scale": scale,
-                        "offset": offset,
-                        "unit": unit
+                        "measurement_id": m.measurement_id,
+                        "name": &m.name,
+                        "unit": &m.unit,
+                        "description": &m.description
                     });
-                    m_map.insert(signal_name, point);
+                    m_map.insert(m.name.clone(), point);
                 }
 
                 let mut a_map = serde_json::Map::new();
-                for (signal_name, data_type, scale, offset, unit) in actions {
+                for a in &product.actions {
                     let point = serde_json::json!({
-                        "signal_name": &signal_name,
-                        "data_type": data_type,
-                        "scale": scale,
-                        "offset": offset,
-                        "unit": unit
+                        "action_id": a.action_id,
+                        "name": &a.name,
+                        "unit": &a.unit,
+                        "description": &a.description
                     });
-                    a_map.insert(signal_name, point);
+                    a_map.insert(a.name.clone(), point);
                 }
 
                 let properties: serde_json::Value = serde_json::from_str(&properties_json)
@@ -447,7 +376,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ) -> Result<crate::dto::InstanceMeasurementPoint> {
         use crate::dto::{InstanceMeasurementPoint, PointRouting};
 
-        // 1. Get product_name
+        // 1. Get product_name and product definition
         let product_name = sqlx::query_scalar::<_, String>(
             "SELECT product_name FROM instances WHERE instance_id = ?",
         )
@@ -456,71 +385,52 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
-        // 2. JOIN query for the specific measurement point (with channel and point names)
-        let point = sqlx::query_as::<
+        let product = self
+            .product_loader
+            .get_product(&product_name)
+            .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
+
+        // 2. Find the measurement point in built-in product
+        let mp = product
+            .measurements
+            .iter()
+            .find(|m| m.measurement_id == point_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Measurement point {} not found in product '{}'",
+                    point_id,
+                    product_name
+                )
+            })?;
+
+        // 3. Query routing for this specific point
+        let routing_row = sqlx::query_as::<
             _,
             (
-                u32,
-                String,
-                Option<String>,
-                Option<String>, // Point fields
-                Option<i32>,
-                Option<String>,
-                Option<u32>,
-                Option<bool>,   // Routing fields
+                Option<i32>,    // channel_id
+                Option<String>, // channel_type
+                Option<u32>,    // channel_point_id
+                Option<bool>,   // enabled
                 Option<String>, // channel_name
                 Option<String>, // channel_point_name
             ),
         >(
-            r#"
-            SELECT
-                mp.measurement_id,
-                mp.name,
-                mp.unit,
-                mp.description,
-                mr.channel_id,
-                mr.channel_type,
-                mr.channel_point_id,
-                mr.enabled,
-                c.name AS channel_name,
-                COALESCE(tp.signal_name, sp.signal_name) AS channel_point_name
-            FROM measurement_points mp
-            LEFT JOIN measurement_routing mr
-                ON mr.instance_id = ? AND mr.measurement_id = mp.measurement_id
-            LEFT JOIN channels c ON c.channel_id = mr.channel_id
-            LEFT JOIN telemetry_points tp
-                ON tp.channel_id = mr.channel_id
-                AND tp.point_id = mr.channel_point_id
-                AND mr.channel_type = 'T'
-            LEFT JOIN signal_points sp
-                ON sp.channel_id = mr.channel_id
-                AND sp.point_id = mr.channel_point_id
-                AND mr.channel_type = 'S'
-            WHERE mp.product_name = ? AND mp.measurement_id = ?
-            "#,
+            r#"SELECT mr.channel_id, mr.channel_type, mr.channel_point_id, mr.enabled,
+                    c.name AS channel_name,
+                    COALESCE(tp.signal_name, sp.signal_name) AS channel_point_name
+               FROM measurement_routing mr
+               LEFT JOIN channels c ON c.channel_id = mr.channel_id
+               LEFT JOIN telemetry_points tp ON tp.channel_id = mr.channel_id AND tp.point_id = mr.channel_point_id AND mr.channel_type = 'T'
+               LEFT JOIN signal_points sp ON sp.channel_id = mr.channel_id AND sp.point_id = mr.channel_point_id AND mr.channel_type = 'S'
+               WHERE mr.instance_id = ? AND mr.measurement_id = ?"#,
         )
         .bind(instance_id as i64)
-        .bind(&product_name)
         .bind(point_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| {
-            anyhow!(
-                "Measurement point {} not found for instance {}: {}",
-                point_id,
-                instance_id,
-                e
-            )
-        })?;
+        .fetch_optional(&self.pool)
+        .await?;
 
-        let (idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname) = point;
-
-        Ok(InstanceMeasurementPoint {
-            measurement_id: idx,
-            name,
-            unit,
-            description: desc,
-            routing: match (ctype, enabled) {
+        let routing = routing_row.and_then(|(cid, ctype, cpid, enabled, cname, cpname)| {
+            match (ctype, enabled) {
                 (Some(t), Some(e)) => Some(PointRouting {
                     channel_id: cid,
                     channel_type: Some(t),
@@ -530,7 +440,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     channel_point_name: cpname,
                 }),
                 _ => None,
-            },
+            }
+        });
+
+        Ok(InstanceMeasurementPoint {
+            measurement_id: mp.measurement_id,
+            name: mp.name.clone(),
+            unit: mp.unit.clone(),
+            description: mp.description.clone(),
+            routing,
         })
     }
 
@@ -542,7 +460,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ) -> Result<crate::dto::InstanceActionPoint> {
         use crate::dto::{InstanceActionPoint, PointRouting};
 
-        // 1. Get product_name
+        // 1. Get product_name and product definition
         let product_name = sqlx::query_scalar::<_, String>(
             "SELECT product_name FROM instances WHERE instance_id = ?",
         )
@@ -551,71 +469,52 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
-        // 2. JOIN query for the specific action point (with channel and point names)
-        let point = sqlx::query_as::<
+        let product = self
+            .product_loader
+            .get_product(&product_name)
+            .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
+
+        // 2. Find the action point in built-in product
+        let ap = product
+            .actions
+            .iter()
+            .find(|a| a.action_id == point_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Action point {} not found in product '{}'",
+                    point_id,
+                    product_name
+                )
+            })?;
+
+        // 3. Query routing for this specific point
+        let routing_row = sqlx::query_as::<
             _,
             (
-                u32,
-                String,
-                Option<String>,
-                Option<String>, // Point fields
-                Option<i32>,
-                Option<String>,
-                Option<u32>,
-                Option<bool>,   // Routing fields
+                Option<i32>,    // channel_id
+                Option<String>, // channel_type
+                Option<u32>,    // channel_point_id
+                Option<bool>,   // enabled
                 Option<String>, // channel_name
                 Option<String>, // channel_point_name
             ),
         >(
-            r#"
-            SELECT
-                ap.action_id,
-                ap.name,
-                ap.unit,
-                ap.description,
-                ar.channel_id,
-                ar.channel_type,
-                ar.channel_point_id,
-                ar.enabled,
-                c.name AS channel_name,
-                COALESCE(cp.signal_name, ajp.signal_name) AS channel_point_name
-            FROM action_points ap
-            LEFT JOIN action_routing ar
-                ON ar.instance_id = ? AND ar.action_id = ap.action_id
-            LEFT JOIN channels c ON c.channel_id = ar.channel_id
-            LEFT JOIN control_points cp
-                ON cp.channel_id = ar.channel_id
-                AND cp.point_id = ar.channel_point_id
-                AND ar.channel_type = 'C'
-            LEFT JOIN adjustment_points ajp
-                ON ajp.channel_id = ar.channel_id
-                AND ajp.point_id = ar.channel_point_id
-                AND ar.channel_type = 'A'
-            WHERE ap.product_name = ? AND ap.action_id = ?
-            "#,
+            r#"SELECT ar.channel_id, ar.channel_type, ar.channel_point_id, ar.enabled,
+                    c.name AS channel_name,
+                    COALESCE(cp.signal_name, ajp.signal_name) AS channel_point_name
+               FROM action_routing ar
+               LEFT JOIN channels c ON c.channel_id = ar.channel_id
+               LEFT JOIN control_points cp ON cp.channel_id = ar.channel_id AND cp.point_id = ar.channel_point_id AND ar.channel_type = 'C'
+               LEFT JOIN adjustment_points ajp ON ajp.channel_id = ar.channel_id AND ajp.point_id = ar.channel_point_id AND ar.channel_type = 'A'
+               WHERE ar.instance_id = ? AND ar.action_id = ?"#,
         )
         .bind(instance_id as i64)
-        .bind(&product_name)
         .bind(point_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| {
-            anyhow!(
-                "Action point {} not found for instance {}: {}",
-                point_id,
-                instance_id,
-                e
-            )
-        })?;
+        .fetch_optional(&self.pool)
+        .await?;
 
-        let (idx, name, unit, desc, cid, ctype, cpid, enabled, cname, cpname) = point;
-
-        Ok(InstanceActionPoint {
-            action_id: idx,
-            name,
-            unit,
-            description: desc,
-            routing: match (ctype, enabled) {
+        let routing = routing_row.and_then(|(cid, ctype, cpid, enabled, cname, cpname)| {
+            match (ctype, enabled) {
                 (Some(t), Some(e)) => Some(PointRouting {
                     channel_id: cid,
                     channel_type: Some(t),
@@ -625,7 +524,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     channel_point_name: cpname,
                 }),
                 _ => None,
-            },
+            }
+        });
+
+        Ok(InstanceActionPoint {
+            action_id: ap.action_id,
+            name: ap.name.clone(),
+            unit: ap.unit.clone(),
+            description: ap.description.clone(),
+            routing,
         })
     }
 }

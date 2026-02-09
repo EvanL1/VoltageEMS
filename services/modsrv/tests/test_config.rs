@@ -342,29 +342,8 @@ fn test_action_routing_table_sql_not_empty() {
     assert!(sql.contains("action_routing"));
 }
 
-#[test]
-fn test_measurement_points_table_sql_not_empty() {
-    let sql = modsrv::config::MEASUREMENT_POINTS_TABLE;
-    assert!(!sql.is_empty());
-    assert!(sql.contains("CREATE TABLE"));
-    assert!(sql.contains("measurement_points"));
-}
-
-#[test]
-fn test_action_points_table_sql_not_empty() {
-    let sql = modsrv::config::ACTION_POINTS_TABLE;
-    assert!(!sql.is_empty());
-    assert!(sql.contains("CREATE TABLE"));
-    assert!(sql.contains("action_points"));
-}
-
-#[test]
-fn test_property_templates_table_sql_not_empty() {
-    let sql = modsrv::config::PROPERTY_TEMPLATES_TABLE;
-    assert!(!sql.is_empty());
-    assert!(sql.contains("CREATE TABLE"));
-    assert!(sql.contains("property_templates"));
-}
+// Note: measurement_points, action_points, property_templates table tests removed.
+// These tables are no longer defined - product definitions are compile-time constants.
 
 // ============================================================================
 // Edge Cases and Error Handling

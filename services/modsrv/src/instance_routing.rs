@@ -348,20 +348,27 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             }
         }
 
-        // Validate measurement point exists
-        let point_exists = sqlx::query_scalar::<_, bool>(
-            r#"
-            SELECT EXISTS(
-                SELECT 1 FROM measurement_points mp
-                JOIN instances i ON i.product_name = mp.product_name
-                WHERE i.instance_name = ? AND mp.measurement_id = ?
+        // Validate measurement point exists (from built-in product definitions)
+        let point_exists = if instance_exists {
+            let product_name = sqlx::query_scalar::<_, String>(
+                "SELECT product_name FROM instances WHERE instance_name = ?",
             )
-            "#,
-        )
-        .bind(instance_name)
-        .bind(routing.measurement_id)
-        .fetch_one(&self.pool)
-        .await?;
+            .bind(instance_name)
+            .fetch_one(&self.pool)
+            .await?;
+
+            self.product_loader
+                .get_product(&product_name)
+                .map(|product| {
+                    product
+                        .measurements
+                        .iter()
+                        .any(|m| m.measurement_id == routing.measurement_id)
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         if !point_exists {
             errors.push(format!(
@@ -412,20 +419,27 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             }
         }
 
-        // Validate action point exists
-        let point_exists = sqlx::query_scalar::<_, bool>(
-            r#"
-            SELECT EXISTS(
-                SELECT 1 FROM action_points ap
-                JOIN instances i ON i.product_name = ap.product_name
-                WHERE i.instance_name = ? AND ap.action_id = ?
+        // Validate action point exists (from built-in product definitions)
+        let point_exists = if instance_exists {
+            let product_name = sqlx::query_scalar::<_, String>(
+                "SELECT product_name FROM instances WHERE instance_name = ?",
             )
-            "#,
-        )
-        .bind(instance_name)
-        .bind(routing.action_id)
-        .fetch_one(&self.pool)
-        .await?;
+            .bind(instance_name)
+            .fetch_one(&self.pool)
+            .await?;
+
+            self.product_loader
+                .get_product(&product_name)
+                .map(|product| {
+                    product
+                        .actions
+                        .iter()
+                        .any(|a| a.action_id == routing.action_id)
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         if !point_exists {
             errors.push(format!(
@@ -514,87 +528,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Create measurement_points table for validation tests (without FK constraint)
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS measurement_points (
-                product_name TEXT NOT NULL,
-                measurement_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                unit TEXT,
-                description TEXT,
-                PRIMARY KEY (product_name, measurement_id)
-            )"#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Create action_points table for validation tests
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS action_points (
-                product_name TEXT NOT NULL,
-                action_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                unit TEXT,
-                description TEXT,
-                PRIMARY KEY (product_name, action_id)
-            )"#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Insert Battery measurement points (matches Battery.json)
-        for id in 1..=19 {
-            sqlx::query(
-                "INSERT INTO measurement_points (product_name, measurement_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("Battery")
-            .bind(id)
-            .bind(format!("Battery M{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        // Insert Battery action points
-        for id in 1..=3 {
-            sqlx::query(
-                "INSERT INTO action_points (product_name, action_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("Battery")
-            .bind(id)
-            .bind(format!("Battery A{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        // Insert PCS measurement points (for PCS tests)
-        for id in 1..=10 {
-            sqlx::query(
-                "INSERT INTO measurement_points (product_name, measurement_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("PCS")
-            .bind(id)
-            .bind(format!("PCS M{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        // Insert PCS action points
-        for id in 1..=5 {
-            sqlx::query(
-                "INSERT INTO action_points (product_name, action_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("PCS")
-            .bind(id)
-            .bind(format!("PCS A{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
+        // Note: measurement_points and action_points tables are no longer needed.
+        // Validation tests now use built-in product definitions from voltage-model crate
+        // (Battery has 19 measurements + 3 actions, PCS has its own set, etc.)
 
         (temp_dir, pool)
     }
