@@ -52,6 +52,7 @@ static BUILTIN_PRODUCTS: Lazy<Vec<BuiltinProduct>> = Lazy::new(|| {
         include_str!("products/PCS.json"),
         include_str!("products/Diesel.json"),
         include_str!("products/PV_DCDC.json"),
+        include_str!("products/PVInverter.json"),
         include_str!("products/Env.json"),
         include_str!("products/Load.json"),
     ];
@@ -98,7 +99,7 @@ mod tests {
     fn test_builtin_products_loaded() {
         let products = get_builtin_products();
         assert!(!products.is_empty(), "Should have built-in products");
-        assert_eq!(products.len(), 9, "Should have 9 products");
+        assert_eq!(products.len(), 10, "Should have 10 products");
     }
 
     #[test]
