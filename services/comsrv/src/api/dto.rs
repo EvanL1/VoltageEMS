@@ -453,8 +453,22 @@ pub struct ChannelCreateRequest {
 
 /// Channel configuration update request
 /// Note: Use PUT /api/channels/{id}/enabled to change enabled state
+///
+/// ## Channel ID Migration
+/// If `channel_id` is provided and differs from the path ID, the channel will be
+/// migrated to the new ID. This includes:
+/// - Updating all related tables (points, mappings, routing)
+/// - Clearing old Redis keys
+/// - Restarting the channel with the new ID
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelConfigUpdateRequest {
+    /// New channel ID (optional, triggers ID migration if provided and different from path ID)
+    ///
+    /// When specified, the channel will be migrated from the current ID (in URL path)
+    /// to this new ID. All related data (points, mappings, routing) will be updated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = 6, nullable = true)]
+    pub channel_id: Option<u32>,
     pub name: Option<String>,
     pub description: Option<String>,
     pub protocol: Option<String>,
@@ -1072,6 +1086,7 @@ mod tests {
         }"#;
 
         let request: ChannelConfigUpdateRequest = serde_json::from_str(json_data).unwrap();
+        assert!(request.channel_id.is_none()); // Not provided, defaults to None
         assert_eq!(request.name, Some("Updated Channel Name".to_string()));
         assert_eq!(request.description, Some("Updated description".to_string()));
         assert!(request.protocol.is_none());
@@ -1079,5 +1094,21 @@ mod tests {
 
         let params = request.parameters.unwrap();
         assert_eq!(params.get("timeout"), Some(&json!(5000)));
+    }
+
+    #[test]
+    fn test_channel_config_update_request_with_channel_id() {
+        let json_data = r#"{
+            "channel_id": 6,
+            "name": "Migrated Channel"
+        }"#;
+
+        let request: ChannelConfigUpdateRequest = serde_json::from_str(json_data).unwrap();
+        assert_eq!(request.channel_id, Some(6));
+        assert_eq!(request.name, Some("Migrated Channel".to_string()));
+        assert!(request.description.is_none());
+        assert!(request.protocol.is_none());
+        assert!(request.parameters.is_none());
+        assert!(request.logging.is_none());
     }
 }

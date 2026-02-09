@@ -26,13 +26,13 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tracing::debug;
-use voltage_modbus::logging::{
-    CallbackLogger, LogCallback, LogLevel as VoltageLogLevel, LoggingMode,
+use voltage_modbus::{
+    DeviceLimits, ModbusClient, ModbusTcpClient, PacketCallback as VoltagePacketCallback,
+    PacketDirection as VoltagePacketDirection, TcpTransport,
 };
-use voltage_modbus::{DeviceLimits, ModbusClient, ModbusTcpClient};
 
 #[cfg(feature = "modbus")]
-use voltage_modbus::ModbusRtuClient;
+use voltage_modbus::{ModbusRtuClient, RtuTransport};
 
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
@@ -63,69 +63,126 @@ use async_trait::async_trait;
 type GroupedPoints = HashMap<(u8, u8), Arc<Vec<PointConfig>>>;
 
 // ============================================================================
-// Raw Packet Logging Bridge
+// Raw Packet Logging Bridge (using voltage_modbus PacketCallback)
 // ============================================================================
 
-/// Parse hex string to bytes (e.g., "00 01 00 00 00 06 01 03" -> [0, 1, 0, 0, 0, 6, 1, 3])
-fn parse_hex_string(hex: &str) -> Option<Vec<u8>> {
-    hex.split_whitespace()
-        .map(|s| u8::from_str_radix(s, 16).ok())
-        .collect()
-}
-
-/// Extract raw packet data from Modbus TCP ADU.
+/// Extract metadata from Modbus TCP ADU.
 ///
-/// TCP ADU format: [Trans(2)][Proto(2)][Len(2)][Unit(1)][FC(1)][Data...]
-/// Returns (slave_id, function_code) from the packet.
-fn extract_modbus_metadata(data: &[u8]) -> (u8, u8) {
+/// TCP ADU format: [Trans(2)][Proto(2)][Len(2)][Unit(1)][FC(1)][StartAddr(2)][Qty(2)]...
+/// Returns (slave_id, function_code, transaction_id, start_address, quantity) from the packet.
+fn extract_tcp_metadata(data: &[u8]) -> (u8, u8, Option<u16>, Option<u16>, Option<u16>) {
     if data.len() >= 8 {
-        (data[6], data[7]) // Unit ID and Function Code
+        let transaction_id = u16::from_be_bytes([data[0], data[1]]);
+        let slave_id = data[6];
+        let function_code = data[7];
+
+        // Extract address range for read/write function codes (FC 1-4, 5-6, 15-16)
+        let (start_address, quantity) = if data.len() >= 12 {
+            let start = u16::from_be_bytes([data[8], data[9]]);
+            let qty = u16::from_be_bytes([data[10], data[11]]);
+            (Some(start), Some(qty))
+        } else {
+            (None, None)
+        };
+
+        (
+            slave_id,
+            function_code,
+            Some(transaction_id),
+            start_address,
+            quantity,
+        )
     } else {
-        (0, 0)
+        (0, 0, None, None, None)
     }
 }
 
-/// Create a CallbackLogger that bridges voltage_modbus logs to comsrv's LogContext.
+/// Extract metadata from Modbus RTU ADU.
 ///
-/// The callback parses raw packet data from log messages and forwards to log_raw_packet().
-fn create_modbus_logger(
-    log_context: Arc<LogContext>,
-    transport: ModbusTransportType,
-) -> CallbackLogger {
-    let callback: LogCallback = Box::new(move |_level, message| {
-        // Parse raw packet from message format: "Modbus Request -> Raw: XX XX XX..."
-        // or "Modbus Response <- Raw: XX XX XX..."
-        if let Some(raw_start) = message.find("Raw: ") {
-            let hex_str = &message[raw_start + 5..];
+/// RTU ADU format: [Unit(1)][FC(1)][StartAddr(2)][Qty(2)]...[CRC(2)]
+/// Returns (slave_id, function_code, start_address, quantity) from the packet.
+#[cfg(feature = "modbus")]
+fn extract_rtu_metadata(data: &[u8]) -> (u8, u8, Option<u16>, Option<u16>) {
+    if data.len() >= 2 {
+        let slave_id = data[0];
+        let function_code = data[1];
 
-            // Determine direction
-            let direction = if message.contains("->") {
-                PacketDirection::Send
-            } else {
-                PacketDirection::Receive
+        // Extract address range for read/write function codes
+        let (start_address, quantity) = if data.len() >= 6 {
+            let start = u16::from_be_bytes([data[2], data[3]]);
+            let qty = u16::from_be_bytes([data[4], data[5]]);
+            (Some(start), Some(qty))
+        } else {
+            (None, None)
+        };
+
+        (slave_id, function_code, start_address, quantity)
+    } else {
+        (0, 0, None, None)
+    }
+}
+
+/// Create a PacketCallback that bridges voltage_modbus real packets to comsrv's LogContext.
+///
+/// This callback receives the **actual bytes** sent/received on the wire,
+/// not reconstructed packets. This ensures accurate logging including correct TID.
+///
+/// # Arguments
+/// - `log_context`: The logging context for this channel
+/// - `transport_type`: TCP or RTU transport type
+/// - `group_id`: Shared atomic counter for correlating packets with point values
+fn create_packet_callback(
+    log_context: Arc<LogContext>,
+    transport_type: ModbusTransportType,
+    group_id: Arc<std::sync::atomic::AtomicU32>,
+) -> VoltagePacketCallback {
+    Arc::new(move |direction, data| {
+        // Convert voltage_modbus direction to comsrv direction
+        let dir = match direction {
+            VoltagePacketDirection::Send => PacketDirection::Send,
+            VoltagePacketDirection::Receive => PacketDirection::Receive,
+        };
+
+        // Extract metadata based on transport type
+        let (slave_id, function_code, transaction_id, start_address, quantity) =
+            match transport_type {
+                ModbusTransportType::Tcp => extract_tcp_metadata(data),
+                #[cfg(feature = "modbus")]
+                ModbusTransportType::Rtu => {
+                    let (slave, fc, start, qty) = extract_rtu_metadata(data);
+                    (slave, fc, None, start, qty) // RTU has no transaction ID
+                },
+                // ASCII mode is not implemented - fail fast if someone tries to use it
+                #[allow(unreachable_patterns)]
+                _ => unreachable!("ModbusTransportType::Ascii is not supported"),
             };
 
-            // Parse hex to bytes
-            if let Some(data) = parse_hex_string(hex_str) {
-                let (slave_id, function_code) = extract_modbus_metadata(&data);
+        // Create metadata with full details
+        let metadata = PacketMetadata::Modbus {
+            transport: transport_type,
+            slave_id,
+            function_code,
+            transaction_id,
+            start_address,
+            quantity,
+        };
 
-                // Create metadata
-                let metadata = PacketMetadata::Modbus {
-                    transport,
-                    slave_id,
-                    function_code,
-                };
+        // Read current group_id (atomic, lock-free)
+        let current_gid = group_id.load(std::sync::atomic::Ordering::Relaxed);
+        let gid = if current_gid > 0 {
+            Some(current_gid)
+        } else {
+            None
+        };
 
-                // Spawn async task to log (fire-and-forget, since callback is sync)
-                let ctx = log_context.clone();
-                tokio::spawn(async move {
-                    ctx.log_raw_packet(direction, data, metadata).await;
-                });
-            }
-        }
-    });
-
-    CallbackLogger::with_mode(Some(callback), VoltageLogLevel::Info, LoggingMode::Raw)
+        // Clone data for async task (callback is sync, logging is async)
+        let ctx = log_context.clone();
+        let data = data.to_vec();
+        tokio::spawn(async move {
+            ctx.log_raw_packet_with_group(dir, data, metadata, gid)
+                .await;
+        });
+    })
 }
 
 // ============================================================================
@@ -749,6 +806,9 @@ pub struct ModbusChannel {
     // === Logging ===
     /// Logging context for channel events
     log_context: Arc<LogContext>,
+    /// Current group ID for correlating packets and values in logs.
+    /// Shared with PacketCallback via Arc for cross-thread access.
+    current_group_id: Arc<std::sync::atomic::AtomicU32>,
 }
 
 // ChannelDiagnostics replaced with AtomicDiagnostics from protocols::core
@@ -787,6 +847,7 @@ impl ModbusChannel {
             polling_interval_ms: DEFAULT_POLLING_INTERVAL_MS,
             command_batcher: CommandBatcher::new(),
             log_context: Arc::new(LogContext::new(channel_id)),
+            current_group_id: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
 
@@ -1634,34 +1695,49 @@ impl ProtocolClient for ModbusChannel {
             )),
         };
 
-        // Create client based on connection mode (with raw packet logging)
+        // Create client based on connection mode (with raw packet logging via PacketCallback)
         let connect_result = match self.config.connection_mode {
             ConnectionMode::Tcp => {
-                // TCP connection with logging
-                let logger =
-                    create_modbus_logger(self.log_context.clone(), ModbusTransportType::Tcp);
-                match ModbusTcpClient::with_logging(
-                    &self.config.address,
-                    self.config.connect_timeout,
-                    Some(logger),
-                )
-                .await
-                {
-                    Ok(client) => Ok(ModbusClientWrapper::Tcp(client)),
+                // Parse socket address
+                let socket_addr: std::net::SocketAddr = self
+                    .config
+                    .address
+                    .parse()
+                    .map_err(|e| GatewayError::Connection(format!("Invalid address: {}", e)))?;
+
+                // Create transport with packet callback for real packet logging
+                match TcpTransport::new(socket_addr, self.config.connect_timeout).await {
+                    Ok(mut transport) => {
+                        // Set callback to capture actual wire bytes with group ID correlation
+                        let callback = create_packet_callback(
+                            self.log_context.clone(),
+                            ModbusTransportType::Tcp,
+                            self.current_group_id.clone(),
+                        );
+                        transport.set_packet_callback(callback);
+                        // Create client from transport
+                        let client = ModbusTcpClient::from_transport(transport);
+                        Ok(ModbusClientWrapper::Tcp(client))
+                    },
                     Err(e) => Err(GatewayError::Connection(e.to_string())),
                 }
             },
             #[cfg(feature = "modbus")]
             ConnectionMode::Rtu => {
-                // RTU serial connection with logging
-                let logger =
-                    create_modbus_logger(self.log_context.clone(), ModbusTransportType::Rtu);
-                match ModbusRtuClient::with_logging(
-                    &self.config.rtu_device,
-                    self.config.baud_rate,
-                    Some(logger),
-                ) {
-                    Ok(client) => Ok(ModbusClientWrapper::Rtu(client)),
+                // Create RTU transport with packet callback
+                match RtuTransport::new(&self.config.rtu_device, self.config.baud_rate) {
+                    Ok(mut transport) => {
+                        // Set callback to capture actual wire bytes (including CRC) with group ID
+                        let callback = create_packet_callback(
+                            self.log_context.clone(),
+                            ModbusTransportType::Rtu,
+                            self.current_group_id.clone(),
+                        );
+                        transport.set_packet_callback(callback);
+                        // Create client from transport
+                        let client = ModbusRtuClient::from_transport(transport);
+                        Ok(ModbusClientWrapper::Rtu(client))
+                    },
                     Err(e) => Err(GatewayError::Connection(e.to_string())),
                 }
             },
@@ -1771,6 +1847,13 @@ impl ProtocolClient for ModbusChannel {
         let mut failures = Vec::with_capacity(total_points);
 
         for ((_slave_id, _fc), points) in groups.iter() {
+            // Increment group ID before reading this group
+            // This ensures request/response packets and parsed values share the same ID
+            let group_id = self
+                .current_group_id
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
+
             let results = Self::read_point_group(
                 client,
                 points,
@@ -1785,6 +1868,18 @@ impl ProtocolClient for ModbusChannel {
                 for point in points.iter() {
                     failures.push(PointFailure::new(point.id, "Read failed - no response"));
                 }
+            }
+
+            // Log point values immediately after each group read (Info level)
+            // This ensures in Debug mode, point values appear right after raw packets
+            if !results.is_empty() {
+                let point_summaries: Vec<(u32, voltage_model::PointType, Value, _)> = results
+                    .iter()
+                    .map(|(_, dp)| (dp.id, dp.point_type, dp.value.clone(), dp.quality))
+                    .collect();
+                self.log_context
+                    .log_point_values_with_group(&point_summaries, Some(group_id))
+                    .await;
             }
 
             for (_point_id, data_point) in results {

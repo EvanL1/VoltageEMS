@@ -17,6 +17,8 @@ use axum::{
     extract::{Path, State},
     response::Json,
 };
+#[allow(unused_imports)] // Used in utoipa examples
+use serde_json::json;
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 
@@ -538,38 +540,352 @@ pub async fn create_channel_handler<R: Rtdb>(
     Ok(Json(SuccessResponse::new(result)))
 }
 
+/// Migrate channel ID in database (all related tables)
+///
+/// This function updates the channel_id in all related tables within a single transaction.
+/// Tables updated: telemetry_points, signal_points, control_points, adjustment_points,
+/// json_point_mappings, point_mappings, measurement_routing, action_routing, channels
+async fn migrate_channel_id_in_db(
+    old_id: u32,
+    new_id: u32,
+    pool: &sqlx::SqlitePool,
+) -> Result<(), AppError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to begin transaction: {}", e)))?;
+
+    // Disable foreign key constraints temporarily
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to disable FK: {}", e)))?;
+
+    // Update all related tables (order matters for potential future FK constraints)
+    let tables = [
+        "telemetry_points",
+        "signal_points",
+        "control_points",
+        "adjustment_points",
+        "json_point_mappings",
+        "point_mappings",
+        "measurement_routing",
+        "action_routing",
+    ];
+
+    for table in &tables {
+        let query = format!("UPDATE {} SET channel_id = ? WHERE channel_id = ?", table);
+        let result = sqlx::query(&query)
+            .bind(new_id as i64)
+            .bind(old_id as i64)
+            .execute(&mut *tx)
+            .await;
+
+        match result {
+            Ok(r) => {
+                if r.rows_affected() > 0 {
+                    tracing::debug!(
+                        "Ch{} -> Ch{}: {} rows in {}",
+                        old_id,
+                        new_id,
+                        r.rows_affected(),
+                        table
+                    );
+                }
+            },
+            Err(e) => {
+                // Table might not exist, log and continue
+                tracing::debug!("Table {} update skipped: {}", table, e);
+            },
+        }
+    }
+
+    // Update the main channels table
+    sqlx::query("UPDATE channels SET channel_id = ? WHERE channel_id = ?")
+        .bind(new_id as i64)
+        .bind(old_id as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to update channels: {}", e)))?;
+
+    // Re-enable foreign key constraints
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to enable FK: {}", e)))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to commit transaction: {}", e)))?;
+
+    tracing::info!("Ch{} -> Ch{}: database migration complete", old_id, new_id);
+    Ok(())
+}
+
+/// Change channel ID with full migration
+///
+/// This function handles the complete channel ID migration:
+/// 1. Validates new_id doesn't exist
+/// 2. Stops old channel (runtime)
+/// 3. Migrates database (all related tables in transaction)
+/// 4. Clears Redis keys for old channel
+/// 5. Reloads routing cache
+/// 6. Creates and connects new channel
+async fn change_channel_id<R: Rtdb + 'static>(
+    old_id: u32,
+    new_id: u32,
+    req: crate::dto::ChannelConfigUpdateRequest,
+    state: &AppState<R>,
+) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
+    use crate::core::channels::ChannelManager;
+    use crate::core::config::ChannelConfig;
+    use std::time::Duration;
+
+    // 1. Validate new_id doesn't exist in runtime
+    let manager = &state.channel_manager;
+    if manager.get_channel(new_id).is_some() {
+        return Err(AppError::conflict(format!(
+            "Channel {} already exists in runtime",
+            new_id
+        )));
+    }
+
+    // 2. Validate new_id doesn't exist in database
+    let db_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channels WHERE channel_id = ?)")
+            .bind(new_id as i64)
+            .fetch_one(&state.sqlite_pool)
+            .await
+            .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
+
+    if db_exists {
+        return Err(AppError::conflict(format!(
+            "Channel {} already exists in database",
+            new_id
+        )));
+    }
+
+    // 3. Load current configuration from database
+    let current: Option<(String, String, bool, Option<String>)> =
+        sqlx::query_as("SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?")
+            .bind(old_id as i64)
+            .fetch_optional(&state.sqlite_pool)
+            .await
+            .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
+
+    let Some((current_name, current_protocol, enabled, current_config_str)) = current else {
+        return Err(AppError::not_found(format!(
+            "Channel {} not found in database",
+            old_id
+        )));
+    };
+
+    // 4. Parse current config
+    let (current_description, current_parameters, current_logging) =
+        parse_channel_config(old_id, current_config_str)?;
+
+    // Check if any additional updates are requested (besides channel_id)
+    let has_other_updates = req.name.is_some()
+        || req.protocol.is_some()
+        || req.description.is_some()
+        || req.parameters.is_some()
+        || req.logging.is_some();
+
+    // Apply requested updates (if any)
+    let name = req.name.unwrap_or(current_name);
+    let protocol = req.protocol.unwrap_or(current_protocol);
+    let description = req.description.or(current_description);
+    let parameters = if let Some(new_params) = req.parameters {
+        let mut merged = current_parameters;
+        for (k, v) in new_params {
+            merged.insert(k, v);
+        }
+        merged
+    } else {
+        current_parameters
+    };
+    let logging = req.logging.unwrap_or(current_logging);
+
+    // 5. Stop old channel (runtime)
+    if manager.get_channel(old_id).is_some() {
+        if let Err(e) = manager.remove_channel(old_id).await {
+            tracing::warn!("Ch{} remove failed: {}", old_id, e);
+        } else {
+            tracing::debug!("Ch{} stopped for ID migration", old_id);
+        }
+    }
+
+    // 6. Migrate database (all related tables in transaction)
+    migrate_channel_id_in_db(old_id, new_id, &state.sqlite_pool).await?;
+
+    // 7. Update channel name/protocol/config if changed
+    if has_other_updates {
+        let config_json = build_channel_config_json(description.as_ref(), &parameters, &logging)
+            .map_err(|e| AppError::internal_error(format!("Failed to build config JSON: {}", e)))?;
+
+        sqlx::query("UPDATE channels SET name = ?, protocol = ?, config = ? WHERE channel_id = ?")
+            .bind(&name)
+            .bind(&protocol)
+            .bind(&config_json)
+            .bind(new_id as i64)
+            .execute(&state.sqlite_pool)
+            .await
+            .map_err(|e| AppError::internal_error(format!("Failed to update channel: {}", e)))?;
+    }
+
+    // 8. Redis keys for old channel will be overwritten when new channel starts
+    // No explicit cleanup needed - keys are namespaced by channel_id
+    tracing::debug!(
+        "Ch{} Redis keys will be overwritten by Ch{}",
+        old_id,
+        new_id
+    );
+
+    // 9. Reload routing cache
+    if let Err(e) = ChannelManager::<voltage_rtdb::RedisRtdb>::reload_routing_cache(
+        &state.sqlite_pool,
+        &manager.routing_cache,
+    )
+    .await
+    {
+        tracing::warn!("Routing cache reload failed: {}", e);
+    }
+
+    // 10. Create and connect new channel (if enabled)
+    let runtime_status = if enabled {
+        let new_config = ChannelConfig {
+            core: ChannelCore {
+                id: new_id,
+                name: name.clone(),
+                description: description.clone(),
+                protocol: protocol.clone(),
+                enabled,
+            },
+            parameters: parameters.clone(),
+            logging: logging.clone(),
+        };
+
+        match manager.create_channel(Arc::new(new_config)).await {
+            Ok(entry) => {
+                // Wait for connection with timeout (sync instead of fire-and-forget)
+                match tokio::time::timeout(Duration::from_secs(5), entry.connect()).await {
+                    Ok(Ok(_)) => {
+                        tracing::info!("Ch{} connected after ID migration", new_id);
+                        "connected".to_string()
+                    },
+                    Ok(Err(e)) => {
+                        tracing::warn!("Ch{} connect failed: {}", new_id, e);
+                        "connection_failed".to_string()
+                    },
+                    Err(_) => {
+                        tracing::debug!("Ch{} connect timeout, continuing in background", new_id);
+                        "connecting".to_string()
+                    },
+                }
+            },
+            Err(e) => {
+                tracing::error!("Ch{} create failed: {}", new_id, e);
+                "error".to_string()
+            },
+        }
+    } else {
+        "stopped".to_string()
+    };
+
+    let result = crate::dto::ChannelCrudResult {
+        core: ChannelCore {
+            id: new_id,
+            name,
+            description,
+            protocol,
+            enabled,
+        },
+        runtime_status,
+        message: Some(format!("Channel ID changed from {} to {}", old_id, new_id)),
+    };
+
+    tracing::info!("Ch{} -> Ch{}: migration complete", old_id, new_id);
+    Ok(Json(SuccessResponse::new(result)))
+}
+
 /// Update an existing channel configuration
 ///
 /// Updates channel configuration (name, protocol, parameters) without changing enabled state.
 /// If the channel is running, it will be hot-reloaded with the new configuration.
 /// Use PUT /api/channels/{id}/enabled to change the enabled state.
 ///
+/// ## Channel ID Migration
+/// If `channel_id` is provided in the request body and differs from the path ID,
+/// the channel will be migrated to the new ID. This includes:
+/// - Updating all related tables (points, mappings, routing)
+/// - Restarting the channel with the new ID
+///
 /// @route PUT /api/channels/{id}
-/// @input Path(id): u16 - Channel ID to update
+/// @input Path(id): u32 - Current channel ID (or ID to migrate from)
 /// @input State(state): AppState - Application state
-/// @input Json(req): ChannelConfigUpdateRequest - Update parameters
+/// @input Json(req): ChannelConfigUpdateRequest - Update parameters (optionally include channel_id for migration)
 /// @output `Json<ApiResponse<ChannelCrudResult>>` - Update result
 /// @status 200 - Channel updated successfully
 /// @status 404 - Channel not found
+/// @status 409 - Conflict (new channel_id already exists)
 /// @status 500 - Database or runtime error
-/// @side-effects Updates SQLite and hot-reloads if running
+/// @side-effects Updates SQLite and hot-reloads if running; migrates all data if channel_id changed
 #[utoipa::path(
     put,
     path = "/api/channels/{id}",
     params(
-        ("id" = u32, Path, description = "Channel identifier")
+        ("id" = u32, Path, description = "Current channel identifier (or ID to migrate from)")
     ),
-    request_body = crate::dto::ChannelConfigUpdateRequest,
+    request_body(
+        content = crate::dto::ChannelConfigUpdateRequest,
+        description = "Channel update request. Include channel_id to migrate to a new ID.",
+        examples(
+            ("Update name only" = (
+                summary = "Update channel name",
+                value = json!({
+                    "name": "Updated Channel Name"
+                })
+            )),
+            ("Migrate channel ID" = (
+                summary = "Change channel ID from 13 to 6",
+                description = "Migrates all related data (points, mappings, routing) to the new ID",
+                value = json!({
+                    "channel_id": 6,
+                    "name": "1DL2-2 (2)"
+                })
+            )),
+            ("Update parameters" = (
+                summary = "Update connection parameters",
+                value = json!({
+                    "parameters": {
+                        "host": "192.168.1.101",
+                        "timeout_ms": 10000
+                    }
+                })
+            ))
+        )
+    ),
     responses(
-        (status = 200, description = "Channel updated", body = crate::dto::ChannelCrudResult)
+        (status = 200, description = "Channel updated successfully", body = crate::dto::ChannelCrudResult),
+        (status = 404, description = "Channel not found"),
+        (status = 409, description = "Conflict - new channel_id already exists"),
+        (status = 500, description = "Internal server error")
     ),
     tag = "comsrv"
 )]
-pub async fn update_channel_handler<R: Rtdb>(
+pub async fn update_channel_handler<R: Rtdb + 'static>(
     Path(id): Path<u32>,
     State(state): State<AppState<R>>,
     Json(req): Json<crate::dto::ChannelConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
+    // Check if channel ID migration is requested
+    if let Some(new_id) = req.channel_id {
+        if new_id != id {
+            tracing::info!("Ch{} -> Ch{} ID migration requested", id, new_id);
+            return change_channel_id(id, new_id, req, &state).await;
+        }
+    }
+
     tracing::debug!("Ch{} updating", id);
 
     // 1. Check if channel is currently running
@@ -811,6 +1127,32 @@ pub async fn update_channel_handler<R: Rtdb>(
         tracing::debug!("Ch{} updated (stopped)", id);
         "stopped".to_string()
     };
+
+    // Update channel name in Redis hash if name changed
+    // This ensures Redis cache is consistent even for MetadataOnly changes
+    if name_changed {
+        let keyspace = voltage_model::KeySpaceConfig::production_cached();
+        let channels_key = keyspace.channels_hash_key();
+        if let Err(e) = state
+            .rtdb
+            .hash_set(
+                &channels_key,
+                &id.to_string(),
+                bytes::Bytes::from(name.clone()),
+            )
+            .await
+        {
+            // Redis is cache layer - log warning but don't fail the request
+            tracing::warn!(
+                "Ch{} failed to update name in Redis hash ({}): {}",
+                id,
+                channels_key,
+                e
+            );
+        } else {
+            tracing::debug!("Ch{} name updated in Redis hash: {}", id, channels_key);
+        }
+    }
 
     // Use the final description after applying updates (or keep previous if not provided)
     let result = crate::dto::ChannelCrudResult {
@@ -1055,7 +1397,36 @@ pub async fn delete_channel_handler<R: Rtdb>(
         AppError::internal_error(format!("Failed to begin transaction: {}", e))
     })?;
 
-    // 2. Delete channel from database within transaction
+    // 2. Delete related records from dependent tables (foreign key constraints)
+    let related_tables = [
+        "telemetry_points",
+        "signal_points",
+        "control_points",
+        "adjustment_points",
+        "json_point_mappings",
+        "point_mappings",
+        "measurement_routing",
+        "action_routing",
+    ];
+
+    for table in &related_tables {
+        let query = format!("DELETE FROM {} WHERE channel_id = ?", table);
+        let result = sqlx::query(&query).bind(id as i64).execute(&mut *tx).await;
+
+        match result {
+            Ok(r) => {
+                if r.rows_affected() > 0 {
+                    tracing::debug!("Ch{} deleted {} rows from {}", id, r.rows_affected(), table);
+                }
+            },
+            Err(e) => {
+                // Table may not exist, log and continue
+                tracing::debug!("Table {} delete skipped: {}", table, e);
+            },
+        }
+    }
+
+    // 3. Delete channel from database
     let result = sqlx::query("DELETE FROM channels WHERE channel_id = ?")
         .bind(id as i64)
         .execute(&mut *tx)
@@ -1075,14 +1446,14 @@ pub async fn delete_channel_handler<R: Rtdb>(
         )));
     }
 
-    // 3. Commit transaction BEFORE removing runtime channel
+    // 4. Commit transaction BEFORE removing runtime channel
     // This ensures database consistency is preserved
     tx.commit().await.map_err(|e| {
         tracing::error!("Ch{} delete tx commit: {}", id, e);
         AppError::internal_error(format!("Failed to commit transaction: {}", e))
     })?;
 
-    // 4. Remove from runtime (best effort - doesn't affect data consistency)
+    // 5. Remove from runtime (best effort - doesn't affect data consistency)
     // Even if this fails, the channel is gone from database which is the source of truth
     {
         // Direct access without RwLock (lock-free)

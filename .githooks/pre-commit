@@ -43,10 +43,10 @@ fi
 
 # 运行测试 - 包括单元测试和集成测试（跳过 doctests）
 echo "🧪 Running tests..."
-if ! cargo test --workspace --lib --tests --quiet 2>/dev/null; then
+if ! cargo test --workspace --lib --tests --quiet -- --test-threads=1 2>/dev/null; then
     echo -e "${RED}❌ Tests failed!${NC}"
     echo "Running tests again to show errors:"
-    cargo test --workspace --lib --tests
+    cargo test --workspace --lib --tests -- --test-threads=1
     exit 1
 fi
 

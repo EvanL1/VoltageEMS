@@ -8,11 +8,41 @@ use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use tracing::{info, warn};
 
-// Import DDL constants from services (lib mode)
-use comsrv::core::config as comsrv_schema;
-use modsrv::config as modsrv_schema;
+// Import DDL constants from common (shared schema definitions)
+use common::test_utils::schema::{
+    ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE,
+    INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE,
+    SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
+};
 
 use super::file_utils;
+
+// ============================================================================
+// JSON Point Mappings DDL (MQTT/HTTP protocol support)
+// ============================================================================
+
+/// JSON point mappings table DDL for MQTT/HTTP protocols
+///
+/// This table enables configuration-driven device integration:
+/// - MQTT devices publish JSON payloads with vendor-specific formats
+/// - HTTP devices return JSON responses with custom schemas
+/// - JSONPath expressions extract values without code changes
+const JSON_POINT_MAPPINGS_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS json_point_mappings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel_id INTEGER NOT NULL REFERENCES channels(channel_id) ON DELETE CASCADE,
+        point_id INTEGER NOT NULL,
+        point_type TEXT NOT NULL,
+        json_path TEXT NOT NULL,
+        data_type TEXT DEFAULT 'float',
+        scale REAL DEFAULT 1.0,
+        offset REAL DEFAULT 0.0,
+        description TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(channel_id, point_id, point_type)
+    )
+"#;
 
 // ============================================================================
 // Rules DDL (defined locally since rules are managed by monarch)
@@ -108,47 +138,29 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     migrate_rules_table_if_needed(&pool).await?;
 
     // === Shared tables ===
-    sqlx::query(comsrv_schema::SERVICE_CONFIG_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(comsrv_schema::SYNC_METADATA_TABLE)
-        .execute(&pool)
-        .await?;
+    sqlx::query(SERVICE_CONFIG_TABLE).execute(&pool).await?;
+    sqlx::query(SYNC_METADATA_TABLE).execute(&pool).await?;
 
-    // === Channel & Point tables (comsrv) ===
-    sqlx::query(comsrv_schema::CHANNELS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(comsrv_schema::TELEMETRY_POINTS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(comsrv_schema::SIGNAL_POINTS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(comsrv_schema::CONTROL_POINTS_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(comsrv_schema::ADJUSTMENT_POINTS_TABLE)
-        .execute(&pool)
-        .await?;
+    // === Channel & Point tables ===
+    sqlx::query(CHANNELS_TABLE).execute(&pool).await?;
+    sqlx::query(TELEMETRY_POINTS_TABLE).execute(&pool).await?;
+    sqlx::query(SIGNAL_POINTS_TABLE).execute(&pool).await?;
+    sqlx::query(CONTROL_POINTS_TABLE).execute(&pool).await?;
+    sqlx::query(ADJUSTMENT_POINTS_TABLE).execute(&pool).await?;
 
     // === JSON point mappings table (MQTT/HTTP protocols) ===
-    sqlx::query(comsrv_schema::JSON_POINT_MAPPINGS_TABLE)
+    sqlx::query(JSON_POINT_MAPPINGS_TABLE)
         .execute(&pool)
         .await?;
 
-    // === Instance tables (modsrv) ===
-    // Note: Product tables (products, measurement_points, action_points, property_templates)
-    // have been removed. Products are now compile-time built-in constants from voltage-model crate.
-    sqlx::query(modsrv_schema::INSTANCES_TABLE)
+    // === Instance tables ===
+    // Note: Product tables have been removed.
+    // Products are now compile-time built-in constants from voltage-model crate.
+    sqlx::query(INSTANCES_TABLE).execute(&pool).await?;
+    sqlx::query(MEASUREMENT_ROUTING_TABLE)
         .execute(&pool)
         .await?;
-    sqlx::query(modsrv_schema::MEASUREMENT_ROUTING_TABLE)
-        .execute(&pool)
-        .await?;
-    sqlx::query(modsrv_schema::ACTION_ROUTING_TABLE)
-        .execute(&pool)
-        .await?;
+    sqlx::query(ACTION_ROUTING_TABLE).execute(&pool).await?;
 
     // === Rule tables (rules engine) ===
     sqlx::query(RULE_CHAINS_TABLE).execute(&pool).await?;

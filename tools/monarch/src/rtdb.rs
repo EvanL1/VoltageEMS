@@ -4,13 +4,10 @@
 
 use anyhow::Result;
 use clap::Subcommand;
-use tracing::{info, warn};
-
-#[cfg(feature = "lib-mode")]
-use crate::context::ServiceContext;
-
-#[cfg(feature = "lib-mode")]
-use voltage_rtdb::{Bytes, Rtdb};
+use common::redis::RedisClient;
+use std::sync::Arc;
+use tracing::info;
+use voltage_rtdb::{Bytes, RedisRtdb, Rtdb};
 
 #[derive(Subcommand)]
 pub enum RtdbCommands {
@@ -71,54 +68,35 @@ pub enum RtdbCommands {
     Patterns,
 }
 
-pub async fn handle_command(cmd: RtdbCommands, service_ctx: Option<&ServiceContext>) -> Result<()> {
-    #[cfg(feature = "lib-mode")]
-    {
-        if service_ctx.is_none() {
-            warn!("RTDB commands require offline mode (--offline flag)");
-            warn!("Please run with --offline to use lib-mode RTDB access");
-            return Ok(());
-        }
+pub async fn handle_command(cmd: RtdbCommands, redis_url: &str) -> Result<()> {
+    // Connect to Redis directly
+    let redis_client = Arc::new(RedisClient::new(redis_url).await?);
+    let rtdb = RedisRtdb::from_client(redis_client);
 
-        let ctx = service_ctx.expect("service_ctx checked above");
-
-        // Use modsrv's RTDB (all services share same Redis)
-        let modsrv = ctx.modsrv()?;
-        let rtdb = &modsrv.rtdb;
-
-        match cmd {
-            RtdbCommands::Get { key, field } => {
-                handle_get(&**rtdb, &key, field.as_deref()).await?;
-            },
-            RtdbCommands::Set { key, value, field } => {
-                handle_set(&**rtdb, &key, &value, field.as_deref()).await?;
-            },
-            RtdbCommands::Scan { pattern, limit } => {
-                handle_scan(&**rtdb, &pattern, limit).await?;
-            },
-            RtdbCommands::Del { keys, force } => {
-                handle_del(&**rtdb, &keys, force).await?;
-            },
-            RtdbCommands::Inspect { key, full } => {
-                handle_inspect(&**rtdb, &key, full).await?;
-            },
-            RtdbCommands::Patterns => {
-                show_patterns();
-            },
-        }
-    }
-
-    #[cfg(not(feature = "lib-mode"))]
-    {
-        let _ = (cmd, service_ctx);
-        warn!("RTDB commands are only available in lib-mode");
-        warn!("Please rebuild monarch with --features lib-mode");
+    match cmd {
+        RtdbCommands::Get { key, field } => {
+            handle_get(&rtdb, &key, field.as_deref()).await?;
+        },
+        RtdbCommands::Set { key, value, field } => {
+            handle_set(&rtdb, &key, &value, field.as_deref()).await?;
+        },
+        RtdbCommands::Scan { pattern, limit } => {
+            handle_scan(&rtdb, &pattern, limit).await?;
+        },
+        RtdbCommands::Del { keys, force } => {
+            handle_del(&rtdb, &keys, force).await?;
+        },
+        RtdbCommands::Inspect { key, full } => {
+            handle_inspect(&rtdb, &key, full).await?;
+        },
+        RtdbCommands::Patterns => {
+            show_patterns();
+        },
     }
 
     Ok(())
 }
 
-#[cfg(feature = "lib-mode")]
 async fn handle_get(rtdb: &impl Rtdb, key: &str, field: Option<&str>) -> Result<()> {
     if let Some(field) = field {
         // HGET operation
@@ -150,7 +128,6 @@ async fn handle_get(rtdb: &impl Rtdb, key: &str, field: Option<&str>) -> Result<
     Ok(())
 }
 
-#[cfg(feature = "lib-mode")]
 async fn handle_set(rtdb: &impl Rtdb, key: &str, value: &str, field: Option<&str>) -> Result<()> {
     let value_bytes = Bytes::from(value.to_string());
 
@@ -168,7 +145,6 @@ async fn handle_set(rtdb: &impl Rtdb, key: &str, value: &str, field: Option<&str
     Ok(())
 }
 
-#[cfg(feature = "lib-mode")]
 async fn handle_scan(rtdb: &impl Rtdb, pattern: &str, limit: usize) -> Result<()> {
     let keys = rtdb.scan_match(pattern).await?;
 
@@ -202,7 +178,6 @@ async fn handle_scan(rtdb: &impl Rtdb, pattern: &str, limit: usize) -> Result<()
     Ok(())
 }
 
-#[cfg(feature = "lib-mode")]
 async fn handle_del(rtdb: &impl Rtdb, keys: &[String], force: bool) -> Result<()> {
     if keys.is_empty() {
         println!("⚠ No keys specified");
@@ -242,7 +217,6 @@ async fn handle_del(rtdb: &impl Rtdb, keys: &[String], force: bool) -> Result<()
     Ok(())
 }
 
-#[cfg(feature = "lib-mode")]
 async fn handle_inspect(rtdb: &impl Rtdb, key: &str, full: bool) -> Result<()> {
     // Check if key exists
     if !rtdb.exists(key).await? {

@@ -4,7 +4,6 @@
 //! service management, and operational control for all VoltageEMS services.
 
 mod channels;
-mod context;
 mod core;
 mod doctor;
 mod logs;
@@ -15,161 +14,10 @@ mod services;
 mod shm;
 mod utils;
 
-// ===== Library Mode API =====
-//
-// Direct service library calls instead of HTTP API.
-// Provides the same functionality as HTTP API but with:
-// - No need for running services
-// - 10x faster response time (no HTTP overhead)
-// - Better error messages (direct access to internal errors)
-// - Support for batch operations
-pub mod lib_api {
-    #[cfg(feature = "lib-mode")]
-    pub mod channels;
+// Note: lib-mode (direct service library calls) has been removed in favor of HTTP-only mode.
+// This simplifies the architecture, reduces code duplication (~50%), and aligns with MCP patterns.
+// All commands now use HTTP clients to communicate with running services.
 
-    #[cfg(feature = "lib-mode")]
-    pub mod models;
-
-    #[cfg(feature = "lib-mode")]
-    pub mod rules;
-
-    /// Common result type for lib API operations
-    pub type Result<T> = anyhow::Result<T>;
-
-    /// Error type for lib API operations
-    #[derive(Debug, thiserror::Error)]
-    pub enum LibApiError {
-        #[cfg(feature = "lib-mode")]
-        #[error("Comsrv error: {0}")]
-        Comsrv(#[from] comsrv::ComSrvError),
-
-        #[cfg(feature = "lib-mode")]
-        #[error("Modsrv error: {0}")]
-        Modsrv(#[from] modsrv::ModSrvError),
-        // rules errors are now handled by modsrv::ModSrvError
-        #[error("Database error: {0}")]
-        Database(#[from] sqlx::Error),
-
-        #[error("Redis error: {0}")]
-        Redis(String),
-
-        #[error("Configuration error: {0}")]
-        Config(String),
-
-        #[error("Not found: {0}")]
-        NotFound(String),
-
-        #[error("Invalid input: {0}")]
-        InvalidInput(String),
-    }
-
-    impl LibApiError {
-        /// Create a not found error
-        pub fn not_found(msg: impl Into<String>) -> Self {
-            Self::NotFound(msg.into())
-        }
-
-        /// Create an invalid input error
-        pub fn invalid_input(msg: impl Into<String>) -> Self {
-            Self::InvalidInput(msg.into())
-        }
-
-        /// Create a config error
-        pub fn config(msg: impl Into<String>) -> Self {
-            Self::Config(msg.into())
-        }
-    }
-
-    #[cfg(feature = "lib-mode")]
-    impl From<voltage_rtdb::error::RtdbError> for LibApiError {
-        fn from(err: voltage_rtdb::error::RtdbError) -> Self {
-            Self::Redis(err.to_string())
-        }
-    }
-
-    // ========================================================================
-    // Unit Tests for LibApiError
-    // ========================================================================
-
-    #[cfg(test)]
-    #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_lib_api_error_not_found() {
-            let err = LibApiError::not_found("Resource not found");
-            assert!(matches!(err, LibApiError::NotFound(_)));
-
-            let msg = err.to_string();
-            assert!(msg.contains("not found"));
-        }
-
-        #[test]
-        fn test_lib_api_error_invalid_input() {
-            let err = LibApiError::invalid_input("Invalid parameter");
-            assert!(matches!(err, LibApiError::InvalidInput(_)));
-
-            let msg = err.to_string();
-            assert!(msg.contains("Invalid input"));
-        }
-
-        #[test]
-        fn test_lib_api_error_config() {
-            let err = LibApiError::config("Missing configuration");
-            assert!(matches!(err, LibApiError::Config(_)));
-
-            let msg = err.to_string();
-            assert!(msg.contains("Configuration error"));
-        }
-
-        #[test]
-        fn test_lib_api_error_redis() {
-            let err = LibApiError::Redis("Connection refused".to_string());
-            assert!(matches!(err, LibApiError::Redis(_)));
-
-            let msg = err.to_string();
-            assert!(msg.contains("Redis error"));
-        }
-
-        #[test]
-        fn test_lib_api_error_from_string() {
-            // Test that constructors accept various string types
-            let err1 = LibApiError::not_found(String::from("owned string"));
-            let err2 = LibApiError::not_found("static str");
-            let err3 = LibApiError::not_found(format!("formatted {}", "string"));
-
-            assert!(err1.to_string().contains("owned string"));
-            assert!(err2.to_string().contains("static str"));
-            assert!(err3.to_string().contains("formatted string"));
-        }
-
-        #[test]
-        fn test_lib_api_error_display() {
-            let errors = vec![
-                LibApiError::NotFound("item".to_string()),
-                LibApiError::InvalidInput("bad input".to_string()),
-                LibApiError::Config("config issue".to_string()),
-                LibApiError::Redis("redis issue".to_string()),
-            ];
-
-            for err in errors {
-                // Each error should have a non-empty display
-                let display = err.to_string();
-                assert!(!display.is_empty());
-            }
-        }
-
-        #[test]
-        fn test_lib_api_error_debug() {
-            let err = LibApiError::not_found("test");
-            let debug_str = format!("{:?}", err);
-            assert!(debug_str.contains("NotFound"));
-        }
-    }
-}
-
-use crate::context::{ServiceConfig, ServiceContext};
 use crate::core::{schema, MonarchCore};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -225,14 +73,6 @@ struct Cli {
     /// Database files path (default: auto-detect /opt/MonarchEdge/data or ./data)
     #[arg(long = "db-path", global = true)]
     db_path: Option<String>,
-
-    /// Force offline mode (use lib API instead of HTTP)
-    #[arg(short = 'o', long, global = true)]
-    offline: bool,
-
-    /// Force online mode (use HTTP API only)
-    #[arg(long, global = true)]
-    online: bool,
 }
 
 #[derive(Subcommand)]
@@ -345,6 +185,32 @@ enum Commands {
     },
 }
 
+/// Auto-detect configuration path from environment or defaults
+fn auto_detect_config_path() -> PathBuf {
+    std::env::var("VOLTAGE_CONFIG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if Path::new("/opt/MonarchEdge/config").exists() {
+                PathBuf::from("/opt/MonarchEdge/config")
+            } else {
+                PathBuf::from("config")
+            }
+        })
+}
+
+/// Auto-detect database path from environment or defaults
+fn auto_detect_db_path() -> PathBuf {
+    std::env::var("VOLTAGE_DATA_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            if Path::new("/opt/MonarchEdge/data").exists() {
+                PathBuf::from("/opt/MonarchEdge/data")
+            } else {
+                PathBuf::from("data")
+            }
+        })
+}
+
 fn print_banner() {
     println!();
     println!(
@@ -394,21 +260,16 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    // Use ServiceConfig::auto_detect() as baseline, then override with CLI args
-    let mut service_config = ServiceConfig::auto_detect();
+    // Auto-detect paths from environment or defaults
+    let config_path = cli
+        .config_path
+        .map(PathBuf::from)
+        .unwrap_or_else(auto_detect_config_path);
 
-    // Override with CLI arguments if provided
-    if let Some(config_path) = cli.config_path.as_deref() {
-        service_config.config_path = PathBuf::from(config_path);
-    }
-
-    if let Some(db_path) = cli.db_path.as_deref() {
-        service_config.db_path = PathBuf::from(db_path);
-    }
-
-    // Extract paths for use in configuration commands
-    let config_path = &service_config.config_path;
-    let db_path = &service_config.db_path;
+    let db_path = cli
+        .db_path
+        .map(PathBuf::from)
+        .unwrap_or_else(auto_detect_db_path);
 
     // Print banner for interactive commands
     if !cli.no_color {
@@ -421,79 +282,6 @@ async fn main() -> Result<()> {
         );
         println!();
     }
-
-    // Initialize ServiceContext for offline mode support
-    #[cfg(feature = "lib-mode")]
-    let service_ctx = {
-        // Detect operating mode
-        let use_offline = if cli.online {
-            false // Explicitly online mode
-        } else if cli.offline {
-            true // Explicitly offline mode
-        } else {
-            // Auto-detect: try to initialize offline mode
-            true
-        };
-
-        if use_offline {
-            // Use the constructed service_config directly
-            let mut ctx = ServiceContext::new(service_config.clone());
-
-            // Initialize both modsrv and comsrv for offline mode
-            // modsrv: for models, rules, instances
-            // comsrv: for channels
-            let modsrv_ok = match ctx.init_modsrv().await {
-                Ok(_) => true,
-                Err(e) => {
-                    if cli.verbose {
-                        println!("{} Failed to initialize modsrv: {}", "WARN".yellow(), e);
-                    }
-                    false
-                },
-            };
-
-            let comsrv_ok = match ctx.init_comsrv().await {
-                Ok(_) => true,
-                Err(e) => {
-                    if cli.verbose {
-                        println!("{} Failed to initialize comsrv: {}", "WARN".yellow(), e);
-                    }
-                    false
-                },
-            };
-
-            if modsrv_ok || comsrv_ok {
-                if cli.verbose {
-                    let services: Vec<&str> = [
-                        if modsrv_ok { Some("modsrv") } else { None },
-                        if comsrv_ok { Some("comsrv") } else { None },
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                    println!(
-                        "{} Offline mode initialized ({})",
-                        "INFO".bright_green(),
-                        services.join(", ")
-                    );
-                }
-                Some(ctx)
-            } else {
-                if cli.verbose {
-                    println!("{} Falling back to online mode", "INFO".bright_cyan());
-                }
-                None
-            }
-        } else {
-            if cli.verbose {
-                println!("{} Using online mode (HTTP API)", "INFO".bright_cyan());
-            }
-            None
-        }
-    };
-
-    #[cfg(not(feature = "lib-mode"))]
-    let service_ctx: Option<ServiceContext> = None;
 
     match cli.command {
         // Configuration management commands
@@ -508,50 +296,52 @@ async fn main() -> Result<()> {
                     "{}",
                     "Validating all configuration (dry run)...".bright_cyan()
                 );
-                validate_command(detailed, config_path, db_path, check).await?;
+                validate_command(detailed, &config_path, &db_path, check).await?;
             } else {
                 println!("{}", "Syncing all configuration...".bright_cyan());
-                sync_command(force, detailed, config_path, db_path, check).await?;
+                sync_command(force, detailed, &config_path, &db_path, check).await?;
             }
         },
         Commands::Status { detailed } => {
             println!("{}", "Configuration Status".bright_cyan());
-            status_command(detailed, db_path).await?;
+            status_command(detailed, &db_path).await?;
         },
         Commands::Init { force } => {
             println!("{}", "Initializing database schema...".bright_cyan());
-            init_command(db_path, force).await?;
+            init_command(&db_path, force).await?;
         },
         Commands::Export { output, detailed } => {
             println!(
                 "{}",
                 "Exporting configuration from database...".bright_cyan()
             );
-            export_command(output, detailed, config_path, db_path).await?;
+            export_command(output, detailed, &config_path, &db_path).await?;
         },
 
-        // Service management commands
+        // Service management commands (all use HTTP API)
         Commands::Channels { command } => {
             let base_url = std::env::var("VOLTAGE_COMSRV_URL")
                 .unwrap_or_else(|_| "http://localhost:6001".to_string());
-            channels::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
+            channels::handle_command(command, &base_url).await?;
         },
         Commands::Models { command } => {
             let base_url = std::env::var("VOLTAGE_MODSRV_URL")
                 .unwrap_or_else(|_| "http://localhost:6002".to_string());
-            models::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
+            models::handle_command(command, &base_url).await?;
         },
         Commands::Rules { command } => {
             // Rules merged into modsrv (port 6002)
             let base_url = std::env::var("VOLTAGE_MODSRV_URL")
                 .unwrap_or_else(|_| "http://localhost:6002".to_string());
-            rules::handle_command(command, service_ctx.as_ref(), Some(&base_url)).await?;
+            rules::handle_command(command, &base_url).await?;
         },
         Commands::Rtdb { command } => {
-            rtdb::handle_command(command, service_ctx.as_ref()).await?;
+            let redis_url = std::env::var("VOLTAGE_REDIS_URL")
+                .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+            rtdb::handle_command(command, &redis_url).await?;
         },
         Commands::Services { command } => {
-            services::handle_command(command, service_ctx.as_ref()).await?;
+            services::handle_command(command).await?;
         },
         Commands::Logs { command } => {
             logs::handle_command(command).await?;

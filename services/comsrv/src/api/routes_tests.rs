@@ -1261,6 +1261,7 @@ async fn test_update_channel_handler() {
     params.insert("timeout".to_string(), serde_json::json!(5000));
 
     let request_body = crate::dto::ChannelConfigUpdateRequest {
+        channel_id: None, // No ID migration
         name: Some("Updated Channel".to_string()),
         description: Some("Updated Description".to_string()),
         protocol: None,
