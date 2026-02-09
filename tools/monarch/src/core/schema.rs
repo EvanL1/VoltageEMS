@@ -4,7 +4,7 @@
 //! All tables are created in a single `voltage.db` file.
 
 use anyhow::{Context, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, Sqlite, SqlitePool};
 use std::path::Path;
 use tracing::{info, warn};
 
@@ -78,6 +78,185 @@ const RULE_HISTORY_TABLE: &str = r#"
     )
 "#;
 
+// ============================================================================
+// Schema Version Migration
+// ============================================================================
+//
+// Uses SQLite's built-in PRAGMA user_version to track schema structure version.
+// Each breaking schema change gets a new version with a migration function.
+//
+// To add a new migration:
+//   1. Increment SCHEMA_VERSION
+//   2. Add `migrate_vN()` function
+//   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
+
+/// Current schema structure version — increment when adding migrations
+const SCHEMA_VERSION: i32 = 2;
+
+/// Run pending schema migrations based on `PRAGMA user_version`
+///
+/// Reads the database's current version, executes any outstanding migrations
+/// sequentially, then stamps the new version. All migration queries run on
+/// a single connection to keep `PRAGMA foreign_keys` state consistent.
+async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+    let current: i32 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(pool)
+        .await?;
+
+    if current >= SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    info!("Schema migration: v{current} -> v{SCHEMA_VERSION}",);
+
+    // Acquire a single connection — PRAGMA foreign_keys is per-connection
+    let mut conn = pool.acquire().await?;
+
+    if current < 1 {
+        migrate_v1(&mut conn).await.context("Migration v1 failed")?;
+    }
+
+    if current < 2 {
+        migrate_v2(&mut conn).await.context("Migration v2 failed")?;
+    }
+
+    sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
+        .execute(&mut *conn)
+        .await?;
+
+    info!("Schema migration complete: v{SCHEMA_VERSION}");
+    Ok(())
+}
+
+/// v1: Remove `products` foreign key from `instances` table, drop obsolete tables
+///
+/// Old schema had `REFERENCES products(product_name)` on instances.product_name.
+/// Products are now compile-time constants — the FK and table are no longer needed.
+async fn migrate_v1(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    let has_products: bool =
+        sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name='products'")
+            .fetch_optional(&mut **conn)
+            .await?
+            .unwrap_or(false);
+
+    if !has_products {
+        info!("Migration v1: skipped (products table not found)");
+        return Ok(());
+    }
+
+    info!("Migration v1: rebuilding instances table, removing products FK");
+
+    sqlx::query("PRAGMA foreign_keys=OFF")
+        .execute(&mut **conn)
+        .await?;
+
+    // Rebuild instances without products FK (matches INSTANCES_TABLE DDL)
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS instances_new (
+            instance_id INTEGER NOT NULL PRIMARY KEY,
+            instance_name TEXT NOT NULL UNIQUE,
+            product_name TEXT NOT NULL,
+            parent_id INTEGER,
+            properties TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (parent_id) REFERENCES instances(instance_id) ON DELETE SET NULL
+        )",
+    )
+    .execute(&mut **conn)
+    .await?;
+
+    // Copy data — old table has no parent_id, defaults to NULL
+    sqlx::query(
+        "INSERT INTO instances_new
+            (instance_id, instance_name, product_name, properties, created_at, updated_at)
+         SELECT instance_id, instance_name, product_name, properties, created_at, updated_at
+         FROM instances",
+    )
+    .execute(&mut **conn)
+    .await?;
+
+    sqlx::query("DROP TABLE instances")
+        .execute(&mut **conn)
+        .await?;
+    sqlx::query("ALTER TABLE instances_new RENAME TO instances")
+        .execute(&mut **conn)
+        .await?;
+
+    // Drop obsolete product-related tables
+    for table in [
+        "products",
+        "measurement_points",
+        "action_points",
+        "property_templates",
+        "product_library_meta",
+    ] {
+        sqlx::query(&format!("DROP TABLE IF EXISTS {table}"))
+            .execute(&mut **conn)
+            .await?;
+    }
+
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(&mut **conn)
+        .await?;
+
+    info!("Migration v1: complete");
+    Ok(())
+}
+
+/// v2: Rename legacy snake_case product names to match new built-in product library
+///
+/// Old config templates used `battery_pack`, `pcs`, etc. The compile-time product
+/// library uses `Battery`, `PCS`, `PVInverter`, `Diesel`. This migration updates
+/// existing rows so `get_builtin_product()` can find them by exact name match.
+async fn migrate_v2(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    // On a fresh database, instances table doesn't exist yet (created after migrations).
+    // Only run the rename if the table is already present from a previous schema version.
+    let has_instances: bool =
+        sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name='instances'")
+            .fetch_optional(&mut **conn)
+            .await?
+            .unwrap_or(false);
+
+    if !has_instances {
+        info!("Migration v2: skipped (instances table not yet created)");
+        return Ok(());
+    }
+
+    info!("Migration v2: renaming legacy product names");
+
+    let mappings = [
+        ("battery_pack", "Battery"),
+        ("pcs", "PCS"),
+        ("diesel_generator", "Diesel"),
+        ("pv_inverter", "PVInverter"),
+    ];
+
+    for (old, new) in mappings {
+        let result = sqlx::query("UPDATE instances SET product_name = ? WHERE product_name = ?")
+            .bind(new)
+            .bind(old)
+            .execute(&mut **conn)
+            .await?;
+
+        if result.rows_affected() > 0 {
+            info!(
+                "Migration v2: renamed '{}' -> '{}' ({} rows)",
+                old,
+                new,
+                result.rows_affected()
+            );
+        }
+    }
+
+    info!("Migration v2: complete");
+    Ok(())
+}
+
+// ============================================================================
+// Legacy Ad-hoc Migrations (kept for backward compatibility)
+// ============================================================================
+
 /// Migrate legacy rules table if needed
 ///
 /// Checks if the rules table uses the old schema (id TEXT) and rebuilds it
@@ -134,7 +313,10 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     // Set file permissions for Docker compatibility
     file_utils::set_database_permissions(db_path)?;
 
-    // Run schema migrations before creating tables
+    // Run versioned schema migrations (PRAGMA user_version based)
+    run_migrations(&pool).await?;
+
+    // Run legacy ad-hoc migrations (detection-based, kept for backward compatibility)
     migrate_rules_table_if_needed(&pool).await?;
 
     // === Shared tables ===

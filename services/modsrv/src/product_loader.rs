@@ -285,7 +285,7 @@ mod tests {
             let loader = ProductLoader::new(pool);
 
             let products = loader.get_all_products();
-            assert_eq!(products.len(), 9);
+            assert_eq!(products.len(), 10);
 
             let names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
             assert!(names.contains(&"Battery"));
@@ -314,7 +314,7 @@ mod tests {
             let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
             let loader = ProductLoader::new(pool);
 
-            assert_eq!(loader.product_count(), 9);
+            assert_eq!(loader.product_count(), 10);
         });
     }
 

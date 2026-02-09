@@ -66,13 +66,7 @@ pub use memory_impl::{MemoryRtdb, MemoryStats};
 // accessible via crate::vec_impl::{...} where needed
 
 // Shared memory public API (only types needed by external crates)
-pub use shared_impl::{
-    default_shm_path, is_shm_available, try_open_reader, ChannelToSlotIndex, SharedConfig,
-    SharedReaderStats, SharedVecRtdbReader, SharedVecRtdbWriter, SharedWriterStats,
-};
-
-// Internal shared memory types (ChannelIndex, SharedHeader, SHARED_MAGIC) are
-// accessible via crate::shared_impl::{...} where needed - not re-exported here
+pub use shared_impl::{default_shm_path, is_shm_available, ChannelToSlotIndex, SharedConfig};
 
 // Unified shared memory (simplified architecture: Header + PointSlots only)
 pub use unified_shm::{
@@ -249,11 +243,10 @@ pub mod helpers {
             // Use precomputed pool (0-255) or itoa - returns Arc<str>
             let field: Arc<str> = precomputed::get_point_id_str_or_alloc(point_id);
 
-            // Arc::clone is O(1), convert to String only when pushing to final Vec
-            // This reduces 3 String clones to 3 Arc::clone + 3 Arc->String conversions
-            values.push((field.to_string(), f64_to_bytes(value)));
-            timestamps.push((field.to_string(), timestamp_bytes.clone()));
-            raw_values.push((field.to_string(), f64_to_bytes(raw_value)));
+            // Arc::clone is O(1) — zero heap allocation per field
+            values.push((Arc::clone(&field), f64_to_bytes(value)));
+            timestamps.push((Arc::clone(&field), timestamp_bytes.clone()));
+            raw_values.push((field, f64_to_bytes(raw_value)));
         }
 
         // Write all hashes in a single pipeline
