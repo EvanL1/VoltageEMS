@@ -62,12 +62,10 @@ impl<'a> ChannelsService<'a> {
         let mut summaries = Vec::new();
 
         for (channel_id, name, protocol, enabled) in db_channels {
-            // Check if channel is connected at runtime
-            let connected = if let Some(ch) = manager.get_channel(channel_id) {
-                ch.is_connected().await
-            } else {
-                false
-            };
+            // Check if channel is connected at runtime (non-blocking)
+            let connected = manager
+                .get_channel(channel_id)
+                .is_some_and(|ch| ch.is_connected());
 
             summaries.push(ChannelSummary {
                 id: channel_id,
@@ -102,18 +100,16 @@ impl<'a> ChannelsService<'a> {
         let (connected, connection_info, last_error) =
             if let Some(ch) = manager.get_channel(channel_id) {
                 let status = ch.get_status().await;
-                // get_diagnostics may fail if the channel protocol task is not running
-                let (conn_info, err_info) = match ch.get_diagnostics(channel_id).await {
-                    Ok(diag) => (
-                        diag.get("connection_info")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        diag.get("last_error")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                    ),
-                    Err(_) => (None, None),
-                };
+                // get_diagnostics returns cached diagnostics (non-blocking)
+                let diag = ch.get_diagnostics(channel_id);
+                let conn_info = diag
+                    .get("connection_info")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let err_info = diag
+                    .get("last_error")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 (status.is_connected, conn_info, err_info)
             } else {
                 (false, None, None)

@@ -132,6 +132,11 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
         .execute(&pool)
         .await?;
 
+    // === JSON point mappings table (MQTT/HTTP protocols) ===
+    sqlx::query(comsrv_schema::JSON_POINT_MAPPINGS_TABLE)
+        .execute(&pool)
+        .await?;
+
     // === Instance tables (modsrv) ===
     // Note: Product tables (products, measurement_points, action_points, property_templates)
     // have been removed. Products are now compile-time built-in constants from voltage-model crate.
@@ -179,6 +184,13 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_adjustment_points_channel ON adjustment_points(channel_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    // JSON point mappings indexes (for MQTT/HTTP protocols)
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_json_point_mappings_channel ON json_point_mappings(channel_id)",
     )
     .execute(pool)
     .await?;

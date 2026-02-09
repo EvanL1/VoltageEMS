@@ -154,8 +154,17 @@ impl ShmCommandPoller {
 
         let command = Self::build_command(point_type, point_id, value, current_ts as i64);
         if let Some(sender) = self.command_senders.get(&channel_id) {
-            if let Err(e) = sender.try_send(command) {
-                warn!("ShmPoller send failed ch={}: {}", channel_id, e);
+            // Use send_timeout instead of try_send to handle transient backpressure
+            match tokio::time::timeout(std::time::Duration::from_millis(50), sender.send(command))
+                .await
+            {
+                Ok(Ok(())) => {},
+                Ok(Err(_)) => {
+                    warn!("ShmPoller: channel {} closed", channel_id);
+                },
+                Err(_) => {
+                    warn!("ShmPoller: channel {} buffer full for 50ms", channel_id);
+                },
             }
         }
     }

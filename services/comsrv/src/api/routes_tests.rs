@@ -1265,6 +1265,7 @@ async fn test_update_channel_handler() {
         description: Some("Updated Description".to_string()),
         protocol: None,
         parameters: Some(params),
+        logging: None,
     };
 
     let request = Request::builder()

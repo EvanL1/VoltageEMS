@@ -1418,6 +1418,10 @@ impl ChannelRuntime for OpcUaChannel {
     async fn diagnostics(&self) -> Result<Diagnostics> {
         <Self as Protocol>::diagnostics(self).await
     }
+
+    fn connection_state(&self) -> ConnectionState {
+        <Self as Protocol>::connection_state(self)
+    }
 }
 
 #[cfg(test)]

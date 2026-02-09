@@ -197,6 +197,20 @@ impl ComsrvSqliteLoader {
                 },
             }
 
+            // Parse logging config from JSON
+            let logging = match extra_config_obj.get("logging") {
+                None => crate::core::config::ChannelLoggingConfig::default(),
+                Some(logging_value) => serde_json::from_value(logging_value.clone())
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(
+                            "Ch{} invalid logging config, using default: {}",
+                            channel_id,
+                            e
+                        );
+                        crate::core::config::ChannelLoggingConfig::default()
+                    }),
+            };
+
             // Create channel config (without runtime fields)
             let channel = ChannelConfig {
                 core: crate::core::config::ChannelCore {
@@ -207,7 +221,7 @@ impl ComsrvSqliteLoader {
                     enabled,
                 },
                 parameters,
-                logging: crate::core::config::ChannelLoggingConfig::default(),
+                logging,
             };
 
             // Note: Points will be loaded at runtime when creating RuntimeChannelConfig

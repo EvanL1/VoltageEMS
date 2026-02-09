@@ -15,10 +15,11 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
+use voltage_model::{sanitize_value, ValidationConfig};
 use voltage_routing::set_action_point;
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{KeySpaceConfig, RoutingCache, UnifiedReader};
+use voltage_rtdb::{KeySpaceConfig, RoutingCache, ShmNotifier, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
 #[inline]
@@ -202,6 +203,8 @@ pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     shared_reader: Option<Arc<UnifiedReader>>,
     /// Optional UnifiedWriter for M2C via shared memory
     shm_action_writer: Option<Arc<voltage_rtdb::UnifiedWriter>>,
+    /// Optional ShmNotifier for UDS event notification (M2C low-latency path)
+    shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
 }
 
 impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
@@ -213,6 +216,7 @@ impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
             state_store: Arc::new(MemoryStateStore::new()),
             shared_reader: None,
             shm_action_writer: None,
+            shm_notifier: None,
         }
     }
 }
@@ -230,6 +234,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             state_store,
             shared_reader: None,
             shm_action_writer: None,
+            shm_notifier: None,
         }
     }
 
@@ -252,6 +257,15 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     /// SHM serves as the primary path for comsrv's ShmCommandPoller.
     pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> Self {
         self.shm_action_writer = Some(writer);
+        self
+    }
+
+    /// Enable ShmNotifier for UDS event notification
+    ///
+    /// When enabled, after writing to SHM, sends UDS notification to comsrv
+    /// for immediate command dispatch (~1-2ms latency vs polling).
+    pub fn with_shm_notifier(mut self, notifier: Arc<tokio::sync::Mutex<ShmNotifier>>) -> Self {
+        self.shm_notifier = Some(notifier);
         self
     }
 
@@ -495,6 +509,85 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         },
                     };
                 },
+                RuleNode::PeriodDelta {
+                    input,
+                    output,
+                    period,
+                    wires,
+                } => {
+                    // Read input variable (cumulative value like total energy)
+                    let input_vars = vec![input.clone()];
+                    let values_changed =
+                        match self.read_rule_variables(&input_vars, &mut values).await {
+                            Ok(changed) => changed,
+                            Err(e) => {
+                                result.error =
+                                    Some(format!("Failed to read input variable: {}", e));
+                                return Ok(result);
+                            },
+                        };
+
+                    // Snapshot values when entering this node
+                    let input_snapshot =
+                        snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
+                    result.variable_values = Arc::clone(&input_snapshot);
+
+                    // Get the input value
+                    let input_value = values.get(&input.name).copied().unwrap_or(0.0);
+
+                    // Create CalcEngine with rule_id as context (for stateful period_delta)
+                    let calc_engine =
+                        CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule.id));
+
+                    // Calculate period delta using builtin function
+                    // State key format: calc:state:rule_{id}:period_delta:{var_name}_{period}
+                    let state_key = format!(
+                        "{}:{}:{}",
+                        rule.id,
+                        input.instance.unwrap_or(0),
+                        input.point.unwrap_or(0)
+                    );
+                    let delta = match calc_engine
+                        .builtin()
+                        .period_delta(&state_key, input_value, period)
+                        .await
+                    {
+                        Ok(v) => v,
+                        Err(e) => {
+                            result.error = Some(format!("period_delta error: {}", e));
+                            return Ok(result);
+                        },
+                    };
+
+                    // Write delta to output variable
+                    let action = self.write_period_delta_result(output, delta, period).await;
+                    let node_actions = vec![action];
+                    result.actions_executed.push(action);
+
+                    // Update local values
+                    values.insert(output.name.clone(), delta);
+                    values_snapshot = None; // Invalidate cache
+
+                    // Record node execution detail
+                    result.node_details.insert(
+                        current_id.to_string(),
+                        NodeExecutionDetail {
+                            node_type: "periodDelta",
+                            input_values: input_snapshot,
+                            condition_results: None,
+                            matched_port: None,
+                            actions: Some(node_actions),
+                        },
+                    );
+
+                    current_id = match wires.default.first() {
+                        Some(next) => next.as_str(),
+                        None => {
+                            result.error = Some("PeriodDelta node has no output wire".to_string());
+                            return Ok(result);
+                        },
+                    };
+                },
             }
         }
 
@@ -516,6 +609,12 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         values: &mut HashMap<String, f64>,
     ) -> Result<bool> {
         let mut values_changed = false;
+        let keyspace = KeySpaceConfig::production_cached();
+
+        // ★ Phase 1a: Try SHM first, collect Redis fallback requests
+        // Group by Redis key for batched HMGET (reduces N calls to ~2 calls)
+        // Key: (redis_key, is_action), Value: Vec<(var_name, field)>
+        let mut redis_requests: HashMap<(String, bool), Vec<(String, String)>> = HashMap::new();
 
         for var in variables {
             // Skip formula variables in Phase 1 - calculated in Phase 2 after base variables
@@ -523,7 +622,6 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 continue;
             }
 
-            // Clone var.name once at loop start, reuse in all branches
             let var_name = var.name.clone();
 
             // Get instance ID (supports both "instance" and "instance_id" via serde alias)
@@ -548,8 +646,6 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             let is_action = point_type == "action";
 
             // ★ Priority 1: SharedMemory (~5μs) - cross-process zero-copy
-            // UnifiedReader API: get_instance(id, type, point, routing) → Option<(f64, u64)>
-            // instance_type: 0 = Measurement, 1 = Action
             if let Some(reader) = &self.shared_reader {
                 let instance_type = if is_action { 1 } else { 0 };
                 if let Some((val, _ts)) =
@@ -561,40 +657,49 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 }
             }
 
-            // ★ Priority 2: Redis (~1ms) - remote fallback
-            let keyspace = KeySpaceConfig::production_cached();
+            // SHM miss - queue for batched Redis fetch
             let key = if is_action {
                 keyspace.instance_action_key(instance_id)
             } else {
                 keyspace.instance_measurement_key(instance_id)
             };
+            let field = precomputed::get_point_id_str_or_alloc(point).to_string();
+            redis_requests
+                .entry((key, is_action))
+                .or_default()
+                .push((var_name, field));
+        }
 
-            // Use precomputed pool for common point IDs (0-255) to avoid allocation
-            let field = precomputed::get_point_id_str_or_alloc(point);
-
-            match self.rtdb.hash_get(&key, &field).await {
-                Ok(Some(val_bytes)) => {
-                    let val_str = String::from_utf8_lossy(&val_bytes);
-                    if let Ok(val) = val_str.parse::<f64>() {
+        // ★ Phase 1b: Batched Redis fetch using HMGET (single RTT per key)
+        for ((key, _is_action), var_fields) in redis_requests {
+            let fields: Vec<&str> = var_fields.iter().map(|(_, f)| f.as_str()).collect();
+            match self.rtdb.hash_mget(&key, &fields).await {
+                Ok(results) => {
+                    for (i, (var_name, field)) in var_fields.into_iter().enumerate() {
+                        let val = results
+                            .get(i)
+                            .and_then(|opt| opt.as_ref())
+                            .and_then(|bytes| {
+                                let s = String::from_utf8_lossy(bytes);
+                                s.parse::<f64>().ok()
+                            })
+                            .unwrap_or_else(|| {
+                                tracing::warn!(
+                                    "Var {}: {}:{} not found or invalid",
+                                    var_name,
+                                    key,
+                                    field
+                                );
+                                0.0
+                            });
                         values_changed |= values.insert(var_name, val) != Some(val);
-                    } else {
-                        tracing::warn!(
-                            "Var {}: '{}' not number at {}:{}",
-                            var_name,
-                            val_str,
-                            key,
-                            field
-                        );
-                        values_changed |= values.insert(var_name, 0.0) != Some(0.0);
                     }
                 },
-                Ok(None) => {
-                    tracing::warn!("Var {}: {}:{} not found", var_name, key, field);
-                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
-                },
                 Err(e) => {
-                    tracing::error!("Var {} read err: {}", var_name, e);
-                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
+                    tracing::error!("Redis HMGET error for {}: {}", key, e);
+                    for (var_name, _) in var_fields {
+                        values_changed |= values.insert(var_name, 0.0) != Some(0.0);
+                    }
                 },
             }
         }
@@ -778,7 +883,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         values: &HashMap<String, f64>,
     ) -> ActionResult {
         // Resolve the value to write
-        let resolved_value: f64 = if let Some(n) = assignment.value.as_f64() {
+        let raw_value: f64 = if let Some(n) = assignment.value.as_f64() {
             n
         } else if let Some(n) = assignment.value.as_i64() {
             n as f64
@@ -788,6 +893,18 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         } else {
             0.0
         };
+
+        // Sanitize value to prevent NaN/Infinity from reaching devices
+        let config = ValidationConfig::default();
+        let resolved_value = sanitize_value(raw_value, 0.0, &config);
+        if (raw_value - resolved_value).abs() > f64::EPSILON || raw_value.is_nan() {
+            tracing::warn!(
+                "Rule action value sanitized: {} → {} (variable '{}')",
+                raw_value,
+                resolved_value,
+                variable.name
+            );
+        }
 
         let Some(instance_id) = variable.instance else {
             tracing::error!(
@@ -824,6 +941,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         // Use precomputed pool for common point IDs (0-255)
         let point_str = precomputed::get_point_id_str_or_alloc(point);
         // SHM writer enables direct M2C via shared memory (primary path)
+        // Lock notifier for mutable access during async call
+        let mut notifier_guard = match &self.shm_notifier {
+            Some(n) => Some(n.lock().await),
+            None => None,
+        };
         let routed = match set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
@@ -831,7 +953,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             &point_str,
             resolved_value,
             self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-            None, // TODO: Add ShmNotifier for UDS event notification
+            notifier_guard.as_deref_mut(),
         )
         .await
         {
@@ -865,9 +987,21 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     async fn write_calculation_result(
         &self,
         variable: &RuleVariable,
-        value: f64,
+        raw_value: f64,
         calc: &CalculationRule,
     ) -> ActionResult {
+        // Sanitize calculation result to prevent NaN/Infinity propagation
+        let config = ValidationConfig::default();
+        let value = sanitize_value(raw_value, 0.0, &config);
+        if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
+            tracing::warn!(
+                "Calc output '{}' sanitized: {} → {} (formula='{}')",
+                calc.output,
+                raw_value,
+                value,
+                calc.formula
+            );
+        }
         let Some(instance_id) = variable.instance else {
             tracing::error!(
                 "Calc output skipped: variable '{}' missing instance_id (output='{}')",
@@ -914,6 +1048,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 // Use precomputed pool for common point IDs (0-255)
                 let point_str = precomputed::get_point_id_str_or_alloc(point);
                 // SHM writer enables direct M2C via shared memory
+                // Lock notifier for mutable access during async call
+                let mut notifier_guard = match &self.shm_notifier {
+                    Some(n) => Some(n.lock().await),
+                    None => None,
+                };
                 match set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
@@ -921,7 +1060,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     &point_str,
                     value,
                     self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-                    None, // TODO: Add ShmNotifier for UDS event notification
+                    notifier_guard.as_deref_mut(),
                 )
                 .await
                 {
@@ -951,6 +1090,85 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             target_type: "instance",
             target_id: instance_id,
             point_type: point_type_to_static(Some(point_type), "M"),
+            point_id: point,
+            value,
+            success,
+        }
+    }
+
+    /// Write period delta result to instance point
+    ///
+    /// Similar to write_calculation_result but specifically for PeriodDelta nodes.
+    /// Always writes to measurement points (period deltas are derived values).
+    async fn write_period_delta_result(
+        &self,
+        variable: &RuleVariable,
+        raw_value: f64,
+        period: &str,
+    ) -> ActionResult {
+        // Sanitize period delta result to prevent NaN/Infinity propagation
+        let config = ValidationConfig::default();
+        let value = sanitize_value(raw_value, 0.0, &config);
+        if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
+            tracing::warn!(
+                "PeriodDelta output '{}' sanitized: {} → {} (period='{}')",
+                variable.name,
+                raw_value,
+                value,
+                period
+            );
+        }
+        let Some(instance_id) = variable.instance else {
+            tracing::error!(
+                "PeriodDelta output skipped: variable '{}' missing instance_id (period='{}')",
+                variable.name,
+                period
+            );
+            return ActionResult {
+                target_type: "instance",
+                target_id: 0,
+                point_type: "M",
+                point_id: 0,
+                value,
+                success: false,
+            };
+        };
+
+        let Some(point) = variable.point else {
+            tracing::error!(
+                "PeriodDelta output skipped: variable '{}' missing point_id (instance_id={}, period='{}')",
+                variable.name,
+                instance_id,
+                period
+            );
+            return ActionResult {
+                target_type: "instance",
+                target_id: instance_id,
+                point_type: "M",
+                point_id: 0,
+                value,
+                success: false,
+            };
+        };
+
+        // Period delta results are always measurement points (derived values)
+        let success = self
+            .write_measurement_point(instance_id, point, value)
+            .await
+            .is_ok();
+
+        tracing::debug!(
+            "PeriodDelta write: inst:{}:M:{} = {} (period={})",
+            instance_id,
+            point,
+            value,
+            period
+        );
+
+        ActionResult {
+            target_type: "instance",
+            target_id: instance_id,
+            point_type: "M",
             point_id: point,
             value,
             success,

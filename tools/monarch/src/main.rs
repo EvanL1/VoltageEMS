@@ -86,6 +86,87 @@ pub mod lib_api {
             Self::Redis(err.to_string())
         }
     }
+
+    // ========================================================================
+    // Unit Tests for LibApiError
+    // ========================================================================
+
+    #[cfg(test)]
+    #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_lib_api_error_not_found() {
+            let err = LibApiError::not_found("Resource not found");
+            assert!(matches!(err, LibApiError::NotFound(_)));
+
+            let msg = err.to_string();
+            assert!(msg.contains("not found"));
+        }
+
+        #[test]
+        fn test_lib_api_error_invalid_input() {
+            let err = LibApiError::invalid_input("Invalid parameter");
+            assert!(matches!(err, LibApiError::InvalidInput(_)));
+
+            let msg = err.to_string();
+            assert!(msg.contains("Invalid input"));
+        }
+
+        #[test]
+        fn test_lib_api_error_config() {
+            let err = LibApiError::config("Missing configuration");
+            assert!(matches!(err, LibApiError::Config(_)));
+
+            let msg = err.to_string();
+            assert!(msg.contains("Configuration error"));
+        }
+
+        #[test]
+        fn test_lib_api_error_redis() {
+            let err = LibApiError::Redis("Connection refused".to_string());
+            assert!(matches!(err, LibApiError::Redis(_)));
+
+            let msg = err.to_string();
+            assert!(msg.contains("Redis error"));
+        }
+
+        #[test]
+        fn test_lib_api_error_from_string() {
+            // Test that constructors accept various string types
+            let err1 = LibApiError::not_found(String::from("owned string"));
+            let err2 = LibApiError::not_found("static str");
+            let err3 = LibApiError::not_found(format!("formatted {}", "string"));
+
+            assert!(err1.to_string().contains("owned string"));
+            assert!(err2.to_string().contains("static str"));
+            assert!(err3.to_string().contains("formatted string"));
+        }
+
+        #[test]
+        fn test_lib_api_error_display() {
+            let errors = vec![
+                LibApiError::NotFound("item".to_string()),
+                LibApiError::InvalidInput("bad input".to_string()),
+                LibApiError::Config("config issue".to_string()),
+                LibApiError::Redis("redis issue".to_string()),
+            ];
+
+            for err in errors {
+                // Each error should have a non-empty display
+                let display = err.to_string();
+                assert!(!display.is_empty());
+            }
+        }
+
+        #[test]
+        fn test_lib_api_error_debug() {
+            let err = LibApiError::not_found("test");
+            let debug_str = format!("{:?}", err);
+            assert!(debug_str.contains("NotFound"));
+        }
+    }
 }
 
 use crate::context::{ServiceConfig, ServiceContext};

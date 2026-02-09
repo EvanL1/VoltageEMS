@@ -359,3 +359,119 @@ async fn load_routing_maps_from_sqlite(
 
     Ok((c2m_map, m2c_map))
 }
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // ServiceConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_service_config_unified_db_path() {
+        let config = ServiceConfig {
+            db_path: PathBuf::from("/opt/MonarchEdge/data"),
+            config_path: PathBuf::from("/opt/MonarchEdge/config"),
+            redis_url: "redis://localhost:6379".to_string(),
+        };
+
+        let db_path = config.unified_db_path();
+        assert_eq!(db_path, PathBuf::from("/opt/MonarchEdge/data/voltage.db"));
+    }
+
+    #[test]
+    fn test_service_config_unified_db_path_relative() {
+        let config = ServiceConfig {
+            db_path: PathBuf::from("data"),
+            config_path: PathBuf::from("config"),
+            redis_url: "redis://localhost:6379".to_string(),
+        };
+
+        let db_path = config.unified_db_path();
+        assert_eq!(db_path, PathBuf::from("data/voltage.db"));
+    }
+
+    #[test]
+    fn test_service_config_unified_db_path_empty() {
+        let config = ServiceConfig {
+            db_path: PathBuf::from(""),
+            config_path: PathBuf::from(""),
+            redis_url: String::new(),
+        };
+
+        let db_path = config.unified_db_path();
+        assert_eq!(db_path, PathBuf::from("voltage.db"));
+    }
+
+    #[test]
+    fn test_service_config_clone() {
+        let config = ServiceConfig {
+            db_path: PathBuf::from("/data"),
+            config_path: PathBuf::from("/config"),
+            redis_url: "redis://localhost:6379".to_string(),
+        };
+
+        let cloned = config.clone();
+        assert_eq!(cloned.db_path, config.db_path);
+        assert_eq!(cloned.config_path, config.config_path);
+        assert_eq!(cloned.redis_url, config.redis_url);
+    }
+
+    #[test]
+    fn test_service_config_debug() {
+        let config = ServiceConfig {
+            db_path: PathBuf::from("/data"),
+            config_path: PathBuf::from("/config"),
+            redis_url: "redis://localhost:6379".to_string(),
+        };
+
+        // Just verify Debug trait is implemented
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("db_path"));
+        assert!(debug_str.contains("config_path"));
+        assert!(debug_str.contains("redis_url"));
+    }
+
+    // ========================================================================
+    // ServiceContext Tests (basic creation, no external deps)
+    // ========================================================================
+
+    #[test]
+    fn test_service_context_new() {
+        let config = ServiceConfig {
+            db_path: PathBuf::from("/data"),
+            config_path: PathBuf::from("/config"),
+            redis_url: "redis://localhost:6379".to_string(),
+        };
+
+        let ctx = ServiceContext::new(config.clone());
+
+        // Verify the context was created by checking the config field
+        assert_eq!(ctx.config.redis_url, "redis://localhost:6379");
+    }
+
+    // Note: ServiceContext::init_modsrv() and init_comsrv() require actual
+    // database and Redis connections, so they are tested in integration tests.
+
+    // ========================================================================
+    // auto_detect() behavior documentation
+    // ========================================================================
+
+    // Note: ServiceConfig::auto_detect() depends on environment variables
+    // and filesystem state, making it unsuitable for deterministic unit tests.
+    // The logic is:
+    //
+    // 1. VOLTAGE_DATA_PATH env var -> use that
+    // 2. /opt/MonarchEdge/data exists -> use production path
+    // 3. Otherwise -> use relative "data"
+    //
+    // Similarly for config path and redis URL.
+    //
+    // Integration tests should verify auto_detect in various environments.
+}

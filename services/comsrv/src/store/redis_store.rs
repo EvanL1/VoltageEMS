@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use tokio::sync::{Notify, RwLock};
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::error::Result as ProtocolResult;
@@ -192,9 +192,12 @@ impl<R: Rtdb> RedisDataStore<R> {
             // Use explicit point_type and id (no decoding needed)
             let value = point.value.as_f64().unwrap_or(0.0);
 
-            debug!(
+            // Use trace! to avoid flooding logs - only visible with RUST_LOG=trace
+            trace!(
                 "[{:?}] Point {}: value={:.2}",
-                point.point_type, point.id, value
+                point.point_type,
+                point.id,
+                value
             );
 
             updates.push(ChannelPointUpdate {

@@ -189,8 +189,17 @@ pub struct HighFreqRingBuffer {
     owned: bool,
 }
 
-// Safety: 内部使用原子操作，可安全跨线程
+// SAFETY: HighFreqRingBuffer can be safely sent across threads because:
+// - All mutable state access uses atomic operations (AtomicU64 for head/tail)
+// - The underlying NonNull<u8> points to mmap'd memory that remains valid
+//   for the lifetime of the buffer
+// - No thread-local state is used
 unsafe impl Send for HighFreqRingBuffer {}
+
+// SAFETY: HighFreqRingBuffer can be safely shared between threads because:
+// - Read/write operations use atomic load/store with appropriate ordering
+// - The ring buffer design prevents data races through atomic index management
+// - Multiple readers can safely observe the same memory region
 unsafe impl Sync for HighFreqRingBuffer {}
 
 impl HighFreqRingBuffer {

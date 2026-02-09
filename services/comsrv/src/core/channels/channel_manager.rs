@@ -6,13 +6,16 @@
 
 use arc_swap::ArcSwapOption;
 use dashmap::DashSet;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::protocols::core::file_logging::{ChannelFileLogHandler, FileLogLevel};
+use crate::protocols::core::logging::{
+    ChannelLogConfig, ChannelLogHandler, CompositeLogHandler, LogEventType, TracingLogHandler,
+};
 use crate::protocols::gateway::ChannelRuntime;
 
 /// Maximum number of channel slots (pre-allocated for O(1) access)
@@ -38,7 +41,6 @@ use crate::core::channels::converters::{
 use crate::core::channels::factory::create_can_channel;
 use crate::core::channels::shm_listener::ShmCommandListener;
 use crate::core::channels::shm_poller::ShmCommandPoller;
-use crate::core::channels::trigger::CommandTrigger;
 use crate::core::config::{ChannelConfig, RuntimeChannelConfig};
 use crate::error::{ComSrvError, Result};
 use crate::store::RedisDataStore;
@@ -104,15 +106,16 @@ pub struct ChannelEntry<R: Rtdb> {
     task_handle: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
     /// Channel metadata (name, protocol type, etc.)
     pub metadata: ChannelMetadata,
-    /// Command trigger for TODO queue integration
-    /// NOTE: RwLock is only used during channel removal (non-hot path),
-    /// so lock contention is not a concern here.
-    pub command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
+
     /// Channel configuration
     pub channel_config: Arc<ChannelConfig>,
-    /// Direct command sender for bypassing TODO queue (business commands)
+    /// Direct command sender for M2C business commands (control/adjustment)
     pub command_tx:
         Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
+    /// Cached connection state for non-blocking access (updated by unified task)
+    cached_connection_state: Arc<AtomicU8>,
+    /// Cached diagnostics for non-blocking access (updated by unified task after each poll)
+    cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
 }
 
 impl<R: Rtdb> std::fmt::Debug for ChannelEntry<R> {
@@ -145,11 +148,8 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         store: Arc<RedisDataStore<R>>,
         channel_config: Arc<ChannelConfig>,
         protocol_type: String,
-        command_trigger: Option<Arc<RwLock<CommandTrigger<R>>>>,
-        _command_tx: Option<
-            tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>,
-        >,
         poll_interval_ms: u64,
+        log_handler: Arc<dyn ChannelLogHandler>,
     ) -> Self {
         let metadata = ChannelMetadata {
             name: Arc::from(channel_config.name()),
@@ -164,9 +164,20 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         let (protocol_tx, protocol_rx) =
             tokio::sync::mpsc::channel::<crate::core::channels::types::ProtocolCommand>(32);
 
-        // Create business command channel (for control/adjustment from TODO queue)
+        // Create business command channel (for control/adjustment from M2C SHM)
+        // Buffer size 1024 prevents backpressure drops during burst M2C traffic
         let (business_tx, business_rx) =
-            tokio::sync::mpsc::channel::<crate::core::channels::traits::ChannelCommand>(100);
+            tokio::sync::mpsc::channel::<crate::core::channels::traits::ChannelCommand>(1024);
+
+        // Create shared connection state cache (initialized as Connecting)
+        let cached_state = Arc::new(AtomicU8::new(
+            crate::core::channels::types::ConnectionState::Connecting.as_u8(),
+        ));
+        let cached_state_clone = Arc::clone(&cached_state);
+
+        // Create shared diagnostics cache (initialized as None)
+        let cached_diagnostics = Arc::new(ArcSwapOption::empty());
+        let cached_diagnostics_clone = Arc::clone(&cached_diagnostics);
 
         // Spawn the unified channel task
         let store_clone = Arc::clone(&store);
@@ -178,6 +189,9 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
                 store_clone,
                 channel_id,
                 poll_interval_ms,
+                cached_state_clone,
+                cached_diagnostics_clone,
+                log_handler,
             )
             .await;
         });
@@ -187,9 +201,10 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             store,
             task_handle: Arc::new(std::sync::Mutex::new(Some(task_handle))),
             metadata,
-            command_trigger,
             channel_config,
             command_tx: Some(business_tx),
+            cached_connection_state: cached_state,
+            cached_diagnostics,
         }
     }
 
@@ -199,7 +214,7 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             channel_id,
             name: self.metadata.name.to_string(),
             protocol_type: self.metadata.protocol_type.clone(),
-            is_connected: self.is_connected().await,
+            is_connected: self.is_connected(),
             created_at: self.metadata.created_at,
             last_accessed_ms: self.metadata.last_accessed_ms.load(Ordering::Relaxed),
         }
@@ -214,65 +229,53 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
 
     /// Check if channel is connected.
     ///
-    /// Sends a GetConnectionState command to the unified channel task.
-    pub async fn is_connected(&self) -> bool {
-        use crate::core::channels::types::ProtocolCommand;
+    /// Returns the cached connection state for non-blocking access.
+    /// The cache is updated by the unified channel task after each poll cycle.
+    pub fn is_connected(&self) -> bool {
+        let state_u8 = self.cached_connection_state.load(Ordering::Relaxed);
+        crate::core::channels::types::ConnectionState::from_u8(state_u8).is_connected()
+    }
 
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        if self
-            .protocol_tx
-            .send(ProtocolCommand::GetConnectionState { response_tx })
-            .await
-            .is_err()
-        {
-            return false; // Channel closed
-        }
-
-        match response_rx.await {
-            Ok(state) => state.is_connected(),
-            Err(_) => false,
-        }
+    /// Get cached connection state (non-blocking).
+    pub fn get_cached_connection_state(&self) -> crate::core::channels::types::ConnectionState {
+        let state_u8 = self.cached_connection_state.load(Ordering::Relaxed);
+        crate::core::channels::types::ConnectionState::from_u8(state_u8)
     }
 
     /// Get channel status.
     pub async fn get_status(&self) -> crate::core::channels::types::ChannelStatus {
         crate::core::channels::types::ChannelStatus {
-            is_connected: self.is_connected().await,
+            is_connected: self.is_connected(),
             last_update: chrono::Utc::now().timestamp(),
         }
     }
 
-    /// Get diagnostics information.
+    /// Get cached diagnostics information (non-blocking).
+    ///
+    /// Returns the cached diagnostics that is updated by the unified channel task
+    /// after each poll cycle. This is safe to call from API handlers without
+    /// blocking on slow protocol operations.
     #[allow(clippy::disallowed_methods)]
-    pub async fn get_diagnostics(
-        &self,
-        channel_id: u32,
-    ) -> crate::error::Result<serde_json::Value> {
-        use crate::core::channels::types::ProtocolCommand;
-
-        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        self.protocol_tx
-            .send(ProtocolCommand::GetDiagnostics { response_tx })
-            .await
-            .map_err(|_| crate::error::ComSrvError::channel_not_found(channel_id))?;
-
-        let diag = response_rx
-            .await
-            .map_err(|_| crate::error::ComSrvError::channel_not_found(channel_id))?;
-
-        match diag {
-            Some(d) => Ok(serde_json::json!({
+    pub fn get_diagnostics(&self, channel_id: u32) -> serde_json::Value {
+        match self.cached_diagnostics.load().as_deref() {
+            Some(d) => serde_json::json!({
                 "protocol_type": "unified",
-                "connected": true,
+                "connected": d.connection_state.is_connected(),
                 "channel_id": channel_id,
                 "error_count": d.error_count,
-                "last_error": d.last_error
-            })),
-            None => Ok(serde_json::json!({
+                "last_error": d.last_error,
+                "read_count": d.read_count,
+                "write_count": d.write_count,
+                "protocol": d.protocol,
+                "extra": d.extra
+            }),
+            None => serde_json::json!({
                 "protocol_type": "unified",
                 "connected": false,
-                "channel_id": channel_id
-            })),
+                "channel_id": channel_id,
+                "error_count": 0,
+                "last_error": null
+            }),
         }
     }
 
@@ -321,25 +324,75 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         Ok(())
     }
 
+    /// Set the channel log level dynamically.
+    ///
+    /// Sends a SetLogLevel command to the unified channel task.
+    /// Valid levels: "debug" (verbose), "info" (standard), "error" (minimal)
+    pub async fn set_log_level(&self, level: &str) -> crate::error::Result<()> {
+        use crate::core::channels::types::ProtocolCommand;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.protocol_tx
+            .send(ProtocolCommand::SetLogLevel {
+                level: level.to_string(),
+                response_tx,
+            })
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        response_rx
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?
+            .map_err(crate::error::ComSrvError::ValidationError)
+    }
+
     /// Get the channel ID from metadata name (parsed from config)
     pub fn channel_id(&self) -> u32 {
         self.channel_config.id()
     }
 
-    /// Shutdown the unified channel task
+    /// Shutdown the unified channel task gracefully.
     ///
-    /// Sends a Shutdown command and aborts the task if needed.
+    /// Sends a Shutdown command to the unified task. The task will process
+    /// the command and exit its loop cleanly, allowing proper resource cleanup.
+    ///
+    /// NOTE: This method does NOT abort the task immediately. Use `abort_task()`
+    /// if you need to force-terminate after a timeout.
     pub fn shutdown(&self) {
         use crate::core::channels::types::ProtocolCommand;
 
-        // Try to send shutdown command (fire-and-forget)
+        // Send shutdown command (fire-and-forget)
+        // The unified task will receive this and break out of its loop
         let _ = self.protocol_tx.try_send(ProtocolCommand::Shutdown);
+    }
 
-        // Also abort the task handle as a fallback
+    /// Force-abort the unified channel task.
+    ///
+    /// Use this only after `shutdown()` if the task doesn't exit in time.
+    /// This is a last resort that may cause resource leaks.
+    pub fn abort_task(&self) {
         if let Ok(mut handle) = self.task_handle.lock() {
             if let Some(h) = handle.take() {
-                h.abort();
+                if !h.is_finished() {
+                    warn!(
+                        "Ch{} task did not exit gracefully, aborting",
+                        self.channel_id()
+                    );
+                    h.abort();
+                }
             }
+        }
+    }
+
+    /// Check if the unified task has finished.
+    pub fn is_task_finished(&self) -> bool {
+        if let Ok(handle) = self.task_handle.lock() {
+            match handle.as_ref() {
+                Some(h) => h.is_finished(),
+                None => true, // Task was already taken/aborted
+            }
+        } else {
+            true // Lock poisoned, assume finished
         }
     }
 }
@@ -364,6 +417,7 @@ use crate::protocols::core::traits::PollResult;
 ///
 /// This design eliminates lock contention between polling and command execution,
 /// reducing command latency from 300ms to <10ms.
+#[allow(clippy::too_many_arguments)]
 async fn run_unified_channel_task<R: Rtdb>(
     mut protocol: Box<dyn ChannelRuntime>,
     mut protocol_rx: tokio::sync::mpsc::Receiver<ProtocolCommand>,
@@ -371,14 +425,42 @@ async fn run_unified_channel_task<R: Rtdb>(
     store: Arc<RedisDataStore<R>>,
     channel_id: u32,
     poll_interval_ms: u64,
+    cached_state: Arc<AtomicU8>,
+    cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
+    log_handler: Arc<dyn ChannelLogHandler>,
 ) {
     info!(
         "Ch{} unified task started (interval: {}ms)",
         channel_id, poll_interval_ms
     );
 
+    // Helper to update cached connection state
+    let update_cached_state = |state: &dyn ChannelRuntime, cache: &AtomicU8| {
+        use crate::protocols::core::traits::ConnectionState as ProtocolConnectionState;
+        let protocol_state = state.connection_state();
+        let channel_state = match protocol_state {
+            ProtocolConnectionState::Connected => {
+                crate::core::channels::types::ConnectionState::Connected
+            },
+            ProtocolConnectionState::Connecting => {
+                crate::core::channels::types::ConnectionState::Connecting
+            },
+            ProtocolConnectionState::Reconnecting => {
+                crate::core::channels::types::ConnectionState::Retrying
+            },
+            ProtocolConnectionState::Disconnected => {
+                crate::core::channels::types::ConnectionState::Disconnected
+            },
+            ProtocolConnectionState::Error => crate::core::channels::types::ConnectionState::Failed,
+        };
+        cache.store(channel_state.as_u8(), Ordering::Relaxed);
+    };
+
     // Wait a bit for the connection to be established
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // Update initial connection state
+    update_cached_state(protocol.as_ref(), &cached_state);
 
     // Use configured poll interval
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(poll_interval_ms));
@@ -416,13 +498,55 @@ async fn run_unified_channel_task<R: Rtdb>(
                         let _ = response_tx.send(diag);
                     }
                     ProtocolCommand::GetConnectionState { response_tx } => {
-                        // Use diagnostics as a proxy for connection state
-                        let state = if protocol.diagnostics().await.is_ok() {
-                            crate::core::channels::types::ConnectionState::Connected
-                        } else {
-                            crate::core::channels::types::ConnectionState::Disconnected
+                        // Get actual connection state from protocol
+                        use crate::protocols::core::traits::ConnectionState as ProtocolConnectionState;
+                        let protocol_state = protocol.connection_state();
+                        // Map protocol state to channel state
+                        let state = match protocol_state {
+                            ProtocolConnectionState::Connected => {
+                                crate::core::channels::types::ConnectionState::Connected
+                            }
+                            ProtocolConnectionState::Connecting => {
+                                crate::core::channels::types::ConnectionState::Connecting
+                            }
+                            ProtocolConnectionState::Reconnecting => {
+                                crate::core::channels::types::ConnectionState::Retrying
+                            }
+                            ProtocolConnectionState::Disconnected => {
+                                crate::core::channels::types::ConnectionState::Disconnected
+                            }
+                            ProtocolConnectionState::Error => {
+                                crate::core::channels::types::ConnectionState::Failed
+                            }
                         };
                         let _ = response_tx.send(state);
+                    }
+                    ProtocolCommand::SetLogLevel { level, response_tx } => {
+                        use crate::protocols::core::logging::ChannelLogConfig;
+                        let result = match level.to_lowercase().as_str() {
+                            "debug" | "verbose" => {
+                                protocol.set_log_config(ChannelLogConfig::all());
+                                log_handler.set_log_level("debug");
+                                info!("Ch{} log level set to DEBUG (protocol + file)", channel_id);
+                                Ok(())
+                            }
+                            "info" | "standard" => {
+                                protocol.set_log_config(ChannelLogConfig::default());
+                                log_handler.set_log_level("info");
+                                info!("Ch{} log level set to INFO (protocol + file)", channel_id);
+                                Ok(())
+                            }
+                            "error" | "minimal" => {
+                                protocol.set_log_config(ChannelLogConfig::errors_only());
+                                log_handler.set_log_level("info");
+                                info!("Ch{} log level set to ERROR (protocol), INFO (file)", channel_id);
+                                Ok(())
+                            }
+                            other => {
+                                Err(format!("Invalid log level '{}', use: debug/info/error", other))
+                            }
+                        };
+                        let _ = response_tx.send(result);
                     }
                     ProtocolCommand::Shutdown => {
                         info!("Ch{} received shutdown command", channel_id);
@@ -431,7 +555,7 @@ async fn run_unified_channel_task<R: Rtdb>(
                 }
             }
 
-            // Priority 2: Business commands (control/adjustment from TODO queue)
+            // Priority 2: Business commands (control/adjustment from M2C SHM)
             Some(cmd) = business_rx.recv() => {
                 match cmd {
                     ChannelCommand::Control { point_id, value, .. } => {
@@ -472,24 +596,30 @@ async fn run_unified_channel_task<R: Rtdb>(
                 // Poll data using ChannelRuntime interface
                 let result: PollResult = protocol.poll_once().await;
 
-                // Log partial failures from poll result
+                // Log partial failures from poll result (only when failures exist)
                 let failure_count = result.failures.len();
                 if failure_count > 0 {
+                    // Sample first 3 failures for debugging
+                    let sample_errors: Vec<_> = result.failures.iter().take(3)
+                        .map(|f| format!("pt{}:{}", f.point_id, f.error))
+                        .collect();
                     warn!(
-                        "Ch{} partial read failure: {} points failed",
-                        channel_id, failure_count
+                        "Ch{} partial read: {} failed, samples: [{}]",
+                        channel_id, failure_count, sample_errors.join(", ")
                     );
                 }
 
                 let count = result.data.len();
                 if count > 0 {
-                    debug!("Ch{} polling got {} data points", channel_id, count);
+                    // Use trace! for successful polls to reduce log volume
+                    // Only visible when RUST_LOG=trace
+                    tracing::trace!("Ch{} poll ok: {} pts", channel_id, count);
                     if let Err(e) = store.write_batch(channel_id, result.data).await {
                         error!("Ch{} failed to write to Redis: {}", channel_id, e);
                     }
                 }
 
-                // Check diagnostics for accumulated errors (outside of lock now!)
+                // Check diagnostics for accumulated errors and update cache
                 if let Ok(diag) = protocol.diagnostics().await {
                     if diag.error_count > prev_error_count {
                         let new_errors = diag.error_count - prev_error_count;
@@ -499,11 +629,21 @@ async fn run_unified_channel_task<R: Rtdb>(
                         );
                         prev_error_count = diag.error_count;
                     }
+                    // Update cached diagnostics for non-blocking access
+                    cached_diagnostics.store(Some(Arc::new(diag)));
                 }
+
+                // Update cached connection state after each poll cycle
+                update_cached_state(protocol.as_ref(), &cached_state);
             }
         }
     }
 
+    // Mark as disconnected on shutdown
+    cached_state.store(
+        crate::core::channels::types::ConnectionState::Disconnected.as_u8(),
+        Ordering::Relaxed,
+    );
     info!("Ch{} unified task stopped", channel_id);
 }
 
@@ -568,11 +708,73 @@ impl<R: Rtdb> std::fmt::Debug for ChannelManager<R> {
     }
 }
 
+/// Get the base directory for channel log files.
+/// Uses VOLTAGE_LOG_DIR environment variable if set, otherwise falls back to "/app/logs".
+fn get_channel_log_base_dir() -> String {
+    let base = std::env::var("VOLTAGE_LOG_DIR").unwrap_or_else(|_| "/app/logs".to_string());
+    format!("{}/comsrv/channels", base)
+}
+
 impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Pre-allocate channel slots for O(1) access
     #[inline]
     fn create_channel_slots() -> Vec<ArcSwapOption<ChannelEntry<R>>> {
         (0..MAX_CHANNELS).map(|_| ArcSwapOption::empty()).collect()
+    }
+
+    /// Configure logging for a channel based on ChannelLoggingConfig.
+    ///
+    /// Sets up both tracing and file logging handlers when enabled.
+    /// Returns the composite log handler for hot-reload support.
+    fn configure_channel_logging(
+        protocol: &mut Box<dyn ChannelRuntime>,
+        channel_id: u32,
+        channel_name: &str,
+        logging_config: &crate::core::config::ChannelLoggingConfig,
+    ) -> Arc<dyn ChannelLogHandler> {
+        // Create composite handler with tracing
+        let mut composite = CompositeLogHandler::new().with_handler(Arc::new(TracingLogHandler));
+
+        // Add file logging if enabled
+        if logging_config.enabled {
+            let level = FileLogLevel::parse(logging_config.level.as_deref());
+            let log_dir = get_channel_log_base_dir();
+
+            let file_handler = ChannelFileLogHandler::new(&log_dir)
+                .with_level(level)
+                .with_channel(channel_id, channel_name);
+
+            composite.add_handler(Arc::new(file_handler));
+
+            info!(
+                "Ch{} file logging enabled (level={:?}, dir={})",
+                channel_id, level, log_dir
+            );
+        }
+
+        // Create Arc and clone for return value (for hot-reload support)
+        let handler: Arc<dyn ChannelLogHandler> = Arc::new(composite);
+        protocol.set_log_handler(handler.clone());
+
+        // Configure log config based on logging level
+        let log_config = if logging_config.enabled {
+            let level = logging_config.level.as_deref().unwrap_or("info");
+            if level.eq_ignore_ascii_case("debug") {
+                // Debug: log everything including raw packets
+                ChannelLogConfig::all()
+            } else {
+                // Info: log raw packets + errors + connections
+                ChannelLogConfig::new()
+                    .with_raw_packets(true)
+                    .enable_event(LogEventType::RawPacket)
+            }
+        } else {
+            // Disabled: default config (no raw packets)
+            ChannelLogConfig::default()
+        };
+
+        protocol.set_log_config(log_config);
+        handler
     }
 
     /// Create new channel manager
@@ -676,8 +878,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
     /// Configure SHM command poller for M2C commands via shared memory
     ///
-    /// This enables polling Control/Adjustment points from SHM instead of Redis TODO queue.
-    /// The SHM poller runs as a complement to the existing TODO queue (Redis as fallback).
+    /// This enables polling Control/Adjustment points from SHM.
+    /// The SHM poller detects timestamp changes and dispatches commands to channels.
     ///
     /// # Arguments
     /// * `unified_reader` - Shared memory reader for polling C/A timestamps
@@ -952,12 +1154,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         store.start_flush_task().await;
 
         // 4. Create VirtualChannel protocol
-        let protocol = create_virtual_channel(channel_id, runtime_config.name(), point_configs);
+        let mut protocol = create_virtual_channel(channel_id, runtime_config.name(), point_configs);
 
-        // 5. Setup command trigger for M2C control
-        // Note: command_rx and command_tx are unused because ChannelEntry::new creates its own channels
-        let (command_trigger, _command_rx, _command_tx) =
-            self.create_command_trigger(channel_id).await?;
+        // 5. Configure channel logging (returns handler for hot-reload)
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
 
         // 6. Get poll interval from config
         let poll_interval_ms = runtime_config
@@ -973,9 +1178,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             store,
             base_config,
             "virtual".to_string(),
-            command_trigger,
-            None, // command_tx is created internally by ChannelEntry::new
             poll_interval_ms,
+            log_handler,
         );
 
         info!("Ch{} created (virtual)", channel_id);
@@ -1026,12 +1230,23 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 502
             });
 
-        // 5. Create ModbusChannel protocol
-        let protocol = create_modbus_channel(channel_id, host, port, point_configs);
+        // 4b. Extract I/O timeout from config (UI parameter name: read_timeout_ms)
+        let io_timeout_ms = params.get("read_timeout_ms").and_then(|v| v.as_u64());
+        if let Some(timeout) = io_timeout_ms {
+            debug!("Ch{} using read_timeout_ms: {}ms", channel_id, timeout);
+        }
 
-        // 6. Setup command trigger for M2C control
-        let (command_trigger, _command_rx, _command_tx) =
-            self.create_command_trigger(channel_id).await?;
+        // 5. Create ModbusChannel protocol
+        let mut protocol =
+            create_modbus_channel(channel_id, host, port, point_configs, io_timeout_ms);
+
+        // 6. Configure channel logging (returns handler for hot-reload)
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
 
         // 7. Get poll interval from config
         let poll_interval_ms = params
@@ -1045,9 +1260,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             store,
             base_config,
             "modbus_tcp".to_string(),
-            command_trigger,
-            None, // command_tx is created internally by ChannelEntry::new
             poll_interval_ms,
+            log_handler,
         );
 
         info!("Ch{} created (modbus_tcp)", channel_id);
@@ -1101,12 +1315,23 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 9600
             });
 
-        // 5. Create ModbusChannel (RTU) protocol
-        let protocol = create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs);
+        // 4b. Extract I/O timeout from config (UI parameter name: read_timeout_ms)
+        let io_timeout_ms = params.get("read_timeout_ms").and_then(|v| v.as_u64());
+        if let Some(timeout) = io_timeout_ms {
+            debug!("Ch{} using read_timeout_ms: {}ms", channel_id, timeout);
+        }
 
-        // 6. Setup command trigger for M2C control
-        let (command_trigger, _command_rx, _command_tx) =
-            self.create_command_trigger(channel_id).await?;
+        // 5. Create ModbusChannel (RTU) protocol
+        let mut protocol =
+            create_modbus_rtu_channel(channel_id, device, baud_rate, point_configs, io_timeout_ms);
+
+        // 6. Configure channel logging (returns handler for hot-reload)
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
 
         // 7. Get poll interval from config
         let poll_interval_ms = params
@@ -1120,9 +1345,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             store,
             base_config,
             "modbus_rtu".to_string(),
-            command_trigger,
-            None, // command_tx is created internally by ChannelEntry::new
             poll_interval_ms,
+            log_handler,
         );
 
         info!("Ch{} created (modbus_rtu)", channel_id);
@@ -1154,11 +1378,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         store.start_flush_task().await;
 
         // 4. Create GpioChannel protocol
-        let protocol = create_gpio_channel(channel_id, runtime_config);
+        let mut protocol = create_gpio_channel(channel_id, runtime_config);
 
-        // 5. Setup command trigger for M2C control (DO commands)
-        let (command_trigger, _command_rx, _command_tx) =
-            self.create_command_trigger(channel_id).await?;
+        // 5. Configure channel logging (returns handler for hot-reload)
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
 
         // 6. Get poll interval from config
         // GPIO needs faster polling (default 200ms for responsive DI detection)
@@ -1175,9 +1403,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             store,
             base_config,
             "gpio".to_string(),
-            command_trigger,
-            None, // command_tx is created internally by ChannelEntry::new
             poll_interval_ms,
+            log_handler,
         );
 
         info!("Ch{} created (gpio)", channel_id);
@@ -1227,11 +1454,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             });
 
         // 5. Create CanClient protocol
-        let protocol = create_can_channel(channel_id, can_interface, can_point_configs);
+        let mut protocol = create_can_channel(channel_id, can_interface, can_point_configs);
 
-        // 6. Setup command trigger (CAN is read-only, but we still create the trigger for consistency)
-        let (command_trigger, _command_rx, _command_tx) =
-            self.create_command_trigger(channel_id).await?;
+        // 6. Configure channel logging (returns handler for hot-reload)
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
 
         // 7. Get poll interval from config
         // CAN is event-driven, needs faster polling (default 200ms)
@@ -1246,9 +1477,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             store,
             base_config,
             "can".to_string(),
-            command_trigger,
-            None, // command_tx is created internally by ChannelEntry::new
             poll_interval_ms,
+            log_handler,
         );
 
         info!("Ch{} created (can)", channel_id);
@@ -1297,7 +1527,16 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         Ok(())
     }
 
-    /// Remove channel
+    /// Remove channel with graceful shutdown.
+    ///
+    /// Performs proper cleanup in the following order:
+    /// 1. Unregister from external systems (cache, SHM poller/listener)
+    /// 2. Send shutdown signal to unified task
+    /// 3. Wait for task to exit gracefully (with timeout)
+    /// 4. Shutdown store to flush WriteBuffer
+    /// 5. Disconnect channel
+    /// 6. Stop command trigger
+    /// 7. Deallocate dynamic slots
     pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
         // Unregister from cache before removing channel
         if let Some(ref cache) = self.command_tx_cache {
@@ -1324,19 +1563,30 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .ok_or_else(|| ComSrvError::invalid_channel_id(channel_id))?;
 
         if let Some(entry) = slot.swap(None) {
-            // Shutdown background tasks
+            // 1. Send shutdown signal to unified task (non-blocking)
             entry.shutdown();
 
-            // Disconnect channel
-            let _ = entry.disconnect().await;
-
-            // Stop command trigger if exists
-            if let Some(trigger_arc) = &entry.command_trigger {
-                let mut trigger = trigger_arc.write().await;
-                let _ = trigger.stop().await;
+            // 2. Wait for task to exit gracefully (up to 500ms)
+            //    This allows the protocol to clean up file handles, flush buffers, etc.
+            let max_wait = std::time::Duration::from_millis(500);
+            let start = std::time::Instant::now();
+            while !entry.is_task_finished() && start.elapsed() < max_wait {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
 
-            // Dynamic Slot Deallocation: Remove channel from ChannelIndex and free slots
+            // 3. Force-abort if task didn't exit in time
+            if !entry.is_task_finished() {
+                entry.abort_task();
+            }
+
+            // 4. Shutdown store to flush WriteBuffer to Redis
+            //    This is CRITICAL: ensures polled data is persisted before channel removal
+            entry.store.shutdown().await;
+
+            // 5. Disconnect channel
+            let _ = entry.disconnect().await;
+
+            // 6. Dynamic Slot Deallocation: Remove channel from ChannelIndex and free slots
             if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
                 match bitmap.write() {
                     Ok(mut bitmap_guard) => {
@@ -1359,7 +1609,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 }
             }
 
-            info!("Ch{} removed", channel_id);
+            info!("Ch{} removed (graceful shutdown)", channel_id);
             Ok(())
         } else {
             Err(ComSrvError::channel_not_found(channel_id))
@@ -1410,7 +1660,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 .get(*channel_id as usize)
                 .and_then(|s| s.load_full())
             {
-                if entry.is_connected().await {
+                if entry.is_connected() {
                     count += 1;
                 }
             }
@@ -1457,6 +1707,11 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     /// # O(n) where n = active channels (not 10000 slots)
     /// Uses active_channel_ids index for efficient iteration
     pub async fn connect_all_channels(&self) -> Result<()> {
+        // Limit concurrent connections to avoid resource exhaustion
+        // 16 is a reasonable default for most TCP-based protocols
+        const MAX_CONCURRENT_CONNECTS: usize = 16;
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTS));
+
         let mut connect_tasks = Vec::with_capacity(self.active_channel_ids.len());
 
         for channel_id_ref in self.active_channel_ids.iter() {
@@ -1467,8 +1722,10 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 .and_then(|s| s.load_full())
             {
                 let entry_clone = Arc::clone(&entry);
+                let sem = Arc::clone(&semaphore);
 
                 let task = tokio::spawn(async move {
+                    let _permit = sem.acquire().await;
                     match entry_clone.connect().await {
                         Ok(_) => {
                             // Note: TracingLogHandler outputs "Channel connected" at info level
@@ -1711,39 +1968,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         }
 
         Ok(())
-    }
-
-    /// Create and start CommandTrigger (replaces storage_manager.setup_command_trigger)
-    /// Returns (trigger, rx, tx) - tx is for direct command sending
-    async fn create_command_trigger(
-        &self,
-        channel_id: u32,
-    ) -> Result<(
-        Option<Arc<RwLock<crate::core::channels::trigger::CommandTrigger<R>>>>,
-        tokio::sync::mpsc::Receiver<crate::core::channels::traits::ChannelCommand>,
-        Option<tokio::sync::mpsc::Sender<crate::core::channels::traits::ChannelCommand>>,
-    )> {
-        use crate::core::channels::trigger::{CommandTrigger, CommandTriggerConfig};
-
-        debug!("Ch{} trigger creating", channel_id);
-
-        let config = CommandTriggerConfig {
-            channel_id,
-            timeout_seconds: 1, // Default BLPOP timeout
-        };
-
-        // 缓冲区从 100 增大到 1000，提供更好的背压容量
-        // 当队列接近满时，ShmListener 会记录 error 日志
-        let (tx, rx) = tokio::sync::mpsc::channel(1000);
-
-        // Pass RTDB directly to trigger (works with both RedisRtdb and MemoryRtdb)
-        let mut trigger = CommandTrigger::new(config, tx.clone(), self.rtdb.clone()).await?;
-        trigger.start().await?;
-
-        debug!("Ch{} trigger created", channel_id);
-
-        // Return tx for direct command sending (bypasses TODO queue)
-        Ok((Some(Arc::new(RwLock::new(trigger))), rx, Some(tx)))
     }
 }
 

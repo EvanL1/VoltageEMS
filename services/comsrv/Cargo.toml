@@ -48,6 +48,15 @@ serde_yaml = { workspace = true }
 serde_json = { workspace = true }
 csv = { workspace = true }
 
+# JSONPath for MQTT/HTTP protocol JSON mapping
+serde_json_path = { workspace = true, optional = true }
+
+# MQTT client for event-driven data collection
+rumqttc = { version = "0.24", optional = true }
+
+# HTTP client for polling/webhook data collection
+reqwest = { workspace = true, optional = true }
+
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -94,6 +103,9 @@ can = ["dep:socketcan"]
 j1939 = ["can", "dep:voltage_j1939"]
 gpio = ["dep:tokio-gpiod"]
 dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP 和串口 RTU）
+json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protocols
+mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
+http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []

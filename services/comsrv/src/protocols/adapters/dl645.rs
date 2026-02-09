@@ -1481,6 +1481,18 @@ impl ChannelRuntime for Dl645Channel {
             extra: serde_json::Value::Null,
         })
     }
+
+    fn connection_state(&self) -> ConnectionState {
+        <Self as Protocol>::connection_state(self)
+    }
+
+    fn set_log_handler(&mut self, handler: Arc<dyn ChannelLogHandler>) {
+        <Self as LoggableProtocol>::set_log_handler(self, handler);
+    }
+
+    fn set_log_config(&mut self, config: ChannelLogConfig) {
+        <Self as LoggableProtocol>::set_log_config(self, config);
+    }
 }
 
 // ============================================================================

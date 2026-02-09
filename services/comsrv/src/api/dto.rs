@@ -7,7 +7,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-pub use crate::core::config::{ChannelConfig, ChannelCore};
+pub use crate::core::config::{ChannelConfig, ChannelCore, ChannelLoggingConfig};
 pub use common::{
     AppError, ComponentHealth, ErrorInfo, ErrorResponse, HealthStatus, PaginatedResponse,
     ServiceStatus as SharedServiceStatus, SuccessResponse,
@@ -459,6 +459,8 @@ pub struct ChannelConfigUpdateRequest {
     pub description: Option<String>,
     pub protocol: Option<String>,
     pub parameters: Option<HashMap<String, serde_json::Value>>,
+    /// Logging configuration for this channel
+    pub logging: Option<ChannelLoggingConfig>,
 }
 
 /// Channel enabled state update request

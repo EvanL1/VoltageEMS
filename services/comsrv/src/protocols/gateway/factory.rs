@@ -44,6 +44,16 @@ pub fn create_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         return create_dl645_channel(config);
     }
 
+    #[cfg(feature = "mqtt")]
+    if protocol.eq_ignore_ascii_case("mqtt") {
+        return create_mqtt_channel(config);
+    }
+
+    #[cfg(feature = "http")]
+    if protocol.eq_ignore_ascii_case("http") {
+        return create_http_channel(config);
+    }
+
     if protocol.eq_ignore_ascii_case("virtual") {
         return create_virtual_channel(config);
     }
@@ -211,6 +221,49 @@ fn create_dl645_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime
     let channel_config = params.to_channel_config();
 
     let channel = crate::protocols::adapters::dl645::Dl645Channel::new(
+        channel_config,
+        config.id,
+        config.name.clone(),
+    );
+
+    Ok(Box::new(channel))
+}
+
+#[cfg(feature = "mqtt")]
+fn create_mqtt_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::mqtt::MqttParamsConfig;
+
+    // Parse parameters
+    let params: MqttParamsConfig = serde_json::from_value(config.parameters.clone())
+        .map_err(|e| GatewayError::Config(format!("Invalid MQTT parameters: {}", e)))?;
+
+    // Build channel config
+    let channel_config = params.to_config();
+
+    // MqttChannel is event-driven, doesn't use point configs like Modbus
+    // JSON mappings are loaded from json_point_mappings table at connect time
+    let channel = crate::protocols::adapters::mqtt::MqttChannel::new(
+        channel_config,
+        config.id,
+        config.name.clone(),
+    );
+
+    Ok(Box::new(channel))
+}
+
+#[cfg(feature = "http")]
+fn create_http_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::http::HttpParamsConfig;
+
+    // Parse parameters
+    let params: HttpParamsConfig = serde_json::from_value(config.parameters.clone())
+        .map_err(|e| GatewayError::Config(format!("Invalid HTTP parameters: {}", e)))?;
+
+    // Build channel config
+    let channel_config = params.to_config();
+
+    // HttpChannel uses JSON mappings loaded from json_point_mappings table
+    let channel = crate::protocols::adapters::http::HttpChannel::new(
         channel_config,
         config.id,
         config.name.clone(),

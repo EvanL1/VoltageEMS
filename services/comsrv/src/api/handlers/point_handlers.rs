@@ -2466,6 +2466,12 @@ async fn process_create_operation<R: Rtdb>(
         obj.insert("point_id".to_string(), serde_json::json!(item.point_id));
     }
 
+    // Extract protocol_mapping before deserialization (not part of Point structs)
+    let protocol_mapping_json: Option<String> = item
+        .data
+        .get("protocol_mapping")
+        .map(|v| serde_json::to_string(v).unwrap_or_default());
+
     // Deserialize and insert based on point type
     match point_type_upper.as_str() {
         "T" => {
@@ -2475,11 +2481,11 @@ async fn process_create_operation<R: Rtdb>(
             let sql = if item.force {
                 "INSERT OR REPLACE INTO telemetry_points
                  (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             } else {
                 "INSERT INTO telemetry_points
                  (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             };
 
             sqlx::query(sql)
@@ -2492,6 +2498,7 @@ async fn process_create_operation<R: Rtdb>(
                 .bind(&point.data_type)
                 .bind(point.reverse)
                 .bind(&point.base.description)
+                .bind(&protocol_mapping_json)
                 .execute(&state.sqlite_pool)
                 .await
                 .map_err(|e| format!("Failed to insert: {}", e))?;
@@ -2503,11 +2510,11 @@ async fn process_create_operation<R: Rtdb>(
             let sql = if item.force {
                 "INSERT OR REPLACE INTO signal_points
                  (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
             } else {
                 "INSERT INTO signal_points
                  (channel_id, point_id, signal_name, unit, reverse, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
             };
 
             sqlx::query(sql)
@@ -2517,6 +2524,7 @@ async fn process_create_operation<R: Rtdb>(
                 .bind(&point.base.unit)
                 .bind(point.reverse)
                 .bind(&point.base.description)
+                .bind(&protocol_mapping_json)
                 .execute(&state.sqlite_pool)
                 .await
                 .map_err(|e| format!("Failed to insert: {}", e))?;
@@ -2530,11 +2538,11 @@ async fn process_create_operation<R: Rtdb>(
             let sql = if item.force {
                 "INSERT OR REPLACE INTO control_points
                  (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             } else {
                 "INSERT INTO control_points
                  (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             };
 
             sqlx::query(sql)
@@ -2547,6 +2555,7 @@ async fn process_create_operation<R: Rtdb>(
                 .bind(point.reverse)
                 .bind("bool") // data_type: default for control points
                 .bind(&point.base.description)
+                .bind(&protocol_mapping_json)
                 .execute(&state.sqlite_pool)
                 .await
                 .map_err(|e| format!("Failed to insert: {}", e))?;
@@ -2564,11 +2573,11 @@ async fn process_create_operation<R: Rtdb>(
             let sql = if item.force {
                 "INSERT OR REPLACE INTO adjustment_points
                  (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             } else {
                 "INSERT INTO adjustment_points
                  (channel_id, point_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             };
 
             sqlx::query(sql)
@@ -2581,6 +2590,7 @@ async fn process_create_operation<R: Rtdb>(
                 .bind(reverse)
                 .bind(&point.data_type)
                 .bind(&point.base.description)
+                .bind(&protocol_mapping_json)
                 .execute(&state.sqlite_pool)
                 .await
                 .map_err(|e| format!("Failed to insert: {}", e))?;

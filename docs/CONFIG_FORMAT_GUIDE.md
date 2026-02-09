@@ -104,6 +104,46 @@ channels:
 | `opcua` | OPC UA | `endpoint_url` |
 | `di_do` | GPIO 数字 I/O | `driver`, `gpio_base_path` |
 | `dl645` | DL/T 645-2007 电表 | `device`, `baud_rate`, `address` |
+| `mqtt` | MQTT 发布/订阅 | `broker` |
+| `http` | HTTP 轮询/Webhook | `url`（轮询）或 `listen_path`（Webhook） |
+
+#### MQTT 协议连接配置
+
+| 参数 | 类型 | 必需 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `broker` | string | ✓ | `tcp://localhost:1883` | Broker 地址，格式：`tcp://host:port` 或 `ssl://host:port` |
+| `client_id` | string | ✗ | 自动生成 UUID | 客户端标识 |
+| `username` | string | ✗ | - | 认证用户名 |
+| `password` | string | ✗ | - | 认证密码 |
+| `subscriptions` | array | ✗ | [] | 订阅主题列表 |
+| `subscriptions[].topic` | string | ✓ | - | MQTT 主题，支持 `+`/`#` 通配符 |
+| `subscriptions[].qos` | u8 | ✗ | 1 | QoS 等级 (0/1/2) |
+| `keep_alive_secs` | u64 | ✗ | 30 | 心跳间隔（秒） |
+| `connect_timeout_ms` | u64 | ✗ | 5000 | 连接超时（毫秒） |
+| `reconnect_delay_ms` | u64 | ✗ | 5000 | 重连延迟（毫秒） |
+
+**MQTT 主题通配符说明：**
+- `+` 单层通配符：`device/+/telemetry` 匹配 `device/001/telemetry`、`device/002/telemetry`
+- `#` 多层通配符：`device/#` 匹配 `device/001/telemetry`、`device/001/status/online`
+
+#### HTTP 协议连接配置
+
+| 参数 | 类型 | 必需 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `mode` | enum | ✗ | `polling` | 模式：`polling`（轮询）/ `webhook`（被动接收） |
+| `url` | string | ✓* | - | 目标 URL（轮询模式必需） |
+| `method` | enum | ✗ | `GET` | HTTP 方法：`GET`/`POST`/`PUT` |
+| `headers` | object | ✗ | {} | 请求头，如 `Authorization` |
+| `body` | string | ✗ | - | 请求体（POST/PUT） |
+| `interval_ms` | u64 | ✗ | 5000 | 轮询间隔（毫秒） |
+| `timeout_ms` | u64 | ✗ | 3000 | 请求超时（毫秒） |
+| `listen_path` | string | ✓* | - | 监听路径（Webhook 模式必需） |
+| `auth_token` | string | ✗ | - | Webhook 认证 token |
+| `max_retries` | u32 | ✗ | 3 | 失败重试次数 |
+
+**HTTP 模式选择指南：**
+- **polling**：主动从外部 API 拉取数据，适用于传统 HTTP API
+- **webhook**：被动接收外部推送，适用于支持事件通知的系统
 
 ### instances.yaml - 设备实例
 

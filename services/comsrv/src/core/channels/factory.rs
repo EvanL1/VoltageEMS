@@ -5,9 +5,6 @@
 //! This module provides factory functions that create protocol client instances
 //! (VirtualChannel, ModbusChannel, GpioChannel, CanClient) from comsrv configuration.
 
-#[cfg(feature = "modbus")]
-use std::sync::Arc;
-
 use crate::protocols::adapters::virtual_channel::{VirtualChannel, VirtualChannelConfig};
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::gateway::ChannelRuntime;
@@ -59,28 +56,33 @@ pub fn create_virtual_channel(
 /// * `host` - Modbus TCP server host address
 /// * `port` - Modbus TCP server port
 /// * `point_configs` - Point configurations with Modbus addresses
+/// * `io_timeout_ms` - Optional I/O timeout in milliseconds (default: 3000ms)
 #[cfg(feature = "modbus")]
 pub fn create_modbus_channel(
     channel_id: u32,
     host: &str,
     port: u16,
     point_configs: Vec<PointConfig>,
+    io_timeout_ms: Option<u64>,
 ) -> Box<dyn ChannelRuntime> {
-    use crate::protocols::core::logging::{ChannelLogConfig, LoggableProtocol, TracingLogHandler};
+    use std::time::Duration;
 
     let address = format!("{}:{}", host, port);
 
-    let config = ModbusChannelConfig::tcp(&address)
+    let mut config = ModbusChannelConfig::tcp(&address)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
 
+    // Apply custom I/O timeout if provided
+    if let Some(timeout_ms) = io_timeout_ms {
+        config = config.with_io_timeout(Duration::from_millis(timeout_ms));
+    }
+
     let channel_name = format!("modbus_tcp_{}", channel_id);
-    let mut channel = ModbusChannel::new(config, channel_id, channel_name.clone());
-    // Enable tracing logs
-    channel.set_log_handler(Arc::new(TracingLogHandler));
-    channel.set_log_config(ChannelLogConfig::default());
+    let channel = ModbusChannel::new(config, channel_id, channel_name.clone());
 
     // ModbusChannel directly implements ChannelRuntime - no wrapper needed
+    // Logging is configured by ChannelManager.configure_channel_logging()
     Box::new(channel)
 }
 
@@ -95,26 +97,31 @@ pub fn create_modbus_channel(
 /// * `device` - Serial device path (e.g., "/dev/ttyUSB0" on Linux)
 /// * `baud_rate` - Serial baud rate (e.g., 9600, 19200, 115200)
 /// * `point_configs` - Point configurations with Modbus addresses
+/// * `io_timeout_ms` - Optional I/O timeout in milliseconds (default: 3000ms)
 #[cfg(feature = "modbus")]
 pub fn create_modbus_rtu_channel(
     channel_id: u32,
     device: &str,
     baud_rate: u32,
     point_configs: Vec<PointConfig>,
+    io_timeout_ms: Option<u64>,
 ) -> Box<dyn ChannelRuntime> {
-    use crate::protocols::core::logging::{ChannelLogConfig, LoggableProtocol, TracingLogHandler};
+    use std::time::Duration;
 
-    let config = ModbusChannelConfig::rtu(device, baud_rate)
+    let mut config = ModbusChannelConfig::rtu(device, baud_rate)
         .with_points(point_configs)
         .with_reconnect(ReconnectConfig::default());
 
+    // Apply custom I/O timeout if provided
+    if let Some(timeout_ms) = io_timeout_ms {
+        config = config.with_io_timeout(Duration::from_millis(timeout_ms));
+    }
+
     let channel_name = format!("modbus_rtu_{}", channel_id);
-    let mut channel = ModbusChannel::new(config, channel_id, channel_name.clone());
-    // Enable tracing logs
-    channel.set_log_handler(Arc::new(TracingLogHandler));
-    channel.set_log_config(ChannelLogConfig::default());
+    let channel = ModbusChannel::new(config, channel_id, channel_name.clone());
 
     // ModbusChannel directly implements ChannelRuntime - no wrapper needed
+    // Logging is configured by ChannelManager.configure_channel_logging()
     Box::new(channel)
 }
 

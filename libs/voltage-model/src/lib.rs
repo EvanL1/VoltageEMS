@@ -20,7 +20,10 @@ pub mod validation;
 pub use error::{ModelError, Result};
 pub use keyspace::KeySpaceConfig;
 pub use types::{PointRole, PointType};
-pub use validation::{validate_calculation_id, validate_instance_name, validate_product_name};
+pub use validation::{
+    is_value_valid, sanitize_value, validate_calculation_id, validate_instance_name,
+    validate_product_name, validate_value, ValidationConfig, ValueValidationError,
+};
 
 // Re-export core types for compatibility
 pub use voltage_core::ParsePointTypeError;

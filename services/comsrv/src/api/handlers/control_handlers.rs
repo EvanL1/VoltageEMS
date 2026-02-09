@@ -393,6 +393,56 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
     }
 }
 
+/// Set channel log level dynamically
+///
+/// @route PUT /api/channels/{id}/logging
+/// @input Path(id): u32 - Channel identifier
+/// @input Json(req): SetLogLevelRequest - Log level to set (debug/info/error)
+/// @output `Json<SuccessResponse<String>>` - Operation result
+/// @status 200 - Log level updated successfully
+/// @status 400 - Invalid log level
+/// @status 404 - Channel not found
+#[utoipa::path(
+    put,
+    path = "/api/channels/{id}/logging",
+    params(
+        ("id" = u32, Path, description = "Channel identifier")
+    ),
+    request_body = common::admin_api::SetLogLevelRequest,
+    responses(
+        (status = 200, description = "Channel log level updated", body = String,
+            example = json!({
+                "success": true,
+                "data": "Channel 1 log level set to debug"
+            })
+        ),
+        (status = 400, description = "Invalid log level"),
+        (status = 404, description = "Channel not found")
+    ),
+    tag = "comsrv"
+)]
+pub async fn set_channel_log_level<R: Rtdb>(
+    State(state): State<AppState<R>>,
+    Path(id): Path<u32>,
+    Json(req): Json<common::admin_api::SetLogLevelRequest>,
+) -> Result<Json<SuccessResponse<String>>, AppError> {
+    let manager = &state.channel_manager;
+
+    let Some(entry) = manager.get_channel(id) else {
+        return Err(AppError::not_found(format!("Channel {} not found", id)));
+    };
+
+    entry
+        .set_log_level(&req.level)
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    Ok(Json(SuccessResponse::new(format!(
+        "Channel {} log level set to {}",
+        id, req.level
+    ))))
+}
+
 /// Normalize point type from full name or short name to single letter
 fn normalize_point_type(type_str: &str) -> Result<PointType, AppError> {
     match type_str {

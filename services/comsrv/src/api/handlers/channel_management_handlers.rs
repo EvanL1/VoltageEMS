@@ -649,12 +649,13 @@ pub async fn update_channel_handler<R: Rtdb>(
 
     // Extract current configuration for restoration and apply requested updates
     // Move current_config_str since it's only used here
-    let (previous_description, previous_parameters, _previous_logging) =
+    let (previous_description, previous_parameters, previous_logging) =
         parse_channel_config(id, current_config_str)?;
 
     // Clone previous values since they're needed later for change detection
     let mut description = previous_description.clone();
     let mut parameters = previous_parameters.clone();
+    let mut logging = previous_logging.clone();
 
     if let Some(new_description) = &req.description {
         description = Some(new_description.clone());
@@ -666,8 +667,11 @@ pub async fn update_channel_handler<R: Rtdb>(
         }
     }
 
-    if req.description.is_some() || req.parameters.is_some() {
-        let logging = ChannelLoggingConfig::default();
+    if let Some(new_logging) = &req.logging {
+        logging = new_logging.clone();
+    }
+
+    if req.description.is_some() || req.parameters.is_some() || req.logging.is_some() {
         let config_json = build_channel_config_json(description.as_ref(), &parameters, &logging)
             .map_err(|e| {
                 tracing::error!("Serialize Ch{}: {}", id, e);
@@ -713,6 +717,23 @@ pub async fn update_channel_handler<R: Rtdb>(
                 tx.commit().await.map_err(|e| {
                     AppError::internal_error(format!("Database operation failed: {}", e))
                 })?;
+
+                // Apply logging config change at runtime (no hot reload needed)
+                if req.logging.is_some() {
+                    let level = logging.level.as_deref().unwrap_or(if logging.enabled {
+                        "info"
+                    } else {
+                        "error" // disabled = minimal logging
+                    });
+                    if let Some(entry) = state.channel_manager.get_channel(id) {
+                        if let Err(e) = entry.set_log_level(level).await {
+                            tracing::warn!("Ch{} set log level failed: {}", id, e);
+                        } else {
+                            tracing::info!("Ch{} log level set to {}", id, level);
+                        }
+                    }
+                }
+
                 "running".to_string()
             },
             NonCritical => {
@@ -733,8 +754,8 @@ pub async fn update_channel_handler<R: Rtdb>(
                         protocol: protocol.clone(),
                         enabled,
                     },
-                    parameters,
-                    logging: ChannelLoggingConfig::default(),
+                    parameters: parameters.clone(),
+                    logging: logging.clone(),
                 };
 
                 // Spawn background hot reload
@@ -767,7 +788,7 @@ pub async fn update_channel_handler<R: Rtdb>(
                         enabled,
                     },
                     parameters,
-                    logging: ChannelLoggingConfig::default(),
+                    logging,
                 };
 
                 // Spawn background hot reload

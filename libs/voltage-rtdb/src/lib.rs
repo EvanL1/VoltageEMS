@@ -82,7 +82,7 @@ pub use unified_shm::{
 
 // UDS event notification (M2C command notification via Unix Domain Socket)
 pub use notification::ShmNotification;
-pub use notifier::{ShmNotifier, DEFAULT_UDS_PATH};
+pub use notifier::{NotifyResult, ShmNotifier, UdsHealth, DEFAULT_UDS_PATH};
 
 // Snapshot management (periodic saves, graceful shutdown)
 pub use snapshot::{snapshot_exists, snapshot_info, SnapshotConfig, SnapshotInfo, SnapshotManager};

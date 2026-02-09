@@ -19,43 +19,48 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 #[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
+use voltage_calc::StateStore;
 use voltage_rtdb::traits::Rtdb;
 use voltage_rules::{self as rule_repository, RuleNode, RuleScheduler, RuleVariable};
 
 /// Rule Engine state shared across handlers
-pub struct RuleEngineState<R: Rtdb> {
+///
+/// Generic over `S: StateStore` to support different state backends:
+/// - `MemoryStateStore`: In-memory (default, lost on restart)
+/// - `RtdbStateStore`: Redis-backed (persistent)
+pub struct RuleEngineState<R: Rtdb, S: StateStore = voltage_calc::MemoryStateStore> {
     /// SQLite pool for rule persistence
     pub pool: SqlitePool,
     /// Rule scheduler (owns the executor)
-    pub scheduler: Arc<RuleScheduler<R>>,
+    pub scheduler: Arc<RuleScheduler<R, S>>,
 }
 
-impl<R: Rtdb + 'static> RuleEngineState<R> {
-    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler<R>>) -> Self {
+impl<R: Rtdb + 'static, S: StateStore + 'static> RuleEngineState<R, S> {
+    pub fn new(pool: SqlitePool, scheduler: Arc<RuleScheduler<R, S>>) -> Self {
         Self { pool, scheduler }
     }
 }
 
 /// Create rule engine API routes
-pub fn create_rule_routes<R: Rtdb + Send + Sync + 'static>(
-    state: Arc<RuleEngineState<R>>,
+pub fn create_rule_routes<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    state: Arc<RuleEngineState<R, S>>,
 ) -> Router {
     Router::new()
         // Rule management (Vue Flow-based)
-        .route("/api/rules", get(list_rules::<R>).post(create_rule::<R>))
+        .route("/api/rules", get(list_rules::<R, S>).post(create_rule::<R, S>))
         .route(
             "/api/rules/{id}",
-            get(get_rule::<R>)
-                .put(update_rule::<R>)
-                .delete(delete_rule::<R>),
+            get(get_rule::<R, S>)
+                .put(update_rule::<R, S>)
+                .delete(delete_rule::<R, S>),
         )
-        .route("/api/rules/{id}/enable", post(enable_rule::<R>))
-        .route("/api/rules/{id}/disable", post(disable_rule::<R>))
-        .route("/api/rules/{id}/execute", post(execute_rule_now::<R>))
-        .route("/api/rules/{id}/variables", get(get_rule_variables::<R>))
+        .route("/api/rules/{id}/enable", post(enable_rule::<R, S>))
+        .route("/api/rules/{id}/disable", post(disable_rule::<R, S>))
+        .route("/api/rules/{id}/execute", post(execute_rule_now::<R, S>))
+        .route("/api/rules/{id}/variables", get(get_rule_variables::<R, S>))
         // Scheduler control
-        .route("/api/scheduler/status", get(scheduler_status::<R>))
-        .route("/api/scheduler/reload", post(scheduler_reload::<R>))
+        .route("/api/scheduler/status", get(scheduler_status::<R, S>))
+        .route("/api/scheduler/reload", post(scheduler_reload::<R, S>))
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .with_state(state)
@@ -73,7 +78,14 @@ pub fn create_rule_routes<R: Rtdb + Send + Sync + 'static>(
         schemas(
             CreateRuleRequest,
             UpdateRuleRequest,
-            RuleListQuery
+            RuleListQuery,
+            // PeriodDelta Swagger Schemas
+            RuleVariableSchema,
+            PeriodType,
+            PeriodDeltaNodeSchema,
+            VueFlowPeriodDeltaNode,
+            VueFlowPeriodDeltaNodeData,
+            PeriodDeltaConfigSchema
         )
     ),
     tags(
@@ -81,6 +93,156 @@ pub fn create_rule_routes<R: Rtdb + Send + Sync + 'static>(
     )
 )]
 pub struct RuleApiDoc;
+
+// ============================================================================
+// PeriodDelta Swagger Schema Types (for API documentation only)
+// ============================================================================
+
+/// Rule variable definition for Swagger documentation
+///
+/// Represents a data point reference within a rule, identifying an instance and point.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub struct RuleVariableSchema {
+    /// Variable name (e.g., "X1", "Y1")
+    #[cfg_attr(feature = "swagger-ui", schema(example = "X1"))]
+    pub name: String,
+
+    /// Device instance ID
+    #[cfg_attr(feature = "swagger-ui", schema(example = 1))]
+    pub instance: u32,
+
+    /// Point type: "measurement" or "action"
+    #[serde(rename = "pointType")]
+    #[cfg_attr(feature = "swagger-ui", schema(example = "measurement"))]
+    pub point_type: String,
+
+    /// Point ID within the device
+    #[cfg_attr(feature = "swagger-ui", schema(example = 9))]
+    pub point: u32,
+}
+
+/// Period type for PeriodDelta node
+///
+/// Defines the time window for delta calculation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub enum PeriodType {
+    /// Daily period (resets at midnight local time)
+    #[serde(rename = "daily")]
+    Daily,
+    /// Weekly period (resets on Monday midnight)
+    #[serde(rename = "weekly")]
+    Weekly,
+    /// Monthly period (resets on 1st of month)
+    #[serde(rename = "monthly")]
+    Monthly,
+    /// Quarterly period (resets on Q1/Q2/Q3/Q4 start)
+    #[serde(rename = "quarterly")]
+    Quarterly,
+}
+
+/// PeriodDelta node configuration for Swagger documentation
+///
+/// This node calculates the delta (change) of a cumulative value within a specified period.
+/// Common use case: Calculate daily/weekly/monthly charge/discharge energy from cumulative meters.
+///
+/// # Example Use Cases
+/// - **Daily Charge Energy**: Input from total charge counter (ID 9), output to daily counter (ID 101)
+/// - **Monthly Discharge Energy**: Track monthly discharge for billing
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub struct PeriodDeltaNodeSchema {
+    /// Node type identifier (always "action-periodDelta")
+    #[serde(rename = "type")]
+    #[cfg_attr(feature = "swagger-ui", schema(example = "action-periodDelta"))]
+    pub node_type: String,
+
+    /// Input variable - source cumulative value (e.g., total charge energy)
+    pub input: RuleVariableSchema,
+
+    /// Output variable - period delta result (e.g., daily charge energy)
+    pub output: RuleVariableSchema,
+
+    /// Period type: daily, weekly, monthly, or quarterly
+    #[cfg_attr(feature = "swagger-ui", schema(example = "daily"))]
+    pub period: String,
+
+    /// Output wires to next node(s)
+    #[cfg_attr(feature = "swagger-ui", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
+    pub wires: serde_json::Value,
+}
+
+/// Vue Flow node wrapper for PeriodDelta
+///
+/// This is the full structure as stored in flow_json for the Vue Flow editor.
+/// Contains position, display properties, and the nested config.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub struct VueFlowPeriodDeltaNode {
+    /// Unique node ID
+    #[cfg_attr(feature = "swagger-ui", schema(example = "period-delta-1"))]
+    pub id: String,
+
+    /// Node type (use "custom" for custom nodes)
+    #[serde(rename = "type")]
+    #[cfg_attr(feature = "swagger-ui", schema(example = "custom"))]
+    pub node_type: String,
+
+    /// Node position on canvas
+    #[cfg_attr(feature = "swagger-ui", schema(value_type = Object, example = json!({"x": 150, "y": 100})))]
+    pub position: serde_json::Value,
+
+    /// Node data containing the PeriodDelta configuration
+    pub data: VueFlowPeriodDeltaNodeData,
+}
+
+/// Vue Flow node data for PeriodDelta
+///
+/// Contains the internal type identifier and configuration.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub struct VueFlowPeriodDeltaNodeData {
+    /// Internal node type (must be "action-periodDelta")
+    #[serde(rename = "type")]
+    #[cfg_attr(feature = "swagger-ui", schema(example = "action-periodDelta"))]
+    pub data_type: String,
+
+    /// Display label for the node
+    #[cfg_attr(feature = "swagger-ui", schema(example = "Daily Charge Energy"))]
+    pub label: Option<String>,
+
+    /// Node configuration
+    pub config: PeriodDeltaConfigSchema,
+}
+
+/// PeriodDelta config within Vue Flow node data
+///
+/// The actual configuration parameters for the PeriodDelta calculation.
+///
+/// # Point Mapping Table
+/// | Input Point (Cumulative) | Output Point (Period Delta) | Period |
+/// |--------------------------|----------------------------|--------|
+/// | 9 (Charge Energy) | 101 (Daily Charge) | daily |
+/// | 9 (Charge Energy) | 103 (Weekly Charge) | weekly |
+/// | 10 (Discharge Energy) | 102 (Daily Discharge) | daily |
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(utoipa::ToSchema))]
+pub struct PeriodDeltaConfigSchema {
+    /// Input variable (cumulative source, e.g., total charge energy from meter)
+    pub input: RuleVariableSchema,
+
+    /// Output variable (period delta destination, e.g., daily charge energy)
+    pub output: RuleVariableSchema,
+
+    /// Period: "daily" | "weekly" | "monthly" | "quarterly"
+    #[cfg_attr(feature = "swagger-ui", schema(example = "daily"))]
+    pub period: String,
+
+    /// Wires to next nodes
+    #[cfg_attr(feature = "swagger-ui", schema(value_type = Object, example = json!({"default": ["next-node-id"]})))]
+    pub wires: serde_json::Value,
+}
 
 // ============================================================================
 // Handlers
@@ -179,8 +341,8 @@ pub struct UpdateRuleRequest {
     ),
     tag = "rules"
 ))]
-pub async fn list_rules<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn list_rules<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Query(query): Query<RuleListQuery>,
 ) -> Result<Json<SuccessResponse<PaginatedResponse<serde_json::Value>>>, ModSrvError> {
     let page = query.page.max(1);
@@ -230,8 +392,8 @@ pub async fn list_rules<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn create_rule<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn create_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Json(req): Json<CreateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Get next sequential ID
@@ -282,8 +444,8 @@ pub async fn create_rule<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn get_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match rule_repository::get_rule(&state.pool, id).await {
@@ -313,8 +475,8 @@ pub async fn get_rule<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn update_rule<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn update_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Path(id): Path<i64>,
     Json(req): Json<UpdateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
@@ -424,8 +586,8 @@ pub async fn update_rule<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn delete_rule<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn delete_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     if let Err(e) = rule_repository::delete_rule(&state.pool, id).await {
@@ -456,8 +618,8 @@ pub async fn delete_rule<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn enable_rule<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn enable_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     if let Err(e) = rule_repository::set_rule_enabled(&state.pool, id, true).await {
@@ -488,8 +650,8 @@ pub async fn enable_rule<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn disable_rule<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn disable_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     if let Err(e) = rule_repository::set_rule_enabled(&state.pool, id, false).await {
@@ -536,9 +698,9 @@ pub async fn disable_rule<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn execute_rule_now<R: Rtdb + Send + Sync + 'static>(
+pub async fn execute_rule_now<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
     Path(id): Path<i64>,
-    State(state): State<Arc<RuleEngineState<R>>>,
+    State(state): State<Arc<RuleEngineState<R, S>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     let execution_id = format!("manual-{}", uuid::Uuid::new_v4());
     let timestamp = chrono::Utc::now();
@@ -596,8 +758,8 @@ pub async fn execute_rule_now<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn scheduler_status<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn scheduler_status<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     let status = state.scheduler.status().await;
 
@@ -618,8 +780,8 @@ pub async fn scheduler_status<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn scheduler_reload<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn scheduler_reload<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     match state.scheduler.reload_rules().await {
         Ok(count) => {
@@ -652,8 +814,8 @@ pub async fn scheduler_reload<R: Rtdb + Send + Sync + 'static>(
     ),
     tag = "rules"
 ))]
-pub async fn get_rule_variables<R: Rtdb + Send + Sync + 'static>(
-    State(state): State<Arc<RuleEngineState<R>>>,
+pub async fn get_rule_variables<R: Rtdb + Send + Sync + 'static, S: StateStore + 'static>(
+    State(state): State<Arc<RuleEngineState<R, S>>>,
     Path(id): Path<i64>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
     // Get the rule from database
