@@ -89,7 +89,7 @@
         width: unset !important;
       }
       &.vtable__cell--name {
-        width: 50%;
+        width: 25%;
       }
       &.vtable__cell--value {
         width: 25%;
@@ -100,6 +100,20 @@
       &.vtable__cell--status {
         width: 50%;
       }
+      &.vtable__cell--time {
+        width: 25%;
+      }
+    }
+  }
+  .device__table--right{
+    .vtable__cell--name{
+      width: 30% !important;
+    }
+    .vtable__cell--status{
+      width: 30% !important;
+    }
+    .vtable__cell--time{
+      width: 40% !important;
     }
   }
 }

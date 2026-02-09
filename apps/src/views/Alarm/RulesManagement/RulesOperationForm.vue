@@ -16,15 +16,34 @@
 
         <!-- 拆分Monitor Data为三个el-form-item，分别校�?-->
         <div class="monitor-data-group" ref="monitorDataGroupRef">
-          <el-form-item label="Monitor Data:" prop="service_type" style="margin-right: 0">
+          <el-form-item label="Monitor Data:" prop="channel_id" style="margin-right: 0">
             <el-select
-              v-model="form.service_type"
-              placeholder="Select Service Type"
+              v-model="form.channel_id"
+              placeholder="Select Channel"
               popper-class="rules-dialog-popper"
               :append-to="monitorDataGroupRef"
+              @change="handleChannelChange"
+              :disabled="loadingChannels"
             >
               <el-option
-                v-for="item in service_types"
+                v-for="item in channelList"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item prop="data_type" style="margin-right: 0">
+            <el-select
+              v-model="form.data_type"
+              placeholder="Select Point Type"
+              popper-class="rules-dialog-popper"
+              :append-to="monitorDataGroupRef"
+              @change="handlePointTypeChange"
+              :disabled="!form.channel_id || loadingPoints"
+            >
+              <el-option
+                v-for="item in data_types"
                 :key="item.value"
                 :label="item.label"
                 :value="item.value"
@@ -37,24 +56,10 @@
               placeholder="Select Point"
               popper-class="rules-dialog-popper"
               :append-to="monitorDataGroupRef"
+              :disabled="!form.channel_id || !form.data_type || loadingPoints"
             >
               <el-option
                 v-for="item in points"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item prop="data_type" style="margin-right: 0">
-            <el-select
-              v-model="form.data_type"
-              placeholder="Select Data Type"
-              popper-class="rules-dialog-popper"
-              :append-to="monitorDataGroupRef"
-            >
-              <el-option
-                v-for="item in data_types"
                 :key="item.value"
                 :label="item.label"
                 :value="item.value"
@@ -110,8 +115,19 @@
           </el-form-item>
         </div>
 
-        <el-form-item label="Switch:" prop="enabled" style="display: flex; margin-right: 0">
+        <el-form-item label="Enabled:" prop="enabled" style="width: 100%; margin-right: 0">
           <el-switch v-model="form.enabled" />
+        </el-form-item>
+
+        <el-form-item label="Description:" prop="description" style="width: 100%">
+          <el-input
+            v-model="form.description"
+            type="textarea"
+            :rows="3"
+            placeholder="Enter description (optional)"
+            maxlength="50"
+            show-word-limit
+          />
         </el-form-item>
       </el-form>
     </template>
@@ -126,8 +142,11 @@
 <script setup lang="ts">
 import type { FormInstance } from 'element-plus'
 import { getRuleDetail, createRule, updateRule } from '@/api/alarm'
+import { getAllChannels, getPointsTables } from '@/api/channelsManagement'
 import type { RuleFormModel, DialogExpose } from '@/types/ruleManagement'
 import type { Operator } from '@/types/ruleManagement'
+import type { PointType } from '@/types/channelConfiguration'
+
 const formRef = ref<FormInstance>()
 const dialogRef = ref<DialogExpose>()
 const monitorDataGroupRef = ref<HTMLElement>()
@@ -136,42 +155,54 @@ const conditionGroupRef = ref<HTMLElement>()
 
 const getDefaultForm = (): RuleFormModel => ({
   rule_name: '',
-  service_type: null,
+  service_type: 'comsrv',
+  channel_id: undefined,
   point_id: null,
   data_type: null,
   warning_level: null,
   operator: null,
   value: null,
+  description: '',
   enabled: true,
 })
 
 const form = ref<RuleFormModel>(getDefaultForm())
 
-const service_types = [{ label: 'comsrv', value: 'comsrv' }]
-const points = [
-  { label: '1', value: 1 },
-  { label: '2', value: 2 },
-  { label: '3', value: 3 },
-  { label: '4', value: 4 },
-  { label: '5', value: 5 },
-  { label: '6', value: 6 },
-  { label: '7', value: 7 },
-  { label: '8', value: 8 },
-]
+// 通道列表
+const channelList = ref<Array<{ label: string; value: number }>>([])
+const loadingChannels = ref(false)
+
+// 所有点位数据（包含T和S类型）
+const allPointsData = ref<Array<{ point_id: number; signal_name: string; point_type?: PointType }>>([])
+// 筛选后的点位列表（用于显示）
+const points = computed(() => {
+  if (!form.value.data_type) {
+    return []
+  }
+  return allPointsData.value
+    .filter((point) => point.point_type === form.value.data_type)
+    .map((point) => ({
+      label: String(point.signal_name || `Point ${point.point_id}`),
+      value: Number(point.point_id),
+    }))
+})
+const loadingPoints = ref(false)
+
+// Point Type 选项（T 和 S）
 const data_types = [
   { label: 'T', value: 'T' },
-  { label: 'A', value: 'A' },
+  { label: 'S', value: 'S' },
 ]
 
 const alarmLevelOptions = [
-  { label: 'L1', value: 1 },
-  { label: 'L2', value: 2 },
-  { label: 'L3', value: 3 },
+  { label: 'Critical Alarm', value: 1 },
+  { label: 'Warning Alarm', value: 2 },
+  { label: 'Info Alarm', value: 3 },
 ]
 
 const rules = {
   rule_name: [{ required: true, message: 'Please input rule name', trigger: 'blur' }],
-  service_type: [{ required: true, message: 'Required', trigger: 'change' }],
+  channel_id: [{ required: true, message: 'Required', trigger: 'change' }],
   point_id: [{ required: true, message: 'Required', trigger: 'change' }],
   data_type: [{ required: true, message: 'Required', trigger: 'change' }],
   warning_level: [{ required: true, message: 'Please select alarm level', trigger: 'change' }],
@@ -182,23 +213,121 @@ const rules = {
 const mode = ref<'create' | 'edit'>('create')
 const dialogTitle = computed(() => (mode.value === 'edit' ? 'Edit Rule' : 'New Rule'))
 
+// 加载通道列表
+const loadChannels = async () => {
+  try {
+    loadingChannels.value = true
+    const res = await getAllChannels()
+    const list = Array.isArray(res?.data?.list)
+      ? res.data.list
+      : Array.isArray(res?.data)
+        ? res.data
+        : Array.isArray(res)
+          ? (res as any)
+          : []
+    channelList.value = (list as any[])
+      .map((it: any) => ({
+        label: String(it.name || `Channel ${it.id}`),
+        value: Number(it.id),
+      }))
+      .filter((x) => Number.isFinite(x.value) && x.value > 0)
+  } catch (error) {
+    console.error('Failed to load channels:', error)
+    channelList.value = []
+  } finally {
+    loadingChannels.value = false
+  }
+}
+
+// 加载所有点位（T和S类型）
+const loadAllPoints = async (channelId: number) => {
+  if (!channelId) {
+    allPointsData.value = []
+    return
+  }
+  try {
+    loadingPoints.value = true
+    // 不传type参数，获取所有类型的点位
+    const res = await getPointsTables(channelId)
+    
+    const allPoints: Array<{ point_id: number; signal_name: string; point_type: PointType }> = []
+    
+    if (res.success && res.data) {
+      // 处理T类型点位（telemetry）
+      const tPointsData = Array.isArray(res.data.telemetry) ? res.data.telemetry : []
+      allPoints.push(
+        ...tPointsData.map((point: any) => ({
+          point_id: Number(point.point_id),
+          signal_name: String(point.signal_name || `Point ${point.point_id}`),
+          point_type: 'T' as PointType,
+        })),
+      )
+      
+      // 处理S类型点位（signal）
+      const sPointsData = Array.isArray(res.data.signal) ? res.data.signal : []
+      allPoints.push(
+        ...sPointsData.map((point: any) => ({
+          point_id: Number(point.point_id),
+          signal_name: String(point.signal_name || `Point ${point.point_id}`),
+          point_type: 'S' as PointType,
+        })),
+      )
+    }
+    
+    allPointsData.value = allPoints
+  } catch (error) {
+    console.error('Failed to load points:', error)
+    allPointsData.value = []
+  } finally {
+    loadingPoints.value = false
+  }
+}
+
+// 处理通道变化
+const handleChannelChange = async () => {
+  form.value.data_type = null
+  form.value.point_id = null
+  allPointsData.value = []
+  // 选择通道后立即加载所有点位
+  if (form.value.channel_id) {
+    await loadAllPoints(Number(form.value.channel_id))
+  }
+}
+
+// 处理点位类型变化
+const handlePointTypeChange = () => {
+  form.value.point_id = null
+  // 点位列表会根据computed自动筛选，无需额外操作
+}
+
 const rules_id = ref<string>()
 async function open(rulesId?: string, openMode: 'create' | 'edit' = 'create') {
   try {
     mode.value = openMode
     form.value = getDefaultForm()
     rules_id.value = rulesId || ''
+    
+    // 加载通道列表
+    await loadChannels()
+    
     if (rulesId) {
       const res = await getRuleDetail(rules_id.value)
       if (res.success) {
         form.value.rule_name = res.data.list[0].rule_name
-        form.value.service_type = res.data.list[0].service_type
+        form.value.service_type = 'comsrv' // 固定为 comsrv
+        form.value.channel_id = res.data.list[0].channel_id
         form.value.point_id = res.data.list[0].point_id
-        form.value.data_type = res.data.list[0].data_type
+        form.value.data_type = res.data.list[0].data_type as 'T' | 'S'
         form.value.warning_level = res.data.list[0].warning_level
         form.value.operator = res.data.list[0].operator as Operator
         form.value.value = res.data.list[0].value
+        form.value.description = res.data.list[0].description || ''
         form.value.enabled = res.data.list[0].enabled
+        
+        // 如果有通道，加载所有点位
+        if (form.value.channel_id) {
+          await loadAllPoints(Number(form.value.channel_id))
+        }
       }
     }
     nextTick(() => {
@@ -229,8 +358,10 @@ function onCancel() {
 async function onSubmit() {
   formRef.value?.validate(async (valid) => {
     if (!valid) return
+    // 确保 service_type 固定为 comsrv
+    const submitData = { ...form.value, service_type: 'comsrv' }
     if (mode.value === 'create') {
-      const res = await createRule({ ...form.value, channel_id: 1001 })
+      const res = await createRule(submitData)
       if (res.success) {
         emit('submit', form.value)
         close()
@@ -241,7 +372,7 @@ async function onSubmit() {
       if (!rules_id.value) {
         throw new Error('rules_id is required')
       }
-      const res = await updateRule(rules_id.value, { ...form.value, channel_id: 1001 })
+      const res = await updateRule(rules_id.value, submitData)
       if (res.success) {
         emit('submit', form.value)
         close()

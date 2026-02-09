@@ -5,7 +5,7 @@ export interface LeftTableItem {
   name: string
   value: number | null | string
   unit: string
-  updateTime?: string
+  updateTime?: number | string | null
   pointId: number
 }
 
@@ -14,5 +14,5 @@ export interface RightTableItem {
   name: string
   status: number | null | string
   pointId: number
-  updateTime?: string
+  updateTime?: number | string | null
 }

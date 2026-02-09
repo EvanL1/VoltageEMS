@@ -113,9 +113,9 @@
           <div class="home-altersList">
             <div class="home-altersItem" v-for="item in alterInfoList" :key="item.id">
               <div class="alters__item-name">{{ item.deviceName }}</div>
-              <img v-if="item.alterLevel == 'L1'" :src="alterL1" class="alters__item-icon" />
-              <img v-else-if="item.alterLevel == 'L2'" :src="alterL2" class="alters__item-icon" />
-              <img v-else-if="item.alterLevel == 'L3'" :src="alterL3" class="alters__item-icon" />
+              <img v-if="item.alterLevel == 'Critical Alarm'" :src="alterL1" class="alters__item-icon" />
+              <img v-else-if="item.alterLevel == 'Warning Alarm'" :src="alterL2" class="alters__item-icon" />
+              <img v-else-if="item.alterLevel == 'Info Alarm'" :src="alterL3" class="alters__item-icon" />
               <div class="alters__item-msg">{{ item.alterMsg }}</div>
             </div>
           </div>
@@ -308,19 +308,19 @@ const alterInfoList = reactive([
   {
     id: 1,
     deviceName: 'ESS',
-    alterLevel: 'L1',
+    alterLevel: 'Critical Alarm',
     alterMsg: 'Battery Overvoltage Alarm',
   },
   {
     id: 2,
     deviceName: 'PV',
-    alterLevel: 'L2',
+    alterLevel: 'Warning Alarm',
     alterMsg: 'Battery Overvoltage Alarm',
   },
   {
     id: 3,
     deviceName: 'Load',
-    alterLevel: 'L3',
+    alterLevel: 'Info Alarm',
     alterMsg: 'Battery Overvoltage Alarm',
   },
 ])

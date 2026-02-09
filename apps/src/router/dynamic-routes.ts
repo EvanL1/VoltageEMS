@@ -329,6 +329,7 @@ export const dynamicRoutes: RouteItem[] = [
           roles: ['Admin'],
         },
       },
+      /*
       {
         path: 'configuration',
         name: 'configuration',
@@ -384,6 +385,7 @@ export const dynamicRoutes: RouteItem[] = [
           },
         ],
       },
+      */
     ],
   },
 ]

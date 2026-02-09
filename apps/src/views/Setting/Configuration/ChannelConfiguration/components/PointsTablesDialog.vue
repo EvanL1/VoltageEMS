@@ -915,6 +915,7 @@ const open = async (
         })
       },
     },
+    pageId.value,
   )
 
   // 加载 mappings 数据
@@ -979,6 +980,7 @@ const close = () => {
   if (pageId.value) {
     try {
       wsManager.unsubscribe(pageId.value)
+      
     } catch {}
     pageId.value = ''
   }
