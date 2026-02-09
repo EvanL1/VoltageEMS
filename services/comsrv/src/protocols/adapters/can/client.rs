@@ -303,18 +303,29 @@ impl CanClient {
                     break;
                 }
 
-                // Apply mappings to decode cached frames
-                let cache = frame_cache.read().await;
+                // Apply mappings to decode cached frames.
+                // Scope the read lock so it's dropped before any .await calls below,
+                // preventing potential deadlocks if the handler tries to acquire a write lock.
+                let mapping_result = {
+                    let cache = frame_cache.read().await;
 
-                #[cfg(feature = "tracing-support")]
-                {
-                    tracing::info!("Frame cache has {} CAN IDs", cache.len());
-                    for (can_id, frame_data) in cache.iter() {
-                        tracing::debug!("  CAN ID 0x{:03X}: {} bytes", can_id, frame_data.len());
+                    #[cfg(feature = "tracing-support")]
+                    {
+                        tracing::info!("Frame cache has {} CAN IDs", cache.len());
+                        for (can_id, frame_data) in cache.iter() {
+                            tracing::debug!(
+                                "  CAN ID 0x{:03X}: {} bytes",
+                                can_id,
+                                frame_data.len()
+                            );
+                        }
                     }
-                }
 
-                match point_manager.apply_mappings(&cache) {
+                    point_manager.apply_mappings(&cache)
+                    // cache (RwLockReadGuard) is dropped here
+                };
+
+                match mapping_result {
                     Ok(decoded_points) => {
                         #[cfg(feature = "tracing-support")]
                         tracing::info!("Decoded {} points from frame cache", decoded_points.len());
@@ -356,7 +367,7 @@ impl CanClient {
                             let batch_arc = Arc::new(batch);
                             let _ = event_tx.send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
 
-                            // Call handler
+                            // Call handler (no lock held — safe to .await)
                             if let Some(ref handler) = event_handler {
                                 #[cfg(feature = "tracing-support")]
                                 tracing::debug!("Calling on_data_update handler");

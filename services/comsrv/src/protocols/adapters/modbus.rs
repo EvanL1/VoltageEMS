@@ -175,7 +175,10 @@ fn create_packet_callback(
             None
         };
 
-        // Clone data for async task (callback is sync, logging is async)
+        // Clone data for async task (callback is sync, logging is async).
+        // JoinHandle intentionally dropped — log_raw_packet_with_group returns ()
+        // and handles errors internally. Panic in this task will be caught by
+        // tokio's default panic hook and logged to stderr.
         let ctx = log_context.clone();
         let data = data.to_vec();
         tokio::spawn(async move {
@@ -1783,6 +1786,7 @@ impl ProtocolClient for ModbusChannel {
         let old_state = self.get_state();
 
         if let Some(mut client) = self.client.take() {
+            // Ignore: best-effort close — we're disconnecting anyway, errors are non-recoverable
             let _ = client.close().await;
         }
         self.set_state(ConnectionState::Disconnected);
