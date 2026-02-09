@@ -641,6 +641,7 @@ dependencies = [
  "errors",
  "futures",
  "http-body-util",
+ "itoa",
  "once_cell",
  "rand 0.8.5",
  "redis",
@@ -2030,6 +2031,7 @@ dependencies = [
  "evalexpr",
  "futures",
  "http-body-util",
+ "itoa",
  "redis",
  "regex",
  "serde",
@@ -4323,6 +4325,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "itoa",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -4357,6 +4360,21 @@ dependencies = [
  "tracing",
  "uuid",
  "voltage-infra",
+ "voltage-model",
+ "voltage-rtdb-shm",
+]
+
+[[package]]
+name = "voltage-rtdb-shm"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "memmap2",
+ "parking_lot",
+ "rustc-hash",
+ "tempfile",
+ "tokio",
+ "tracing",
  "voltage-model",
 ]
 

@@ -14,6 +14,7 @@ members = [
     "libs/voltage-model",
     # libs/voltage-protocols removed - protocols are now in comsrv
     "libs/voltage-rtdb",
+    "libs/voltage-rtdb-shm",
     "libs/voltage-routing",
     "libs/voltage-rules",
     "libs/voltage-schema-macro",

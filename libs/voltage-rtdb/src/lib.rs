@@ -16,17 +16,19 @@ pub mod redis_impl;
 
 pub mod memory_impl;
 
-pub mod vec_impl;
+// SHM modules are now in voltage-rtdb-shm crate, re-exported here for backward compatibility
+pub use voltage_rtdb_shm::instance_index;
+pub use voltage_rtdb_shm::notification;
+pub use voltage_rtdb_shm::notifier;
+pub use voltage_rtdb_shm::ring_buffer;
+pub use voltage_rtdb_shm::slot_bitmap;
+pub use voltage_rtdb_shm::vec_impl;
 
 pub mod shared_impl;
 
 pub mod unified_shm;
 
 pub mod snapshot;
-
-pub mod notification;
-
-pub mod notifier;
 
 pub mod error;
 
@@ -40,13 +42,7 @@ pub mod routing_cache;
 
 pub mod numfmt;
 
-pub mod ring_buffer;
-
-pub mod slot_bitmap;
-
 pub mod channel_index;
-
-pub mod instance_index;
 
 // Re-exports
 pub use bytes::Bytes;
@@ -61,10 +57,6 @@ pub use redis_impl::RedisRtdb;
 
 pub use memory_impl::{MemoryRtdb, MemoryStats};
 
-// VecRtdb removed from public API - using SharedMemory + Redis two-tier architecture
-// PointSlot, ChannelVecStore, and instance_point_type are internal implementation details
-// accessible via crate::vec_impl::{...} where needed
-
 // Shared memory public API (only types needed by external crates)
 pub use shared_impl::{default_shm_path, is_shm_available, ChannelToSlotIndex, SharedConfig};
 
@@ -75,8 +67,8 @@ pub use unified_shm::{
 };
 
 // UDS event notification (M2C command notification via Unix Domain Socket)
-pub use notification::ShmNotification;
-pub use notifier::{NotifyResult, ShmNotifier, UdsHealth, DEFAULT_UDS_PATH};
+pub use voltage_rtdb_shm::notification::ShmNotification;
+pub use voltage_rtdb_shm::notifier::{NotifyResult, ShmNotifier, UdsHealth, DEFAULT_UDS_PATH};
 
 // Snapshot management (periodic saves, graceful shutdown)
 pub use snapshot::{snapshot_exists, snapshot_info, SnapshotConfig, SnapshotInfo, SnapshotManager};
@@ -84,20 +76,22 @@ pub use snapshot::{snapshot_exists, snapshot_info, SnapshotConfig, SnapshotInfo,
 pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
 
 // Ring buffer (high-frequency data recording)
-pub use ring_buffer::{
+pub use voltage_rtdb_shm::ring_buffer::{
     current_timestamp_us, DataPoint, HighFreqRingBuffer, RingBufferConfig, SharedRingBuffer,
 };
 
 pub use time::{FixedTimeProvider, SystemTimeProvider, TimeProvider};
 
 // Slot bitmap for dynamic allocation (unified pool architecture)
-pub use slot_bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
+pub use voltage_rtdb_shm::slot_bitmap::{
+    BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader,
+};
 
 // Channel index for dynamic channel management
 pub use channel_index::{ChannelIndex, DynamicChannelLayout};
 
 // Instance index for dynamic instance management with shared slots
-pub use instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
+pub use voltage_rtdb_shm::instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 
 pub use write_buffer::{
     WriteBuffer, WriteBufferConfig, WriteBufferStats, WriteBufferStatsSnapshot,
@@ -140,19 +134,6 @@ pub mod helpers {
     ///
     /// **Design principle**: Hash writes and TODO triggers are always synchronized.
     /// No matter how the Hash is modified (routing/API/tools), TODO is automatically triggered.
-    ///
-    /// # Arguments
-    /// * `rtdb` - RTDB trait object
-    /// * `config` - KeySpace configuration
-    /// * `channel_id` - Channel ID
-    /// * `point_type` - Point type (Control or Adjustment)
-    /// * `point_id` - Point ID
-    /// * `value` - Point value
-    /// * `timestamp_ms` - Timestamp in milliseconds
-    ///
-    /// # Returns
-    /// * `Ok(())` - Success
-    /// * `Err(anyhow::Error)` - Write error
     pub async fn set_channel_point_with_trigger<R>(
         rtdb: &R,
         config: &KeySpaceConfig,
@@ -165,23 +146,17 @@ pub mod helpers {
     where
         R: Rtdb,
     {
-        // Step 1: Write to separate hashes (value, ts, raw)
-        // - comsrv:{channel_id}:{type}      -> values
-        // - comsrv:{channel_id}:{type}:ts   -> timestamps
-        // - comsrv:{channel_id}:{type}:raw  -> raw values
         let channel_key = config.channel_key(channel_id, point_type);
         write_channel_points(
             rtdb,
             &channel_key,
-            vec![(point_id, value, value)], // (point_id, value, raw_value)
+            vec![(point_id, value, value)],
             timestamp_ms,
         )
         .await?;
 
-        // Step 2: Auto-trigger TODO queue (Write-Triggers-Routing pattern)
         let todo_key = config.todo_queue_key(channel_id, point_type);
 
-        // Compact trigger message format - direct string construction (avoids json! double serialization)
         let trigger = format!(
             r#"{{"point_id":{},"value":{},"timestamp":{}}}"#,
             point_id, value, timestamp_ms
@@ -202,24 +177,10 @@ pub mod helpers {
     /// - `{channel_key}`     → engineering values
     /// - `{channel_key}:ts`  → timestamps
     /// - `{channel_key}:raw` → raw values
-    ///
-    /// # Arguments
-    /// * `rtdb` - RTDB trait object
-    /// * `channel_key` - Base channel key (e.g. "comsrv:1001:T")
-    /// * `points` - Vector of (point_id, value, raw_value) tuples
-    /// * `timestamp_ms` - Timestamp in milliseconds (shared by all points)
-    ///
-    /// # Returns
-    /// * `Ok(usize)` - Number of points written
-    /// * `Err(anyhow::Error)` - Write error
-    ///
-    /// # Optimization
-    /// - Uses zero-allocation number formatting (itoa/ryu)
-    /// - Uses Arc<str> for O(1) clone across 3 layers, converts to String only at final push
     pub async fn write_channel_points<R>(
         rtdb: &R,
         channel_key: &str,
-        points: Vec<(u32, f64, f64)>, // (point_id, value, raw_value)
+        points: Vec<(u32, f64, f64)>,
         timestamp_ms: i64,
     ) -> Result<usize>
     where
@@ -230,26 +191,19 @@ pub mod helpers {
         }
 
         let count = points.len();
-
-        // Pre-convert timestamp to Bytes once using itoa (zero heap during format)
         let timestamp_bytes = i64_to_bytes(timestamp_ms);
 
-        // Prepare data for three hashes using Arc<str> for O(1) sharing
         let mut values = Vec::with_capacity(count);
         let mut timestamps = Vec::with_capacity(count);
         let mut raw_values = Vec::with_capacity(count);
 
         for (point_id, value, raw_value) in points {
-            // Use precomputed pool (0-255) or itoa - returns Arc<str>
             let field: Arc<str> = precomputed::get_point_id_str_or_alloc(point_id);
-
-            // Arc::clone is O(1) — zero heap allocation per field
             values.push((Arc::clone(&field), f64_to_bytes(value)));
             timestamps.push((Arc::clone(&field), timestamp_bytes.clone()));
             raw_values.push((field, f64_to_bytes(raw_value)));
         }
 
-        // Write all hashes in a single pipeline
         let ts_key = format!("{}:ts", channel_key);
         let raw_key = format!("{}:raw", channel_key);
 
@@ -265,24 +219,10 @@ pub mod helpers {
     }
 
     /// Buffer channel points for deferred write (via WriteBuffer)
-    ///
-    /// Synchronous version that buffers writes for later flush to Redis.
-    /// Used with WriteBuffer for high-frequency updates.
-    ///
-    /// Uses precomputed point ID pool and itoa/ryu for zero-allocation formatting.
-    ///
-    /// # Arguments
-    /// * `write_buffer` - WriteBuffer for aggregating writes
-    /// * `channel_key` - Base channel key (e.g. "comsrv:1001:T")
-    /// * `points` - Vector of (point_id, value, raw_value) tuples
-    /// * `timestamp_ms` - Timestamp in milliseconds
-    ///
-    /// # Returns
-    /// Number of points buffered
     pub fn buffer_channel_points(
         write_buffer: &WriteBuffer,
         channel_key: &str,
-        points: Vec<(u32, f64, f64)>, // (point_id, value, raw_value)
+        points: Vec<(u32, f64, f64)>,
         timestamp_ms: i64,
     ) -> usize {
         if points.is_empty() {
@@ -290,28 +230,19 @@ pub mod helpers {
         }
 
         let count = points.len();
-
-        // Pre-convert timestamp to Bytes once using itoa (zero heap during format)
         let timestamp_bytes = i64_to_bytes(timestamp_ms);
 
-        // Prepare data with Arc<str> for O(1) field name sharing
         let mut values = Vec::with_capacity(count);
         let mut timestamps = Vec::with_capacity(count);
         let mut raw_values = Vec::with_capacity(count);
 
         for (point_id, value, raw_value) in points {
-            // Use precomputed pool (0-255) or itoa for larger IDs
-            // Arc<str> allows O(1) clone across 3 layers
             let field: Arc<str> = precomputed::get_point_id_str_or_alloc(point_id);
-
-            // Arc::clone is O(1) - just atomic counter increment
-            // f64_to_bytes uses ryu for fast formatting
             values.push((Arc::clone(&field), f64_to_bytes(value)));
             timestamps.push((Arc::clone(&field), timestamp_bytes.clone()));
             raw_values.push((field, f64_to_bytes(raw_value)));
         }
 
-        // Buffer all hashes
         let ts_key = format!("{}:ts", channel_key);
         let raw_key = format!("{}:raw", channel_key);
 
@@ -323,26 +254,6 @@ pub mod helpers {
     }
 
     /// Write a single point with automatic TODO queue trigger based on point type
-    ///
-    /// This function automatically determines whether to trigger the TODO queue:
-    /// - **Control/Adjustment types**: Write data + trigger TODO queue
-    /// - **Telemetry/Signal types**: Write data only (no TODO trigger)
-    ///
-    /// This implements the Write-Triggers-Routing pattern for downlink commands
-    /// while avoiding unnecessary TODO triggers for uplink (read-only) data.
-    ///
-    /// # Arguments
-    /// * `rtdb` - RTDB trait object
-    /// * `config` - KeySpace configuration
-    /// * `channel_id` - Channel ID
-    /// * `point_type` - Point type (determines TODO trigger behavior)
-    /// * `point_id` - Point ID
-    /// * `value` - Point value
-    /// * `timestamp_ms` - Optional timestamp in milliseconds. If None, uses current system time.
-    ///
-    /// # Returns
-    /// * `Ok(i64)` - Timestamp in milliseconds (either passed in or computed)
-    /// * `Err(anyhow::Error)` - Write error
     pub async fn write_point_auto_trigger<R>(
         rtdb: &R,
         config: &KeySpaceConfig,
@@ -355,7 +266,6 @@ pub mod helpers {
     where
         R: Rtdb,
     {
-        // Use provided timestamp or compute current time
         let timestamp_ms = timestamp_ms.unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -365,7 +275,6 @@ pub mod helpers {
 
         match point_type {
             PointType::Control | PointType::Adjustment => {
-                // Write data + trigger TODO queue (Write-Triggers-Routing pattern)
                 set_channel_point_with_trigger(
                     rtdb,
                     config,
@@ -378,12 +287,11 @@ pub mod helpers {
                 .await?;
             },
             PointType::Telemetry | PointType::Signal => {
-                // Write data only (no TODO trigger for uplink data)
                 let channel_key = config.channel_key(channel_id, point_type);
                 write_channel_points(
                     rtdb,
                     &channel_key,
-                    vec![(point_id, value, value)], // (point_id, value, raw_value)
+                    vec![(point_id, value, value)],
                     timestamp_ms,
                 )
                 .await?;
@@ -394,27 +302,6 @@ pub mod helpers {
     }
 
     /// Write channel point to Hash only (no TODO queue trigger)
-    ///
-    /// # Optimization
-    /// When direct mpsc trigger succeeds, use this function to persist data
-    /// to Redis Hash without triggering the TODO queue (already triggered via mpsc).
-    ///
-    /// This reduces Redis operations by 50%:
-    /// - Before: HSET + RPUSH (TODO queue)
-    /// - After: HSET only
-    ///
-    /// # Arguments
-    /// * `rtdb` - RTDB trait object
-    /// * `config` - KeySpace configuration
-    /// * `channel_id` - Channel ID
-    /// * `point_type` - Point type (Control or Adjustment)
-    /// * `point_id` - Point ID
-    /// * `value` - Point value
-    /// * `timestamp_ms` - Timestamp in milliseconds
-    ///
-    /// # Returns
-    /// * `Ok(())` - Success
-    /// * `Err(anyhow::Error)` - Write error
     pub async fn write_channel_hash_only<R>(
         rtdb: &R,
         config: &KeySpaceConfig,
@@ -429,11 +316,10 @@ pub mod helpers {
     {
         let channel_key = config.channel_key(channel_id, point_type);
 
-        // Write to three-layer Hash (value/ts/raw) - NO TODO queue trigger
         write_channel_points(
             rtdb,
             &channel_key,
-            vec![(point_id, value, value)], // (point_id, value, raw_value)
+            vec![(point_id, value, value)],
             timestamp_ms,
         )
         .await?;

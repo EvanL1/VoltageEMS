@@ -45,6 +45,12 @@ pub mod instance_point_type {
 ///
 /// 32-byte aligned for cache-line friendliness.
 /// Uses atomic operations for lock-free concurrent access.
+///
+/// # Safety (shared memory usage)
+///
+/// This struct is `#[repr(C)]` to guarantee a deterministic field layout
+/// when cast from raw pointers in `unified_shm.rs`. The compile-time
+/// assertion below ensures the size never drifts from expectations.
 #[repr(C, align(32))]
 pub struct PointSlot {
     /// Engineering value (IEEE 754 double as bits)
@@ -56,6 +62,8 @@ pub struct PointSlot {
     /// Flags: bit 0 = dirty, bits 1-7 = quality
     flags: AtomicU64,
 }
+
+const _: () = assert!(std::mem::size_of::<PointSlot>() == 32);
 
 impl Default for PointSlot {
     fn default() -> Self {

@@ -27,6 +27,7 @@ ryu = { workspace = true }   # High-performance f64 to string (Round 129)
 
 # Core dependencies for keyspace
 voltage-model = { path = "../voltage-model" }
+voltage-rtdb-shm = { path = "../voltage-rtdb-shm" }
 
 # Optional dependencies
 voltage-infra = { path = "../voltage-infra", optional = true, default-features = false, features = ["redis"] }

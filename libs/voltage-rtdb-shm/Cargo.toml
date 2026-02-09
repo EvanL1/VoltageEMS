@@ -1,0 +1,23 @@
+[package]
+name = "voltage-rtdb-shm"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+voltage-model = { path = "../voltage-model" }
+parking_lot = { workspace = true }
+rustc-hash = { workspace = true }
+memmap2 = "0.9"
+arc-swap = "1.7"
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[lints]
+workspace = true
