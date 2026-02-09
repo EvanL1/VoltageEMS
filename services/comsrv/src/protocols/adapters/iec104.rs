@@ -758,7 +758,7 @@ fn convert_iec104_value(value: &voltage_iec104::DataValue) -> Value {
     }
 }
 
-/// Convert Cp56Time2a to DateTime<Utc>.
+/// Convert Cp56Time2a to `DateTime<Utc>`.
 fn cp56time2a_to_datetime(time: &Cp56Time2a) -> Option<DateTime<Utc>> {
     if time.invalid {
         return None;

@@ -57,7 +57,7 @@ pub fn f64_to_bytes(n: f64) -> Bytes {
     Bytes::copy_from_slice(s.as_bytes())
 }
 
-/// Convert u32 to Arc<str> (single allocation, O(1) clone)
+/// Convert u32 to `Arc<str>` (single allocation, O(1) clone)
 ///
 /// Use this when the same point_id will be used multiple times (e.g., 3-layer writes).
 #[inline]
@@ -68,7 +68,7 @@ pub fn u32_to_arc_str(n: u32) -> Arc<str> {
 
 /// Thread-local point ID string cache
 ///
-/// Caches Arc<str> representations of point IDs for batch operations.
+/// Caches `Arc<str>` representations of point IDs for batch operations.
 /// Using thread-local storage avoids synchronization overhead.
 ///
 /// # Design
@@ -97,7 +97,7 @@ pub fn u32_to_arc_str(n: u32) -> Arc<str> {
 /// ```
 pub struct PointIdCache {
     /// Pre-allocated cache for common point IDs (0-1023)
-    /// Index is point_id, value is Option<Arc<str>>
+    /// Index is point_id, value is `Option<Arc<str>>`
     cache: Vec<Option<Arc<str>>>,
 }
 
@@ -119,7 +119,7 @@ impl PointIdCache {
         }
     }
 
-    /// Get or create Arc<str> for point ID
+    /// Get or create `Arc<str>` for point ID
     ///
     /// Returns cached value if available, otherwise creates and caches.
     /// For IDs >= capacity, creates fresh Arc without caching.
@@ -170,7 +170,7 @@ pub mod precomputed {
     use super::*;
     use std::sync::LazyLock;
 
-    /// Pre-computed Arc<str> for point IDs 0-255
+    /// Pre-computed `Arc<str>` for point IDs 0-255
     static POINT_ID_POOL: LazyLock<[Arc<str>; 256]> = LazyLock::new(|| {
         std::array::from_fn(|i| {
             let mut buffer = itoa::Buffer::new();
@@ -178,7 +178,7 @@ pub mod precomputed {
         })
     });
 
-    /// Get pre-computed Arc<str> for point ID (0-255 only)
+    /// Get pre-computed `Arc<str>` for point ID (0-255 only)
     ///
     /// Returns None for IDs >= 256.
     #[inline]
@@ -190,7 +190,7 @@ pub mod precomputed {
         }
     }
 
-    /// Get Arc<str> for point ID with fallback to dynamic allocation
+    /// Get `Arc<str>` for point ID with fallback to dynamic allocation
     ///
     /// Uses pre-computed pool for 0-255, allocates for larger IDs.
     #[inline]

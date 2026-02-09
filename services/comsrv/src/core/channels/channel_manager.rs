@@ -798,7 +798,7 @@ async fn run_unified_channel_task<R: Rtdb>(
 /// - Memory: ~160KB for 10000 slots (16 bytes per ArcSwapOption)
 pub struct ChannelManager<R: Rtdb> {
     /// Pre-allocated channel slots for O(1) direct index access
-    /// Index = channel_id, value = Option<Arc<ChannelEntry>>
+    /// Index = channel_id, value = `Option<Arc<ChannelEntry>>`
     channels: Vec<ArcSwapOption<ChannelEntry<R>>>,
     /// Active channel ID index for O(1) iteration (avoids O(10000) full scan)
     /// Synchronized with channels: insert on create_channel, remove on remove_channel

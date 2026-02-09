@@ -60,7 +60,7 @@ pub struct RedisDataStore<R: Rtdb> {
     shared_writer: Option<Arc<UnifiedWriter>>,
     /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
     channel_index: Option<Arc<ChannelToSlotIndex>>,
-    /// Point configurations cache (channel_id -> Arc<configs> for O(1) clone)
+    /// Point configurations cache (channel_id -> `Arc<configs>` for O(1) clone)
     point_configs: DashMap<u32, Arc<Vec<PointConfig>>>,
     /// Single broadcast sender for all subscribers (avoids clone * N)
     event_sender: DataEventSender,
@@ -118,7 +118,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// Start the background flush task for the write buffer.
     ///
     /// The task runs until `shutdown()` is called or the store is dropped.
-    /// Uses interior mutability so this can be called on Arc<RedisDataStore>.
+    /// Uses interior mutability so this can be called on `Arc<RedisDataStore>`.
     /// Idempotent: if a task is already running, this is a no-op.
     pub async fn start_flush_task(&self) {
         // Check if task already running (prevent concurrent start race)

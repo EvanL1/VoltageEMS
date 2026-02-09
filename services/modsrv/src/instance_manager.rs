@@ -70,12 +70,12 @@ pub struct InstanceManager<R: Rtdb> {
     /// UnifiedWriter for writing Control/Adjustment points to SHM
     /// When set, M2C commands go directly to SHM (primary path)
     /// Redis TODO queue remains as fallback
-    /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
+    /// Uses OnceLock for delayed initialization (set after `Arc<InstanceManager>` is created)
     pub(crate) shm_action_writer: std::sync::OnceLock<Arc<voltage_rtdb_shm::UnifiedWriter>>,
     // ========== UDS Notifier (Event-driven M2C) ==========
     /// ShmNotifier for sending UDS notifications to comsrv
     /// When SHM write succeeds, send notification to trigger immediate dispatch
-    /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
+    /// Uses OnceLock for delayed initialization (set after `Arc<InstanceManager>` is created)
     /// Protected by tokio Mutex for async &mut access
     pub(crate) shm_notifier:
         std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>>,
@@ -126,7 +126,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// for comsrv's ShmCommandPoller, with Redis as fallback.
     ///
     /// Uses OnceLock for delayed initialization - can be called after
-    /// Arc<InstanceManager> is created. Returns true if set successfully,
+    /// `Arc<InstanceManager>` is created. Returns true if set successfully,
     /// false if already set.
     pub fn set_shm_action_writer(&self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> bool {
         self.shm_action_writer.set(writer).is_ok()
@@ -139,7 +139,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Falls back gracefully if notification fails.
     ///
     /// Uses OnceLock for delayed initialization - can be called after
-    /// Arc<InstanceManager> is created. Returns true if set successfully,
+    /// `Arc<InstanceManager>` is created. Returns true if set successfully,
     /// false if already set.
     pub fn set_shm_notifier(
         &self,

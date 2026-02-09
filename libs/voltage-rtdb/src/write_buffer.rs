@@ -125,7 +125,7 @@ pub struct WriteBufferStatsSnapshot {
 /// 3-layer writes (value/timestamp/raw). `Arc::clone()` is O(1).
 pub struct WriteBuffer {
     /// Pending data: key -> {field -> value}
-    /// Field names use Arc<str> for O(1) cloning in multi-layer writes
+    /// Field names use `Arc<str>` for O(1) cloning in multi-layer writes
     pending: DashMap<String, DashMap<Arc<str>, Bytes>>,
     /// Notification for forced flush
     flush_notify: Arc<Notify>,

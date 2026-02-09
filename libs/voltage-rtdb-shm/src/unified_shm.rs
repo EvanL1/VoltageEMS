@@ -86,7 +86,7 @@ const _: () = assert!(std::mem::size_of::<UnifiedHeader>() == 64);
 
 /// Calculate file size for given max_slots
 ///
-/// Layout: Header (64B) + PointSlot[max_slots] (32B each)
+/// Layout: Header (64B) + PointSlot\[max_slots\] (32B each)
 #[inline]
 pub const fn calculate_file_size(max_slots: u32) -> usize {
     std::mem::size_of::<UnifiedHeader>() + (max_slots as usize) * std::mem::size_of::<PointSlot>()
@@ -102,8 +102,8 @@ pub const fn slot_offset() -> usize {
 
 /// Channel layout - allocation info for one channel
 ///
-/// Stored in process memory as Vec<ChannelLayout>.
-/// Access: layouts[channel_id]
+/// Stored in process memory as `Vec<ChannelLayout>`.
+/// Access: layouts\[channel_id\]
 #[derive(Clone, Default, Debug)]
 pub struct ChannelLayout {
     /// Base slot index for this channel

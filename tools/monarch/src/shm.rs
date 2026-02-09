@@ -36,7 +36,7 @@ use ratatui::Terminal;
 pub enum ShmCommands {
     /// Get point value
     Get {
-        /// Key format: inst:<id>:M|A:<point_id> or ch:<id>:T|S|C|A:<point_id>
+        /// Key format: `inst:<id>:M|A:<point_id>` or `ch:<id>:T|S|C|A:<point_id>`
         key: String,
     },
 
@@ -60,13 +60,13 @@ pub enum ShmCommands {
 /// Parsed shared memory key
 #[derive(Debug, Clone)]
 enum ShmKey {
-    /// Instance point: inst:<id>:M|A:<point_id>
+    /// Instance point: `inst:<id>:M|A:<point_id>`
     Instance {
         instance_id: u32,
         point_type: u8, // 0=Measurement, 1=Action
         point_id: u32,
     },
-    /// Channel point: ch:<id>:T|S|C|A:<point_id>
+    /// Channel point: `ch:<id>:T|S|C|A:<point_id>`
     Channel {
         channel_id: u32,
         point_type: PointType,
@@ -228,7 +228,7 @@ fn complete_command(prefix: &str) -> (usize, Vec<Pair>) {
     (0, matches)
 }
 
-/// Complete key format: inst:<id>:M|A:<point_id> or ch:<id>:T|S|C|A:<point_id>
+/// Complete key format: `inst:<id>:M|A:<point_id>` or `ch:<id>:T|S|C|A:<point_id>`
 fn complete_key(key_prefix: &str, start_pos: usize) -> (usize, Vec<Pair>) {
     let parts: Vec<&str> = key_prefix.split(':').collect();
 
