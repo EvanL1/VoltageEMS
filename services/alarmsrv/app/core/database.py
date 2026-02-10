@@ -141,7 +141,7 @@ class DatabaseManager:
             create_alert_rule_sql = """
             CREATE TABLE IF NOT EXISTS alert_rule (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                service_type TEXT NOT NULL DEFAULT 'comsrv' CHECK(service_type IN ('comsrv', 'rulesrv', 'modsrv', 'alarmsrv', 'hissrv', 'netsrv')),
+                service_type TEXT NOT NULL DEFAULT 'comsrv',
                 channel_id INTEGER NOT NULL,
                 data_type TEXT NOT NULL,
                 point_id INTEGER NOT NULL,

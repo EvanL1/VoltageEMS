@@ -129,11 +129,6 @@ class AlertRule:
         """验证规则有效性"""
         if not self.service_type or self.service_type.strip() == "":
             return False
-            
-        # 暂时只支持这些服务类型
-        valid_services = ["comsrv", "rulesrv", "modsrv", "alarmsrv", "hissrv", "netsrv"]
-        if self.service_type not in valid_services:
-            return False
         
         if not self.channel_id or self.channel_id <= 0:
             return False
@@ -160,11 +155,6 @@ class AlertRule:
         """详细验证规则有效性，返回验证结果和错误信息"""
         if not self.service_type or self.service_type.strip() == "":
             return False, "服务类型不能为空"
-            
-        # 暂时只支持这些服务类型
-        valid_services = ["comsrv", "rulesrv", "modsrv", "alarmsrv", "hissrv", "netsrv"]
-        if self.service_type not in valid_services:
-            return False, f"不支持的服务类型'{self.service_type}'，支持的类型: {', '.join(valid_services)}"
         
         if not self.channel_id or self.channel_id <= 0:
             return False, f"通道ID必须大于0，当前值: {self.channel_id}"

@@ -439,6 +439,10 @@ else
     echo -e "${YELLOW}⊘ Skipping influxdb:3-core (not selected)${NC}"
 fi
 
+# Pull alpine image for upgrade container (always include)
+echo -e "${BLUE}Pulling alpine:latest for upgrade container...${NC}"
+pull_and_save_image "alpine:latest" "alpine.tar.gz"
+
 # Verify images
 echo -e "${YELLOW}Verifying Docker images...${NC}"
 

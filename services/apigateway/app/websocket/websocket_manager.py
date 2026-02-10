@@ -463,12 +463,25 @@ class WebSocketManager:
                         data = await self.edge_data_client.get_data(channel_id, data_type_str, source)
                         
                         if data:
-                            updates.append({
+                            # data 现在包含 values 和可选的 ts 字段
+                            update_item = {
                                 "source": source,  # 添加source字段
                                 "channel_id": channel_id,
-                                "data_type": data_type_str,
-                                "values": data
-                            })
+                                "data_type": data_type_str
+                            }
+                            
+                            # 提取 values 字段
+                            if "values" in data:
+                                update_item["values"] = data["values"]
+                            else:
+                                # 兼容旧格式（直接是values）
+                                update_item["values"] = data
+                            
+                            # 如果有时间戳数据，添加 ts 字段
+                            if "ts" in data and data["ts"]:
+                                update_item["ts"] = data["ts"]
+                            
+                            updates.append(update_item)
                     except Exception as e:
                         logger.warning(f"获取数据类型 {data_type_str} 失败: {e}")
                         continue
