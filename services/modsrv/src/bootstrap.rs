@@ -173,23 +173,46 @@ async fn setup_sqlite() -> Result<SqlitePool> {
 }
 
 /// Load and sync products to Redis
+///
+/// If `config.products_path` is set and the directory exists, external product
+/// JSON files override built-in products. Otherwise, built-in products are used.
 pub async fn load_products<R>(
-    _config: &ModsrvConfig,
+    config: &ModsrvConfig,
     sqlite_pool: &SqlitePool,
     _rtdb: &Arc<R>,
 ) -> Result<Arc<ProductLoader>>
 where
     R: voltage_rtdb::Rtdb,
 {
-    // Products are now loaded from code definitions (no config directory needed)
-    let product_loader = ProductLoader::new(sqlite_pool.clone());
+    use std::sync::Arc as StdArc;
+    use voltage_model::product_lib::ProductLibrary;
 
-    // Initialize instance schema (products are compile-time constants)
+    // Load product library with optional external overrides
+    let products_dir = config
+        .products_path
+        .as_ref()
+        .map(std::path::Path::new)
+        .filter(|p| p.is_dir());
+
+    let library = ProductLibrary::load(products_dir).map_err(|e| {
+        super::error::ModSrvError::ConfigError(format!("Failed to load product library: {}", e))
+    })?;
+    let product_count = library.len();
+
+    let product_loader = ProductLoader::with_library(sqlite_pool.clone(), StdArc::new(library));
+
+    // Initialize instance schema
     product_loader.init_schema().await?;
 
-    // Products are now built-in (compile-time), no database check needed
-    let product_count = product_loader.product_count();
-    info!("{} built-in products available", product_count);
+    if products_dir.is_some() {
+        info!(
+            "{} products loaded (with external overrides)",
+            product_count
+        );
+    } else {
+        info!("{} built-in products available", product_count);
+    }
+
     Ok(Arc::new(product_loader))
 }
 

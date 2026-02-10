@@ -611,6 +611,9 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             .hash_set(&exec_key, "error", Bytes::from(error_str))
             .await;
 
+        // Set 24h TTL to prevent Redis memory leak from accumulating exec keys
+        let _ = self.rtdb.expire(&exec_key, 86400).await;
+
         debug!("Written rule execution result to Redis: {}", rule_id);
     }
 }

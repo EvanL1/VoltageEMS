@@ -490,6 +490,7 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
 
     let handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {

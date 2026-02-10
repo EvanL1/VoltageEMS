@@ -25,7 +25,11 @@ schemars = { version = "0.8", optional = true }
 utoipa = { workspace = true, optional = true }
 
 # Error handling
+anyhow = { workspace = true }
 thiserror = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
 
 # Lazy initialization
 once_cell = { workspace = true }
@@ -37,6 +41,7 @@ csv = { workspace = true }
 sqlx = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]

@@ -215,6 +215,13 @@ impl Rtdb for RedisRtdb {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
+    async fn expire<'a>(&'a self, key: &'a str, seconds: i64) -> Result<bool> {
+        self.client
+            .expire(key, seconds)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
     async fn scan_match<'a>(&'a self, pattern: &'a str) -> Result<Vec<String>> {
         self.client
             .scan_match(pattern)

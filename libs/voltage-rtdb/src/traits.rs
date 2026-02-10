@@ -285,6 +285,21 @@ pub trait Rtdb: Send + Sync + 'static {
         pattern: &'a str,
     ) -> impl Future<Output = Result<Vec<String>>> + Send + 'a;
 
+    // ========== Key Expiry Operations ==========
+
+    /// Set a timeout on key (Redis EXPIRE)
+    ///
+    /// Returns true if the timeout was set, false if key does not exist.
+    /// Default implementation is a no-op that returns false (for test backends).
+    fn expire<'a>(
+        &'a self,
+        key: &'a str,
+        seconds: i64,
+    ) -> impl Future<Output = Result<bool>> + Send + 'a {
+        let _ = (key, seconds);
+        async move { Ok(false) }
+    }
+
     // ========== Pipeline Operations ==========
 
     /// Execute multiple HMSET operations in a single pipeline (pure Redis, no Lua)

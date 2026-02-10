@@ -614,8 +614,31 @@ impl ConfigSyncer {
 
         debug!("Config: {}", config_count);
 
-        // Note: Products are now compile-time built-in constants (voltage-model crate).
-        // No need to sync from CSV files. Products are embedded in the binary.
+        // Validate external product JSON files if directory exists
+        let products_dir = config_dir.join("products");
+        if products_dir.is_dir() {
+            let product_errors = voltage_model::product_lib::validate_product_dir(&products_dir);
+            for (filename, error) in &product_errors {
+                stats.errors.push(SyncError {
+                    item: format!("products/{}", filename),
+                    error: error.clone(),
+                });
+            }
+            if product_errors.is_empty() {
+                // Try loading to verify override semantics
+                match voltage_model::product_lib::ProductLibrary::load(Some(&products_dir)) {
+                    Ok(lib) => {
+                        info!("Products: {} (with external overrides)", lib.len());
+                    },
+                    Err(e) => {
+                        stats.errors.push(SyncError {
+                            item: "products/".to_string(),
+                            error: format!("Failed to load product library: {}", e),
+                        });
+                    },
+                }
+            }
+        }
 
         // Load and sync instances
         let instances_path = config_dir.join("instances.yaml");

@@ -533,6 +533,19 @@ impl RedisClient {
             .with_context(|| format!("Failed to FCALL function: {}", function))
     }
 
+    /// Set a timeout on key (Redis EXPIRE)
+    ///
+    /// Returns true if the timeout was set, false if key does not exist.
+    pub async fn expire(&self, key: &str, seconds: i64) -> Result<bool> {
+        let mut conn = self.get_connection().await?;
+        redis::cmd("EXPIRE")
+            .arg(key)
+            .arg(seconds)
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to EXPIRE key: {}", key))
+    }
+
     /// Check if key exists
     pub async fn exists(&self, key: &str) -> Result<bool> {
         let mut conn = self.get_connection().await?;

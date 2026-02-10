@@ -5,8 +5,9 @@
 
 use anyhow::{Context, Result};
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use tracing::debug;
-use voltage_model::product_lib::{self, BuiltinProduct, PointDef};
+use voltage_model::product_lib::{self, BuiltinProduct, PointDef, ProductLibrary};
 
 // Re-export types from local config for other modules
 pub use crate::config::{
@@ -15,22 +16,39 @@ pub use crate::config::{
 };
 pub use voltage_model::PointRole;
 
-/// Product loader that provides access to built-in products
+/// Product loader that provides access to products
 ///
-/// This is now a zero-cost abstraction over voltage_model::product_lib.
-/// Products are compile-time constants embedded in the binary.
+/// Supports two modes:
+/// - Built-in only: delegates to `voltage_model::product_lib` static functions
+/// - Library mode: uses `ProductLibrary` for runtime product overrides
 #[derive(Clone)]
 pub struct ProductLoader {
     /// SQLite pool for instance schema initialization (not for product queries)
     pool: SqlitePool,
+    /// Optional runtime product library (with external overrides)
+    library: Option<Arc<ProductLibrary>>,
 }
 
 impl ProductLoader {
-    /// Create a new ProductLoader
+    /// Create a new ProductLoader (built-in products only)
     ///
     /// The pool is only used for schema initialization, not product queries.
     pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            library: None,
+        }
+    }
+
+    /// Create a ProductLoader with a runtime product library
+    ///
+    /// When a library is provided, all product queries use it instead of
+    /// the compile-time built-in products. This enables runtime overrides.
+    pub fn with_library(pool: SqlitePool, library: Arc<ProductLibrary>) -> Self {
+        Self {
+            pool,
+            library: Some(library),
+        }
     }
 
     /// Initialize database schema for instances and mappings
@@ -149,14 +167,24 @@ impl ProductLoader {
     /// @output `Result<Product>` - Product with all point definitions
     /// @throws anyhow::Error - Product not found
     pub fn get_product(&self, product_name: &str) -> Result<Product> {
+        if let Some(lib) = &self.library {
+            let builtin = lib
+                .get(product_name)
+                .context(format!("Product not found: {}", product_name))?;
+            return Ok(convert_builtin_to_product(builtin));
+        }
+
         let builtin = product_lib::get_builtin_product(product_name)
             .context(format!("Product not found: {}", product_name))?;
-
         Ok(convert_builtin_to_product(builtin))
     }
 
     /// Get all products
     pub fn get_all_products(&self) -> Vec<Product> {
+        if let Some(lib) = &self.library {
+            return lib.all().iter().map(convert_builtin_to_product).collect();
+        }
+
         product_lib::get_builtin_products()
             .iter()
             .map(convert_builtin_to_product)
@@ -165,6 +193,14 @@ impl ProductLoader {
 
     /// Get product hierarchy (product_name, parent_name) tuples
     pub fn get_product_hierarchy(&self) -> ProductHierarchy {
+        if let Some(lib) = &self.library {
+            return lib
+                .all()
+                .iter()
+                .map(|p| (p.name.clone(), p.parent_name.clone()))
+                .collect();
+        }
+
         product_lib::get_builtin_products()
             .iter()
             .map(|p| (p.name.clone(), p.parent_name.clone()))
@@ -176,6 +212,14 @@ impl ProductLoader {
     /// Returns Vec of (product_name, parent_name) tuples.
     /// Ideal for frontend dropdown lists or selection interfaces.
     pub fn get_all_product_names(&self) -> Vec<(String, Option<String>)> {
+        if let Some(lib) = &self.library {
+            return lib
+                .all()
+                .iter()
+                .map(|p| (p.name.clone(), p.parent_name.clone()))
+                .collect();
+        }
+
         product_lib::get_builtin_products()
             .iter()
             .map(|p| (p.name.clone(), p.parent_name.clone()))
@@ -184,11 +228,17 @@ impl ProductLoader {
 
     /// Check if a product exists
     pub fn product_exists(&self, name: &str) -> bool {
+        if let Some(lib) = &self.library {
+            return lib.exists(name);
+        }
         product_lib::product_exists(name)
     }
 
-    /// Get the number of built-in products
+    /// Get the number of products
     pub fn product_count(&self) -> usize {
+        if let Some(lib) = &self.library {
+            return lib.len();
+        }
         product_lib::get_builtin_products().len()
     }
 }
