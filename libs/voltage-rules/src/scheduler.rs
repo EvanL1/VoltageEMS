@@ -449,7 +449,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                     logger.log_execution(&result, &result.variable_values);
 
                     // Write rule execution result to Redis for WebSocket monitoring
-                    self.write_rule_exec_to_redis(outcome.rule_id, &result)
+                    self.write_rule_exec_to_redis(outcome.rule_id, &outcome.rule_name, &result)
                         .await;
 
                     let start_cooldown = result.success && !result.actions_executed.is_empty();
@@ -539,18 +539,30 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
     /// Write rule execution result to Redis
     ///
     /// Stores result in `rule:{rule_id}:exec` Hash with fields:
+    /// - `rule_name` → rule name for diagnostics
     /// - `timestamp` → execution timestamp
     /// - `success` → "true" or "false"
     /// - `execution_path` → JSON array of node IDs
     /// - `variable_values` → JSON object of variable values
     /// - `node_details` → JSON object of node execution details
     /// - `error` → error message if any
-    async fn write_rule_exec_to_redis(&self, rule_id: i64, result: &RuleExecutionResult) {
+    async fn write_rule_exec_to_redis(
+        &self,
+        rule_id: i64,
+        rule_name: &str,
+        result: &RuleExecutionResult,
+    ) {
         let exec_key = format!("rule:{}:exec", rule_id);
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("System time should be after UNIX epoch")
             .as_secs();
+
+        // Write rule_name for diagnostics
+        let _ = self
+            .rtdb
+            .hash_set(&exec_key, "rule_name", Bytes::from(rule_name.to_string()))
+            .await;
 
         // Write timestamp
         let _ = self

@@ -124,6 +124,34 @@ fn normalize_protocol_mapping(
     normalized
 }
 
+/// Normalize legacy product names to match built-in product library.
+///
+/// Maps old snake_case names (from config files) to the canonical names
+/// used by `voltage-model` crate's built-in product definitions.
+fn normalize_product_name(name: &str) -> &str {
+    match name {
+        "battery_pack" => {
+            warn!("Legacy product name 'battery_pack' → 'Battery'. Please update instances.yaml");
+            "Battery"
+        },
+        "pcs" => {
+            warn!("Legacy product name 'pcs' → 'PCS'. Please update instances.yaml");
+            "PCS"
+        },
+        "diesel_generator" => {
+            warn!(
+                "Legacy product name 'diesel_generator' → 'Diesel'. Please update instances.yaml"
+            );
+            "Diesel"
+        },
+        "pv_inverter" => {
+            warn!("Legacy product name 'pv_inverter' → 'PVInverter'. Please update instances.yaml");
+            "PVInverter"
+        },
+        _ => name,
+    }
+}
+
 /// Error that occurred during sync
 #[derive(Debug, Clone)]
 pub struct SyncError {
@@ -1007,12 +1035,14 @@ impl ConfigSyncer {
                     "{}".to_string()
                 };
 
+                let normalized_product = normalize_product_name(product_name);
+
                 if let Err(e) = sqlx::query(
                     "INSERT INTO instances (instance_id, instance_name, product_name, properties) VALUES (?, ?, ?, ?)",
                 )
                 .bind(instance_id)
                 .bind(instance_name)
-                .bind(product_name)
+                .bind(normalized_product)
                 .bind(&properties)
                 .execute(&mut **tx)
                 .await
@@ -1085,12 +1115,14 @@ impl ConfigSyncer {
                     "{}".to_string()
                 };
 
+                let normalized_product = normalize_product_name(product_name);
+
                 if let Err(e) = sqlx::query(
                     "INSERT INTO instances (instance_id, instance_name, product_name, properties) VALUES (?, ?, ?, ?)",
                 )
                 .bind(instance_id)
                 .bind(instance_name)
-                .bind(product_name)
+                .bind(normalized_product)
                 .bind(&properties)
                 .execute(&mut **tx)
                 .await

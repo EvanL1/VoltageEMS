@@ -203,6 +203,7 @@ class DataScheduler:
                 return
 
             # 解析各字段
+            rule_name = exec_data.get("rule_name", "")
             exec_timestamp = int(exec_data.get("timestamp", 0))
             success = exec_data.get("success", "false").lower() == "true"
             error = exec_data.get("error") or None
@@ -236,6 +237,7 @@ class DataScheduler:
                 "timestamp": int(time.time()),
                 "data": {
                     "rule_id": int(rule_id) if isinstance(rule_id, str) else rule_id,
+                    "rule_name": rule_name,
                     "variables": {},
                     "last_execution": {
                         "success": success,
