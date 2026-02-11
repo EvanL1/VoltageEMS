@@ -121,6 +121,17 @@ async fn main() -> VoltageResult<()> {
         },
     }
 
+    // Clear channel online status from previous run (crash recovery)
+    {
+        use voltage_rtdb::Rtdb;
+        let online_key = voltage_model::KeySpaceConfig::production_cached().channel_online_key();
+        if let Err(e) = redis_rtdb.del(&online_key).await {
+            warn!("Failed to clear channel online hash: {}", e);
+        } else {
+            debug!("Cleared channel online status hash (fresh start)");
+        }
+    }
+
     // ============ Phase 2: Load routing configuration from unified database ============
     info!("Loading routing cache from unified database...");
     let routing_cache = {
@@ -283,6 +294,8 @@ async fn main() -> VoltageResult<()> {
 
     // Use concrete type (native AFIT requires static dispatch)
     let rtdb: Arc<voltage_rtdb::RedisRtdb> = Arc::new(redis_rtdb);
+    // Keep a reference for shutdown cleanup (clear online status hash)
+    let rtdb_for_shutdown = Arc::clone(&rtdb);
 
     // Create UnifiedReader for SHM command listener (reads from same SHM file)
     // This allows event-driven M2C dispatch with ~1-2ms latency
@@ -428,6 +441,17 @@ async fn main() -> VoltageResult<()> {
         warning_handle,
     )
     .await;
+
+    // Clear channel online status hash (all channels offline after shutdown)
+    {
+        use voltage_rtdb::Rtdb;
+        let online_key = voltage_model::KeySpaceConfig::production_cached().channel_online_key();
+        if let Err(e) = rtdb_for_shutdown.del(&online_key).await {
+            warn!("Failed to clear channel online hash on shutdown: {}", e);
+        } else {
+            info!("Cleared channel online status (service stopped)");
+        }
+    }
 
     // Wait for SHM listener task to complete (if it was started)
     if let Some(handle) = shm_listener_handle {

@@ -78,6 +78,8 @@ pub struct RuleScheduler<R: Rtdb, S: StateStore = voltage_calc::MemoryStateStore
     tick_ms: u64,
     /// Rule logger manager for independent rule log files
     logger_manager: RuleLoggerManager,
+    /// Maximum concurrent rule executions (default: 4)
+    max_concurrency: usize,
 }
 
 impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
@@ -104,6 +106,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
             shutdown: CancellationToken::new(),
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
+            max_concurrency: 4,
         }
     }
 
@@ -195,6 +198,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
             shutdown: CancellationToken::new(),
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
+            max_concurrency: 4,
         }
     }
 }
@@ -245,7 +249,13 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             shutdown: CancellationToken::new(),
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
+            max_concurrency: 4,
         }
+    }
+
+    /// Set maximum concurrent rule executions (must be called before wrapping in Arc)
+    pub fn set_max_concurrency(&mut self, n: usize) {
+        self.max_concurrency = n.max(1);
     }
 
     /// Load rules from database and initialize scheduler state
@@ -408,7 +418,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             result: Result<RuleExecutionResult>,
         }
 
-        // Execute rules concurrently (max 4 parallel)
+        // Execute rules concurrently (max self.max_concurrency parallel)
         let executor = Arc::clone(&self.executor);
         let execution_futures = rules_to_execute.into_iter().map(|(idx, rule)| {
             let executor = Arc::clone(&executor);
@@ -427,7 +437,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         });
 
         let execution_results: Vec<ExecutionOutcome> = stream::iter(execution_futures)
-            .buffer_unordered(4)
+            .buffer_unordered(self.max_concurrency)
             .collect()
             .await;
 

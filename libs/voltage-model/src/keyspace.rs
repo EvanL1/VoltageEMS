@@ -248,6 +248,23 @@ impl KeySpaceConfig {
         format!("{}:channels", self.data_prefix)
     }
 
+    /// Build channel online status hash key: comsrv:online
+    ///
+    /// Stores channel online status in a single hash.
+    /// - Field: channel_id (string)
+    /// - Value: "1" (online) or "0" (offline)
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// let config = KeySpaceConfig::production();
+    /// assert_eq!(config.channel_online_key(), "comsrv:online");
+    /// ```
+    pub fn channel_online_key(&self) -> String {
+        format!("{}:online", self.data_prefix)
+    }
+
     /// Build instance status key: inst:{instance_id}:status
     pub fn instance_status_key(&self, instance_id: u32) -> String {
         format!("{}:{}:status", self.inst_prefix, instance_id)
@@ -557,6 +574,16 @@ mod tests {
         // Test environment
         let test_config = KeySpaceConfig::test();
         assert_eq!(test_config.channels_hash_key(), "test:comsrv:channels");
+    }
+
+    #[test]
+    fn test_channel_online_key() {
+        let config = KeySpaceConfig::production();
+        assert_eq!(config.channel_online_key(), "comsrv:online");
+
+        // Test environment
+        let test_config = KeySpaceConfig::test();
+        assert_eq!(test_config.channel_online_key(), "test:comsrv:online");
     }
 
     #[test]

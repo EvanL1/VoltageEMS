@@ -168,10 +168,11 @@ impl WriteBuffer {
         // Check global pending keys limit to prevent OOM
         if self.pending.len() >= self.config.max_pending_keys && !self.pending.contains_key(key) {
             self.stats.overflow_drops.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!(
+            tracing::error!(
                 pending_keys = self.pending.len(),
                 max = self.config.max_pending_keys,
-                "WriteBuffer overflow: dropping write, triggering flush"
+                dropped_key = key,
+                "WriteBuffer overflow: DATA LOSS - dropping write, triggering flush"
             );
             self.flush_notify.notify_one();
             return;
@@ -214,11 +215,12 @@ impl WriteBuffer {
             self.stats
                 .overflow_drops
                 .fetch_add(fields.len() as u64, Ordering::Relaxed);
-            tracing::warn!(
+            tracing::error!(
                 pending_keys = self.pending.len(),
                 max = self.config.max_pending_keys,
                 dropped_fields = fields.len(),
-                "WriteBuffer overflow: dropping mset, triggering flush"
+                dropped_key = key,
+                "WriteBuffer overflow: DATA LOSS - dropping mset, triggering flush"
             );
             self.flush_notify.notify_one();
             return;

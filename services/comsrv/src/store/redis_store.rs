@@ -32,7 +32,7 @@ use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSend
 
 use voltage_model::{KeySpaceConfig, PointType};
 use voltage_routing::{ChannelPointUpdate, RoutingCache};
-use voltage_rtdb::{Rtdb, WriteBuffer, WriteBufferConfig};
+use voltage_rtdb::{Bytes, Rtdb, WriteBuffer, WriteBufferConfig};
 use voltage_rtdb_shm::{ChannelToSlotIndex, UnifiedWriter};
 
 /// Redis-backed data store for VoltageEMS.
@@ -389,6 +389,28 @@ impl<R: Rtdb> RedisDataStore<R> {
         self.point_configs.remove(&channel_id);
 
         Ok(())
+    }
+
+    /// Publish channel online status to Redis hash.
+    /// Only call when status actually changes to minimize Redis writes.
+    pub async fn publish_channel_online(&self, channel_id: u32, online: bool) {
+        let key = self.key_config.channel_online_key();
+        let value = if online { "1" } else { "0" };
+        if let Err(e) = self
+            .rtdb
+            .hash_set(&key, &channel_id.to_string(), Bytes::from(value))
+            .await
+        {
+            warn!("Ch{} failed to publish online status: {}", channel_id, e);
+        }
+    }
+
+    /// Remove channel online status from Redis hash (cleanup on channel removal).
+    pub async fn clear_channel_online(&self, channel_id: u32) {
+        let key = self.key_config.channel_online_key();
+        if let Err(e) = self.rtdb.hash_del(&key, &channel_id.to_string()).await {
+            warn!("Ch{} failed to clear online status: {}", channel_id, e);
+        }
     }
 }
 

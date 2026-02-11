@@ -204,6 +204,40 @@ where
     // Initialize instance schema
     product_loader.init_schema().await?;
 
+    // Ensure rules tables exist (normally created by `monarch init`,
+    // but needed for standalone startup)
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS rules (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            enabled BOOLEAN DEFAULT TRUE,
+            priority INTEGER DEFAULT 0,
+            cooldown_ms INTEGER DEFAULT 0,
+            trigger_config TEXT,
+            nodes_json TEXT NOT NULL,
+            flow_json TEXT,
+            format TEXT DEFAULT 'vue-flow',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+    )
+    .execute(sqlite_pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS rule_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id INTEGER NOT NULL,
+            triggered_at TIMESTAMP NOT NULL,
+            execution_result TEXT,
+            error TEXT,
+            FOREIGN KEY (rule_id) REFERENCES rules(id)
+        )",
+    )
+    .execute(sqlite_pool)
+    .await?;
+
     if products_dir.is_some() {
         info!(
             "{} products loaded (with external overrides)",
@@ -257,28 +291,17 @@ pub async fn setup_instance_manager(
         product_loader,
     ));
 
-    // Instances must be in database (loaded by monarch)
+    // Instances loaded by monarch (may be empty on first startup)
     let instance_count: i64 = sqlx::query_scalar(ModsrvQueries::COUNT_INSTANCES)
         .fetch_one(sqlite_pool)
         .await
         .unwrap_or(0);
 
     if instance_count == 0 {
-        let allow_empty = std::env::var("MODSRV_ALLOW_EMPTY")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
-        if allow_empty {
-            warn!("No instances (ALLOW_EMPTY)");
-        } else {
-            error!("No instances in DB");
-            return Err(ModSrvError::DatabaseError(
-                "No products/instances found in voltage.db".to_string(),
-            ));
-        }
+        warn!("No instances in DB — run `monarch sync` to load instance config");
+    } else {
+        info!("{} instances loaded", instance_count);
     }
-
-    info!("{} instances loaded", instance_count);
 
     // Initialize real-time data structures in Redis (M/A Hash + name mappings)
     // Note: This does NOT sync metadata - only creates empty Hash structures for real-time data

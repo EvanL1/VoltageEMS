@@ -498,11 +498,28 @@ async fn run_unified_channel_task<R: Rtdb>(
         cache.store(channel_state.as_u8(), Ordering::Relaxed);
     };
 
+    // Track previous online state for change detection (avoid redundant Redis writes)
+    let mut prev_online: Option<bool> = None;
+
+    // Helper macro: check online state change and publish to Redis
+    macro_rules! check_online_change {
+        () => {
+            let current_online = protocol.connection_state().is_connected();
+            if prev_online != Some(current_online) {
+                prev_online = Some(current_online);
+                store
+                    .publish_channel_online(channel_id, current_online)
+                    .await;
+            }
+        };
+    }
+
     // Wait a bit for the connection to be established
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Update initial connection state
     update_cached_state(protocol.as_ref(), &cached_state);
+    check_online_change!();
 
     // Use configured poll interval
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(poll_interval_ms));
@@ -656,6 +673,7 @@ async fn run_unified_channel_task<R: Rtdb>(
                             }
                             // Update cached state and skip this tick
                             update_cached_state(protocol.as_ref(), &cached_state);
+                            check_online_change!();
                             continue;
                         }
                         ReconnectState::Reconnecting => {
@@ -669,6 +687,7 @@ async fn run_unified_channel_task<R: Rtdb>(
                             // Fall through to attempt reconnection
                             if !reconnect_helper.record_attempt() {
                                 update_cached_state(protocol.as_ref(), &cached_state);
+                                check_online_change!();
                                 continue;
                             }
 
@@ -686,12 +705,14 @@ async fn run_unified_channel_task<R: Rtdb>(
                                 }
                             }
                             update_cached_state(protocol.as_ref(), &cached_state);
+                            check_online_change!();
                             continue;
                         }
                         ReconnectState::Disconnected => {
                             // Already tracking disconnection, continue retry sequence
                             if !reconnect_helper.record_attempt() {
                                 update_cached_state(protocol.as_ref(), &cached_state);
+                                check_online_change!();
                                 continue;
                             }
 
@@ -720,6 +741,7 @@ async fn run_unified_channel_task<R: Rtdb>(
                                 }
                             }
                             update_cached_state(protocol.as_ref(), &cached_state);
+                            check_online_change!();
                             continue;
                         }
                     }
@@ -773,6 +795,7 @@ async fn run_unified_channel_task<R: Rtdb>(
 
                 // Update cached connection state after each poll cycle
                 update_cached_state(protocol.as_ref(), &cached_state);
+                check_online_change!();
             }
         }
     }
@@ -782,6 +805,8 @@ async fn run_unified_channel_task<R: Rtdb>(
         crate::core::channels::types::ConnectionState::Disconnected.as_u8(),
         Ordering::Relaxed,
     );
+    // Publish offline status to Redis on shutdown
+    store.publish_channel_online(channel_id, false).await;
     info!("Ch{} unified task stopped", channel_id);
 }
 
@@ -1789,6 +1814,19 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 debug!(
                     "Ch{} name deleted from Redis hash: {}",
                     channel_id, channels_key
+                );
+            }
+
+            // 8. Delete channel online status from Redis hash
+            let online_key = keyspace.channel_online_key();
+            if let Err(e) = self
+                .rtdb
+                .hash_del(&online_key, &channel_id.to_string())
+                .await
+            {
+                warn!(
+                    "Ch{} failed to delete online status from Redis: {}",
+                    channel_id, e
                 );
             }
 

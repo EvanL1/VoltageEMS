@@ -71,6 +71,8 @@ pub struct DynamicInstanceLayout {
     pub own_allocation: Option<SlotAllocation>,
     /// Shared slots - references to Channel slots
     pub shared_slots: Vec<SharedSlotRef>,
+    /// Fast lookup index for shared slots: (point_type, point_id) -> slot_id
+    shared_lookup: FxHashMap<(PointType, u32), usize>,
 }
 
 impl DynamicInstanceLayout {
@@ -85,6 +87,7 @@ impl DynamicInstanceLayout {
             own_total,
             own_allocation: allocation,
             shared_slots: Vec::new(),
+            shared_lookup: FxHashMap::default(),
         }
     }
 
@@ -111,14 +114,12 @@ impl DynamicInstanceLayout {
 
     /// Get slot for any point (checks shared slots first, then own slots)
     ///
-    /// Priority: shared_slots → own_slots
+    /// Priority: shared_slots (O(1) HashMap) → own_slots
     #[inline]
     pub fn slot(&self, point_type: PointType, point_id: u32) -> Option<usize> {
-        // First check shared slots
-        for shared in &self.shared_slots {
-            if shared.point_type == point_type && shared.point_id == point_id {
-                return Some(shared.slot_id);
-            }
+        // O(1) HashMap lookup instead of O(N) linear scan
+        if let Some(&slot_id) = self.shared_lookup.get(&(point_type, point_id)) {
+            return Some(slot_id);
         }
 
         // Then check own slots
@@ -127,12 +128,10 @@ impl DynamicInstanceLayout {
 
     /// Add a shared slot reference (from routing)
     pub fn add_shared_slot(&mut self, slot_ref: SharedSlotRef) {
-        // Check for duplicates
-        if !self
-            .shared_slots
-            .iter()
-            .any(|s| s.point_type == slot_ref.point_type && s.point_id == slot_ref.point_id)
-        {
+        let key = (slot_ref.point_type, slot_ref.point_id);
+        // Check for duplicates via O(1) lookup
+        if let std::collections::hash_map::Entry::Vacant(e) = self.shared_lookup.entry(key) {
+            e.insert(slot_ref.slot_id);
             self.shared_slots.push(slot_ref);
         }
     }
@@ -143,6 +142,7 @@ impl DynamicInstanceLayout {
         point_type: PointType,
         point_id: u32,
     ) -> Option<SharedSlotRef> {
+        self.shared_lookup.remove(&(point_type, point_id));
         if let Some(pos) = self
             .shared_slots
             .iter()
@@ -363,6 +363,7 @@ impl InstanceIndex {
 
         let cleared_count = layout.shared_slots.len();
         layout.shared_slots.clear();
+        layout.shared_lookup.clear();
 
         // COW update
         let guard = self.inner.load();

@@ -212,13 +212,24 @@ async fn main() -> Result<()> {
             None
         };
 
+    // Load max_concurrency from global config (SQLite key-value table)
+    let max_concurrency: usize = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.max_concurrency'",
+    )
+    .fetch_optional(&sqlite_pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(4);
+
     // Create rule scheduler with two-tier priority (SharedMemory > Redis)
     // SHM writer enables M2C actions via shared memory (primary path)
     // ShmNotifier enables UDS event notification for immediate dispatch
     // RtdbStateStore ensures stateful functions (period_delta, integrate, etc.) persist across restarts
     let rule_log_root = PathBuf::from("logs/modsrv");
     let state_store = Arc::new(RtdbStateStore::new(Arc::clone(&rtdb)));
-    let scheduler = Arc::new(RuleScheduler::with_state_store(
+    let mut scheduler = RuleScheduler::with_state_store(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
@@ -228,7 +239,14 @@ async fn main() -> Result<()> {
         shared_reader,
         shm_action_writer,
         shm_notifier,
-    ));
+    );
+    scheduler.set_max_concurrency(max_concurrency);
+    let scheduler = Arc::new(scheduler);
+
+    info!(
+        "Rule scheduler: tick_ms={}, max_concurrency={}",
+        tick_ms, max_concurrency
+    );
 
     // Load rules into scheduler
     match scheduler.load_rules().await {
