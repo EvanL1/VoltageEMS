@@ -1,6 +1,6 @@
 //! M2C (Model to Channel) Routing End-to-End Tests
 //!
-//! Tests the complete data flow from instance action points to channel TODO queues
+//! Tests the complete data flow from instance action points to channel Hash writes
 
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
@@ -50,40 +50,6 @@ async fn setup_m2c_routing(
     (rtdb, routing_cache)
 }
 
-/// Asserts TODO queue has trigger messages
-///
-/// # Arguments
-/// * `rtdb` - RTDB instance
-/// * `queue_key` - TODO queue key (e.g. "comsrv:1001:A:TODO")
-async fn assert_todo_queue_triggered<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
-    let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
-    assert!(
-        !messages.is_empty(),
-        "TODO queue '{}' should have messages",
-        queue_key
-    );
-}
-
-/// Asserts TODO queue is empty
-async fn assert_todo_queue_empty<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
-    let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
-    assert!(
-        messages.is_empty(),
-        "TODO queue '{}' should be empty",
-        queue_key
-    );
-}
-
-/// Parses trigger message from TODO queue
-async fn parse_todo_message<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) -> serde_json::Value {
-    let messages = rtdb.list_range(queue_key, 0, -1).await.unwrap();
-    assert!(!messages.is_empty(), "TODO queue should have messages");
-
-    let message_bytes = &messages[0];
-    let message_str = String::from_utf8(message_bytes.to_vec()).unwrap();
-    serde_json::from_str(&message_str).unwrap()
-}
-
 // ==================== Test Cases ====================
 
 /// Test 1: Basic M2C routing
@@ -92,7 +58,7 @@ async fn parse_todo_message<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) -> serde_js
 /// When: Call set_action_point("inverter_01", "1", 12.3)
 /// Then:
 ///   - Instance Action Hash written: inst:23:A["1"] = "12.3"
-///   - TODO queue triggered: comsrv:1001:A:TODO has message
+///   - Channel Hash written: comsrv:1001:A["1"] = "12.3"
 ///   - Routing result: routed=true, route_result=Some("1001")
 #[tokio::test]
 async fn test_m2c_basic_routing() -> Result<()> {
@@ -127,7 +93,6 @@ async fn test_m2c_basic_routing() -> Result<()> {
     assert_eq!(route_ctx.channel_id, "1001");
     assert_eq!(route_ctx.point_type, "A");
     assert_eq!(route_ctx.comsrv_point_id, "1");
-    assert_eq!(route_ctx.queue_key, "comsrv:1001:A:TODO");
 
     // Verify instance Action Hash written
     let value = rtdb
@@ -140,8 +105,16 @@ async fn test_m2c_basic_routing() -> Result<()> {
         "Action value should match"
     );
 
-    // Verify TODO queue triggered
-    assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
+    // Verify channel Hash written
+    let ch_value = rtdb
+        .hash_get("comsrv:1001:A", "1")
+        .await?
+        .expect("Channel hash should be written");
+    assert_eq!(
+        String::from_utf8(ch_value.to_vec())?,
+        "12.3",
+        "Channel value should match"
+    );
 
     Ok(())
 }
@@ -203,7 +176,6 @@ async fn test_m2c_instance_name_resolution() -> Result<()> {
 /// When: Call set_action_point
 /// Then:
 ///   - Instance Action Hash still written
-///   - TODO queue empty (no trigger)
 ///   - Routing result: routed=false, route_result=Some("no_route")
 #[tokio::test]
 async fn test_m2c_no_routing() -> Result<()> {
@@ -234,9 +206,6 @@ async fn test_m2c_no_routing() -> Result<()> {
         .expect("Action point should still be written");
     assert_eq!(String::from_utf8(value.to_vec())?, "15.5");
 
-    // Verify TODO queue empty
-    assert_todo_queue_empty(&rtdb, "comsrv:1001:A:TODO").await;
-
     Ok(())
 }
 
@@ -244,7 +213,7 @@ async fn test_m2c_no_routing() -> Result<()> {
 ///
 /// Given: Multiple points M2C routing configured
 /// When: Batch set multiple action points
-/// Then: All TODO queues have trigger messages
+/// Then: All channel Hashes written
 #[tokio::test]
 async fn test_m2c_batch_actions() -> Result<()> {
     // Given: Configure multiple point routing
@@ -277,9 +246,16 @@ async fn test_m2c_batch_actions() -> Result<()> {
         );
     }
 
-    // Verify TODO queue has 3 messages
-    let messages = rtdb.list_range("comsrv:1001:A:TODO", 0, -1).await?;
-    assert_eq!(messages.len(), 3, "Should have 3 messages in TODO queue");
+    // Verify channel Hash has all 3 points (f64 serialization includes decimal)
+    for (point_id, expected_value) in [("1", "10.0"), ("2", "20.0"), ("3", "30.0")] {
+        let ch_value = rtdb.hash_get("comsrv:1001:A", point_id).await?.unwrap();
+        assert_eq!(
+            String::from_utf8(ch_value.to_vec())?,
+            expected_value,
+            "Channel point {} value mismatch",
+            point_id
+        );
+    }
 
     Ok(())
 }
@@ -288,7 +264,7 @@ async fn test_m2c_batch_actions() -> Result<()> {
 ///
 /// Given: Configure C(Control) and A(Adjustment) two types of routing
 /// When: Set action points separately
-/// Then: Route to comsrv:{channel_id}:C:TODO and :A:TODO
+/// Then: Route to comsrv:{channel_id}:C and :A Hash
 #[tokio::test]
 async fn test_m2c_different_channel_types() -> Result<()> {
     // Given: Configure control and adjustment routing
@@ -304,99 +280,34 @@ async fn test_m2c_different_channel_types() -> Result<()> {
     // When: Set control type action point
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 1.0).await?;
 
-    // Then: Verify routed to C(Control) TODO queue
+    // Then: Verify routed to C(Control) Hash
     assert!(outcome.routed);
     let route_ctx = outcome.route_context.as_ref().unwrap();
     assert_eq!(route_ctx.point_type, "C", "Should route to Control type");
-    assert_eq!(
-        route_ctx.queue_key, "comsrv:1001:C:TODO",
-        "Should route to Control TODO queue"
-    );
-    assert_todo_queue_triggered(&rtdb, "comsrv:1001:C:TODO").await;
+    let ch_value = rtdb.hash_get("comsrv:1001:C", "5").await?.unwrap();
+    assert_eq!(String::from_utf8(ch_value.to_vec())?, "1.0");
 
     // When: Set adjustment type action point
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "2", 2.0).await?;
 
-    // Then: Verify routed to A(Adjustment) TODO queue
+    // Then: Verify routed to A(Adjustment) Hash
     assert!(outcome.routed);
     let route_ctx = outcome.route_context.as_ref().unwrap();
     assert_eq!(route_ctx.point_type, "A", "Should route to Adjustment type");
-    assert_eq!(
-        route_ctx.queue_key, "comsrv:1001:A:TODO",
-        "Should route to Adjustment TODO queue"
-    );
-    assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
+    let ch_value = rtdb.hash_get("comsrv:1001:A", "6").await?.unwrap();
+    assert_eq!(String::from_utf8(ch_value.to_vec())?, "2.0");
 
     Ok(())
 }
 
-/// Test 6: Trigger message format validation
-///
-/// Given: Configure M2C routing
-/// When: Set action point
-/// Then: TODO queue JSON format correct, contains point_id, value, timestamp
-#[tokio::test]
-async fn test_m2c_trigger_message_format() -> Result<()> {
-    // Given: Configure routing
-    let (rtdb, routing_cache) = setup_m2c_routing(
-        vec![("23:A:1", "1001:A:7")], // Instance point 1 -> Channel point 7
-        vec![("inverter_01", 23)],
-    )
-    .await;
-
-    // When: Set action point
-    let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 42.5).await?;
-    assert!(outcome.routed);
-
-    // Then: Parse TODO queue message
-    let message = parse_todo_message(&rtdb, "comsrv:1001:A:TODO").await;
-
-    // Verify JSON fields
-    assert!(message.is_object(), "Message should be JSON object");
-    assert!(
-        message.get("point_id").is_some(),
-        "Should have point_id field"
-    );
-    assert!(message.get("value").is_some(), "Should have value field");
-    assert!(
-        message.get("timestamp").is_some(),
-        "Should have timestamp field"
-    );
-
-    // Verify field values
-    assert_eq!(
-        message["point_id"].as_u64().unwrap(),
-        7,
-        "point_id should map to comsrv point 7"
-    );
-    assert_eq!(
-        message["value"].as_f64().unwrap(),
-        42.5,
-        "value should match"
-    );
-
-    // Verify timestamp is reasonable (recent time)
-    let timestamp = message["timestamp"].as_i64().unwrap();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-    assert!(
-        timestamp > now - 10_000 && timestamp <= now,
-        "Timestamp should be within last 10 seconds"
-    );
-
-    Ok(())
-}
-
-/// Test 7: Write-Triggers-Routing execution order validation
+/// Test 6: Write execution order validation
 ///
 /// Given: Configure M2C routing
 /// When: Set action point
 /// Then:
-///   - First write to inst:{id}:A Hash (state storage)
-///   - Then write to comsrv TODO queue (trigger)
-///   - Both must succeed
+///   - Instance Hash written: inst:{id}:A
+///   - Channel Hash written: comsrv:{ch}:A
+///   - Both must succeed with consistent values
 #[tokio::test]
 async fn test_m2c_write_triggers_routing_order() -> Result<()> {
     // Given: Configure routing
@@ -406,21 +317,18 @@ async fn test_m2c_write_triggers_routing_order() -> Result<()> {
     // When: Set action point
     set_action_point(rtdb.as_ref(), &routing_cache, 23, "1", 99.9).await?;
 
-    // Then: Verify execution order - Hash written first
+    // Then: Verify instance Hash written
     let hash_value = rtdb.hash_get("inst:23:A", "1").await?;
-    assert!(hash_value.is_some(), "Instance Hash must be written first");
+    assert!(hash_value.is_some(), "Instance Hash must be written");
     assert_eq!(String::from_utf8(hash_value.unwrap().to_vec())?, "99.9");
 
-    // Verify TODO queue written after
-    let messages = rtdb.list_range("comsrv:1001:A:TODO", 0, -1).await?;
-    assert_eq!(messages.len(), 1, "TODO queue should have one message");
-
-    // Verify data consistency between both
-    let message = parse_todo_message(&rtdb, "comsrv:1001:A:TODO").await;
+    // Verify channel Hash written with same value
+    let ch_value = rtdb.hash_get("comsrv:1001:A", "1").await?;
+    assert!(ch_value.is_some(), "Channel Hash must be written");
     assert_eq!(
-        message["value"].as_f64().unwrap(),
-        99.9,
-        "TODO trigger value should match Hash value"
+        String::from_utf8(ch_value.unwrap().to_vec())?,
+        "99.9",
+        "Channel value should match instance value"
     );
 
     Ok(())
@@ -492,19 +400,16 @@ async fn test_m2c_multiple_instances_multiple_channels() -> Result<()> {
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", 111.1).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1001".to_string()));
-    assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
 
     // When & Then: Test instance B -> Channel 1002
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 20, "1", 222.2).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1002".to_string()));
-    assert_todo_queue_triggered(&rtdb, "comsrv:1002:A:TODO").await;
 
     // When & Then: Test instance C -> Channel 1003
     let outcome = set_action_point(rtdb.as_ref(), &routing_cache, 30, "1", 333.3).await?;
     assert!(outcome.routed);
     assert_eq!(outcome.route_result, Some("1003".to_string()));
-    assert_todo_queue_triggered(&rtdb, "comsrv:1003:A:TODO").await;
 
     // Verify all three instance Hashes written correctly
     assert_eq!(

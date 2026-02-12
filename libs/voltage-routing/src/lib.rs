@@ -68,7 +68,6 @@ pub struct RouteContext {
     pub channel_id: String,
     pub point_type: String,
     pub comsrv_point_id: String,
-    pub queue_key: String,
     /// Numeric channel ID for SHM writes
     pub target_channel_id: u32,
     /// Numeric point type (T=0, S=1, C=2, A=3) for SHM writes
@@ -84,7 +83,7 @@ pub struct RouteContext {
 /// This function implements the unified M2C routing logic:
 /// 1. Looks up M2C routing in cache
 /// 2. Writes to instance Action Hash (state storage)
-/// 3. Writes to channel Hash + triggers TODO queue (Write-Triggers-Routing pattern)
+/// 3. Writes to channel Hash (value/ts/raw)
 ///
 /// SHM writes (shared memory) and UDS notifications should be handled by the caller
 /// using [`RouteContext`] fields for the target channel/point/timestamp.
@@ -145,11 +144,11 @@ where
             .await
             .context("Failed to write instance action point")?;
 
-        // Step 2: Write to channel Hash + auto-trigger TODO queue (Write-Triggers-Routing pattern)
+        // Step 2: Write to channel Hash
         use voltage_rtdb::{SystemTimeProvider, TimeProvider};
         let timestamp_ms = SystemTimeProvider.now_millis();
 
-        voltage_rtdb::helpers::set_channel_point_with_trigger(
+        voltage_rtdb::helpers::write_channel_hash_only(
             redis,
             config,
             channel_id,
@@ -159,16 +158,13 @@ where
             timestamp_ms,
         )
         .await
-        .context("Failed to set channel point with trigger")?;
-
-        let todo_key = config.todo_queue_key(channel_id, point_type_enum);
+        .context("Failed to write channel hash")?;
 
         // Build route context with numeric fields for SHM callers
         let route_context = RouteContext {
             channel_id: channel_id.to_string(),
             point_type: point_type_enum.as_str().to_string(),
             comsrv_point_id: comsrv_point_id.to_string(),
-            queue_key: todo_key.to_string(),
             target_channel_id: channel_id,
             target_point_type: point_type_enum.to_u8(),
             target_point_id: comsrv_point_id,
@@ -185,7 +181,7 @@ where
             route_context: Some(route_context),
         })
     } else {
-        // No routing found - write to instance Hash only (no TODO queue)
+        // No routing found - write to instance Hash only
         let instance_action_key = config.instance_action_key(instance_id);
         redis
             .hash_set_f64(&instance_action_key, point_id, value)

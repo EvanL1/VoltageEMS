@@ -446,11 +446,6 @@ async fn test_execute_action_with_route_triggers_downstream() {
     let channel_key = config.channel_key(2, PointType::Adjustment);
     let channel_value = rtdb.hash_get(&channel_key, "5").await.unwrap();
     assert!(channel_value.is_some(), "Channel point should be updated");
-
-    // Verify TODO queue was triggered (check if there are any entries)
-    let todo_key = config.todo_queue_key(2, PointType::Adjustment);
-    let queue_entries = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert!(!queue_entries.is_empty(), "TODO queue should have entry");
 }
 
 #[tokio::test]

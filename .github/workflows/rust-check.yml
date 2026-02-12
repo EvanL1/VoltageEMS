@@ -11,6 +11,34 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Job 0: Frontend Tests (parallel with quality-check, no Rust needed)
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/pnpm-lock.yaml
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: apps
+
+      - name: Run Unit Tests
+        run: pnpm test:unit -- --run
+        working-directory: apps
+
+      - name: Type Check
+        run: pnpm run type-check
+        working-directory: apps
+
   # Job 1: Code Quality Checks (fastest, no Redis needed)
   quality-check:
     name: Quality Check
@@ -309,6 +337,28 @@ jobs:
         run: |
           chmod +x scripts/ci-e2e-test.sh
           ./scripts/ci-e2e-test.sh --skip-build
+
+      # Collect debug artifacts on failure
+      - name: Collect E2E Artifacts on Failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/e2e-artifacts
+          redis-cli HGETALL "comsrv:online" > /tmp/e2e-artifacts/channel_online.txt 2>/dev/null || true
+          redis-cli KEYS "comsrv:*" | head -50 > /tmp/e2e-artifacts/redis_comsrv_keys.txt 2>/dev/null || true
+          redis-cli KEYS "inst:*" | head -50 > /tmp/e2e-artifacts/redis_inst_keys.txt 2>/dev/null || true
+          for ch in 1001 1002 1003 1004; do
+            echo "comsrv:${ch}:T => $(redis-cli HLEN "comsrv:${ch}:T" 2>/dev/null)" >> /tmp/e2e-artifacts/point_counts.txt
+          done
+          curl -s http://127.0.0.1:6001/health > /tmp/e2e-artifacts/comsrv_health.json 2>/dev/null || true
+          curl -s http://127.0.0.1:6002/health > /tmp/e2e-artifacts/modsrv_health.json 2>/dev/null || true
+
+      - name: Upload E2E Artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-artifacts
+          path: /tmp/e2e-artifacts/
+          retention-days: 7
 
       # Cleanup
       - name: Cleanup

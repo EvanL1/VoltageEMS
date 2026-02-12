@@ -7,7 +7,6 @@
 //! 1. UDS 通知发送和接收正确性
 //! 2. 端到端延迟验证 < 5ms
 //! 3. 降级场景：UDS 不可用时不阻塞
-//! 4. 双通道并行：UDS 和 TODO 同时工作
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
 
@@ -236,41 +235,7 @@ async fn test_uds_batch_notifications() {
     let _ = std::fs::remove_file(test_uds_path);
 }
 
-/// 测试 5: 双通道并行 - UDS 不可用时 TODO 队列正常工作
-///
-/// 验证当 UDS 不可用时，TODO 队列（备用通道）仍然正常工作
-#[tokio::test]
-async fn test_dual_channel_fallback_to_todo() {
-    use common::routing::{assert_todo_queue_triggered, setup_m2c_routing};
-    use voltage_routing::set_action_point;
-
-    // 设置测试环境
-    let (rtdb, routing_cache) =
-        setup_m2c_routing(vec![("23:A:1", "1001:A:1")], vec![("inverter_01", 23)]).await;
-
-    // 不使用 UDS（模拟 UDS 不可用），验证 TODO 队列工作
-    let outcome = set_action_point(
-        rtdb.as_ref(),
-        &routing_cache,
-        23,   // instance_id
-        "1",  // point_id
-        99.0, // value
-    )
-    .await
-    .unwrap();
-
-    assert!(outcome.routed, "Action should be routed");
-    assert_eq!(
-        outcome.route_result,
-        Some("1001".to_string()),
-        "Should route to channel 1001"
-    );
-
-    // 验证 TODO 队列有消息（备用通道工作正常）
-    assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
-}
-
-/// 测试 6: ShmNotification 序列化/反序列化
+/// 测试 5: ShmNotification 序列化/反序列化
 ///
 /// 验证 12 字节通知协议的正确性
 #[test]

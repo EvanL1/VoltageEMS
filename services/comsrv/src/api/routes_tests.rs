@@ -2468,11 +2468,6 @@ async fn test_write_single_control_point() {
     let ts_key = format!("{}:ts", channel_key);
     let ts = rtdb.hash_get(&ts_key, "10").await.unwrap().unwrap();
     assert!(!ts.is_empty(), "Timestamp field should exist");
-
-    // Verify TODO queue
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1, "Should have 1 TODO item for C type");
 }
 
 #[tokio::test]
@@ -2498,11 +2493,6 @@ async fn test_write_single_adjustment_point() {
     let channel_key = "comsrv:1005:A";
     let value = rtdb.hash_get(channel_key, "200").await.unwrap().unwrap();
     assert_eq!(value, bytes::Bytes::from("4500.0")); // ryu preserves decimal point
-
-    // Verify TODO queue
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1);
 }
 
 #[tokio::test]
@@ -2536,11 +2526,6 @@ async fn test_write_batch_control_points() {
 
     let val2 = rtdb.hash_get(channel_key, "11").await.unwrap().unwrap();
     assert_eq!(val2, bytes::Bytes::from("0.0")); // ryu preserves decimal point
-
-    // Verify TODO queue has 2 items
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 2);
 }
 
 #[tokio::test]
@@ -2570,11 +2555,6 @@ async fn test_write_batch_adjustment_points() {
 
     let val2 = rtdb.hash_get(channel_key, "201").await.unwrap().unwrap();
     assert_eq!(val2, bytes::Bytes::from("380.0")); // ryu preserves decimal point
-
-    // Verify TODO queue has 2 items
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 2);
 }
 
 #[tokio::test]
@@ -2606,15 +2586,6 @@ async fn test_write_control_persists_to_rtdb() {
     let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
     let ts: u64 = ts_str.parse().unwrap();
     assert_eq!(ts, response_timestamp);
-
-    // Verify TODO queue structure
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1);
-
-    // TODO queue stores only point_id (minimal trigger signal)
-    let todo_json: serde_json::Value = serde_json::from_slice(&todo_items[0]).unwrap();
-    assert_eq!(todo_json["point_id"], 12);
 }
 
 #[tokio::test]
@@ -2646,15 +2617,6 @@ async fn test_write_adjustment_persists_to_rtdb() {
     let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
     let ts: u64 = ts_str.parse().unwrap();
     assert_eq!(ts, response_timestamp);
-
-    // Verify TODO queue
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1);
-
-    // TODO queue stores only point_id (minimal trigger signal)
-    let todo_json: serde_json::Value = serde_json::from_slice(&todo_items[0]).unwrap();
-    assert_eq!(todo_json["point_id"], 202);
 }
 
 // ===== P1: New Feature Tests (5 tests) =====
@@ -2680,11 +2642,6 @@ async fn test_write_single_telemetry_point() {
     let channel_key = "comsrv:1005:T";
     let value = rtdb.hash_get(channel_key, "1").await.unwrap().unwrap();
     assert!(!value.is_empty());
-
-    // Verify NO TODO queue for T type
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 0, "T type should NOT write to TODO queue");
 }
 
 #[tokio::test]
@@ -2707,11 +2664,6 @@ async fn test_write_single_signal_point() {
     let channel_key = "comsrv:1005:S";
     let value = rtdb.hash_get(channel_key, "100").await.unwrap().unwrap();
     assert!(!value.is_empty());
-
-    // Verify NO TODO queue for S type
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 0, "S type should NOT write to TODO queue");
 }
 
 #[tokio::test]
@@ -2741,11 +2693,6 @@ async fn test_write_batch_telemetry_points() {
 
     let val2 = rtdb.hash_get(channel_key, "2").await.unwrap().unwrap();
     assert!(!val2.is_empty());
-
-    // Verify NO TODO queue for T type
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 0);
 }
 
 #[tokio::test]

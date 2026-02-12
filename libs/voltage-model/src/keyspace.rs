@@ -197,12 +197,6 @@ impl KeySpaceConfig {
         )
     }
 
-    /// Build TODO queue key: comsrv:{channel_id}:{type}:TODO
-    pub fn todo_queue_key(&self, channel_id: u32, point_type: PointType) -> String {
-        let target = self.target_prefix.as_ref().unwrap_or(&self.data_prefix);
-        format!("{}:{}:{}:TODO", target, channel_id, point_type.as_str())
-    }
-
     /// Build instance measurement key: inst:{instance_id}:M
     ///
     /// # Examples
@@ -526,22 +520,6 @@ mod tests {
     }
 
     #[test]
-    fn test_todo_queue_key() {
-        let config = KeySpaceConfig::production();
-        assert_eq!(
-            config.todo_queue_key(1001, PointType::Control),
-            "comsrv:1001:C:TODO"
-        );
-
-        // M2C mode should use target_prefix
-        let m2c_config = config.for_m2c();
-        assert_eq!(
-            m2c_config.todo_queue_key(1001, PointType::Control),
-            "comsrv:1001:C:TODO"
-        );
-    }
-
-    #[test]
     fn test_instance_keys() {
         let config = KeySpaceConfig::production();
 
@@ -655,10 +633,6 @@ mod tests {
             "test:comsrv:1001:T"
         );
         assert_eq!(config.instance_measurement_key(1), "test:inst:1:M");
-        assert_eq!(
-            config.todo_queue_key(1001, PointType::Control),
-            "test:comsrv:1001:C:TODO"
-        );
     }
 
     #[test]

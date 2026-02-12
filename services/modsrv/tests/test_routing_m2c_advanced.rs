@@ -38,14 +38,6 @@ async fn setup_m2c_routing(m2c_routes: Vec<(&str, &str)>) -> (Arc<MemoryRtdb>, A
     (rtdb, routing_cache)
 }
 
-/// Get TODO queue message count
-async fn todo_queue_count<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) -> usize {
-    rtdb.list_range(queue_key, 0, -1)
-        .await
-        .expect("List failed")
-        .len()
-}
-
 // ============================================================================
 // Concurrent Action Trigger Tests
 // ============================================================================
@@ -87,10 +79,6 @@ async fn test_m2c_concurrent_triggers() -> Result<()> {
     for handle in handles {
         handle.await?;
     }
-
-    // Verify all TODO queue messages arrived
-    let count = todo_queue_count(&rtdb, "comsrv:1001:A:TODO").await;
-    assert_eq!(count, 5, "All 5 messages should be in TODO queue");
 
     // Verify all instance hash values written
     for point_id in 1..=5 {
@@ -153,11 +141,15 @@ async fn test_m2c_concurrent_multi_instance() -> Result<()> {
         assert_eq!(outcome.route_result, Some(expected_channel));
     }
 
-    // Verify each channel has exactly 1 message
+    // Verify each channel Hash has the point written
     for i in 1..=5 {
-        let queue_key = format!("comsrv:100{}:A:TODO", i);
-        let count = todo_queue_count(&rtdb, &queue_key).await;
-        assert_eq!(count, 1, "Channel 100{} should have 1 message", i);
+        let ch_key = format!("comsrv:100{}:A", i);
+        let value = rtdb.hash_get(&ch_key, "1").await.unwrap();
+        assert!(
+            value.is_some(),
+            "Channel 100{} should have point written",
+            i
+        );
     }
 
     Ok(())
@@ -200,10 +192,6 @@ async fn test_m2c_high_volume_single_instance() -> Result<()> {
 
     let elapsed = start.elapsed();
     println!("100 M2C actions: {:?}", elapsed);
-
-    // Verify all messages in TODO queue
-    let count = todo_queue_count(&rtdb, "comsrv:1001:A:TODO").await;
-    assert_eq!(count, 100, "All 100 messages should be in TODO queue");
 
     // Performance check
     assert!(
@@ -253,11 +241,18 @@ async fn test_m2c_high_volume_multi_instance() -> Result<()> {
     let elapsed = start.elapsed();
     println!("100 M2C actions (10x10): {:?}", elapsed);
 
-    // Verify each channel has 10 messages
+    // Verify each channel Hash has all 10 points
     for inst in 1..=10 {
-        let queue_key = format!("comsrv:{}:A:TODO", 1000 + inst);
-        let count = todo_queue_count(&rtdb, &queue_key).await;
-        assert_eq!(count, 10, "Channel {} should have 10 messages", 1000 + inst);
+        let ch_key = format!("comsrv:{}:A", 1000 + inst);
+        for point in 1..=10 {
+            let value = rtdb.hash_get(&ch_key, &point.to_string()).await.unwrap();
+            assert!(
+                value.is_some(),
+                "Channel {} point {} should be written",
+                1000 + inst,
+                point
+            );
+        }
     }
 
     Ok(())
@@ -314,11 +309,15 @@ async fn test_m2c_fan_out_from_multiple_points() -> Result<()> {
         );
     }
 
-    // Verify each channel received command
+    // Verify each channel Hash has the point written
     for channel in [1001, 1002, 1003] {
-        let queue_key = format!("comsrv:{}:A:TODO", channel);
-        let count = todo_queue_count(&rtdb, &queue_key).await;
-        assert_eq!(count, 1, "Channel {} should have 1 message", channel);
+        let ch_key = format!("comsrv:{}:A", channel);
+        let value = rtdb.hash_get(&ch_key, "1").await.unwrap();
+        assert!(
+            value.is_some(),
+            "Channel {} should have point written",
+            channel
+        );
     }
 
     Ok(())
@@ -352,9 +351,13 @@ async fn test_m2c_rule_trigger_simulation() -> Result<()> {
         assert!(outcome.routed, "Action should be routed");
     }
 
-    // Step 3: Verify action was triggered
-    let count = todo_queue_count(&rtdb, "comsrv:1001:A:TODO").await;
-    assert_eq!(count, 1, "Charging command should be sent");
+    // Step 3: Verify action was written to channel Hash (f64 serialization includes decimal)
+    let ch_value = rtdb.hash_get("comsrv:1001:A", "1").await?.unwrap();
+    assert_eq!(
+        String::from_utf8(ch_value.to_vec())?,
+        "1.0",
+        "Charging command should be written"
+    );
 
     // Verify action value recorded in instance
     let value = rtdb
@@ -383,9 +386,11 @@ async fn test_m2c_sequential_rule_triggers() -> Result<()> {
     // Rule 2 triggers (e.g., 100ms later in real scenario)
     set_action_point(rtdb.as_ref(), &routing_cache, 10, "2", 0.5).await?; // Reduce charge rate to 50%
 
-    // Verify both actions queued
-    let count = todo_queue_count(&rtdb, "comsrv:1001:A:TODO").await;
-    assert_eq!(count, 2, "Both actions should be queued");
+    // Verify both actions written to channel Hash (f64 serialization includes decimal)
+    let export_ch = rtdb.hash_get("comsrv:1001:A", "1").await?.unwrap();
+    assert_eq!(String::from_utf8(export_ch.to_vec())?, "1.0");
+    let rate_ch = rtdb.hash_get("comsrv:1001:A", "2").await?.unwrap();
+    assert_eq!(String::from_utf8(rate_ch.to_vec())?, "0.5");
 
     // Verify instance state updated
     let export_enabled = rtdb.hash_get("inst:10:A", "1").await?.unwrap();
@@ -438,10 +443,6 @@ async fn test_m2c_rapid_updates() -> Result<()> {
         let value = if i % 2 == 0 { 1.0 } else { 0.0 }; // Toggle
         set_action_point(rtdb.as_ref(), &routing_cache, 10, "1", value).await?;
     }
-
-    // All updates should be queued (comsrv will handle de-duplication if needed)
-    let count = todo_queue_count(&rtdb, "comsrv:1001:A:TODO").await;
-    assert_eq!(count, 10, "All 10 updates should be queued");
 
     // Final instance state should be last value (0.0)
     let value = rtdb.hash_get("inst:10:A", "1").await?.unwrap();

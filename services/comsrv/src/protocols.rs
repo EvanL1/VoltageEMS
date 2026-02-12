@@ -4,6 +4,9 @@
 //! - Modbus TCP/RTU
 //! - IEC 60870-5-104
 //! - OPC UA
+//! - MQTT
+//! - HTTP
+//! - DL/T 645-2007
 //! - CAN/J1939
 //! - GPIO
 //! - Virtual Channel

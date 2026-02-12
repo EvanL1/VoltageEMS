@@ -232,7 +232,7 @@ jobs:
 
           - **Rust Services**: comsrv (6001), modsrv (6002)
           - **Python Services**: hissrv (6004), apigateway (6005), netsrv (6006), alarmsrv (6007)
-          - **Infrastructure**: Redis 8, InfluxDB 2
+          - **Infrastructure**: Redis 8, InfluxDB 3
           - **CLI Tool**: monarch
 
           EOF

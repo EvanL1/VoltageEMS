@@ -46,8 +46,14 @@ pub mod store;
 pub use store::RedisDataStore;
 
 // Protocol implementations are in crate::protocols:
-// - modbus_tcp: protocols::ModbusChannel (TCP mode)
-// - modbus_rtu: protocols::ModbusChannel (RTU mode)
+// - modbus_tcp/rtu: protocols::ModbusChannel (TCP and RTU modes)
+// - iec104: protocols::Iec104Channel
+// - opcua: protocols::OpcuaChannel
+// - mqtt: protocols::MqttChannel
+// - http: protocols::HttpChannel
+// - dl645: protocols::Dl645Channel
+// - can/j1939: protocols::CanChannel
+// - gpio: protocols::GpioChannel
 // - virtual: protocols::VirtualChannel
 
 pub mod runtime {

@@ -8,14 +8,17 @@
 #   Downlink: API -> comsrv -> simulator (C/A write)
 #
 # Test Phases:
-#   Phase 0: Build            - Build simulator, comsrv, modsrv, monarch
-#   Phase 1: Environment      - Verify Redis, clear test data
-#   Phase 2: Simulation       - Start 4 simulators (PV, Battery, Diesel, Load)
-#   Phase 3: DB Config        - Initialize database via monarch
-#   Phase 4: Data Acquisition - Start comsrv, collect Modbus data
-#   Phase 5: Redis Verify     - Validate T/S/C/A data in Redis
-#   Phase 6: modsrv Routing   - Start modsrv, verify C2M + M2C routing pointers
-#   Phase 7: C/A Write        - Test FC05/FC06 reverse write via API
+#   Phase 0:  Build            - Build simulator, comsrv, modsrv, monarch
+#   Phase 1:  Environment      - Verify Redis, clear test data
+#   Phase 2:  Simulation       - Start 4 simulators (PV, Battery, Diesel, Load)
+#   Phase 3:  DB Config        - Initialize database via monarch
+#   Phase 4:  Data Acquisition - Start comsrv, collect Modbus data
+#   Phase 5:  Redis Verify     - Validate T/S/C/A data + channel online status
+#   Phase 6:  modsrv Routing   - Start modsrv, verify C2M + M2C routing pointers
+#   Phase 7:  C/A Write        - Test FC05/FC06 reverse write via API
+#   Phase 8:  Health API       - Verify comsrv + modsrv health endpoints
+#   Phase 9:  M2C Downlink     - Test modsrv action execution (device control)
+#   Phase 10: Instance Data    - Verify instance list + measurement queries
 #
 # Function Codes Tested:
 #   FC01 - Read Coils           (Signal read)
@@ -279,6 +282,11 @@ done
 echo -e "\r${LINE_V}   Progress: 8/8 seconds... done"
 print_phase_end "pass"
 
+# From Phase 5 onward, we are in "verification" mode.
+# Disable set -e so test failures are captured as result variables
+# instead of causing immediate script termination.
+set +e
+
 # Step 5: Verify Redis data
 print_phase "[Phase 5] Redis Data Verification"
 
@@ -387,6 +395,21 @@ for ch_id in [1001, 1002, 1003, 1004]:
 
 print(f"{LINE_V}")
 
+# Channel Online status verification
+print(f"{LINE_V} Channel Online Status:")
+online_data = r.hgetall("comsrv:online")
+online_ok = True
+for ch_id in [1001, 1002, 1003, 1004]:
+    status = online_data.get(str(ch_id), "missing")
+    ok = status == "1"
+    if not ok:
+        online_ok = False
+    print(f"{LINE_V}   Channel {ch_id}: {'online' if ok else status} {check_mark(ok)}")
+if not online_ok:
+    all_passed = False
+
+print(f"{LINE_V}")
+
 # Final verdict
 if all_passed:
     print(f"{LINE_V} {GREEN}✓ All E2E data verification tests passed!{NC}")
@@ -400,10 +423,7 @@ E2E_RESULT=$?
 print_phase_end "$([ $E2E_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
 
 if [ $E2E_RESULT -ne 0 ]; then
-    log_error "Phase 5 failed, skipping remaining phases"
-    END_TIME=$(date +%s)
-    DURATION=$((END_TIME - START_TIME))
-    exit 1
+    log_warn "Phase 5 failed, continuing to collect remaining results"
 fi
 
 # Step 6: Start modsrv and verify C2M routing
@@ -534,10 +554,7 @@ C2M_RESULT=$?
 print_phase_end "$([ $C2M_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
 
 if [ $C2M_RESULT -ne 0 ]; then
-    log_error "Phase 6 failed, skipping remaining phases"
-    END_TIME=$(date +%s)
-    DURATION=$((END_TIME - START_TIME))
-    exit 1
+    log_warn "Phase 6 failed, continuing to collect remaining results"
 fi
 
 # Step 7: Test C/A reverse write (FC05/FC06)
@@ -606,9 +623,145 @@ fi
 
 print_phase_end "$([ $CA_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
 
+# Step 8: Health API verification
+print_phase "[Phase 8] Health API Verification"
+
+HEALTH_PASSED=true
+
+# comsrv health
+COMSRV_HEALTH=$(curl -s -w "\n%{http_code}" http://127.0.0.1:6001/health --connect-timeout 5)
+COMSRV_HEALTH_CODE=$(echo "$COMSRV_HEALTH" | tail -n1)
+if [ "$COMSRV_HEALTH_CODE" = "200" ]; then
+    echo -e "${LINE_V}   comsrv /health: ${GREEN}✓${NC} (HTTP 200)"
+else
+    echo -e "${LINE_V}   comsrv /health: ${RED}✗${NC} (HTTP ${COMSRV_HEALTH_CODE})"
+    HEALTH_PASSED=false
+fi
+
+# modsrv health
+MODSRV_HEALTH=$(curl -s -w "\n%{http_code}" http://127.0.0.1:6002/health --connect-timeout 5)
+MODSRV_HEALTH_CODE=$(echo "$MODSRV_HEALTH" | tail -n1)
+if [ "$MODSRV_HEALTH_CODE" = "200" ]; then
+    echo -e "${LINE_V}   modsrv /health: ${GREEN}✓${NC} (HTTP 200)"
+else
+    echo -e "${LINE_V}   modsrv /health: ${RED}✗${NC} (HTTP ${MODSRV_HEALTH_CODE})"
+    HEALTH_PASSED=false
+fi
+
+if [ "$HEALTH_PASSED" = true ]; then
+    HEALTH_RESULT=0
+else
+    HEALTH_RESULT=1
+fi
+
+print_phase_end "$([ $HEALTH_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
+# Step 9: modsrv Action Execution (M2C Downlink)
+print_phase "[Phase 9] modsrv Action Execution (M2C Downlink)"
+
+echo -e "${LINE_V} Testing M2C downlink via modsrv action API..."
+echo -e "${LINE_V}"
+
+ACTION_PASSED=true
+
+# test_action function (reuses test_write pattern)
+test_action() {
+    local inst_id=$1
+    local point_id=$2
+    local value=$3
+    local desc=$4
+
+    local response
+    response=$(curl -s -w "\n%{http_code}" -X POST \
+        "http://127.0.0.1:6002/api/instances/${inst_id}/action" \
+        -H "Content-Type: application/json" \
+        -d "{\"point_id\": \"${point_id}\", \"value\": ${value}}" \
+        --connect-timeout 5 2>&1)
+
+    local http_code
+    http_code=$(echo "$response" | tail -n1)
+
+    if [ "$http_code" = "200" ]; then
+        echo -e "${LINE_V}   Instance ${inst_id} ${desc}: ${GREEN}✓${NC}"
+        return 0
+    else
+        echo -e "${LINE_V}   Instance ${inst_id} ${desc}: ${RED}✗${NC} (HTTP ${http_code})"
+        return 1
+    fi
+}
+
+# Battery instance (id=2) has 3 A points
+test_action 2 "1" 5000.0 "Battery A1=5000 (charge power)" || ACTION_PASSED=false
+test_action 2 "2" 3000.0 "Battery A2=3000 (discharge power)" || ACTION_PASSED=false
+test_action 2 "3" 48.5   "Battery A3=48.5 (voltage setpoint)" || ACTION_PASSED=false
+
+echo -e "${LINE_V}"
+
+# Diesel instance (id=3) has 5 A points; smoke-testing first 2
+test_action 3 "1" 6000.0 "Diesel A1=6000 (power setpoint)" || ACTION_PASSED=false
+test_action 3 "2" 50.0   "Diesel A2=50.0 (freq setpoint)" || ACTION_PASSED=false
+
+echo -e "${LINE_V}"
+
+if [ "$ACTION_PASSED" = true ]; then
+    echo -e "${LINE_V} ${GREEN}✓ M2C Action test passed (5/5)!${NC}"
+    ACTION_RESULT=0
+else
+    echo -e "${LINE_V} ${RED}✗ M2C Action test failed${NC}"
+    ACTION_RESULT=1
+fi
+
+print_phase_end "$([ $ACTION_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
+# Step 10: modsrv Instance Data Query
+print_phase "[Phase 10] Instance Data Query Verification"
+
+DATA_PASSED=true
+
+# Verify instance list
+INST_COUNT=$(curl -s http://127.0.0.1:6002/api/instances --connect-timeout 5 | $PYTHON_CMD -c "
+import json, sys
+data = json.load(sys.stdin)
+instances = data.get('data', [])
+print(len(instances))
+" 2>/dev/null)
+
+if [ "$INST_COUNT" -ge 4 ] 2>/dev/null; then
+    echo -e "${LINE_V}   GET /api/instances: ${INST_COUNT} instances ${GREEN}✓${NC}"
+else
+    echo -e "${LINE_V}   GET /api/instances: ${INST_COUNT:-error} instances ${RED}✗${NC}"
+    DATA_PASSED=false
+fi
+
+# Verify each instance has measurement data
+for inst_id in 1 2 3 4; do
+    M_COUNT=$(curl -s "http://127.0.0.1:6002/api/instances/${inst_id}/data" --connect-timeout 5 | $PYTHON_CMD -c "
+import json, sys
+data = json.load(sys.stdin)
+measurements = data.get('data', {}).get('measurements', {})
+print(len(measurements))
+" 2>/dev/null)
+
+    if [ "$M_COUNT" -gt 0 ] 2>/dev/null; then
+        echo -e "${LINE_V}   Instance ${inst_id} measurements: ${M_COUNT} points ${GREEN}✓${NC}"
+    else
+        echo -e "${LINE_V}   Instance ${inst_id} measurements: ${M_COUNT:-0} points ${RED}✗${NC}"
+        DATA_PASSED=false
+    fi
+done
+
+if [ "$DATA_PASSED" = true ]; then
+    DATA_RESULT=0
+else
+    DATA_RESULT=1
+fi
+
+print_phase_end "$([ $DATA_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
 # Combine results
 FINAL_RESULT=0
-if [ $E2E_RESULT -ne 0 ] || [ $C2M_RESULT -ne 0 ] || [ $CA_RESULT -ne 0 ]; then
+if [ $E2E_RESULT -ne 0 ] || [ $C2M_RESULT -ne 0 ] || [ $CA_RESULT -ne 0 ] || \
+   [ $HEALTH_RESULT -ne 0 ] || [ $ACTION_RESULT -ne 0 ] || [ $DATA_RESULT -ne 0 ]; then
     FINAL_RESULT=1
 fi
 
@@ -625,15 +778,20 @@ echo -e "${BOX_V}  Test Duration:  ${DURATION}s                                 
 echo -e "${BOX_V}  Channels:       4 (PV, Battery, Diesel, Load)                ${BOX_V}"
 echo -e "${BOX_V}  Expected:       3900 points + C/A write                      ${BOX_V}"
 echo -e "${BOX_V}                                                               ${BOX_V}"
-echo -e "${BOX_V}  Uplink (Read):                                               ${BOX_V}"
-echo -e "${BOX_V}    FC03 (Holding Registers): 3200 points                      ${BOX_V}"
-echo -e "${BOX_V}    FC01 (Read Coils):        200 points                       ${BOX_V}"
-echo -e "${BOX_V}    FC02 (Discrete Inputs):   200 points                       ${BOX_V}"
-echo -e "${BOX_V}  Downlink (Write):                                            ${BOX_V}"
-echo -e "${BOX_V}    FC05 (Write Coil):        tested                           ${BOX_V}"
-echo -e "${BOX_V}    FC06 (Write Register):    tested                           ${BOX_V}"
-echo -e "${BOX_V}  Routing:                                                     ${BOX_V}"
-echo -e "${BOX_V}    route:c2m + inst:*:M:     verified                         ${BOX_V}"
+
+REDIS_RESULT="$([ $E2E_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+ROUTE_RESULT="$([ $C2M_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+CA_STATUS="$([ $CA_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+HEALTH_STATUS="$([ $HEALTH_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+ACTION_STATUS="$([ $ACTION_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+DATA_STATUS="$([ $DATA_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+
+echo -e "${BOX_V}  Phase 5  Redis Data + Online:        ${REDIS_RESULT}                     ${BOX_V}"
+echo -e "${BOX_V}  Phase 6  C2M + M2C Routing:          ${ROUTE_RESULT}                     ${BOX_V}"
+echo -e "${BOX_V}  Phase 7  C/A Write (FC05/FC06):      ${CA_STATUS}                     ${BOX_V}"
+echo -e "${BOX_V}  Phase 8  Health API:                  ${HEALTH_STATUS}                     ${BOX_V}"
+echo -e "${BOX_V}  Phase 9  M2C Action Downlink:         ${ACTION_STATUS}                     ${BOX_V}"
+echo -e "${BOX_V}  Phase 10 Instance Data Query:         ${DATA_STATUS}                     ${BOX_V}"
 echo -e "${BOX_V}                                                               ${BOX_V}"
 
 if [ $FINAL_RESULT -eq 0 ]; then

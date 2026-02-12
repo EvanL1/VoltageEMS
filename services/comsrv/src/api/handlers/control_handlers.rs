@@ -250,7 +250,7 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                             },
                             Err(_) => {
                                 tracing::warn!(
-                                    "Direct trigger failed Ch{}, fallback to TODO",
+                                    "Direct trigger failed Ch{}, write Hash only",
                                     channel_id
                                 );
                                 false
@@ -264,42 +264,20 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                 };
 
             // Always write to Redis Hash (for modsrv sync and state persistence)
-            // If direct_triggered, use write_channel_hash_only (skip TODO queue)
-            // Otherwise, use full write_point_auto_trigger (includes TODO queue as fallback)
-            if direct_triggered {
-                // Direct trigger succeeded - write Hash only (no TODO queue)
-                voltage_rtdb::helpers::write_channel_hash_only(
-                    rtdb.as_ref(),
-                    config,
-                    channel_id,
-                    point_type,
-                    point_id,
-                    *value,
-                    timestamp_ms,
-                )
-                .await
-                .map_err(|e| {
-                    tracing::error!("Hash write Ch{}:{:?}:{}: {}", channel_id, point_type, id, e);
-                    AppError::internal_error(format!("Failed to write point value: {}", e))
-                })?;
-            } else {
-                // Fallback: use full write path (includes TODO queue)
-                // Pass the pre-computed timestamp for consistency with Direct Path
-                voltage_rtdb::helpers::write_point_auto_trigger(
-                    rtdb.as_ref(),
-                    config,
-                    channel_id,
-                    point_type,
-                    point_id,
-                    *value,
-                    Some(timestamp_ms), // Use same timestamp as Direct Path would use
-                )
-                .await
-                .map_err(|e| {
-                    tracing::error!("Write Ch{}:{:?}:{}: {}", channel_id, point_type, id, e);
-                    AppError::internal_error(format!("Failed to write point value: {}", e))
-                })?;
-            }
+            voltage_rtdb::helpers::write_channel_hash_only(
+                rtdb.as_ref(),
+                config,
+                channel_id,
+                point_type,
+                point_id,
+                *value,
+                timestamp_ms,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Hash write Ch{}:{:?}:{}: {}", channel_id, point_type, id, e);
+                AppError::internal_error(format!("Failed to write point value: {}", e))
+            })?;
 
             tracing::debug!(
                 "Write Ch{}:{:?}:{} = {} @{} (direct={})",
@@ -341,16 +319,19 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                     },
                 };
 
-                // Write point using voltage-rtdb helper
-                // Batch writes: let the function compute timestamp for each point
-                match voltage_rtdb::helpers::write_point_auto_trigger(
+                // Write point to Redis Hash
+                let batch_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64;
+                match voltage_rtdb::helpers::write_channel_hash_only(
                     rtdb.as_ref(),
                     config,
                     channel_id,
                     point_type,
                     point_id,
                     point.value,
-                    None, // Each batch point gets its own timestamp
+                    batch_ts,
                 )
                 .await
                 {

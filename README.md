@@ -5,19 +5,52 @@
 
 [中文版本](README-CN.md) | [Documentation](docs/README.md)
 
-Industrial IoT energy management system built with Rust. Real-time data collection, processing, and monitoring for industrial energy scenarios.
+Industrial IoT energy management system built with Rust. Multi-protocol data acquisition, real-time processing via shared memory, rule engine execution, and full-stack monitoring for industrial energy scenarios.
+
+## Features
+
+- **Multi-Protocol Support** — Modbus TCP/RTU, IEC 60870-5-104, OPC UA, MQTT, HTTP, DL/T 645, CAN, J1939, GPIO
+- **Zero-Copy Shared Memory** — High-performance data path between services via `/dev/shm`, bypassing serialization overhead
+- **Rule Engine** — Visual rule editing (Vue Flow) with real-time execution, expression evaluation, and scheduling
+- **Time-Series Integration** — InfluxDB 3.x for historical data persistence and trend analysis
+- **Full-Stack Visualization** — Vue.js 3 + ECharts dashboard with real-time WebSocket updates
 
 ## Architecture
 
 ```
-Device (Modbus/Virtual/gRPC) → comsrv(:6001) → Redis(:6379) → modsrv(:6002)
+                        ┌─────────────────────────────────────────────┐
+                        │              voltage-redis(:6379)           │
+                        │          Real-time Data Store + Routing     │
+                        └──────┬──────────────────────┬───────────────┘
+                               │                      │
+  Devices ─────► comsrv(:6001) ┤                      ├─► modsrv(:6002)
+   Modbus        Communication │    SHM + UDS         │   Rules / Calc
+   IEC104        & Collection  ◄──────────────────────┘   Instances
+   OPC UA                      │
+   MQTT/HTTP                   │
+   DL645/CAN          apigateway(:6005) ──── apps(:8080)
+   J1939/GPIO            API Gateway          Vue.js Frontend
+                               │
+                       hissrv(:6004) ◄── InfluxDB(:8181)
+                       Historical Data       Time-Series DB
+                               │
+                     alarmsrv(:6007)    netsrv(:6006)
+                     Alarm Management   MQTT Networking
 ```
 
-| Service | Port | Description |
-|---------|------|-------------|
-| comsrv | 6001 | Communication - industrial protocols |
-| modsrv | 6002 | Model service + rule engine |
-| Redis | 6379 | Real-time data store |
+### Service Ports
+
+| Service | Port | Language | Description |
+|---------|------|----------|-------------|
+| comsrv | 6001 | Rust | Communication service — industrial protocol drivers, channel management |
+| modsrv | 6002 | Rust | Model service — product definitions, device instances, rule engine |
+| hissrv | 6004 | Python | Historical data service — InfluxDB 3.x time-series persistence |
+| apigateway | 6005 | Python | API gateway — unified REST API, WebSocket, JWT auth |
+| netsrv | 6006 | Python | Network service — MQTT broker integration |
+| alarmsrv | 6007 | Python | Alarm service — alarm rules and notifications |
+| apps | 8080 | Vue.js | Frontend — ECharts dashboards, Vue Flow rule editor |
+| voltage-redis | 6379 | — | Real-time data store and message routing |
+| InfluxDB | 8181 | — | Time-series database for historical data |
 
 ## Quick Start
 
@@ -52,6 +85,77 @@ cargo build --release -p monarch
 docker compose up -d
 docker compose ps
 ```
+
+## Project Structure
+
+```
+VoltageEMS/
+├── services/
+│   ├── comsrv/              # Communication service (Rust)
+│   ├── modsrv/              # Model service + rules (Rust)
+│   └── python-services/
+│       ├── hissrv/          # Historical data (Python/FastAPI)
+│       ├── apigateway/      # API gateway (Python/FastAPI)
+│       ├── netsrv/          # MQTT networking (Python/FastAPI)
+│       └── alarmsrv/        # Alarm management (Python/FastAPI)
+├── libs/                    # 13 shared Rust libraries
+├── tools/
+│   ├── monarch/             # CLI config & service manager
+│   └── simulator/           # Modbus TCP/RTU slave simulator
+├── apps/                    # Vue.js 3 frontend (Element Plus + ECharts)
+├── firmware/                # Embedded firmware prototype (ARM/STM32)
+├── config/                  # YAML/CSV configuration
+└── docs/                    # Documentation
+```
+
+## Libraries
+
+### Core
+
+| Library | Description |
+|---------|-------------|
+| voltage-core | Core types and codecs — `no_std` compatible for embedded firmware |
+| voltage-model | Model layer — calculations, product definitions, instance management |
+| voltage-infra | Infrastructure — Redis and SQLite integration |
+| common | Service bootstrap, config management, and shared utilities |
+| errors | Unified error types across all services |
+
+### Data Layer
+
+| Library | Description |
+|---------|-------------|
+| voltage-rtdb | Real-time database abstraction — Redis and in-memory backends |
+| voltage-rtdb-shm | Shared memory RTDB implementation — zero-copy data sharing |
+| voltage-shm | Platform-agnostic shared memory readers/writers |
+| voltage-routing | Data flow routing — comsrv ↔ modsrv message routing |
+
+### Extensions
+
+| Library | Description |
+|---------|-------------|
+| voltage-calc | Expression evaluation engine with built-in functions |
+| voltage-rules | Rule engine — Vue Flow rule parsing, execution, and scheduling |
+| voltage-sim | Waveform generator for device simulation |
+| voltage-schema-macro | Proc macro — auto-generates SQL DDL from Rust structs |
+
+## Data Flow
+
+### Upstream (Device → Cloud)
+
+```
+Device → comsrv → Redis (route:c2m) → modsrv
+                   channel data         rule execution
+                   "comsrv:{id}:T"      instance calc
+```
+
+### Downstream (Cloud → Device)
+
+```
+Primary:  modsrv → Redis (route:m2c) → SHM write + UDS notify → comsrv → Device
+Fallback: modsrv → Redis (inst:{id}:A + TODO) → comsrv ShmPoller → Device
+```
+
+The primary path uses shared memory (`/dev/shm/voltage-rtdb.shm`) with Unix Domain Socket notifications for minimal latency. The fallback path polls Redis for resilience.
 
 ## Monarch CLI
 
@@ -93,19 +197,6 @@ monarch <command> --help
 | `VOLTAGE_CONFIG_PATH` | Config directory | Auto-detect |
 | `VOLTAGE_DATA_PATH` | Data directory | Auto-detect |
 
-## Project Structure
-
-```
-VoltageEMS/
-├── services/comsrv/     # Communication service
-├── services/modsrv/     # Model service + rules
-├── tools/monarch/       # CLI tool
-├── libs/                # Shared libraries
-├── apps/                # Vue.js frontend
-├── config/              # YAML/CSV config
-└── docs/                # Documentation
-```
-
 ## Development
 
 ```bash
@@ -115,7 +206,7 @@ cargo build --workspace
 # Test
 cargo test --workspace
 
-# Quick check (fmt + clippy + test)
+# Quick check (fmt + clippy + test + frontend)
 ./scripts/quick-check.sh
 ```
 

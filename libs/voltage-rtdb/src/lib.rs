@@ -51,7 +51,6 @@ pub mod helpers {
     use super::numfmt::{f64_to_bytes, i64_to_bytes, precomputed};
     use super::{KeySpaceConfig, MemoryRtdb, Rtdb, WriteBuffer};
     use anyhow::{Context, Result};
-    use bytes::Bytes;
     use std::sync::Arc;
     use voltage_model::PointType;
 
@@ -71,51 +70,6 @@ pub mod helpers {
     /// ```
     pub fn create_test_rtdb() -> Arc<MemoryRtdb> {
         Arc::new(MemoryRtdb::new())
-    }
-
-    // ==================== Production Helpers ====================
-
-    /// Set channel point with automatic TODO queue trigger
-    ///
-    /// This function implements the Write-Triggers-Routing pattern:
-    /// 1. Writes to comsrv:{channel_id}:{A|C} Hash (value/ts/raw)
-    /// 2. Automatically triggers comsrv:{channel_id}:{A|C}:TODO queue
-    ///
-    /// **Design principle**: Hash writes and TODO triggers are always synchronized.
-    /// No matter how the Hash is modified (routing/API/tools), TODO is automatically triggered.
-    pub async fn set_channel_point_with_trigger<R>(
-        rtdb: &R,
-        config: &KeySpaceConfig,
-        channel_id: u32,
-        point_type: PointType,
-        point_id: u32,
-        value: f64,
-        timestamp_ms: i64,
-    ) -> Result<()>
-    where
-        R: Rtdb,
-    {
-        let channel_key = config.channel_key(channel_id, point_type);
-        write_channel_points(
-            rtdb,
-            &channel_key,
-            vec![(point_id, value, value)],
-            timestamp_ms,
-        )
-        .await?;
-
-        let todo_key = config.todo_queue_key(channel_id, point_type);
-
-        let trigger = format!(
-            r#"{{"point_id":{},"value":{},"timestamp":{}}}"#,
-            point_id, value, timestamp_ms
-        );
-
-        rtdb.list_rpush(&todo_key, Bytes::from(trigger))
-            .await
-            .context("Failed to trigger TODO queue")?;
-
-        Ok(())
     }
 
     // ==================== Batch Helpers ====================
@@ -202,7 +156,7 @@ pub mod helpers {
         count
     }
 
-    /// Write a single point with automatic TODO queue trigger based on point type
+    /// Write a single point to channel Hash (all point types unified)
     pub async fn write_point_auto_trigger<R>(
         rtdb: &R,
         config: &KeySpaceConfig,
@@ -222,30 +176,16 @@ pub mod helpers {
                 .as_millis() as i64
         });
 
-        match point_type {
-            PointType::Control | PointType::Adjustment => {
-                set_channel_point_with_trigger(
-                    rtdb,
-                    config,
-                    channel_id,
-                    point_type,
-                    point_id,
-                    value,
-                    timestamp_ms,
-                )
-                .await?;
-            },
-            PointType::Telemetry | PointType::Signal => {
-                let channel_key = config.channel_key(channel_id, point_type);
-                write_channel_points(
-                    rtdb,
-                    &channel_key,
-                    vec![(point_id, value, value)],
-                    timestamp_ms,
-                )
-                .await?;
-            },
-        }
+        write_channel_hash_only(
+            rtdb,
+            config,
+            channel_id,
+            point_type,
+            point_id,
+            value,
+            timestamp_ms,
+        )
+        .await?;
 
         Ok(timestamp_ms)
     }
