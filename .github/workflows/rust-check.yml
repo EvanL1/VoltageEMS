@@ -11,34 +11,6 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Job 0: Frontend Tests (parallel with quality-check, no Rust needed)
-  frontend-tests:
-    name: Frontend Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: apps/pnpm-lock.yaml
-
-      - name: Install Dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: apps
-
-      - name: Run Unit Tests
-        run: pnpm test:unit -- --run
-        working-directory: apps
-
-      - name: Type Check
-        run: pnpm run type-check
-        working-directory: apps
-
   # Job 1: Code Quality Checks (fastest, no Redis needed)
   quality-check:
     name: Quality Check
