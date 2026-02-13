@@ -76,7 +76,7 @@ impl Clone for ChannelMetadata {
 }
 
 /// Helper function to get current Unix timestamp in milliseconds
-fn unix_timestamp_ms() -> i64 {
+pub(crate) fn unix_timestamp_ms() -> i64 {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_millis() as i64,
         Err(e) => {
@@ -443,6 +443,24 @@ use crate::core::channels::traits::ChannelCommand;
 use crate::core::channels::types::ProtocolCommand;
 use crate::protocols::core::traits::PollResult;
 
+/// Check if channel online state changed and publish to Redis if so.
+///
+/// Avoids redundant Redis writes by tracking previous state.
+async fn check_online_change<R: Rtdb>(
+    protocol: &dyn ChannelRuntime,
+    prev_online: &mut Option<bool>,
+    store: &RedisDataStore<R>,
+    channel_id: u32,
+) {
+    let current_online = protocol.connection_state().is_connected();
+    if *prev_online != Some(current_online) {
+        *prev_online = Some(current_online);
+        store
+            .publish_channel_online(channel_id, current_online)
+            .await;
+    }
+}
+
 /// Run the unified channel task that handles both polling and commands.
 ///
 /// ## Lock-Free Architecture
@@ -478,48 +496,20 @@ async fn run_unified_channel_task<R: Rtdb>(
 
     // Helper to update cached connection state
     let update_cached_state = |state: &dyn ChannelRuntime, cache: &AtomicU8| {
-        use crate::protocols::core::traits::ConnectionState as ProtocolConnectionState;
-        let protocol_state = state.connection_state();
-        let channel_state = match protocol_state {
-            ProtocolConnectionState::Connected => {
-                crate::core::channels::types::ConnectionState::Connected
-            },
-            ProtocolConnectionState::Connecting => {
-                crate::core::channels::types::ConnectionState::Connecting
-            },
-            ProtocolConnectionState::Reconnecting => {
-                crate::core::channels::types::ConnectionState::Retrying
-            },
-            ProtocolConnectionState::Disconnected => {
-                crate::core::channels::types::ConnectionState::Disconnected
-            },
-            ProtocolConnectionState::Error => crate::core::channels::types::ConnectionState::Failed,
-        };
+        let channel_state: crate::core::channels::types::ConnectionState =
+            state.connection_state().into();
         cache.store(channel_state.as_u8(), Ordering::Relaxed);
     };
 
     // Track previous online state for change detection (avoid redundant Redis writes)
     let mut prev_online: Option<bool> = None;
 
-    // Helper macro: check online state change and publish to Redis
-    macro_rules! check_online_change {
-        () => {
-            let current_online = protocol.connection_state().is_connected();
-            if prev_online != Some(current_online) {
-                prev_online = Some(current_online);
-                store
-                    .publish_channel_online(channel_id, current_online)
-                    .await;
-            }
-        };
-    }
-
     // Wait a bit for the connection to be established
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Update initial connection state
     update_cached_state(protocol.as_ref(), &cached_state);
-    check_online_change!();
+    check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
 
     // Use configured poll interval
     let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(poll_interval_ms));
@@ -560,27 +550,8 @@ async fn run_unified_channel_task<R: Rtdb>(
                         let _ = response_tx.send(diag);
                     }
                     ProtocolCommand::GetConnectionState { response_tx } => {
-                        // Get actual connection state from protocol
-                        use crate::protocols::core::traits::ConnectionState as ProtocolConnectionState;
-                        let protocol_state = protocol.connection_state();
-                        // Map protocol state to channel state
-                        let state = match protocol_state {
-                            ProtocolConnectionState::Connected => {
-                                crate::core::channels::types::ConnectionState::Connected
-                            }
-                            ProtocolConnectionState::Connecting => {
-                                crate::core::channels::types::ConnectionState::Connecting
-                            }
-                            ProtocolConnectionState::Reconnecting => {
-                                crate::core::channels::types::ConnectionState::Retrying
-                            }
-                            ProtocolConnectionState::Disconnected => {
-                                crate::core::channels::types::ConnectionState::Disconnected
-                            }
-                            ProtocolConnectionState::Error => {
-                                crate::core::channels::types::ConnectionState::Failed
-                            }
-                        };
+                        let state: crate::core::channels::types::ConnectionState =
+                            protocol.connection_state().into();
                         let _ = response_tx.send(state);
                     }
                     ProtocolCommand::SetLogLevel { level, response_tx } => {
@@ -650,6 +621,18 @@ async fn run_unified_channel_task<R: Rtdb>(
                             }
                         }
                     }
+                    ChannelCommand::BatchControl { points, .. } => {
+                        match protocol.write_control(&points).await {
+                            Ok(n) => debug!("Ch{} batch control {}/{} ok", channel_id, n, points.len()),
+                            Err(e) => error!("Ch{} batch control err: {}", channel_id, e),
+                        }
+                    }
+                    ChannelCommand::BatchAdjustment { points, .. } => {
+                        match protocol.write_adjustment(&points).await {
+                            Ok(n) => debug!("Ch{} batch adj {}/{} ok", channel_id, n, points.len()),
+                            Err(e) => error!("Ch{} batch adj err: {}", channel_id, e),
+                        }
+                    }
                 }
             }
 
@@ -673,7 +656,7 @@ async fn run_unified_channel_task<R: Rtdb>(
                             }
                             // Update cached state and skip this tick
                             update_cached_state(protocol.as_ref(), &cached_state);
-                            check_online_change!();
+                            check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
                             continue;
                         }
                         ReconnectState::Reconnecting => {
@@ -687,7 +670,7 @@ async fn run_unified_channel_task<R: Rtdb>(
                             // Fall through to attempt reconnection
                             if !reconnect_helper.record_attempt() {
                                 update_cached_state(protocol.as_ref(), &cached_state);
-                                check_online_change!();
+                                check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
                                 continue;
                             }
 
@@ -705,14 +688,14 @@ async fn run_unified_channel_task<R: Rtdb>(
                                 }
                             }
                             update_cached_state(protocol.as_ref(), &cached_state);
-                            check_online_change!();
+                            check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
                             continue;
                         }
                         ReconnectState::Disconnected => {
                             // Already tracking disconnection, continue retry sequence
                             if !reconnect_helper.record_attempt() {
                                 update_cached_state(protocol.as_ref(), &cached_state);
-                                check_online_change!();
+                                check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
                                 continue;
                             }
 
@@ -724,7 +707,74 @@ async fn run_unified_channel_task<R: Rtdb>(
                                     "Ch{} waiting {:?} before reconnect attempt",
                                     channel_id, delay
                                 );
-                                tokio::time::sleep(delay).await;
+                                // Use select! to remain responsive to commands during backoff.
+                                // Without this, Shutdown/Connect/Disconnect commands would be
+                                // blocked for the entire backoff duration (potentially tens of seconds).
+                                tokio::select! {
+                                    _ = tokio::time::sleep(delay) => {
+                                        // Backoff completed, fall through to reconnect below
+                                    }
+                                    Some(cmd) = protocol_rx.recv() => {
+                                        use crate::protocols::core::error::GatewayError;
+                                        match cmd {
+                                            ProtocolCommand::Shutdown => {
+                                                info!("Ch{} shutdown during reconnect backoff", channel_id);
+                                                break; // exits the outer loop
+                                            }
+                                            ProtocolCommand::Connect { response_tx } => {
+                                                // Manual connect overrides automatic backoff
+                                                let result = protocol.connect().await;
+                                                if result.is_ok() {
+                                                    reconnect_helper.mark_connected();
+                                                    failed_log_tick_counter = 0;
+                                                }
+                                                let _ = response_tx.send(result);
+                                            }
+                                            ProtocolCommand::Disconnect { response_tx } => {
+                                                let _ = protocol.disconnect().await;
+                                                let _ = response_tx.send(());
+                                            }
+                                            ProtocolCommand::GetConnectionState { response_tx } => {
+                                                let state: crate::core::channels::types::ConnectionState =
+                                                    protocol.connection_state().into();
+                                                let _ = response_tx.send(state);
+                                            }
+                                            ProtocolCommand::GetDiagnostics { response_tx } => {
+                                                let diag = protocol.diagnostics().await.ok();
+                                                let _ = response_tx.send(diag);
+                                            }
+                                            ProtocolCommand::SetLogLevel { level, response_tx } => {
+                                                let result = match level.to_lowercase().as_str() {
+                                                    "debug" | "verbose" => {
+                                                        protocol.set_log_config(ChannelLogConfig::all());
+                                                        log_handler.set_log_level("debug");
+                                                        Ok(())
+                                                    }
+                                                    "info" | "standard" => {
+                                                        protocol.set_log_config(ChannelLogConfig::default());
+                                                        log_handler.set_log_level("info");
+                                                        Ok(())
+                                                    }
+                                                    "error" | "minimal" => {
+                                                        protocol.set_log_config(ChannelLogConfig::errors_only());
+                                                        log_handler.set_log_level("info");
+                                                        Ok(())
+                                                    }
+                                                    other => Err(format!("Invalid log level '{}', use: debug/info/error", other)),
+                                                };
+                                                let _ = response_tx.send(result);
+                                            }
+                                            ProtocolCommand::WriteControl { response_tx, .. }
+                                            | ProtocolCommand::WriteAdjustment { response_tx, .. } => {
+                                                let _ = response_tx.send(Err(GatewayError::NotConnected));
+                                            }
+                                        }
+                                        // Command handled during backoff, skip reconnect attempt
+                                        update_cached_state(protocol.as_ref(), &cached_state);
+                                        check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
+                                        continue; // continues the outer loop
+                                    }
+                                }
                             }
 
                             // Attempt reconnection
@@ -741,7 +791,7 @@ async fn run_unified_channel_task<R: Rtdb>(
                                 }
                             }
                             update_cached_state(protocol.as_ref(), &cached_state);
-                            check_online_change!();
+                            check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
                             continue;
                         }
                     }
@@ -795,7 +845,7 @@ async fn run_unified_channel_task<R: Rtdb>(
 
                 // Update cached connection state after each poll cycle
                 update_cached_state(protocol.as_ref(), &cached_state);
-                check_online_change!();
+                check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
             }
         }
     }

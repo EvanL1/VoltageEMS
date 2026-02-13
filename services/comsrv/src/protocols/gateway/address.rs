@@ -280,66 +280,189 @@ mod tests {
     #[test]
     fn test_parse_modbus_address() {
         let addr = parse_modbus_address("1:100").unwrap();
-        if let ProtocolAddress::Modbus(m) = addr {
-            assert_eq!(m.slave_id, 1);
-            assert_eq!(m.register, 100);
-            assert_eq!(m.function_code, 3);
-        } else {
-            panic!("Expected Modbus address");
-        }
+        let ProtocolAddress::Modbus(m) = addr else {
+            unreachable!("parse_modbus_address always returns Modbus variant")
+        };
+        assert_eq!(m.slave_id, 1);
+        assert_eq!(m.register, 100);
+        assert_eq!(m.function_code, 3);
     }
 
     #[test]
     fn test_parse_modbus_address_with_function() {
         let addr = parse_modbus_address("2:200:4").unwrap();
-        if let ProtocolAddress::Modbus(m) = addr {
-            assert_eq!(m.slave_id, 2);
-            assert_eq!(m.register, 200);
-            assert_eq!(m.function_code, 4);
-        } else {
-            panic!("Expected Modbus address");
-        }
+        let ProtocolAddress::Modbus(m) = addr else {
+            unreachable!("parse_modbus_address always returns Modbus variant")
+        };
+        assert_eq!(m.slave_id, 2);
+        assert_eq!(m.register, 200);
+        assert_eq!(m.function_code, 4);
     }
 
     #[test]
     fn test_parse_iec104_address() {
         let addr = parse_iec104_address("1001").unwrap();
-        if let ProtocolAddress::Iec104(i) = addr {
-            assert_eq!(i.ioa, 1001);
-        } else {
-            panic!("Expected IEC104 address");
-        }
+        let ProtocolAddress::Iec104(i) = addr else {
+            unreachable!("parse_iec104_address always returns Iec104 variant")
+        };
+        assert_eq!(i.ioa, 1001);
     }
 
     #[test]
     fn test_parse_opcua_address() {
         let addr = parse_opcua_address("ns=2;i=1234").unwrap();
-        if let ProtocolAddress::OpcUa(o) = addr {
-            assert_eq!(o.namespace_index, 2);
-            assert_eq!(o.node_id, "i=1234");
-        } else {
-            panic!("Expected OPC UA address");
-        }
+        let ProtocolAddress::OpcUa(o) = addr else {
+            unreachable!("parse_opcua_address always returns OpcUa variant")
+        };
+        assert_eq!(o.namespace_index, 2);
+        assert_eq!(o.node_id, "i=1234");
     }
 
     #[test]
     fn test_parse_opcua_address_no_namespace() {
         let addr = parse_opcua_address("i=1234").unwrap();
-        if let ProtocolAddress::OpcUa(o) = addr {
-            assert_eq!(o.namespace_index, 0);
-            assert_eq!(o.node_id, "i=1234");
-        } else {
-            panic!("Expected OPC UA address");
-        }
+        let ProtocolAddress::OpcUa(o) = addr else {
+            unreachable!("parse_opcua_address always returns OpcUa variant")
+        };
+        assert_eq!(o.namespace_index, 0);
+        assert_eq!(o.node_id, "i=1234");
     }
 
     #[test]
     fn test_parse_virtual_address() {
         let addr = parse_address("virtual", "temperature").unwrap();
-        if let ProtocolAddress::Virtual(v) = addr {
-            assert_eq!(v.tag, "temperature");
-        } else {
-            panic!("Expected Virtual address");
-        }
+        let ProtocolAddress::Virtual(v) = addr else {
+            unreachable!("parse_address(\"virtual\", ..) always returns Virtual variant")
+        };
+        assert_eq!(v.tag, "temperature");
+    }
+
+    // ========== Error Path Tests ==========
+    // Verify that invalid inputs return Result::Err instead of panicking
+
+    #[test]
+    fn test_parse_modbus_missing_register() {
+        // Only slave_id, no colon separator → should error
+        let result = parse_modbus_address("1");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_modbus_invalid_slave_id() {
+        // Non-numeric slave_id
+        let result = parse_modbus_address("abc:100");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_modbus_invalid_register() {
+        // Non-numeric register
+        let result = parse_modbus_address("1:xyz");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_modbus_invalid_function_code() {
+        // Non-numeric function code
+        let result = parse_modbus_address("1:100:bad");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_modbus_slave_id_overflow() {
+        // u8 overflow (256 > 255)
+        let result = parse_modbus_address("256:100");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_modbus_register_overflow() {
+        // u16 overflow (65536 > 65535)
+        let result = parse_modbus_address("1:65536");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_iec104_invalid_ioa() {
+        let result = parse_iec104_address("not_a_number");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_iec104_invalid_type_id() {
+        // Valid IOA but invalid type_id
+        let result = parse_iec104_address("1001:abc");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_iec104_type_id_overflow() {
+        // u8 overflow for type_id
+        let result = parse_iec104_address("1001:256");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_opcua_missing_semicolon() {
+        // Has "ns=" prefix but no semicolon separator
+        let result = parse_opcua_address("ns=2i=1234");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_opcua_invalid_namespace() {
+        let result = parse_opcua_address("ns=abc;i=1234");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_opcua_invalid_node_id_prefix() {
+        // Node ID must start with i=, s=, g=, or b=
+        let result = parse_opcua_address("ns=2;x=1234");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_opcua_no_ns_invalid_prefix() {
+        // No namespace, but invalid node ID prefix
+        let result = parse_opcua_address("x=1234");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_address_unknown_protocol() {
+        let result = parse_address("unknown_proto", "some_addr");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_address_case_insensitive() {
+        // Verify case-insensitive protocol matching
+        assert!(parse_address("MODBUS", "1:100").is_ok());
+        assert!(parse_address("Modbus", "1:100").is_ok());
+        assert!(parse_address("IEC104", "1001").is_ok());
+        assert!(parse_address("OPCUA", "i=1234").is_ok());
+        assert!(parse_address("Virtual", "key").is_ok());
+    }
+
+    #[test]
+    fn test_parse_iec104_with_type_id() {
+        let addr = parse_iec104_address("2001:13").unwrap();
+        let ProtocolAddress::Iec104(i) = addr else {
+            unreachable!("parse_iec104_address always returns Iec104 variant")
+        };
+        assert_eq!(i.ioa, 2001);
+        assert_eq!(i.type_id, 13);
+        assert_eq!(i.common_address, 1);
+    }
+
+    #[test]
+    fn test_parse_opcua_string_node_id() {
+        let addr = parse_opcua_address("ns=3;s=Temperature").unwrap();
+        let ProtocolAddress::OpcUa(o) = addr else {
+            unreachable!("parse_opcua_address always returns OpcUa variant")
+        };
+        assert_eq!(o.namespace_index, 3);
+        assert_eq!(o.node_id, "s=Temperature");
     }
 }
