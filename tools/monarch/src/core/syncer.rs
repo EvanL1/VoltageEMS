@@ -1060,12 +1060,19 @@ impl ConfigSyncer {
 
                 let normalized_product = normalize_product_name(product_name);
 
+                // Parse optional parent_id for topology hierarchy
+                let parent_id = instance_data
+                    .get("parent_id")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+
                 if let Err(e) = sqlx::query(
-                    "INSERT INTO instances (instance_id, instance_name, product_name, properties) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO instances (instance_id, instance_name, product_name, parent_id, properties) VALUES (?, ?, ?, ?, ?)",
                 )
                 .bind(instance_id)
                 .bind(instance_name)
                 .bind(normalized_product)
+                .bind(parent_id.map(|id| id as i64))
                 .bind(&properties)
                 .execute(&mut **tx)
                 .await

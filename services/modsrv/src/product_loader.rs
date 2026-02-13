@@ -226,6 +226,17 @@ impl ProductLoader {
             .collect()
     }
 
+    /// Get the parent product name for a given product (from pName field in JSON)
+    ///
+    /// Returns None for root products (e.g., Station).
+    /// Returns Some("ESS") for products like Battery, PCS, etc.
+    pub fn get_product_parent_name(&self, product_name: &str) -> Option<String> {
+        if let Some(lib) = &self.library {
+            return lib.get(product_name).and_then(|p| p.parent_name.clone());
+        }
+        product_lib::get_builtin_product(product_name).and_then(|p| p.parent_name.clone())
+    }
+
     /// Check if a product exists
     pub fn product_exists(&self, name: &str) -> bool {
         if let Some(lib) = &self.library {

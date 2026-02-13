@@ -13,6 +13,7 @@ use anyhow::Result;
 use common::{fixtures, helpers, TestEnv};
 use modsrv::instance_manager::InstanceManager;
 use modsrv::product_loader::{CreateInstanceRequest, ProductLoader};
+use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_routing::RoutingCache;
 
@@ -37,25 +38,45 @@ async fn test_create_instance_full_flow() -> Result<()> {
         product_loader,
     );
 
-    // 4. Create instance
+    // 4. Setup hierarchy: Station -> ESS (required for Battery)
+    let station_req = CreateInstanceRequest {
+        instance_id: 9901,
+        instance_name: "test_station_root".to_string(),
+        product_name: "Station".to_string(),
+        parent_id: None,
+        properties: HashMap::new(),
+    };
+    instance_manager.create_instance(station_req).await?;
+
+    let ess_req = CreateInstanceRequest {
+        instance_id: 9902,
+        instance_name: "test_ess_parent".to_string(),
+        product_name: "ESS".to_string(),
+        parent_id: Some(9901),
+        properties: HashMap::new(),
+    };
+    instance_manager.create_instance(ess_req).await?;
+
+    // 5. Create Battery instance under ESS
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
+        parent_id: Some(9902),
         properties: fixtures::create_test_instance_properties(),
     };
 
     let instance = instance_manager.create_instance(req).await?;
 
-    // 5. Verify instance created successfully
+    // 6. Verify instance created successfully
     assert_eq!(instance.instance_id(), 1001);
     assert_eq!(instance.instance_name(), "battery_001");
     assert_eq!(instance.product_name(), product_name);
 
-    // 6. Verify database record
+    // 7. Verify database record
     assert!(helpers::assert_instance_exists(env.pool(), 1001).await?);
 
-    // 7. Cleanup
+    // 8. Cleanup
     env.cleanup().await?;
 
     Ok(())
@@ -80,11 +101,31 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
         product_loader,
     );
 
-    // Create first instance
+    // Setup hierarchy: Station -> ESS (required for Battery)
+    let station_req = CreateInstanceRequest {
+        instance_id: 9901,
+        instance_name: "test_station_root".to_string(),
+        product_name: "Station".to_string(),
+        parent_id: None,
+        properties: HashMap::new(),
+    };
+    instance_manager.create_instance(station_req).await?;
+
+    let ess_req = CreateInstanceRequest {
+        instance_id: 9902,
+        instance_name: "test_ess_parent".to_string(),
+        product_name: "ESS".to_string(),
+        parent_id: Some(9901),
+        properties: HashMap::new(),
+    };
+    instance_manager.create_instance(ess_req).await?;
+
+    // Create first Battery instance under ESS
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
+        parent_id: Some(9902),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req.clone()).await?;
@@ -122,11 +163,31 @@ async fn test_get_instance_data() -> Result<()> {
         product_loader,
     );
 
-    // Create instance
+    // Setup hierarchy: Station -> ESS (required for Battery)
+    let station_req = CreateInstanceRequest {
+        instance_id: 9901,
+        instance_name: "test_station_root".to_string(),
+        product_name: "Station".to_string(),
+        parent_id: None,
+        properties: HashMap::new(),
+    };
+    instance_manager.create_instance(station_req).await?;
+
+    let ess_req = CreateInstanceRequest {
+        instance_id: 9902,
+        instance_name: "test_ess_parent".to_string(),
+        product_name: "ESS".to_string(),
+        parent_id: Some(9901),
+        properties: HashMap::new(),
+    };
+    instance_manager.create_instance(ess_req).await?;
+
+    // Create Battery instance under ESS
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
+        parent_id: Some(9902),
         properties: fixtures::create_test_instance_properties(),
     };
     let instance = instance_manager.create_instance(req).await?;

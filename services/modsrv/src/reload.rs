@@ -225,6 +225,7 @@ mod tests {
                 instance_id: id,
                 instance_name: name.to_string(),
                 product_name: product.to_string(),
+                parent_id: None,
                 properties: std::collections::HashMap::new(),
             },
             measurement_mappings: None,

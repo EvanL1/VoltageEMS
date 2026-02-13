@@ -143,6 +143,10 @@ pub struct CreateInstanceDto {
     pub instance_name: String, // Instance name for Redis keys
     #[schema(example = "pv_inverter")]
     pub product_name: String,
+    /// Parent instance ID for topology hierarchy (required for non-root products)
+    #[schema(example = 1)]
+    #[serde(default)]
+    pub parent_id: Option<u32>,
     #[schema(value_type = Object, example = json!({"rated_power": 5000.0, "manufacturer": "Huawei"}))]
     pub properties: Option<HashMap<String, serde_json::Value>>,
 }

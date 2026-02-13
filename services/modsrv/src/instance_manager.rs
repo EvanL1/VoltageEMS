@@ -16,7 +16,11 @@ use voltage_model::{validate_instance_name, KeySpaceConfig};
 use voltage_rtdb::Rtdb;
 use voltage_rtdb_shm::{InstanceIndex, SlotBitmap};
 
+use crate::config::TopologyNode;
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
+
+/// Row type returned by SQLite instance queries
+type InstanceRow = (u32, String, String, Option<u32>, Option<String>, String);
 
 /// Parse properties JSON string into HashMap
 fn parse_properties_json(
@@ -36,14 +40,17 @@ fn parse_properties_json(
 }
 
 /// Build Instance from database row tuple
-fn build_instance_from_row(row: (u32, String, String, Option<String>, String)) -> Result<Instance> {
-    let (instance_id, instance_name, product_name, properties_json, _created_at) = row;
+fn build_instance_from_row(
+    row: (u32, String, String, Option<u32>, Option<String>, String),
+) -> Result<Instance> {
+    let (instance_id, instance_name, product_name, parent_id, properties_json, _created_at) = row;
     let properties = parse_properties_json(properties_json, instance_id)?;
     Ok(Instance {
         core: crate::config::InstanceCore {
             instance_id,
             instance_name,
             product_name,
+            parent_id,
             properties,
         },
         measurement_mappings: None,
@@ -268,7 +275,52 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // We rely on the constraint rather than check-then-act to avoid race conditions.
         let product = self.product_loader.get_product(&req.product_name)?;
 
-        // 3. Begin transaction for atomic creation
+        // 3. Hierarchy validation: enforce pName constraints
+        let parent_name = self
+            .product_loader
+            .get_product_parent_name(&req.product_name);
+        match (&parent_name, req.parent_id) {
+            // Root product (Station): must NOT have a parent
+            (None, Some(_)) => {
+                return Err(anyhow!(
+                    "Root product '{}' cannot have a parent",
+                    req.product_name
+                ));
+            },
+            // Root product, no parent: OK
+            (None, None) => {},
+            // Non-root product: MUST have a parent
+            (Some(expected_parent), None) => {
+                return Err(anyhow!(
+                    "Product '{}' requires a parent instance of type '{}'",
+                    req.product_name,
+                    expected_parent
+                ));
+            },
+            // Non-root product with parent: validate parent's product_name matches
+            (Some(expected_parent), Some(pid)) => {
+                let parent_product: Option<String> =
+                    sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
+                        .bind(pid as i64)
+                        .fetch_optional(&self.pool)
+                        .await?;
+
+                let parent_product =
+                    parent_product.ok_or_else(|| anyhow!("Parent instance {} not found", pid))?;
+
+                if parent_product != *expected_parent {
+                    return Err(anyhow!(
+                        "Parent instance {} is '{}', but '{}' requires parent of type '{}'",
+                        pid,
+                        parent_product,
+                        req.product_name,
+                        expected_parent
+                    ));
+                }
+            },
+        }
+
+        // 4. Begin transaction for atomic creation
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
@@ -285,13 +337,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         if let Err(e) = sqlx::query(
             r#"
-            INSERT INTO instances (instance_id, instance_name, product_name, properties)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO instances (instance_id, instance_name, product_name, parent_id, properties)
+            VALUES (?, ?, ?, ?, ?)
             "#,
         )
         .bind(instance_id as i64)
         .bind(&req.instance_name)
         .bind(&req.product_name)
+        .bind(req.parent_id.map(|id| id as i64))
         .bind(&properties_json)
         .execute(&mut *tx)
         .await
@@ -398,6 +451,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 instance_id,
                 instance_name: req.instance_name,
                 product_name: req.product_name,
+                parent_id: req.parent_id,
                 properties: req.properties,
             },
             measurement_mappings: Some(measurement_point_routings),
@@ -409,9 +463,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// List all instances, optionally filtered by product_name
     pub async fn list_instances(&self, product_name: Option<&str>) -> Result<Vec<Instance>> {
         let query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
+            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
                 r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
                 FROM instances
                 WHERE product_name = ?
                 ORDER BY instance_id ASC
@@ -419,9 +473,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             )
             .bind(pname)
         } else {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
+            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
                 r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
                 FROM instances
                 ORDER BY instance_id ASC
                 "#,
@@ -468,9 +522,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Get paginated data
         let data_query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
+            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
                 r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
                 FROM instances
                 WHERE product_name = ?
                 ORDER BY instance_id ASC
@@ -481,9 +535,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             .bind(page_size as i64)
             .bind(offset as i64)
         } else {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
+            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
                 r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
                 FROM instances
                 ORDER BY instance_id ASC
                 LIMIT ? OFFSET ?
@@ -540,39 +594,38 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         };
 
         // Get paginated data
-        let rows: Vec<(u32, String, String, Option<String>, String)> =
-            if let Some(pname) = product_name {
-                sqlx::query_as(
-                    r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
+        let rows: Vec<InstanceRow> = if let Some(pname) = product_name {
+            sqlx::query_as(
+                r#"
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
                 FROM instances
                 WHERE instance_name LIKE ? AND product_name = ?
                 ORDER BY instance_id ASC
                 LIMIT ? OFFSET ?
                 "#,
-                )
-                .bind(&like_pattern)
-                .bind(pname)
-                .bind(page_size as i64)
-                .bind(offset as i64)
-                .fetch_all(&self.pool)
-                .await?
-            } else {
-                sqlx::query_as(
-                    r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
+            )
+            .bind(&like_pattern)
+            .bind(pname)
+            .bind(page_size as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as(
+                r#"
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
                 FROM instances
                 WHERE instance_name LIKE ?
                 ORDER BY instance_id ASC
                 LIMIT ? OFFSET ?
                 "#,
-                )
-                .bind(&like_pattern)
-                .bind(page_size as i64)
-                .bind(offset as i64)
-                .fetch_all(&self.pool)
-                .await?
-            };
+            )
+            .bind(&like_pattern)
+            .bind(page_size as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?
+        };
 
         let instances = rows
             .into_iter()
@@ -653,9 +706,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     /// Get instance by ID
     pub async fn get_instance(&self, instance_id: u32) -> Result<Instance> {
-        let row = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+        let row = sqlx::query_as::<_, (String, String, Option<u32>, Option<String>, String)>(
             r#"
-            SELECT instance_name, product_name, properties, created_at
+            SELECT instance_name, product_name, parent_id, properties, created_at
             FROM instances
             WHERE instance_id = ?
             "#,
@@ -666,7 +719,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         let row = row.ok_or_else(|| anyhow!("Instance not found: {}", instance_id))?;
 
-        let (instance_name, product_name, properties_json, _created_at) = row;
+        let (instance_name, product_name, parent_id, properties_json, _created_at) = row;
         let properties = parse_properties_json(properties_json, instance_id)?;
 
         // Load point routings from routing tables and generate Redis keys dynamically
@@ -715,6 +768,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 instance_id,
                 instance_name,
                 product_name,
+                parent_id,
                 properties,
             },
             measurement_mappings: Some(measurement_point_routings),
@@ -776,8 +830,31 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         Ok((measurement_routings, action_routings))
     }
 
-    /// Delete an instance by ID
-    pub async fn delete_instance(&self, instance_id: u32) -> Result<()> {
+    /// Collect all descendant instance IDs (BFS), returning them in leaf-first order
+    ///
+    /// Used for cascade delete: descendants must be deleted before the parent.
+    async fn collect_descendants(&self, instance_id: u32) -> Result<Vec<u32>> {
+        let mut all = Vec::new();
+        let mut queue = vec![instance_id];
+        while let Some(parent) = queue.pop() {
+            let children: Vec<(u32,)> =
+                sqlx::query_as("SELECT instance_id FROM instances WHERE parent_id = ?")
+                    .bind(parent as i64)
+                    .fetch_all(&self.pool)
+                    .await?;
+            for (child_id,) in children {
+                all.push(child_id);
+                queue.push(child_id);
+            }
+        }
+        all.reverse(); // Leaf nodes first, parent nodes last
+        Ok(all)
+    }
+
+    /// Delete a single instance by ID (internal — no cascade)
+    ///
+    /// Handles SQLite deletion, Redis cleanup, and dynamic slot deallocation.
+    async fn delete_single_instance(&self, instance_id: u32) -> Result<()> {
         // 1. Query instance_name before deletion (needed for Redis cleanup and logging)
         let instance_name: String =
             sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
@@ -874,11 +951,96 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             }
         }
 
+        // 7. Remove from name cache
+        self.remove_from_name_cache(&instance_name);
+
         info!(
             "Successfully deleted instance: {} ({})",
             instance_id, instance_name
         );
         Ok(())
+    }
+
+    /// Delete an instance by ID with cascade delete of all descendants
+    ///
+    /// Collects all descendant instances (children, grandchildren, etc.),
+    /// deletes them leaf-first to ensure proper Redis cleanup for each,
+    /// then deletes the target instance itself.
+    pub async fn delete_instance(&self, instance_id: u32) -> Result<()> {
+        // 1. Collect all descendants (leaf-first order)
+        let descendants = self.collect_descendants(instance_id).await?;
+
+        if !descendants.is_empty() {
+            info!(
+                "Cascade delete: instance {} has {} descendants",
+                instance_id,
+                descendants.len()
+            );
+        }
+
+        // 2. Delete descendants leaf-first (each goes through full cleanup)
+        for desc_id in &descendants {
+            if let Err(e) = self.delete_single_instance(*desc_id).await {
+                warn!(
+                    "Failed to cascade-delete descendant instance {}: {}",
+                    desc_id, e
+                );
+                // Continue deleting other descendants
+            }
+        }
+
+        // 3. Delete the target instance itself
+        self.delete_single_instance(instance_id).await
+    }
+
+    // ============================================================================
+    // Topology Query Methods
+    // ============================================================================
+
+    /// Get direct child instances of a given parent
+    pub async fn get_children(&self, instance_id: u32) -> Result<Vec<Instance>> {
+        let rows: Vec<InstanceRow> = sqlx::query_as(
+            r#"
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
+                FROM instances
+                WHERE parent_id = ?
+                ORDER BY instance_id ASC
+                "#,
+        )
+        .bind(instance_id as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(build_instance_from_row)
+            .collect::<Result<Vec<_>>>()
+    }
+
+    /// Get full topology tree starting from all root instances (Station)
+    ///
+    /// Returns a flat list of topology nodes with parent_id for tree reconstruction.
+    pub async fn get_topology_tree(&self) -> Result<Vec<TopologyNode>> {
+        let rows: Vec<(u32, String, String, Option<u32>)> = sqlx::query_as(
+            r#"
+            SELECT instance_id, instance_name, product_name, parent_id
+            FROM instances
+            ORDER BY parent_id NULLS FIRST, instance_id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(instance_id, instance_name, product_name, parent_id)| TopologyNode {
+                    instance_id,
+                    instance_name,
+                    product_name,
+                    parent_id,
+                },
+            )
+            .collect())
     }
 }
 

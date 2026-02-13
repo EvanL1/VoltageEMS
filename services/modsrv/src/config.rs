@@ -111,6 +111,9 @@ struct InstanceRecord {
     #[column(not_null)]
     product_name: String,
 
+    /// Parent instance ID for topology hierarchy (NULL for root instances like Station)
+    parent_id: Option<u32>,
+
     properties: Option<String>, // JSON TEXT
 
     #[column(default = "CURRENT_TIMESTAMP")]
@@ -318,6 +321,10 @@ pub struct InstanceCore {
     /// Associated product name
     pub product_name: String,
 
+    /// Parent instance ID for topology hierarchy (None for root instances)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<u32>,
+
     /// Instance properties (key-value pairs supporting multiple types)
     #[serde(default)]
     pub properties: HashMap<String, serde_json::Value>,
@@ -372,6 +379,10 @@ pub struct CreateInstanceRequest {
     /// Product name
     pub product_name: String,
 
+    /// Parent instance ID for topology hierarchy (None for root instances like Station)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<u32>,
+
     /// Instance properties (supports multiple types: numbers, strings, etc.)
     #[serde(default)]
     pub properties: HashMap<String, serde_json::Value>,
@@ -379,6 +390,17 @@ pub struct CreateInstanceRequest {
 
 /// Product hierarchy using tuples (following CLAUDE.md)
 pub type ProductHierarchy = Vec<(String, Option<String>)>;
+
+/// Topology tree node for hierarchical instance display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "swagger-ui", derive(ToSchema))]
+pub struct TopologyNode {
+    pub instance_id: u32,
+    pub instance_name: String,
+    pub product_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<u32>,
+}
 
 // Note: For point role (M/A), use voltage_model::PointRole
 // For point type (T/S/C/A), use voltage_model::PointType
@@ -489,6 +511,7 @@ impl ModsrvQueries {
             instance_id,
             instance_name,
             product_name,
+            parent_id,
             properties
         FROM instances
     "#;
@@ -499,6 +522,7 @@ impl ModsrvQueries {
             instance_id,
             instance_name,
             product_name,
+            parent_id,
             properties
         FROM instances
         WHERE instance_id = ?

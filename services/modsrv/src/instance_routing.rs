@@ -550,17 +550,48 @@ mod tests {
         instance_id: u32,
         instance_name: &str,
         product_name: &str,
+        parent_id: Option<u32>,
     ) {
         let req = crate::product_loader::CreateInstanceRequest {
             instance_id,
             instance_name: instance_name.to_string(),
             product_name: product_name.to_string(),
+            parent_id,
             properties: HashMap::new(),
         };
         manager
             .create_instance(req)
             .await
             .expect("Failed to create instance");
+    }
+
+    /// Setup standard hierarchy: Station(1) -> ESS(2), returns ESS instance_id
+    async fn setup_hierarchy(manager: &InstanceManager<voltage_rtdb::MemoryRtdb>) -> u32 {
+        let station_req = crate::product_loader::CreateInstanceRequest {
+            instance_id: 1,
+            instance_name: "station_root".to_string(),
+            product_name: "Station".to_string(),
+            parent_id: None,
+            properties: HashMap::new(),
+        };
+        manager
+            .create_instance(station_req)
+            .await
+            .expect("Failed to create Station");
+
+        let ess_req = crate::product_loader::CreateInstanceRequest {
+            instance_id: 2,
+            instance_name: "ess_parent".to_string(),
+            product_name: "ESS".to_string(),
+            parent_id: Some(1),
+            properties: HashMap::new(),
+        };
+        manager
+            .create_instance(ess_req)
+            .await
+            .expect("Failed to create ESS");
+
+        2
     }
 
     // Helper: Create a test channel in the database
@@ -583,8 +614,9 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        // Create instance (using built-in Battery product)
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        // Setup hierarchy: Station -> ESS, then create Battery under ESS
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Create channel (required for routing FK)
         create_test_channel(&pool, 3001, "test_channel").await;
@@ -613,7 +645,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Try to create measurement routing with Control type (invalid)
         let request = crate::dto::SinglePointRoutingRequest {
@@ -637,7 +670,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Create unbound routing (all channel fields are None, enabled=true so we can verify)
         let request = crate::dto::SinglePointRoutingRequest {
@@ -666,8 +700,9 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        // Use PCS product which has action points
-        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+        // Setup hierarchy and use PCS product which has action points
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 2001, "pcs_test", "PCS", Some(ess_id)).await;
 
         // Create channel
         create_test_channel(&pool, 3002, "test_channel_2").await;
@@ -695,7 +730,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 2001, "pcs_test", "PCS", Some(ess_id)).await;
 
         // Try to create action routing with Telemetry type (invalid)
         let request = crate::dto::SinglePointRoutingRequest {
@@ -721,7 +757,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create routing first
@@ -751,7 +788,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Try to delete non-existent routing
         let rows_affected = manager.delete_measurement_routing(1001, 999).await.unwrap();
@@ -766,7 +804,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create routing (enabled)
@@ -828,7 +867,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create valid routing row
@@ -853,7 +893,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create routing row with non-existent measurement point
@@ -880,8 +921,9 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        // Use PCS which has both measurement and action points
-        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+        // Setup hierarchy and use PCS which has both measurement and action points
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 2001, "pcs_test", "PCS", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create measurement routing
