@@ -525,7 +525,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             running: self.is_running(),
             total_rules: rules.len(),
             enabled_rules: enabled_count,
-            tick_interval_ms: DEFAULT_TICK_MS,
+            tick_interval_ms: self.tick_ms,
         }
     }
 

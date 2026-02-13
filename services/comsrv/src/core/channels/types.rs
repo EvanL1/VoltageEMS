@@ -78,6 +78,19 @@ impl ConnectionState {
     }
 }
 
+impl From<crate::protocols::core::traits::ConnectionState> for ConnectionState {
+    fn from(protocol_state: crate::protocols::core::traits::ConnectionState) -> Self {
+        use crate::protocols::core::traits::ConnectionState as P;
+        match protocol_state {
+            P::Connected => Self::Connected,
+            P::Connecting => Self::Connecting,
+            P::Reconnecting => Self::Retrying,
+            P::Disconnected => Self::Disconnected,
+            P::Error => Self::Failed,
+        }
+    }
+}
+
 impl std::fmt::Display for ConnectionState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -276,6 +289,18 @@ pub enum ChannelCommand {
         value: f64,
         timestamp: i64,
     },
+    /// Batch control command (multiple YK points in one send)
+    BatchControl {
+        command_id: String,
+        points: Vec<(u32, f64)>,
+        timestamp: i64,
+    },
+    /// Batch adjustment command (multiple YT points in one send)
+    BatchAdjustment {
+        command_id: String,
+        points: Vec<(u32, f64)>,
+        timestamp: i64,
+    },
 }
 
 /// Batch telemetry data for channel transmission
@@ -419,5 +444,112 @@ mod tests {
         assert!(!ConnectionState::Disconnected.is_connected());
         assert!(ConnectionState::Disconnected.can_retry());
         assert!(!ConnectionState::Failed.can_retry());
+    }
+
+    #[test]
+    fn test_connection_state_u8_roundtrip() {
+        // Verify as_u8 → from_u8 roundtrip for all variants
+        let states = [
+            ConnectionState::Uninitialized,
+            ConnectionState::Initializing,
+            ConnectionState::Connecting,
+            ConnectionState::Connected,
+            ConnectionState::Disconnected,
+            ConnectionState::Retrying,
+            ConnectionState::Closed,
+            ConnectionState::Failed,
+        ];
+        for state in states {
+            let u8_val = state.as_u8();
+            let roundtripped = ConnectionState::from_u8(u8_val);
+            assert_eq!(
+                state, roundtripped,
+                "Roundtrip failed for {:?} (u8={})",
+                state, u8_val
+            );
+        }
+    }
+
+    #[test]
+    fn test_connection_state_from_u8_invalid() {
+        // Invalid u8 values should map to Failed
+        assert_eq!(ConnectionState::from_u8(8), ConnectionState::Failed);
+        assert_eq!(ConnectionState::from_u8(255), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn test_connection_state_from_protocol_state() {
+        use crate::protocols::core::traits::ConnectionState as P;
+
+        // Verify the From<ProtocolConnectionState> mapping
+        assert_eq!(
+            ConnectionState::from(P::Connected),
+            ConnectionState::Connected
+        );
+        assert_eq!(
+            ConnectionState::from(P::Connecting),
+            ConnectionState::Connecting
+        );
+        assert_eq!(
+            ConnectionState::from(P::Reconnecting),
+            ConnectionState::Retrying
+        );
+        assert_eq!(
+            ConnectionState::from(P::Disconnected),
+            ConnectionState::Disconnected
+        );
+        assert_eq!(ConnectionState::from(P::Error), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn test_connection_state_display() {
+        assert_eq!(ConnectionState::Connected.to_string(), "CONNECTED");
+        assert_eq!(ConnectionState::Disconnected.to_string(), "DISCONNECTED");
+        assert_eq!(ConnectionState::Failed.to_string(), "FAILED");
+        assert_eq!(ConnectionState::Retrying.to_string(), "RETRYING");
+    }
+
+    #[test]
+    fn test_protocol_value_null() {
+        let v = ProtocolValue::Null;
+        assert!(v.is_null());
+        assert_eq!(v.as_f64(), None);
+        assert_eq!(v.as_i64(), None);
+        assert_eq!(v.as_bool(), None);
+        assert_eq!(v.as_string(), "");
+    }
+
+    #[test]
+    fn test_protocol_value_string_conversions() {
+        let v = ProtocolValue::from("true");
+        assert_eq!(v.as_bool(), Some(true));
+
+        let v = ProtocolValue::from("false");
+        assert_eq!(v.as_bool(), Some(false));
+
+        let v = ProtocolValue::from("42");
+        assert_eq!(v.as_i64(), Some(42));
+        assert_eq!(v.as_f64(), Some(42.0));
+
+        let v = ProtocolValue::from("not_a_number");
+        assert_eq!(v.as_i64(), None);
+        assert_eq!(v.as_f64(), None);
+        assert_eq!(v.as_bool(), None);
+    }
+
+    #[test]
+    fn test_protocol_value_u16_u32_bounds() {
+        let v = ProtocolValue::from(65535i64);
+        assert_eq!(v.as_u16(), Some(65535));
+
+        let v = ProtocolValue::from(65536i64);
+        assert_eq!(v.as_u16(), None); // overflow
+
+        let v = ProtocolValue::from(-1i64);
+        assert_eq!(v.as_u16(), None); // negative
+        assert_eq!(v.as_u32(), None); // negative
+
+        let v = ProtocolValue::from(u32::MAX as i64);
+        assert_eq!(v.as_u32(), Some(u32::MAX));
     }
 }

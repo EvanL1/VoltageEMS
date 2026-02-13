@@ -73,43 +73,7 @@ pub enum ComSrvError {
 /// Result type alias for Communication Service
 pub type Result<T> = std::result::Result<T, ComSrvError>;
 
-// ============================================================================
-// Backward Compatibility Aliases (deprecated, will be removed)
-// ============================================================================
-
 impl ComSrvError {
-    // Legacy constructors for backward compatibility
-    #[deprecated(note = "Use DataError instead")]
-    pub fn serialization(msg: impl Into<String>) -> Self {
-        ComSrvError::DataError(format!("Serialization: {}", msg.into()))
-    }
-
-    #[deprecated(note = "Use DataError instead")]
-    pub fn data_conversion(msg: impl Into<String>) -> Self {
-        ComSrvError::DataError(format!("Conversion: {}", msg.into()))
-    }
-
-    #[deprecated(note = "Use DataError instead")]
-    pub fn invalid_data(msg: impl Into<String>) -> Self {
-        ComSrvError::DataError(format!("Invalid: {}", msg.into()))
-    }
-
-    #[deprecated(note = "Use DataError instead")]
-    pub fn parsing(msg: impl Into<String>) -> Self {
-        ComSrvError::DataError(format!("Parsing: {}", msg.into()))
-    }
-
-    #[deprecated(note = "Use ProtocolError instead")]
-    pub fn modbus(msg: impl Into<String>) -> Self {
-        ComSrvError::ProtocolError(format!("Modbus: {}", msg.into()))
-    }
-
-    #[deprecated(note = "Use StorageError instead")]
-    pub fn redis(msg: impl Into<String>) -> Self {
-        ComSrvError::StorageError(format!("Redis: {}", msg.into()))
-    }
-
-    // Current constructors
     pub fn config(msg: impl Into<String>) -> Self {
         ComSrvError::ConfigError(msg.into())
     }
@@ -631,58 +595,6 @@ mod tests {
         let err = ComSrvError::not_connected();
         assert!(matches!(err, ComSrvError::ConnectionError(_)));
         assert!(err.to_string().contains("Not connected"));
-    }
-
-    // ========================================================================
-    // Deprecated constructor tests (for backward compatibility coverage)
-    // ========================================================================
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_serialization() {
-        let err = ComSrvError::serialization("failed");
-        assert!(matches!(err, ComSrvError::DataError(_)));
-        assert!(err.to_string().contains("Serialization"));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_data_conversion() {
-        let err = ComSrvError::data_conversion("type mismatch");
-        assert!(matches!(err, ComSrvError::DataError(_)));
-        assert!(err.to_string().contains("Conversion"));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_invalid_data() {
-        let err = ComSrvError::invalid_data("corrupt");
-        assert!(matches!(err, ComSrvError::DataError(_)));
-        assert!(err.to_string().contains("Invalid"));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_parsing() {
-        let err = ComSrvError::parsing("syntax error");
-        assert!(matches!(err, ComSrvError::DataError(_)));
-        assert!(err.to_string().contains("Parsing"));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_modbus() {
-        let err = ComSrvError::modbus("exception 0x02");
-        assert!(matches!(err, ComSrvError::ProtocolError(_)));
-        assert!(err.to_string().contains("Modbus"));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_redis() {
-        let err = ComSrvError::redis("connection lost");
-        assert!(matches!(err, ComSrvError::StorageError(_)));
-        assert!(err.to_string().contains("Redis"));
     }
 
     // ========================================================================
