@@ -23,7 +23,7 @@
 
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
 
 // ========== Instance Point Type Constants ==========
 
@@ -46,6 +46,18 @@ pub mod instance_point_type {
 /// 32-byte aligned for cache-line friendliness.
 /// Uses atomic operations for lock-free concurrent access.
 ///
+/// # Seqlock Protocol
+///
+/// Uses the upper 32 bits of `flags` as a seqlock sequence counter to guarantee
+/// consistent reads across all fields. This prevents torn reads when the same
+/// slot is written multiple times within the same millisecond (where timestamp
+/// alone cannot distinguish writes).
+///
+/// - **Writer**: increments sequence to odd (write-in-progress), writes data,
+///   increments sequence to even (write-complete).
+/// - **Reader**: reads sequence, reads data, re-reads sequence. If both reads
+///   match and the value is even, the data is consistent.
+///
 /// # Safety (shared memory usage)
 ///
 /// This struct is `#[repr(C)]` to guarantee a deterministic field layout
@@ -59,9 +71,16 @@ pub struct PointSlot {
     timestamp: AtomicU64,
     /// Raw value (as bits)
     raw_bits: AtomicU64,
-    /// Flags: bit 0 = dirty, bits 1-7 = quality
+    /// Flags layout:
+    /// - bits 0:    dirty flag (1 = modified since last flush)
+    /// - bits 1-7:  quality code (reserved)
+    /// - bits 32-63: seqlock sequence counter (odd = write in progress)
     flags: AtomicU64,
 }
+
+/// Seqlock sequence counter occupies the upper 32 bits of `flags`.
+/// Each write cycle increments it twice: once before (odd) and once after (even).
+const SEQ_INCREMENT: u64 = 1u64 << 32;
 
 const _: () = assert!(std::mem::size_of::<PointSlot>() == 32);
 
@@ -106,30 +125,42 @@ impl PointSlot {
         f64::from_bits(self.raw_bits.load(Ordering::Relaxed))
     }
 
-    /// Maximum retry attempts for load_consistent before returning possibly stale data
+    /// Maximum retry attempts for `load_consistent` before returning possibly stale data.
     ///
-    /// Under extreme write contention, we prefer returning potentially stale data
-    /// over infinite spinning which could cause rule execution delays.
-    const MAX_CONSISTENCY_RETRIES: u32 = 1000;
+    /// Must be large enough to handle bursts of rapid writes with multiple
+    /// concurrent readers. Under extreme cache-line contention on AArch64,
+    /// each retry can take 100-500ns. 32768 retries bounds worst-case
+    /// spinning to ~3-16ms, acceptable for SCADA rule execution while being
+    /// virtually impossible to exhaust in production (where protocol I/O
+    /// between writes makes retries almost never exceed single digits).
+    const MAX_CONSISTENCY_RETRIES: u32 = 32_768;
 
-    /// Load all point data with consistency guarantee (seqlock-style)
+    /// Load all point data with consistency guarantee (seqlock read protocol).
     ///
     /// This method ensures that the returned (value, raw, timestamp) tuple is consistent:
     /// - The value and raw correspond to the same write as the timestamp
-    /// - No "torn read" where timestamp is new but value is old
+    /// - No "torn read" where some fields are from different write cycles
     ///
     /// ## Algorithm
     ///
-    /// Uses double-check pattern similar to seqlock:
-    /// 1. Read timestamp with Acquire ordering (establishes happens-before with Release write)
-    /// 2. Read value and raw with Relaxed ordering (visible due to Acquire above)
-    /// 3. Read timestamp again with Acquire ordering
-    /// 4. If timestamps match, data is consistent; otherwise retry
+    /// 1. Read flags (Relaxed) to get sequence counter
+    /// 2. If sequence is odd (write in progress), spin and retry
+    /// 3. **fence(SeqCst)** — full memory barrier (`dmb ish` on ARM)
+    /// 4. Read value, raw, timestamp (Relaxed)
+    /// 5. **fence(SeqCst)** — full memory barrier
+    /// 6. Re-read flags (Relaxed)
+    /// 7. If sequence unchanged, data is consistent; otherwise retry
     ///
-    /// ## Performance
+    /// ## Memory Ordering (pure fence-based, AArch64-safe)
     ///
-    /// In the common case (no concurrent write), this is 2 Acquire loads + 2 Relaxed loads.
-    /// Under contention, it may retry up to MAX_CONSISTENCY_RETRIES times.
+    /// All individual atomic operations use `Relaxed` ordering. Cross-address
+    /// ordering is enforced entirely by explicit `fence(SeqCst)` barriers,
+    /// which compile to `dmb ish` (full barrier) on AArch64. This follows
+    /// the Linux kernel seqlock pattern (`smp_rmb()`/`smp_wmb()` between
+    /// sequence counter operations and data access).
+    ///
+    /// On x86 (TSO), `fence(SeqCst)` compiles to `mfence` and Relaxed
+    /// loads/stores compile to plain `mov`.
     ///
     /// ## Returns
     ///
@@ -137,26 +168,45 @@ impl PointSlot {
     /// Note: If max retries exceeded, returns latest values which may be inconsistent
     #[inline]
     pub fn load_consistent(&self) -> (f64, f64, u64) {
-        // Retry loop for concurrent write detection with bounded iterations
         for _ in 0..Self::MAX_CONSISTENCY_RETRIES {
-            // Step 1: Read timestamp with Acquire ordering
-            // This ensures we see all writes that happened before the Release store
-            let ts1 = self.timestamp.load(Ordering::Acquire);
+            // Step 1: Read sequence counter (Relaxed — fence below handles ordering)
+            let flags1 = self.flags.load(Ordering::Relaxed);
+            let seq1 = flags1 >> 32;
 
-            // Step 2: Read value and raw (Relaxed is safe after Acquire)
+            // Step 2: Odd sequence = write in progress, retry immediately
+            if seq1 & 1 != 0 {
+                std::hint::spin_loop();
+                continue;
+            }
+
+            // Step 3: FULL BARRIER (dmb ish on ARM):
+            // Ensures data loads below cannot return values that were stored
+            // BEFORE the even sequence was published. Without this fence,
+            // AArch64 can reorder loads from different addresses, allowing
+            // the reader to see stale data for some fields.
+            fence(Ordering::SeqCst);
+
+            // Step 4: Read data fields (Relaxed — fence-enclosed)
             let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
             let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
+            let ts = self.timestamp.load(Ordering::Relaxed);
 
-            // Step 3: Re-read timestamp to detect concurrent write
-            let ts2 = self.timestamp.load(Ordering::Acquire);
+            // Step 5: FULL BARRIER:
+            // Ensures ALL data loads above complete before re-reading the
+            // sequence counter. Without this, the second seq read could be
+            // speculatively executed before data loads, defeating the check.
+            fence(Ordering::SeqCst);
 
-            // Step 4: If timestamps match, data is consistent
-            if ts1 == ts2 {
-                return (value, raw, ts1);
+            // Step 6: Re-read sequence counter
+            let flags2 = self.flags.load(Ordering::Relaxed);
+            let seq2 = flags2 >> 32;
+
+            // Step 7: If sequence unchanged, data is from a single write cycle
+            if seq1 == seq2 {
+                return (value, raw, ts);
             }
 
             // Concurrent write detected, retry
-            // In practice, this loop rarely iterates more than once
             std::hint::spin_loop();
         }
 
@@ -165,47 +215,97 @@ impl PointSlot {
             "load_consistent exceeded {} retries, returning possibly stale data",
             Self::MAX_CONSISTENCY_RETRIES
         );
-        let value = f64::from_bits(self.value_bits.load(Ordering::Acquire));
-        let raw = f64::from_bits(self.raw_bits.load(Ordering::Acquire));
-        let ts = self.timestamp.load(Ordering::Acquire);
+        fence(Ordering::SeqCst);
+        let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
+        let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
+        let ts = self.timestamp.load(Ordering::Relaxed);
         (value, raw, ts)
     }
 
-    /// Load all point data with consistency guarantee, returning None if read during write
+    /// Load all point data with consistency guarantee, returning None if read during write.
     ///
-    /// Non-blocking variant that returns None instead of retrying indefinitely.
+    /// Non-blocking variant that returns None instead of retrying.
     /// Useful when caller prefers to skip stale data rather than wait.
+    ///
+    /// Uses the same fence-based AArch64-safe ordering as `load_consistent()`.
     ///
     /// ## Returns
     ///
     /// - `Some((value, raw, timestamp))` - consistent read
-    /// - `None` - concurrent write detected (caller should retry later or use old value)
+    /// - `None` - write in progress or concurrent write detected
     #[inline]
     pub fn try_load_consistent(&self) -> Option<(f64, f64, u64)> {
-        let ts1 = self.timestamp.load(Ordering::Acquire);
+        let flags1 = self.flags.load(Ordering::Relaxed);
+        let seq1 = flags1 >> 32;
+
+        if seq1 & 1 != 0 {
+            return None;
+        }
+
+        fence(Ordering::SeqCst);
+
         let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
         let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
-        let ts2 = self.timestamp.load(Ordering::Acquire);
+        let ts = self.timestamp.load(Ordering::Relaxed);
 
-        if ts1 == ts2 {
-            Some((value, raw, ts1))
+        fence(Ordering::SeqCst);
+
+        let flags2 = self.flags.load(Ordering::Relaxed);
+        let seq2 = flags2 >> 32;
+
+        if seq1 == seq2 {
+            Some((value, raw, ts))
         } else {
             None
         }
     }
 
-    /// Set all point data atomically (per-field)
+    /// Set all point data with seqlock write protocol.
     ///
-    /// Uses Release ordering on timestamp to ensure value/raw writes are visible
-    /// to readers that use Acquire ordering on timestamp. This prevents torn reads
-    /// where a reader might see a new timestamp but old value/raw values.
+    /// Increments the sequence counter to odd (write-in-progress), writes all
+    /// data fields, then increments to even (write-complete). Readers that
+    /// observe an odd sequence or a changed sequence will retry.
+    ///
+    /// # Memory Ordering (fence-based, AArch64-safe)
+    ///
+    /// Uses explicit `fence(SeqCst)` barriers between the sequence counter
+    /// and data stores, following the Linux kernel seqlock pattern (`smp_wmb`).
+    /// This guarantees cross-address ordering on weakly-ordered architectures:
+    ///
+    /// - **After odd increment**: fence ensures the odd sequence is globally
+    ///   visible before any data store. Readers will see "write in progress".
+    /// - **Before even increment**: fence ensures ALL data stores are globally
+    ///   visible before the even sequence is published.
+    ///
+    /// On x86 (TSO), `fence(SeqCst)` compiles to `mfence` and stores compile
+    /// to plain `mov`, so overhead is minimal on server hardware.
     #[inline]
     pub fn set(&self, value: f64, raw: f64, timestamp: u64) {
+        // Begin write: sequence → odd (signals write-in-progress)
+        // Relaxed: ordering enforced by the fence below, not by this RMW.
+        self.flags.fetch_add(SEQ_INCREMENT, Ordering::Relaxed);
+
+        // FULL BARRIER (dmb ish on ARM, mfence on x86):
+        // Ensures the odd sequence is globally visible to ALL cores
+        // before any data store. Prevents Store→Store reordering across
+        // different addresses (flags vs value_bits/raw_bits/timestamp).
+        fence(Ordering::SeqCst);
+
+        // Data stores — Relaxed because ordering is fence-enclosed.
         self.value_bits.store(value.to_bits(), Ordering::Relaxed);
         self.raw_bits.store(raw.to_bits(), Ordering::Relaxed);
-        // Release ensures preceding Relaxed stores are visible before this store
-        self.timestamp.store(timestamp, Ordering::Release);
-        // Set dirty flag (after Release, order doesn't matter for correctness)
+        self.timestamp.store(timestamp, Ordering::Relaxed);
+
+        // FULL BARRIER:
+        // Ensures ALL data stores are globally visible before the
+        // even sequence is published. Readers that see the even seq
+        // after their own fence(SeqCst) will see all data values.
+        fence(Ordering::SeqCst);
+
+        // End write: sequence → even (signals write-complete)
+        self.flags.fetch_add(SEQ_INCREMENT, Ordering::Relaxed);
+
+        // Dirty flag (advisory, not part of seqlock protocol)
         self.flags.fetch_or(1, Ordering::Relaxed);
     }
 
@@ -786,5 +886,215 @@ mod tests {
         assert_eq!(value, 0.0);
         assert_eq!(raw, 0.0);
         assert_eq!(ts, 0);
+    }
+
+    #[test]
+    fn test_load_consistent_same_timestamp() {
+        // Regression test: multiple writes with identical timestamp must still
+        // produce consistent reads via seqlock (not timestamp comparison).
+        let slot = PointSlot::new();
+        let same_ts = 1729000000u64;
+
+        slot.set(100.0, 1000.0, same_ts);
+        let (v1, r1, t1) = slot.load_consistent();
+        assert_eq!(v1, 100.0);
+        assert_eq!(r1, 1000.0);
+        assert_eq!(t1, same_ts);
+
+        // Second write with SAME timestamp but different values
+        slot.set(200.0, 2000.0, same_ts);
+        let (v2, r2, t2) = slot.load_consistent();
+        assert_eq!(v2, 200.0);
+        assert_eq!(r2, 2000.0);
+        assert_eq!(t2, same_ts);
+
+        // Verify try_load_consistent also works
+        slot.set(300.0, 3000.0, same_ts);
+        let result = slot.try_load_consistent();
+        assert!(result.is_some());
+        let (v3, r3, t3) = result.unwrap();
+        assert_eq!(v3, 300.0);
+        assert_eq!(r3, 3000.0);
+        assert_eq!(t3, same_ts);
+    }
+
+    #[test]
+    fn test_seqlock_dirty_flag_preserved() {
+        let slot = PointSlot::new();
+
+        // After set(), dirty flag should be set
+        slot.set(1.0, 1.0, 100);
+        assert!(slot.is_dirty());
+
+        // Clear dirty and verify
+        slot.clear_dirty();
+        assert!(!slot.is_dirty());
+
+        // After another set(), dirty should be set again
+        slot.set(2.0, 2.0, 200);
+        assert!(slot.is_dirty());
+
+        // load_consistent should still work after dirty flag operations
+        let (v, r, ts) = slot.load_consistent();
+        assert_eq!(v, 2.0);
+        assert_eq!(r, 2.0);
+        assert_eq!(ts, 200);
+    }
+
+    #[test]
+    fn test_seqlock_concurrent_read_write() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let slot = Arc::new(PointSlot::new());
+        let iterations = 100_000;
+
+        // Writer thread: rapidly writes with same timestamp
+        let writer_slot = Arc::clone(&slot);
+        let writer = thread::spawn(move || {
+            for i in 0..iterations {
+                let v = i as f64;
+                writer_slot.set(v, v * 10.0, 42); // same timestamp every time
+            }
+        });
+
+        // Reader thread: try_load_consistent to verify seqlock correctness
+        // (avoids fallback path which is not seqlock-protected)
+        let reader_slot = Arc::clone(&slot);
+        let reader = thread::spawn(move || {
+            let mut consistent_reads = 0u64;
+            for _ in 0..iterations {
+                if let Some((value, raw, _ts)) = reader_slot.try_load_consistent() {
+                    // value and raw must be from the same write: raw == value * 10.0
+                    assert!(
+                        (raw - value * 10.0).abs() < f64::EPSILON || value == 0.0,
+                        "Torn read detected: value={value}, raw={raw} (expected raw={})",
+                        value * 10.0
+                    );
+                    consistent_reads += 1;
+                }
+            }
+            consistent_reads
+        });
+
+        writer.join().unwrap();
+        let reads = reader.join().unwrap();
+        assert!(reads > 0, "No consistent reads achieved");
+    }
+
+    // ========== Additional Seqlock Tests (test-expert) ==========
+
+    #[test]
+    fn test_seqlock_sequence_counter_values() {
+        // Verify the sequence counter in flags[32:63] increments by 2 per write
+        let slot = PointSlot::new();
+
+        let get_seq = || slot.flags.load(Ordering::Relaxed) >> 32;
+
+        assert_eq!(get_seq(), 0, "initial sequence should be 0");
+        assert_eq!(get_seq() & 1, 0, "initial sequence should be even");
+
+        slot.set(1.0, 1.0, 100);
+        assert_eq!(get_seq(), 2, "after 1 write, sequence should be 2");
+
+        slot.set(2.0, 2.0, 200);
+        assert_eq!(get_seq(), 4, "after 2 writes, sequence should be 4");
+
+        slot.set(3.0, 3.0, 300);
+        assert_eq!(get_seq(), 6, "after 3 writes, sequence should be 6");
+    }
+
+    #[test]
+    fn test_seqlock_same_timestamp_rapid_writes() {
+        // Hammers the same slot with identical timestamps, validates consistency
+        let slot = PointSlot::new();
+        let ts = 9999u64;
+
+        for i in 0..1000 {
+            let v = i as f64 * 0.01;
+            let r = v + 1000.0;
+            slot.set(v, r, ts);
+
+            let (rv, rr, rt) = slot.load_consistent();
+            assert_eq!(rv, v, "value mismatch at iteration {}", i);
+            assert_eq!(rr, r, "raw mismatch at iteration {}", i);
+            assert_eq!(rt, ts, "timestamp mismatch at iteration {}", i);
+        }
+    }
+
+    #[test]
+    fn test_seqlock_multi_reader_stress() {
+        // Multiple reader threads + 1 writer: verifies the seqlock protocol itself
+        // is correct — uses try_load_consistent() which returns None instead of
+        // falling back to unprotected reads under extreme contention.
+        use std::sync::atomic::AtomicBool;
+        use std::sync::Arc;
+        use std::thread;
+
+        let slot = Arc::new(PointSlot::new());
+        let running = Arc::new(AtomicBool::new(true));
+
+        // Writer: encodes i into all fields with a known relationship
+        let w_slot = Arc::clone(&slot);
+        let w_running = Arc::clone(&running);
+        let writer = thread::spawn(move || {
+            let mut i = 0u64;
+            while w_running.load(Ordering::Relaxed) {
+                let v = i as f64;
+                w_slot.set(v, v * 10.0, i);
+                i += 1;
+            }
+            i
+        });
+
+        // 4 readers verify consistency using try_load_consistent (no fallback)
+        let readers: Vec<_> = (0..4)
+            .map(|_| {
+                let r_slot = Arc::clone(&slot);
+                let r_running = Arc::clone(&running);
+                thread::spawn(move || {
+                    let mut torn = 0u64;
+                    let mut consistent = 0u64;
+                    let mut skipped = 0u64;
+                    while r_running.load(Ordering::Relaxed) {
+                        // try_load_consistent returns None on contention instead
+                        // of falling back to an unprotected read
+                        if let Some((value, raw, ts)) = r_slot.try_load_consistent() {
+                            consistent += 1;
+                            if value != 0.0 {
+                                let raw_ok = (raw - value * 10.0).abs() < f64::EPSILON;
+                                let ts_ok = ts == value as u64;
+                                if !raw_ok || !ts_ok {
+                                    torn += 1;
+                                }
+                            }
+                        } else {
+                            skipped += 1;
+                        }
+                    }
+                    (consistent, skipped, torn)
+                })
+            })
+            .collect();
+
+        thread::sleep(std::time::Duration::from_millis(150));
+        running.store(false, Ordering::Relaxed);
+
+        let writes = writer.join().unwrap();
+        for handle in readers {
+            let (consistent, _skipped, torn) = handle.join().unwrap();
+            assert_eq!(
+                torn, 0,
+                "Torn reads detected: {torn}/{consistent} (seqlock protocol bug!)"
+            );
+        }
+        assert!(writes > 100, "Writer did too few iterations: {writes}");
+    }
+
+    #[test]
+    fn test_point_slot_layout_stability() {
+        // SHM binary compatibility: PointSlot must remain exactly 32 bytes, 32-byte aligned
+        assert_eq!(std::mem::size_of::<PointSlot>(), 32);
+        assert_eq!(std::mem::align_of::<PointSlot>(), 32);
     }
 }
