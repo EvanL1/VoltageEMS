@@ -42,7 +42,7 @@ tracing-appender = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
-serde_yaml = { workspace = true }
+serde_yml = { workspace = true }
 serde_json = { workspace = true }
 csv = { workspace = true }
 

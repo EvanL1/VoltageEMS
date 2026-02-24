@@ -26,10 +26,14 @@ pub struct SystemTimeProvider;
 
 impl TimeProvider for SystemTimeProvider {
     fn now_millis(&self) -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("System time before Unix epoch")
-            .as_millis() as i64
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => d.as_millis() as i64,
+            Err(_) => {
+                // Clock before UNIX epoch (NTP fault, VM snapshot, etc.) — return 0
+                // rather than panicking, since panic=abort would kill the process.
+                0
+            },
+        }
     }
 }
 

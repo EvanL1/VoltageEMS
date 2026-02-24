@@ -1395,7 +1395,18 @@ impl ModbusChannel {
                 for cmd in commands {
                     let result = match cmd.data_format {
                         DataFormat::UInt16 | DataFormat::Int16 | DataFormat::Bool => {
-                            let value = cmd.value.as_f64().unwrap_or(0.0) as u16;
+                            let raw = cmd.value.as_f64().unwrap_or(0.0);
+                            if raw < 0.0 || raw > u16::MAX as f64 {
+                                failures.push((
+                                    cmd.point_id,
+                                    format!(
+                                        "Value {raw} out of u16 range [0, 65535] for register {}",
+                                        cmd.register_address
+                                    ),
+                                ));
+                                continue;
+                            }
+                            let value = raw as u16;
                             client
                                 .write_06(cmd.slave_id, cmd.register_address, value)
                                 .await
@@ -2001,6 +2012,16 @@ impl ProtocolClient for ModbusChannel {
             // Encode and write register(s)
             let result = match modbus_addr.format {
                 DataFormat::UInt16 | DataFormat::Int16 => {
+                    if raw_value < 0.0 || raw_value > u16::MAX as f64 {
+                        failures.push((
+                            adj.id,
+                            format!(
+                                "Value {raw_value} out of u16 range [0, 65535] for register {}",
+                                modbus_addr.register
+                            ),
+                        ));
+                        continue;
+                    }
                     let value = raw_value as u16;
                     client
                         .write_06(modbus_addr.slave_id, modbus_addr.register, value)

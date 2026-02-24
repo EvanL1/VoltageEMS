@@ -4,7 +4,7 @@
 //! database back to YAML/CSV files.
 
 use anyhow::{Context, Result};
-use serde_yaml;
+use serde_yml;
 use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -80,7 +80,7 @@ impl ConfigExporter {
         // Wrap in Arc to match ComsrvConfig.channels type, use iter + cloned to keep channels for later iteration
         service_config.channels = channels.iter().map(|c| Arc::new(c.clone())).collect();
 
-        let yaml_content = serde_yaml::to_string(&service_config)?;
+        let yaml_content = serde_yml::to_string(&service_config)?;
         std::fs::write(&yaml_path, yaml_content)?;
         result.files_exported.push("comsrv.yaml".to_string());
 
@@ -143,7 +143,7 @@ impl ConfigExporter {
         // Export service configuration
         let service_config = self.export_modsrv_config().await?;
         let yaml_path = output_dir.join("modsrv.yaml");
-        let yaml_content = serde_yaml::to_string(&service_config)?;
+        let yaml_content = serde_yml::to_string(&service_config)?;
         std::fs::write(&yaml_path, yaml_content)?;
         result.files_exported.push("modsrv.yaml".to_string());
 
@@ -154,7 +154,7 @@ impl ConfigExporter {
             let records_count = products_hierarchy.len();
             let mut root: BTreeMap<String, BTreeMap<String, Option<String>>> = BTreeMap::new();
             root.insert("products".to_string(), products_hierarchy);
-            std::fs::write(&products_yaml, serde_yaml::to_string(&root)?)?;
+            std::fs::write(&products_yaml, serde_yml::to_string(&root)?)?;
             result.files_exported.push("products.yaml".to_string());
             result.records_exported += records_count;
         }
@@ -163,9 +163,9 @@ impl ConfigExporter {
         let instances = self.export_instances().await?;
         if !instances.is_empty() {
             let instances_yaml = output_dir.join("instances.yaml");
-            let instances_map: BTreeMap<String, serde_yaml::Value> =
-                BTreeMap::from_iter([("instances".to_string(), serde_yaml::to_value(&instances)?)]);
-            std::fs::write(&instances_yaml, serde_yaml::to_string(&instances_map)?)?;
+            let instances_map: BTreeMap<String, serde_yml::Value> =
+                BTreeMap::from_iter([("instances".to_string(), serde_yml::to_value(&instances)?)]);
+            std::fs::write(&instances_yaml, serde_yml::to_string(&instances_map)?)?;
             result.files_exported.push("instances.yaml".to_string());
             result.records_exported += instances.len();
         }
@@ -195,7 +195,7 @@ impl ConfigExporter {
         // Export service configuration
         let service_config = self.export_rules_config().await?;
         let yaml_path = output_dir.join("rules.yaml");
-        let yaml_content = serde_yaml::to_string(&service_config)?;
+        let yaml_content = serde_yml::to_string(&service_config)?;
         std::fs::write(&yaml_path, yaml_content)?;
         result.files_exported.push("rules.yaml".to_string());
 
@@ -206,7 +206,7 @@ impl ConfigExporter {
             let rules_yaml = output_dir.join("rules_list.yaml");
             let rules_map: BTreeMap<String, Vec<RuleConfig>> =
                 BTreeMap::from_iter([("rules".to_string(), rules_list)]); // Move, not clone
-            std::fs::write(&rules_yaml, serde_yaml::to_string(&rules_map)?)?;
+            std::fs::write(&rules_yaml, serde_yml::to_string(&rules_map)?)?;
             result.files_exported.push("rules_list.yaml".to_string());
             result.records_exported += rules_count;
         }
@@ -568,7 +568,7 @@ impl ConfigExporter {
 
     async fn export_instances(
         &self,
-    ) -> Result<BTreeMap<String, BTreeMap<String, serde_yaml::Value>>> {
+    ) -> Result<BTreeMap<String, BTreeMap<String, serde_yml::Value>>> {
         let mut instances = BTreeMap::new();
 
         let rows = sqlx::query(
@@ -586,12 +586,12 @@ impl ConfigExporter {
             let mut instance_data = BTreeMap::new();
             instance_data.insert(
                 "product_name".to_string(),
-                serde_yaml::Value::String(product_name),
+                serde_yml::Value::String(product_name),
             );
 
             if let Some(props_json) = properties_str {
                 if let Ok(props) = serde_json::from_str::<serde_json::Value>(&props_json) {
-                    if let Ok(yaml_props) = serde_yaml::to_value(props) {
+                    if let Ok(yaml_props) = serde_yml::to_value(props) {
                         instance_data.insert("properties".to_string(), yaml_props);
                     }
                 }

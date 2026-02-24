@@ -482,13 +482,13 @@ pub trait ConfigValidator: Send + Sync {
 /// ```
 pub struct GenericValidator<T> {
     config: Option<T>,
-    raw_yaml: Option<serde_yaml::Value>,
+    raw_yaml: Option<serde_yml::Value>,
 }
 
 impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
     /// Create validator from YAML value
-    pub fn from_yaml(yaml: serde_yaml::Value) -> Self {
-        let config = serde_yaml::from_value(yaml.clone()).ok();
+    pub fn from_yaml(yaml: serde_yml::Value) -> Self {
+        let config = serde_yml::from_value(yaml.clone()).ok();
         Self {
             config,
             raw_yaml: Some(yaml),
@@ -510,7 +510,7 @@ impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         // Deserialize directly from string to capture line/column information
-        let config = serde_yaml::from_str::<T>(&content).map_err(|e| {
+        let config = serde_yml::from_str::<T>(&content).map_err(|e| {
             if let Some(location) = e.location() {
                 anyhow::anyhow!(
                     "Configuration error in {}:{}:{}\n  {}",
@@ -525,7 +525,7 @@ impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
         })?;
 
         // Also parse as YAML Value for raw_yaml field
-        let yaml: serde_yaml::Value = serde_yaml::from_str(&content)?;
+        let yaml: serde_yml::Value = serde_yml::from_str(&content)?;
 
         Ok(Self {
             config: Some(config),
@@ -550,7 +550,7 @@ impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator
 
         if self.config.is_none() {
             if let Some(yaml) = &self.raw_yaml {
-                match serde_yaml::from_value::<T>(yaml.clone()) {
+                match serde_yml::from_value::<T>(yaml.clone()) {
                     Ok(_) => {
                         result.add_warning("Configuration parsed but not stored".to_string());
                     },

@@ -46,17 +46,17 @@ impl RoutingMaps {
 pub async fn load_routing_maps(sqlite_pool: &sqlx::SqlitePool) -> Result<RoutingMaps> {
     debug!("Loading routing maps from SQLite");
 
-    let keyspace = KeySpaceConfig::production();
+    let keyspace = KeySpaceConfig::production_cached();
     let mut maps = RoutingMaps::default();
 
     // Load C2M routing (measurement_routing table)
-    load_c2m_routes(sqlite_pool, &keyspace, &mut maps.c2m).await?;
+    load_c2m_routes(sqlite_pool, keyspace, &mut maps.c2m).await?;
 
     // Load M2C routing (action_routing table)
-    load_m2c_routes(sqlite_pool, &keyspace, &mut maps.m2c).await?;
+    load_m2c_routes(sqlite_pool, keyspace, &mut maps.m2c).await?;
 
     // Load C2C routing (channel_routing table) - optional
-    load_c2c_routes(sqlite_pool, &keyspace, &mut maps.c2c).await;
+    load_c2c_routes(sqlite_pool, keyspace, &mut maps.c2c).await;
 
     info!(
         "Routes loaded: {} C2M, {} M2C, {} C2C",

@@ -296,6 +296,7 @@ impl UnifiedWriter {
     /// Get PointSlot at index
     #[inline]
     fn slot_at(&self, index: usize) -> &PointSlot {
+        // SAFETY: Bounds check required before unsafe pointer arithmetic below
         assert!(
             index < self.slot_count,
             "slot_at: index {} out of bounds (slot_count={})",
@@ -346,6 +347,7 @@ impl UnifiedWriter {
     /// Direct write to slot index (for hot path)
     #[inline]
     pub fn set_direct(&self, slot: usize, value: f64, raw: f64, timestamp_ms: u64) {
+        // SAFETY: Bounds check required before unsafe pointer arithmetic below
         assert!(
             slot < self.slot_count,
             "set_direct: slot {} out of bounds (slot_count={})",
@@ -882,6 +884,7 @@ impl UnifiedReader {
     /// Get PointSlot at index
     #[inline]
     fn slot_at(&self, index: usize) -> &PointSlot {
+        // SAFETY: Bounds check required before unsafe pointer arithmetic below
         assert!(
             index < self.slot_count,
             "slot_at: index {} out of bounds (slot_count={})",

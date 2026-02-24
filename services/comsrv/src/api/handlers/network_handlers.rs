@@ -352,7 +352,7 @@ async fn find_network_files() -> std::io::Result<Vec<PathBuf>> {
         Ok(files)
     })
     .await
-    .expect("spawn_blocking panicked")
+    .map_err(|e| std::io::Error::other(format!("spawn_blocking: {e}")))?
 }
 
 /// Get interface status from /sys/class/net

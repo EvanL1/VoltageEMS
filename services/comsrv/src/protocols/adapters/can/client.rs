@@ -100,12 +100,12 @@ impl CanClient {
 
     /// Add CAN points to the client.
     /// This should be called after `new()` and before `connect()`.
-    pub fn add_points(&mut self, points: Vec<super::config::CanPoint>) {
+    pub fn add_points(&mut self, points: Vec<super::config::CanPoint>) -> Result<()> {
         #[cfg(feature = "tracing-support")]
         tracing::info!("Adding {} CAN points to client", points.len());
 
         let point_manager = Arc::get_mut(&mut self.point_manager)
-            .expect("PointManager should be uniquely owned before connect()");
+            .ok_or_else(|| GatewayError::Config("PointManager has multiple owners".into()))?;
 
         for point in points {
             #[cfg(feature = "tracing-support")]
@@ -123,6 +123,8 @@ impl CanClient {
 
         #[cfg(feature = "tracing-support")]
         tracing::info!("CAN points added successfully");
+
+        Ok(())
     }
 
     /// Start the CAN frame receive task.

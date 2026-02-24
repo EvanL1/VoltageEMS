@@ -1327,7 +1327,7 @@ channels:
 "#;
 
         let config: ComsrvConfig =
-            serde_yaml::from_str(yaml).expect("Should load minimal config with only channels");
+            serde_yml::from_str(yaml).expect("Should load minimal config with only channels");
 
         // Verify default values are used
         assert_eq!(config.service.name, "unnamed_service");
@@ -1349,7 +1349,7 @@ channels:
         let yaml = "{}";
 
         let config: ComsrvConfig =
-            serde_yaml::from_str(yaml).expect("Should load empty config with all defaults");
+            serde_yml::from_str(yaml).expect("Should load empty config with all defaults");
 
         // Verify all default values
         assert_eq!(config.service.name, "unnamed_service");

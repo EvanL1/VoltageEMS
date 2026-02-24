@@ -4,6 +4,7 @@
 //! All handler implementations are in separate handler modules.
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -330,6 +331,7 @@ pub fn create_api_routes_generic<R: Rtdb>(
         .route("/api/network/apply", post(apply_network_changes))
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
+        .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit
         .with_state(state)
 }
 

@@ -1684,7 +1684,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             });
 
         // 5. Create CanClient protocol
-        let mut protocol = create_can_channel(channel_id, can_interface, can_point_configs);
+        let mut protocol = create_can_channel(channel_id, can_interface, can_point_configs)?;
 
         // 6. Configure channel logging (returns handler for hot-reload)
         let log_handler = Self::configure_channel_logging(

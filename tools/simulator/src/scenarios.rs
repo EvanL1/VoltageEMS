@@ -195,7 +195,7 @@ pub fn load_scenario(path: &Path) -> Result<Scenario> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read scenario file: {:?}", path))?;
 
-    let scenario: Scenario = serde_yaml::from_str(&content)
+    let scenario: Scenario = serde_yml::from_str(&content)
         .with_context(|| format!("Failed to parse scenario file: {:?}", path))?;
 
     Ok(scenario)
@@ -231,7 +231,7 @@ faults:
   enabled: false
 "#;
 
-        let scenario: Scenario = serde_yaml::from_str(yaml).unwrap();
+        let scenario: Scenario = serde_yml::from_str(yaml).unwrap();
         assert_eq!(scenario.name, "Test Scenario");
         assert_eq!(scenario.devices.len(), 1);
         assert_eq!(scenario.devices[0].registers.len(), 2);
@@ -253,7 +253,7 @@ faults:
       delay_ms: 2000
 "#;
 
-        let scenario: Scenario = serde_yaml::from_str(yaml).unwrap();
+        let scenario: Scenario = serde_yml::from_str(yaml).unwrap();
         assert!(scenario.faults.enabled);
         assert_eq!(scenario.faults.scenarios.len(), 2);
     }

@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
@@ -291,7 +291,9 @@ impl HttpChannel {
     /// Set connection state
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state as u8, Ordering::SeqCst);
-        let _ = self.event_tx.send(DataEvent::ConnectionChanged(state));
+        if let Err(e) = self.event_tx.send(DataEvent::ConnectionChanged(state)) {
+            trace!("No subscribers for ConnectionChanged event: {e}");
+        }
     }
 
     /// Create HTTP client
@@ -302,11 +304,57 @@ impl HttpChannel {
             .map_err(|e| GatewayError::Protocol(format!("Failed to create HTTP client: {e}")))
     }
 
+    /// Validate URL to prevent SSRF attacks targeting internal services.
+    ///
+    /// Blocks loopback, link-local, and unspecified addresses. RFC 1918 private
+    /// addresses (10.x, 172.16-31.x, 192.168.x) are intentionally ALLOWED because
+    /// this is an industrial gateway that communicates with devices on private networks.
+    fn validate_url(url: &str) -> Result<()> {
+        let parsed = reqwest::Url::parse(url)
+            .map_err(|e| GatewayError::Config(format!("Invalid URL: {e}")))?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| GatewayError::Config("URL has no host".into()))?;
+        let host_lower = host.to_lowercase();
+
+        // Block well-known internal hostnames
+        if host_lower == "localhost" || host_lower == "0.0.0.0" {
+            return Err(GatewayError::Config(format!(
+                "SSRF protection: blocked request to internal address '{host}'"
+            )));
+        }
+
+        // IP-based checks: block loopback and link-local addresses
+        // Note: RFC 1918 private addresses are allowed (industrial devices live there)
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let is_blocked = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback()       // 127.0.0.0/8
+                    || v4.is_link_local()  // 169.254.0.0/16
+                    || v4.is_unspecified() // 0.0.0.0
+                },
+                std::net::IpAddr::V6(v6) => {
+                    v6.is_loopback()       // ::1
+                    || v6.is_unspecified() // ::
+                },
+            };
+            if is_blocked {
+                return Err(GatewayError::Config(format!(
+                    "SSRF protection: blocked request to internal address '{host}'"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Execute a single poll request
     async fn poll_once_internal(&self) -> Result<DataBatch> {
         let url = self.config.url.as_ref().ok_or_else(|| {
             GatewayError::Config("No URL configured for HTTP polling".to_string())
         })?;
+
+        // Note: SSRF validation is done once in connect(), not on every poll
 
         let client = self
             .client
@@ -347,6 +395,15 @@ impl HttpChannel {
                 status.as_u16(),
                 status.canonical_reason().unwrap_or("Unknown")
             )));
+        }
+
+        // Guard against oversized responses to prevent OOM
+        if let Some(len) = response.content_length() {
+            if len > 10 * 1024 * 1024 {
+                return Err(GatewayError::Protocol(format!(
+                    "Response too large: {len} bytes (max 10MB)"
+                )));
+            }
         }
 
         // Parse response body
@@ -415,6 +472,16 @@ impl HttpChannel {
             match request.send().await {
                 Ok(response) => {
                     if response.status().is_success() {
+                        // Guard against oversized responses to prevent OOM
+                        if let Some(len) = response.content_length() {
+                            if len > 10 * 1024 * 1024 {
+                                diagnostics.record_error(format!(
+                                    "Response too large: {len} bytes (max 10MB)"
+                                ));
+                                consecutive_failures += 1;
+                                continue;
+                            }
+                        }
                         match response.bytes().await {
                             Ok(body) => match mapper.parse(&body) {
                                 Ok(batch) => {
@@ -454,8 +521,14 @@ impl HttpChannel {
 
                     if consecutive_failures >= config.max_retries && config.max_retries > 0 {
                         state.store(ConnectionState::Error as u8, Ordering::SeqCst);
-                        let _ = event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Error));
-                        let _ = event_tx.send(DataEvent::Error(e.to_string()));
+                        if let Err(send_err) =
+                            event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Error))
+                        {
+                            trace!("No subscribers for ConnectionChanged event: {send_err}");
+                        }
+                        if let Err(send_err) = event_tx.send(DataEvent::Error(e.to_string())) {
+                            trace!("No subscribers for Error event: {send_err}");
+                        }
                     }
                 },
             }
@@ -488,6 +561,11 @@ impl ChannelRuntime for HttpChannel {
         }
 
         self.set_state(ConnectionState::Connecting);
+
+        // SSRF protection: validate URL once at connect time
+        if let Some(url) = &self.config.url {
+            Self::validate_url(url)?;
+        }
 
         // Load JSON mappings if not already loaded
         self.load_mapper().await?;

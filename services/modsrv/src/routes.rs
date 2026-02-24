@@ -3,6 +3,7 @@
 //! Central route definition for all Model Service API endpoints
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -213,5 +214,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         )
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
+        .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit
         .with_state(state)
 }

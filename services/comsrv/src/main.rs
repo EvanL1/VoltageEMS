@@ -348,7 +348,12 @@ async fn main() -> VoltageResult<()> {
 
     info!("Starting {} service", app_config.service.name);
     if app_config.redis.enabled {
-        info!("Redis storage enabled at: {}", app_config.redis.url);
+        // Strip credentials from Redis URL before logging to avoid leaking secrets
+        let safe_url = app_config.redis.url.find('@').map_or_else(
+            || app_config.redis.url.as_str(),
+            |pos| &app_config.redis.url[pos..],
+        );
+        info!("Redis storage enabled at: redis://*{}", safe_url);
     }
 
     // Start communication channels

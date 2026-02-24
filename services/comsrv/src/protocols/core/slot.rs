@@ -450,6 +450,7 @@ impl ShardedSlotStore {
     /// Only locks the shard containing this point.
     pub fn update(&self, point_id: u32, value: Value, quality: Quality) {
         if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
+            // SAFETY: With panic=abort, RwLock cannot be poisoned; expect is unreachable
             let shard = self.shards[shard_idx].read().expect("RwLock poisoned");
             shard[slot_idx].update(value, quality);
         }
@@ -458,6 +459,7 @@ impl ShardedSlotStore {
     /// Read a single point's value.
     pub fn read(&self, point_id: u32) -> Option<(Value, Quality, i64, u64)> {
         if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
+            // SAFETY: With panic=abort, RwLock cannot be poisoned; expect is unreachable
             let shard = self.shards[shard_idx].read().expect("RwLock poisoned");
             shard[slot_idx].read()
         } else {
@@ -472,6 +474,7 @@ impl ShardedSlotStore {
         let now = Utc::now();
 
         for (shard_idx, shard) in self.shards.iter().enumerate() {
+            // SAFETY: With panic=abort, RwLock cannot be poisoned; expect is unreachable
             let slots = shard.read().expect("RwLock poisoned");
             for (slot_idx, slot) in slots.iter().enumerate() {
                 if let Some((value, quality, ts_ms, _version)) = slot.read() {

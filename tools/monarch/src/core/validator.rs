@@ -155,7 +155,7 @@ impl ConfigValidator {
 
         // Load YAML and perform basic validation
         let yaml_content = std::fs::read_to_string(&yaml_path)?;
-        match serde_yaml::from_str::<serde_yaml::Value>(&yaml_content) {
+        match serde_yml::from_str::<serde_yml::Value>(&yaml_content) {
             Ok(_) => {
                 // Global config is valid YAML
                 Ok(validation_ok())

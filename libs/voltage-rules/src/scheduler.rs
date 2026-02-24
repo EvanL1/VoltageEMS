@@ -565,63 +565,33 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         let exec_key = voltage_rtdb::KeySpaceConfig::production_cached().rule_exec_key(rule_id);
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("System time should be after UNIX epoch")
-            .as_secs();
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
 
-        // Write rule_name for diagnostics
-        let _ = self
-            .rtdb
-            .hash_set(&exec_key, "rule_name", Bytes::from(rule_name.to_string()))
-            .await;
+        // Build all fields in a single Vec for one hash_mset round-trip
+        let mut fields: Vec<(String, Bytes)> = Vec::with_capacity(7);
+        fields.push(("rule_name".into(), Bytes::from(rule_name.to_string())));
+        fields.push(("timestamp".into(), Bytes::from(ts.to_string())));
+        fields.push(("success".into(), Bytes::from(result.success.to_string())));
 
-        // Write timestamp
-        let _ = self
-            .rtdb
-            .hash_set(&exec_key, "timestamp", Bytes::from(ts.to_string()))
-            .await;
-
-        // Write success flag
-        let _ = self
-            .rtdb
-            .hash_set(
-                &exec_key,
-                "success",
-                Bytes::from(result.success.to_string()),
-            )
-            .await;
-
-        // Write execution path as JSON
+        // JSON fields: skip if serialization fails
         if let Ok(path_json) = serde_json::to_string(&result.execution_path) {
-            let _ = self
-                .rtdb
-                .hash_set(&exec_key, "execution_path", Bytes::from(path_json))
-                .await;
+            fields.push(("execution_path".into(), Bytes::from(path_json)));
         }
-
-        // Write variable values as JSON
         if let Ok(vars_json) = serde_json::to_string(&result.variable_values) {
-            let _ = self
-                .rtdb
-                .hash_set(&exec_key, "variable_values", Bytes::from(vars_json))
-                .await;
+            fields.push(("variable_values".into(), Bytes::from(vars_json)));
         }
-
-        // Write node details as JSON
         if let Ok(details_json) = serde_json::to_string(&result.node_details) {
-            let _ = self
-                .rtdb
-                .hash_set(&exec_key, "node_details", Bytes::from(details_json))
-                .await;
+            fields.push(("node_details".into(), Bytes::from(details_json)));
         }
 
-        // Write error if present
-        let error_str = result.error.clone().unwrap_or_default();
-        let _ = self
-            .rtdb
-            .hash_set(&exec_key, "error", Bytes::from(error_str))
-            .await;
+        fields.push((
+            "error".into(),
+            Bytes::from(result.error.clone().unwrap_or_default()),
+        ));
 
-        // Set 24h TTL to prevent Redis memory leak from accumulating exec keys
+        // Single hash_mset call + TTL = 2 RTT instead of 8
+        let _ = self.rtdb.hash_mset(&exec_key, fields).await;
         let _ = self.rtdb.expire(&exec_key, 86400).await;
 
         debug!("Written rule execution result to Redis: {}", rule_id);

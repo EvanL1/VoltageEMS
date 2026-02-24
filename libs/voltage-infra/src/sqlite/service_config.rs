@@ -213,7 +213,7 @@ pub async fn migrate_yaml_to_db(
 
     // Read YAML file
     let yaml_content = std::fs::read_to_string(yaml_path)?;
-    let yaml_value: serde_yaml::Value = serde_yaml::from_str(&yaml_content)?;
+    let yaml_value: serde_yml::Value = serde_yml::from_str(&yaml_content)?;
 
     // Create database if not exists
     if !db_path.exists() {
@@ -228,14 +228,14 @@ pub async fn migrate_yaml_to_db(
     loader.init_schema().await?;
 
     // Flatten and store configuration
-    if let serde_yaml::Value::Mapping(map) = yaml_value {
+    if let serde_yml::Value::Mapping(map) = yaml_value {
         for (key, value) in map {
             if let Some(key_str) = key.as_str() {
                 let (value_str, value_type) = match value {
-                    serde_yaml::Value::Bool(b) => (b.to_string(), "boolean"),
-                    serde_yaml::Value::Number(n) => (n.to_string(), "number"),
-                    serde_yaml::Value::String(s) => (s.clone(), "string"),
-                    serde_yaml::Value::Mapping(_) | serde_yaml::Value::Sequence(_) => {
+                    serde_yml::Value::Bool(b) => (b.to_string(), "boolean"),
+                    serde_yml::Value::Number(n) => (n.to_string(), "number"),
+                    serde_yml::Value::String(s) => (s.clone(), "string"),
+                    serde_yml::Value::Mapping(_) | serde_yml::Value::Sequence(_) => {
                         (serde_json::to_string(&value)?, "json")
                     },
                     _ => continue,

@@ -633,15 +633,22 @@ impl ChannelLogHandler for ChannelFileLogHandler {
                 values, group_id, ..
             } => {
                 // Point values: output multiple lines, one per type
-                for line in self.format_point_values_by_type(values) {
-                    let formatted = self.format_with_group_id(*group_id, &line);
-                    self.write_log(channel_id, &formatted);
-                }
+                let lines = self.format_point_values_by_type(values);
+                // File I/O: avoid blocking tokio worker thread
+                tokio::task::block_in_place(|| {
+                    for line in lines {
+                        let formatted = self.format_with_group_id(*group_id, &line);
+                        self.write_log(channel_id, &formatted);
+                    }
+                });
                 return; // Already handled, skip the generic write_log below
             },
         };
 
-        self.write_log(channel_id, &line);
+        // File I/O: avoid blocking tokio worker thread
+        tokio::task::block_in_place(|| {
+            self.write_log(channel_id, &line);
+        });
     }
 
     fn set_log_level(&self, level: &str) {
@@ -698,7 +705,7 @@ mod tests {
         assert_eq!(FileLogLevel::parse(Some("DEBUG")), FileLogLevel::Debug);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_file_log_handler() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let handler = ChannelFileLogHandler::new(temp_dir.path())

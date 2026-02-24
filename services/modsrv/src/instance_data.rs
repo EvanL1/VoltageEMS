@@ -331,9 +331,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 match tokio::time::timeout(Duration::from_millis(100), notifier_lock.lock()).await {
                     Ok(mut guard) => {
                         if let Some(pt) = voltage_model::PointType::from_u8(ctx.target_point_type) {
-                            let _ = guard
+                            let result = guard
                                 .notify(ctx.target_channel_id, pt, ctx.target_point_id)
                                 .await;
+                            if result.fallback_used {
+                                warn!(
+                                    "UDS notify degraded to fallback for ch={} pt={:?} point={}",
+                                    ctx.target_channel_id, pt, ctx.target_point_id
+                                );
+                            }
                         }
                     },
                     Err(_) => {

@@ -64,8 +64,8 @@ pub struct RedisDataStore<R: Rtdb> {
     point_configs: DashMap<u32, Arc<Vec<PointConfig>>>,
     /// Single broadcast sender for all subscribers (avoids clone * N)
     event_sender: DataEventSender,
-    /// KeySpace configuration
-    key_config: KeySpaceConfig,
+    /// KeySpace configuration (cached static ref to avoid repeated allocation)
+    key_config: &'static KeySpaceConfig,
     /// Flush task handle for cleanup (uses RwLock for interior mutability)
     flush_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     /// Shutdown signal for flush task
@@ -84,15 +84,21 @@ impl<R: Rtdb> RedisDataStore<R> {
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         // Create single broadcast channel - all subscribers share this sender
         let (event_sender, _) = tokio::sync::broadcast::channel(1024);
+        // 24h TTL on written keys: prevents stale data after service crash/restart.
+        // TTL is refreshed every 5 minutes by WriteBuffer's throttled expire logic.
+        let wb_config = WriteBufferConfig {
+            key_ttl_seconds: Some(86400),
+            ..WriteBufferConfig::default()
+        };
         Self {
             rtdb,
             routing_cache,
-            write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
+            write_buffer: Arc::new(WriteBuffer::new(wb_config)),
             shared_writer: None,
             channel_index: None,
             point_configs: DashMap::new(),
             event_sender,
-            key_config: KeySpaceConfig::production(),
+            key_config: KeySpaceConfig::production_cached(),
             flush_handle: RwLock::new(None),
             shutdown_notify: Arc::new(Notify::new()),
         }
@@ -316,18 +322,35 @@ impl<R: Rtdb> RedisDataStore<R> {
     }
 
     /// Read all points for a channel from Redis.
+    ///
+    /// Uses `tokio::join!` to parallelize 4 hash_get_all calls (one per PointType),
+    /// reducing latency from 4 sequential RTTs to 1 concurrent RTT.
     pub async fn read_all(&self, channel_id: u32) -> ProtocolResult<DataBatch> {
         let mut batch = DataBatch::default();
 
-        for point_type in [
-            PointType::Telemetry,
-            PointType::Signal,
-            PointType::Control,
-            PointType::Adjustment,
-        ] {
-            let key = self.key_config.channel_key(channel_id, point_type);
+        let key_t = self
+            .key_config
+            .channel_key(channel_id, PointType::Telemetry);
+        let key_s = self.key_config.channel_key(channel_id, PointType::Signal);
+        let key_c = self.key_config.channel_key(channel_id, PointType::Control);
+        let key_a = self
+            .key_config
+            .channel_key(channel_id, PointType::Adjustment);
 
-            if let Ok(values) = self.rtdb.hash_get_all(&key).await {
+        let (r_t, r_s, r_c, r_a) = tokio::join!(
+            self.rtdb.hash_get_all(&key_t),
+            self.rtdb.hash_get_all(&key_s),
+            self.rtdb.hash_get_all(&key_c),
+            self.rtdb.hash_get_all(&key_a),
+        );
+
+        for (point_type, result) in [
+            (PointType::Telemetry, r_t),
+            (PointType::Signal, r_s),
+            (PointType::Control, r_c),
+            (PointType::Adjustment, r_a),
+        ] {
+            if let Ok(values) = result {
                 for (point_id_str, value_bytes) in values {
                     let value_str = String::from_utf8_lossy(&value_bytes);
                     if let (Ok(point_id), Ok(value)) =

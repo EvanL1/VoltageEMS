@@ -371,7 +371,7 @@ impl ConfigSyncer {
         let yaml_content = std::fs::read_to_string(&global_yaml_path)
             .with_context(|| format!("Failed to read {:?}", global_yaml_path))?;
         let yaml_config: JsonValue =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse global.yaml")?;
+            serde_yml::from_str(&yaml_content).context("Failed to parse global.yaml")?;
 
         // Start transaction
         let db_file = self.db_path.join("voltage.db");
@@ -421,7 +421,7 @@ impl ConfigSyncer {
         let yaml_content = std::fs::read_to_string(&yaml_path)
             .with_context(|| format!("Failed to read {:?}", yaml_path))?;
         let comsrv_config: ComsrvConfig =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse comsrv.yaml")?;
+            serde_yml::from_str(&yaml_content).context("Failed to parse comsrv.yaml")?;
 
         // Convert to JsonValue for database storage (avoiding double parsing)
         let mut yaml_config =
@@ -565,9 +565,9 @@ impl ConfigSyncer {
         let yaml_content = std::fs::read_to_string(&yaml_path)
             .with_context(|| format!("Failed to read {:?}", yaml_path))?;
         let _modsrv_config: ModsrvConfig =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse modsrv.yaml")?;
+            serde_yml::from_str(&yaml_content).context("Failed to parse modsrv.yaml")?;
 
-        let yaml_config = serde_yaml::from_str::<JsonValue>(&yaml_content)
+        let yaml_config = serde_yml::from_str::<JsonValue>(&yaml_content)
             .context("Failed to parse modsrv.yaml as JSON")?;
 
         // Initialize schema if needed (creates database file if not exists)
@@ -974,7 +974,7 @@ impl ConfigSyncer {
         let mut count = 0;
 
         let yaml_content = std::fs::read_to_string(instances_path)?;
-        let instances_data: JsonValue = serde_yaml::from_str(&yaml_content)?;
+        let instances_data: JsonValue = serde_yml::from_str(&yaml_content)?;
 
         // Support both array format (recommended) and legacy object format
         if let Some(instances_array) = instances_data.get("instances").and_then(|v| v.as_array()) {
@@ -1404,7 +1404,7 @@ impl ConfigSyncer {
                 },
                 Some("yaml") | Some("yml") => {
                     let yaml_content = std::fs::read_to_string(&path)?;
-                    serde_yaml::from_str(&yaml_content)?
+                    serde_yml::from_str(&yaml_content)?
                 },
                 _ => continue, // Skip non-JSON/YAML files
             };

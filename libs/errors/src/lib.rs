@@ -397,8 +397,8 @@ impl From<serde_json::Error> for VoltageError {
     }
 }
 
-impl From<serde_yaml::Error> for VoltageError {
-    fn from(err: serde_yaml::Error) -> Self {
+impl From<serde_yml::Error> for VoltageError {
+    fn from(err: serde_yml::Error) -> Self {
         Self::Deserialization(err.to_string())
     }
 }

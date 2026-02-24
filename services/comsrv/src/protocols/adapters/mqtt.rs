@@ -454,7 +454,7 @@ impl ChannelRuntime for MqttChannel {
         let mapper = self
             .mapper
             .clone()
-            .expect("Mapper should be loaded at this point");
+            .ok_or_else(|| GatewayError::Config("MQTT mapper not loaded".into()))?;
         let channel_id = self.channel_id;
         let state = Arc::new(AtomicU8::new(ConnectionState::Connecting as u8));
         let state_clone = state.clone();

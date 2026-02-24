@@ -7,7 +7,7 @@ description = "Infrastructure layer for VoltageEMS (Redis, SQLite)"
 [features]
 default = ["redis", "sqlite"]
 redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
-sqlite = ["dep:sqlx", "dep:serde_yaml"]
+sqlite = ["dep:sqlx", "dep:serde_yml"]
 
 [dependencies]
 # Redis (optional)
@@ -17,7 +17,7 @@ bb8-redis = { workspace = true, optional = true }
 
 # SQLite (optional)
 sqlx = { workspace = true, optional = true }
-serde_yaml = { workspace = true, optional = true }
+serde_yml = { workspace = true, optional = true }
 
 # Local dependencies
 voltage-model = { path = "../voltage-model" }

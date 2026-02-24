@@ -230,7 +230,15 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                                 value: *value,
                                 timestamp: timestamp_ms / 1000,
                             },
-                            _ => unreachable!(),
+                            _ => {
+                                tracing::warn!(
+                                    "Unexpected point_type {:?} in write_channel_point",
+                                    point_type
+                                );
+                                return Err(AppError::bad_request(
+                                    "Only Control and Adjustment point types are supported",
+                                ));
+                            },
                         };
 
                         match tx.send(cmd).await {
@@ -366,7 +374,15 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                             points: direct_points,
                             timestamp: batch_ts / 1000,
                         },
-                        _ => unreachable!(),
+                        _ => {
+                            tracing::warn!(
+                                "Unexpected point_type {:?} in batch write_channel_point",
+                                point_type
+                            );
+                            return Err(AppError::bad_request(
+                                "Only Control and Adjustment point types are supported",
+                            ));
+                        },
                     };
                     if tx.send(cmd).await.is_err() {
                         tracing::warn!("Batch direct trigger failed Ch{}, Redis-only", channel_id);

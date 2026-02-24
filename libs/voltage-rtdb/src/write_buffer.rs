@@ -41,6 +41,10 @@ pub struct WriteBufferConfig {
     /// Maximum total pending keys before dropping oldest data (default: 10000)
     /// Prevents OOM when Redis is unreachable for extended periods
     pub max_pending_keys: usize,
+    /// Optional TTL in seconds for written keys (default: None = no expiry).
+    /// When set, refreshes key TTL periodically during flush cycles to prevent
+    /// stale keys from persisting after service crashes.
+    pub key_ttl_seconds: Option<i64>,
 }
 
 impl Default for WriteBufferConfig {
@@ -49,6 +53,7 @@ impl Default for WriteBufferConfig {
             flush_interval_ms: 20,
             max_fields_per_key: 1000,
             max_pending_keys: 10_000,
+            key_ttl_seconds: None,
         }
     }
 }
@@ -60,6 +65,7 @@ impl WriteBufferConfig {
             flush_interval_ms: 10,
             max_fields_per_key: 500,
             max_pending_keys: 10_000,
+            key_ttl_seconds: None,
         }
     }
 
@@ -69,6 +75,7 @@ impl WriteBufferConfig {
             flush_interval_ms: 50,
             max_fields_per_key: 2000,
             max_pending_keys: 20_000,
+            key_ttl_seconds: None,
         }
     }
 }
@@ -133,6 +140,8 @@ pub struct WriteBuffer {
     config: WriteBufferConfig,
     /// Statistics
     stats: WriteBufferStats,
+    /// Epoch seconds of last TTL refresh (throttled to avoid excess Redis calls)
+    last_expire_secs: AtomicU64,
 }
 
 impl WriteBuffer {
@@ -143,6 +152,7 @@ impl WriteBuffer {
             flush_notify: Arc::new(Notify::new()),
             config,
             stats: WriteBufferStats::default(),
+            last_expire_secs: AtomicU64::new(0),
         }
     }
 
@@ -368,6 +378,8 @@ impl WriteBuffer {
     /// Flush all pending data to Redis
     ///
     /// Returns the number of fields flushed.
+    /// When `key_ttl_seconds` is configured, periodically refreshes TTL on written keys
+    /// (throttled to every 5 minutes to minimize extra Redis calls).
     pub async fn flush<R>(&self, rtdb: &R) -> anyhow::Result<usize>
     where
         R: Rtdb,
@@ -378,9 +390,32 @@ impl WriteBuffer {
             return Ok(0);
         }
 
+        // Collect keys for TTL refresh before operations is consumed by pipeline
+        let ttl_keys: Vec<String> = if self.config.key_ttl_seconds.is_some() {
+            operations.iter().map(|(k, _)| k.clone()).collect()
+        } else {
+            Vec::new()
+        };
+
         let field_count: usize = operations.iter().map(|(_, fields)| fields.len()).sum();
 
         rtdb.pipeline_hash_mset(operations).await?;
+
+        // Refresh TTL on written keys (throttled to every 5 minutes)
+        if let Some(ttl) = self.config.key_ttl_seconds {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let last = self.last_expire_secs.load(Ordering::Relaxed);
+            if now.saturating_sub(last) >= 300 {
+                self.last_expire_secs.store(now, Ordering::Relaxed);
+                for key in &ttl_keys {
+                    let _ = rtdb.expire(key, ttl).await;
+                }
+                tracing::trace!(keys = ttl_keys.len(), ttl, "Refreshed TTL on flushed keys");
+            }
+        }
 
         self.stats.flush_count.fetch_add(1, Ordering::Relaxed);
         self.stats

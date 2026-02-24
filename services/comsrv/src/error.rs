@@ -173,8 +173,8 @@ impl From<serde_json::Error> for ComSrvError {
     }
 }
 
-impl From<serde_yaml::Error> for ComSrvError {
-    fn from(err: serde_yaml::Error) -> Self {
+impl From<serde_yml::Error> for ComSrvError {
+    fn from(err: serde_yml::Error) -> Self {
         ComSrvError::DataError(format!("YAML: {err}"))
     }
 }
@@ -618,8 +618,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_serde_yaml_error() {
-        let yaml_err = serde_yaml::from_str::<serde_yaml::Value>("invalid: yaml: :").unwrap_err();
+    fn test_from_serde_yml_error() {
+        let yaml_err = serde_yml::from_str::<serde_yml::Value>("invalid: yaml: :").unwrap_err();
         let err: ComSrvError = yaml_err.into();
         assert!(matches!(err, ComSrvError::DataError(_)));
         assert!(err.to_string().contains("YAML"));
