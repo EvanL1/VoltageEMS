@@ -1,7 +1,7 @@
 //! Configuration utilities for protocol channel construction.
 //!
 //! This module provides generic utilities for building protocol channels,
-//! without any application-layer concepts like "四遥" (Four Remotes).
+//! without any application-layer concepts like "Four Remotes" (telemetry, signaling, control, adjustment).
 //!
 //! # Design Principle
 //!

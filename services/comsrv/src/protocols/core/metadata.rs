@@ -3,9 +3,9 @@
 //! This module provides self-describing metadata for protocols and drivers,
 //! enabling dynamic discovery and configuration generation.
 
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::LazyLock;
 
 /// Parameter type for configuration options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,7 +266,7 @@ fn build_registry() -> ProtocolRegistry {
 }
 
 /// Global protocol registry instance.
-static PROTOCOL_REGISTRY: Lazy<ProtocolRegistry> = Lazy::new(build_registry);
+static PROTOCOL_REGISTRY: LazyLock<ProtocolRegistry> = LazyLock::new(build_registry);
 
 /// Get the global protocol registry.
 pub fn get_protocol_registry() -> &'static ProtocolRegistry {

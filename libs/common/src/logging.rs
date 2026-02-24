@@ -502,10 +502,6 @@ impl MakeWriter<'_> for ReloadableWriterHandle {
 struct LogRuntime {
     service_name: String,
     log_dir: PathBuf,
-    #[allow(dead_code)] // Kept for potential future use
-    file_level: Level,
-    #[allow(dead_code)] // Kept for potential future use
-    enable_json: bool,
 }
 
 static LOG_RUNTIME: OnceLock<Arc<Mutex<LogRuntime>>> = OnceLock::new();
@@ -714,8 +710,6 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     let runtime = LogRuntime {
         service_name: config.service_name.clone(),
         log_dir: config.log_dir.clone(),
-        file_level: config.file_level,
-        enable_json: config.enable_json,
     };
     let rt_store = LOG_RUNTIME.get_or_init(|| Arc::new(Mutex::new(runtime.clone())));
     if let Ok(mut slot) = rt_store.lock() {

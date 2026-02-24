@@ -47,6 +47,13 @@ use tokio::sync::broadcast;
 
 use async_trait::async_trait;
 
+// ============================================================================
+// Default timeout constants for OPC UA
+// ============================================================================
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_SESSION_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -79,19 +86,6 @@ pub enum OpcUaSecurityPolicy {
 }
 
 impl OpcUaSecurityPolicy {
-    /// Convert to opcua SecurityPolicy.
-    #[allow(dead_code)]
-    fn to_security_policy(self) -> SecurityPolicy {
-        match self {
-            Self::None => SecurityPolicy::None,
-            Self::Basic128Rsa15 => SecurityPolicy::Basic128Rsa15,
-            Self::Basic256 => SecurityPolicy::Basic256,
-            Self::Basic256Sha256 => SecurityPolicy::Basic256Sha256,
-            Self::Aes128Sha256RsaOaep => SecurityPolicy::Aes128Sha256RsaOaep,
-            Self::Aes256Sha256RsaPss => SecurityPolicy::Aes256Sha256RsaPss,
-        }
-    }
-
     /// Get the security policy URI string.
     fn to_uri(self) -> &'static str {
         match self {
@@ -285,9 +279,9 @@ impl OpcUaChannelConfig {
             security_policy: OpcUaSecurityPolicy::None,
             message_security_mode: OpcUaMessageSecurityMode::None,
             identity: OpcUaIdentity::Anonymous,
-            connect_timeout: Duration::from_secs(10),
-            session_timeout: Duration::from_secs(60),
-            request_timeout: Duration::from_secs(30),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            session_timeout: DEFAULT_SESSION_TIMEOUT,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
             subscription: SubscriptionConfig::default(),
             monitored_item: MonitoredItemConfig::default(),
             trust_server_certs: true,
@@ -519,11 +513,11 @@ fn default_app_name() -> String {
 }
 
 fn default_opcua_connect_timeout() -> u64 {
-    10000
+    DEFAULT_CONNECT_TIMEOUT.as_millis() as u64
 }
 
 fn default_session_timeout() -> u64 {
-    60000
+    DEFAULT_SESSION_TIMEOUT.as_millis() as u64
 }
 
 fn default_trust_certs() -> bool {
@@ -640,12 +634,6 @@ impl OpcUaChannel {
             .read()
             .map(|s| *s)
             .unwrap_or(ConnectionState::Error)
-    }
-
-    /// Record an error (lock-free).
-    #[allow(dead_code)]
-    fn record_error(&self, error: &str) {
-        self.diagnostics.record_error(error.to_string());
     }
 
     /// Find point config by ID.

@@ -3,6 +3,7 @@
 //! Provides reusable test fixtures, helper functions, and sample data builders
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
+#![allow(dead_code)] // Test scaffolding - not all helpers used in every test file
 
 use anyhow::Result;
 use common::redis::RedisClient;
@@ -16,15 +17,11 @@ use tempfile::TempDir;
 /// Test environment context containing all required resources
 pub struct TestEnv {
     pub pool: SqlitePool,
-    #[allow(dead_code)]
     pub redis_client: Arc<RedisClient>,
-    #[allow(dead_code)]
     pub temp_dir: TempDir,
-    #[allow(dead_code)]
     pub config: ModsrvConfig,
 }
 
-#[allow(dead_code)]
 impl TestEnv {
     /// Create a fully provisioned test environment
     ///
@@ -76,26 +73,22 @@ impl TestEnv {
     }
 
     /// Borrow the database connection pool
-    #[allow(dead_code)]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
     /// Borrow the Redis client
-    #[allow(dead_code)]
     pub fn redis(&self) -> &Arc<RedisClient> {
         &self.redis_client
     }
 
     /// Return the temporary directory path
-    #[allow(dead_code)]
     pub fn temp_dir(&self) -> PathBuf {
         self.temp_dir.path().to_path_buf()
     }
 }
 
 /// Initialize the test database schema
-#[allow(dead_code)]
 async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
     common::test_utils::schema::init_modsrv_schema(pool).await?;
 
@@ -140,7 +133,6 @@ async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
 }
 
 /// Create a test configuration
-#[allow(dead_code)]
 fn create_test_config() -> Result<ModsrvConfig> {
     use common::{ApiConfig, BaseServiceConfig, RedisConfig};
 
@@ -170,7 +162,6 @@ pub mod fixtures {
     use serde_json::json;
 
     /// Create a test product record
-    #[allow(dead_code)]
     pub async fn create_test_product(pool: &SqlitePool, product_name: &str) -> Result<()> {
         sqlx::query(
             r#"
@@ -188,7 +179,6 @@ pub mod fixtures {
     // Note: create_test_product_points() removed - product points are now compile-time constants
 
     /// Create test instance properties
-    #[allow(dead_code)]
     pub fn create_test_instance_properties() -> HashMap<String, serde_json::Value> {
         let mut props = HashMap::new();
         props.insert("capacity".to_string(), json!(100));
@@ -206,7 +196,6 @@ pub mod helpers {
     use super::*;
 
     /// Verify that an instance exists
-    #[allow(dead_code)]
     pub async fn assert_instance_exists(pool: &SqlitePool, instance_id: u16) -> Result<bool> {
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_id = ?)",
@@ -219,7 +208,6 @@ pub mod helpers {
     }
 
     /// Verify the existence of a Redis key
-    #[allow(dead_code)]
     pub async fn assert_redis_key_exists(redis: &RedisClient, key: &str) -> Result<bool> {
         // Attempt to fetch the key to confirm presence
         match redis.get::<String>(key).await {
@@ -229,7 +217,6 @@ pub mod helpers {
     }
 
     /// Clean up test data
-    #[allow(dead_code)]
     pub async fn cleanup_test_data(pool: &SqlitePool) -> Result<()> {
         sqlx::query("DELETE FROM instance_point_routings")
             .execute(pool)
@@ -279,7 +266,6 @@ pub mod routing {
     ///     // Use rtdb and routing_cache in tests
     /// }
     /// ```
-    #[allow(dead_code)]
     pub async fn setup_m2c_routing(
         m2c_routes: Vec<(&str, &str)>,
         instance_mappings: Vec<(&str, u32)>,
@@ -329,7 +315,6 @@ pub mod routing {
     ///     assert_instance_action(&rtdb, 23, 1, 12.3).await;
     /// }
     /// ```
-    #[allow(dead_code)]
     pub async fn assert_instance_action<R: Rtdb>(
         rtdb: &Arc<R>,
         instance_id: u32,

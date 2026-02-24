@@ -270,9 +270,8 @@ where
     ];
     redis.hash_mset(&product_key, fields).await?;
 
-    redis
-        .sadd(keyspace.product_index_key(), &product.product_name)
-        .await?;
+    let product_index = keyspace.product_index_key();
+    redis.sadd(&product_index, &product.product_name).await?;
 
     if let Some(parent) = &product.parent_name {
         let parent_key = keyspace.product_children_key(parent);
@@ -413,7 +412,7 @@ where
     }
 
     // 2. Initialize inst:{id}:A Hash with all action points set to 0
-    // 与 M 点保持一致：启动时预初始化，便于查询和验证 M2C 路由
+    // Consistent with M points: pre-initialize at startup for queries and M2C routing validation
     let a_key = keyspace.instance_action_key(instance_id);
     for action in actions {
         redis

@@ -123,15 +123,8 @@ impl ServiceConfigLoader {
         }
 
         // Get service-specific default port
-        let default_port = match self.service_name.as_str() {
-            "comsrv" => 6001,
-            "modsrv" => 6002,
-            "alarmsrv" => 6006,
-            "hissrv" => 6004,
-            "apigateway" => 6005,
-            "netsrv" => 6007,
-            _ => 6001, // Fallback default
-        };
+        let default_port = voltage_model::service_ports::default_port_for(&self.service_name)
+            .unwrap_or(voltage_model::service_ports::COMSRV_PORT);
 
         // Extract standard fields - only support dotted key format
         let port = config_map

@@ -451,7 +451,7 @@ fn format_current_time() -> String {
 }
 
 /// Format epoch seconds as a human-readable time string
-#[allow(dead_code)]
+#[cfg(test)]
 fn format_epoch_secs(epoch_secs: u64) -> String {
     // Calculate time components
     let secs_in_day = epoch_secs % 86400;

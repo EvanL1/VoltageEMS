@@ -1582,23 +1582,23 @@ mod tests {
     }
 
     // ========================================================================
-    // DI (Digital Input) 读取测试
+    // DI (Digital Input) Read Tests
     // ========================================================================
 
-    /// 测试单个 DI 引脚读取
+    /// Test single DI pin read
     #[tokio::test]
     async fn test_di_read_single_pin() {
         let shared = SharedMockDriver::new();
         let config =
             GpioChannelConfig::new().add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1));
 
-        // 预设输入值为 true
+        // Preset input value to true
         shared.set_pin_value(1, true);
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_di", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // poll_once() 读取所有引脚
+        // poll_once() reads all pins
         let result = ProtocolClient::poll_once(&mut gpio).await;
         assert!(result.is_success(), "poll should succeed");
 
@@ -1610,7 +1610,7 @@ mod tests {
         assert_eq!(point.value.as_bool(), Some(true), "DI should read true");
     }
 
-    /// 测试多个 DI 引脚读取
+    /// Test multiple DI pin read
     #[tokio::test]
     async fn test_di_read_multiple_pins() {
         let shared = SharedMockDriver::new();
@@ -1620,7 +1620,7 @@ mod tests {
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 19, 3))
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 20, 4));
 
-        // 预设不同的输入值: 1=true, 2=false, 3=true, 4=false
+        // Preset different input values: 1=true, 2=false, 3=true, 4=false
         shared.set_pin_value(1, true);
         shared.set_pin_value(2, false);
         shared.set_pin_value(3, true);
@@ -1635,7 +1635,7 @@ mod tests {
         let batch = result.data;
         assert_eq!(batch.len(), 4, "should have 4 data points");
 
-        // 验证各引脚值
+        // Verify each pin value
         let expected = [(1, true), (2, false), (3, true), (4, false)];
         for (point_id, expected_value) in expected {
             let point = batch.iter().find(|p| p.id == point_id);
@@ -1650,16 +1650,16 @@ mod tests {
         }
     }
 
-    /// 测试 DI active_low 反逻辑
+    /// Test DI active_low inverted logic
     #[tokio::test]
     async fn test_di_active_low() {
         let shared = SharedMockDriver::new();
 
-        // 创建 active_low 配置的 DI 引脚
+        // Create DI pin with active_low configuration
         let pin = GpioPinConfig::digital_input("gpiochip0", 17, 1).with_active_low(true);
         let config = GpioChannelConfig::new().add_pin(pin);
 
-        // 原始值为 true，active_low 应反转为 false
+        // Raw value is true, active_low should invert to false
         shared.set_pin_value(1, true);
 
         let mut gpio =
@@ -1676,7 +1676,7 @@ mod tests {
             "active_low: raw=true should become false"
         );
 
-        // 原始值为 false，active_low 应反转为 true
+        // Raw value is false, active_low should invert to true
         shared.set_pin_value(1, false);
         let result = ProtocolClient::poll_once(&mut gpio).await;
         let point = result.data.iter().next().expect("should have point");
@@ -1688,10 +1688,10 @@ mod tests {
     }
 
     // ========================================================================
-    // DO (Digital Output) 写入测试
+    // DO (Digital Output) Write Tests
     // ========================================================================
 
-    /// 测试多个 DO 引脚批量写入
+    /// Test batch writing to multiple DO pins
     #[tokio::test]
     async fn test_do_write_multiple_pins() {
         let shared = SharedMockDriver::new();
@@ -1703,7 +1703,7 @@ mod tests {
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_do_multi", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 批量写入: 101=true, 102=false, 103=true
+        // Batch write: 101=true, 102=false, 103=true
         let commands = vec![
             ControlCommand::latching(101, true),
             ControlCommand::latching(102, false),
@@ -1716,7 +1716,7 @@ mod tests {
         assert_eq!(result.success_count, 3, "all 3 writes should succeed");
         assert!(result.failures.is_empty(), "no failures expected");
 
-        // 验证写入的值
+        // Verify written values
         assert_eq!(
             shared.get_raw_value(101),
             Some(true),
@@ -1733,18 +1733,18 @@ mod tests {
             "DO 103 should be true"
         );
 
-        // 验证输出状态缓存
+        // Verify output state cache
         assert_eq!(gpio.read_output_state(101), Some(true));
         assert_eq!(gpio.read_output_state(102), Some(false));
         assert_eq!(gpio.read_output_state(103), Some(true));
     }
 
-    /// 测试 DO active_low 反逻辑
+    /// Test DO active_low inverted logic
     #[tokio::test]
     async fn test_do_active_low() {
         let shared = SharedMockDriver::new();
 
-        // 创建 active_low 配置的 DO 引脚
+        // Create DO pin with active_low configuration
         let pin = GpioPinConfig::digital_output("gpiochip0", 18, 101).with_active_low(true);
         let config = GpioChannelConfig::new().add_pin(pin);
 
@@ -1752,7 +1752,7 @@ mod tests {
             create_mock_gpio_with_shared_driver(config, 1, "test_do_active_low", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 写入 true，active_low 应反转为 false
+        // Write true, active_low should invert to false
         ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, true)])
             .await
             .unwrap();
@@ -1762,7 +1762,7 @@ mod tests {
             "active_low: write true should become raw false"
         );
 
-        // 写入 false，active_low 应反转为 true
+        // Write false, active_low should invert to true
         ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, false)])
             .await
             .unwrap();
@@ -1773,7 +1773,7 @@ mod tests {
         );
     }
 
-    /// 测试写入不存在的 DO 引脚
+    /// Test writing to nonexistent DO pin
     #[tokio::test]
     async fn test_do_write_nonexistent_pin() {
         let config =
@@ -1782,7 +1782,7 @@ mod tests {
         let mut gpio = create_mock_gpio(config, 1, "test_do_nonexistent");
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 写入不存在的引脚 999
+        // Write to nonexistent pin 999
         let result =
             ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(999, true)])
                 .await
@@ -1794,29 +1794,29 @@ mod tests {
     }
 
     // ========================================================================
-    // DI/DO 混合测试
+    // DI/DO Mixed Tests
     // ========================================================================
 
-    /// 测试 DI 和 DO 同时配置和操作
+    /// Test simultaneous DI and DO configuration and operation
     #[tokio::test]
     async fn test_di_do_mixed() {
         let shared = SharedMockDriver::new();
         let config = GpioChannelConfig::new()
-            // 2 个 DI
+            // 2 DI pins
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1))
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 18, 2))
-            // 2 个 DO
+            // 2 DO pins
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 19, 101))
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 20, 102));
 
-        // 预设 DI 值
+        // Preset DI values
         shared.set_pin_value(1, true);
         shared.set_pin_value(2, false);
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_mixed", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 写入 DO
+        // Write to DO pins
         ProtocolClient::write_control(
             &mut gpio,
             &[
@@ -1827,21 +1827,21 @@ mod tests {
         .await
         .unwrap();
 
-        // poll_once 应返回 DI + DO 反馈
+        // poll_once should return DI + DO feedback
         let result = ProtocolClient::poll_once(&mut gpio).await;
         let batch = result.data;
 
-        // 应该有 4 个点 (2 DI + 2 DO)
+        // Should have 4 points (2 DI + 2 DO)
         assert_eq!(batch.len(), 4, "should have 4 data points (2 DI + 2 DO)");
 
-        // 验证 DI 值
+        // Verify DI values
         let di1 = batch.iter().find(|p| p.id == 1).expect("DI 1");
         assert_eq!(di1.value.as_bool(), Some(true), "DI 1 should be true");
 
         let di2 = batch.iter().find(|p| p.id == 2).expect("DI 2");
         assert_eq!(di2.value.as_bool(), Some(false), "DI 2 should be false");
 
-        // 验证 DO 反馈
+        // Verify DO feedback
         let do101 = batch.iter().find(|p| p.id == 101).expect("DO 101");
         assert_eq!(
             do101.value.as_bool(),
@@ -1857,7 +1857,7 @@ mod tests {
         );
     }
 
-    /// 测试 DO 输出状态反馈
+    /// Test DO output state feedback
     #[tokio::test]
     async fn test_output_state_feedback() {
         let config = GpioChannelConfig::new()
@@ -1867,11 +1867,11 @@ mod tests {
         let mut gpio = create_mock_gpio(config, 1, "test_feedback");
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 初始状态: poll_once 应该返回默认值 (false)
+        // Initial state: poll_once should return default values (false)
         let result = ProtocolClient::poll_once(&mut gpio).await;
         assert_eq!(result.data.len(), 2, "should have 2 DO feedback points");
 
-        // 写入后再 poll
+        // Poll after writing
         ProtocolClient::write_control(
             &mut gpio,
             &[
@@ -1892,7 +1892,7 @@ mod tests {
             );
         }
 
-        // 再次写入不同的值
+        // Write a different value again
         ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, false)])
             .await
             .unwrap();

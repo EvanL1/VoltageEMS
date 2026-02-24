@@ -252,12 +252,12 @@ async fn perform_hot_reload<R: Rtdb + 'static>(
 
     // 3. Async connection (don't wait) using ChannelEntry's connect method
     // Fire-and-forget: connection is best-effort, errors are logged
-    drop(tokio::spawn(async move {
+    tokio::spawn(async move {
         match entry.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", id),
             Err(e) => tracing::warn!("Ch{} connect: {}", id, e),
         }
-    }));
+    });
 
     tracing::debug!("Ch{} reloaded", id);
     Ok("reloaded".to_string())
@@ -475,13 +475,13 @@ pub async fn create_channel_handler<R: Rtdb>(
                 // Spawn background connection to avoid failing API on initial connect error
                 // Fire-and-forget: connection is best-effort, errors are logged
                 let channel_id_for_log = channel_id;
-                drop(tokio::spawn(async move {
+                tokio::spawn(async move {
                     if let Err(e) = entry.connect().await {
                         tracing::warn!("Ch{} connect: {}", channel_id_for_log, e);
                     } else {
                         tracing::debug!("Ch{} connected", channel_id_for_log);
                     }
-                }));
+                });
                 "connecting".to_string()
             },
             Err(e) => {
@@ -1077,11 +1077,11 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
                 // Spawn background hot reload
                 // Fire-and-forget: hot reload is best-effort, errors are logged
                 let state_clone = state.clone();
-                drop(tokio::spawn(async move {
+                tokio::spawn(async move {
                     if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
                         tracing::error!("Ch{} hot reload: {}", id, e);
                     }
-                }));
+                });
 
                 "updated".to_string()
             },
@@ -1110,11 +1110,11 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
                 // Spawn background hot reload
                 // Fire-and-forget: hot reload is best-effort, errors are logged
                 let state_clone = state.clone();
-                drop(tokio::spawn(async move {
+                tokio::spawn(async move {
                     if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
                         tracing::error!("Ch{} hot reload: {}", id, e);
                     }
-                }));
+                });
 
                 "updated".to_string()
             },
@@ -1271,12 +1271,12 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
                 // Trigger asynchronous connection in background
                 // Fire-and-forget: connection is best-effort, errors are logged
                 let channel_id_for_log = id;
-                drop(tokio::spawn(async move {
+                tokio::spawn(async move {
                     match entry.connect().await {
                         Ok(_) => tracing::debug!("Ch{} connected", channel_id_for_log),
                         Err(e) => tracing::warn!("Ch{} connect: {}", channel_id_for_log, e),
                     }
-                }));
+                });
 
                 // Update database
                 if let Err(e) = sqlx::query("UPDATE channels SET enabled = ? WHERE channel_id = ?")

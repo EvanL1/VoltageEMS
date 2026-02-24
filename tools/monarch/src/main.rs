@@ -320,24 +320,40 @@ async fn main() -> Result<()> {
 
         // Service management commands (all use HTTP API)
         Commands::Channels { command } => {
-            let base_url = std::env::var("VOLTAGE_COMSRV_URL")
-                .unwrap_or_else(|_| "http://localhost:6001".to_string());
+            let base_url = std::env::var("VOLTAGE_COMSRV_URL").unwrap_or_else(|_| {
+                format!(
+                    "http://localhost:{}",
+                    voltage_model::service_ports::COMSRV_PORT
+                )
+            });
             channels::handle_command(command, &base_url).await?;
         },
         Commands::Models { command } => {
-            let base_url = std::env::var("VOLTAGE_MODSRV_URL")
-                .unwrap_or_else(|_| "http://localhost:6002".to_string());
+            let base_url = std::env::var("VOLTAGE_MODSRV_URL").unwrap_or_else(|_| {
+                format!(
+                    "http://localhost:{}",
+                    voltage_model::service_ports::MODSRV_PORT
+                )
+            });
             models::handle_command(command, &base_url).await?;
         },
         Commands::Rules { command } => {
-            // Rules merged into modsrv (port 6002)
-            let base_url = std::env::var("VOLTAGE_MODSRV_URL")
-                .unwrap_or_else(|_| "http://localhost:6002".to_string());
+            // Rules merged into modsrv
+            let base_url = std::env::var("VOLTAGE_MODSRV_URL").unwrap_or_else(|_| {
+                format!(
+                    "http://localhost:{}",
+                    voltage_model::service_ports::MODSRV_PORT
+                )
+            });
             rules::handle_command(command, &base_url).await?;
         },
         Commands::Rtdb { command } => {
-            let redis_url = std::env::var("VOLTAGE_REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+            let redis_url = std::env::var("VOLTAGE_REDIS_URL").unwrap_or_else(|_| {
+                format!(
+                    "redis://localhost:{}",
+                    voltage_model::service_ports::REDIS_PORT
+                )
+            });
             rtdb::handle_command(command, &redis_url).await?;
         },
         Commands::Services { command } => {

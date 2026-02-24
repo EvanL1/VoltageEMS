@@ -1,6 +1,6 @@
-//! 高频环形缓冲区 - T-Box 风格数据记录
+//! High-Frequency Ring Buffer - T-Box Style Data Recording
 //!
-//! 支持微秒级时间戳、Lock-free 写入、SharedMemory 跨进程访问。
+//! Supports microsecond timestamps, lock-free writes, and cross-process access via SharedMemory.
 
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -11,62 +11,62 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use memmap2::MmapMut;
 
-/// 魔数标识 "VOLTRING"
+/// Magic number identifier "VOLTRING"
 const MAGIC: u64 = 0x564F4C54_52494E47;
 const VERSION: u32 = 1;
 
 // ============================================================================
-// DataPoint - 数据点结构 (32 字节对齐)
+// DataPoint - Data Point Structure (32-byte aligned)
 // ============================================================================
 
-/// 高频采集数据点
+/// High-frequency acquisition data point
 ///
-/// 显式 32 字节对齐，确保：
-/// - 跨进程内存布局一致
-/// - 缓存行友好（两个点填满一个 64 字节缓存行）
-/// - 原子操作高效
+/// Explicitly 32-byte aligned to ensure:
+/// - Consistent cross-process memory layout
+/// - Cache-line friendly (two points fill one 64-byte cache line)
+/// - Efficient atomic operations
 ///
-/// 内存布局 (32 bytes total):
+/// Memory layout (32 bytes total):
 /// ```text
 /// offset 0:  timestamp_us (u64)  8 bytes
-/// offset 8:  value (f64)         8 bytes  <- f64 需要 8 字节对齐
-/// offset 16: channel_id (u32)    4 bytes  <- 协议通道 ID
-/// offset 20: instance_id (u32)   4 bytes  <- 业务设备 ID (通过路由映射)
+/// offset 8:  value (f64)         8 bytes  <- f64 requires 8-byte alignment
+/// offset 16: channel_id (u32)    4 bytes  <- Protocol channel ID
+/// offset 20: instance_id (u32)   4 bytes  <- Business device ID (via routing)
 /// offset 24: point_id (u32)      4 bytes
 /// offset 28: point_type (u8)     1 byte
 /// offset 29: quality (u8)        1 byte
-/// offset 30: _reserved ([u8;2])  2 bytes  <- 填充到 32 字节
+/// offset 30: _reserved ([u8;2])  2 bytes  <- Padded to 32 bytes
 /// ```
 #[repr(C, align(32))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DataPoint {
-    /// 微秒时间戳 (Unix epoch)
+    /// Microsecond timestamp (Unix epoch)
     pub timestamp_us: u64,
-    /// 数值（放在 offset 8 确保 8 字节对齐）
+    /// Value (placed at offset 8 to ensure 8-byte alignment)
     pub value: f64,
-    /// 通道 ID (协议层面，如 Modbus 连接 ID)
+    /// Channel ID (protocol level, e.g. Modbus connection ID)
     pub channel_id: u32,
-    /// 实例 ID (业务层面，如设备 ID，通过 RoutingCache C2M 映射获取)
+    /// Instance ID (business level, e.g. device ID, obtained via RoutingCache C2M mapping)
     pub instance_id: u32,
-    /// 点位 ID
+    /// Point ID
     pub point_id: u32,
-    /// 点位类型: 0=T(遥测), 1=S(信号), 2=C(控制), 3=A(调节)
+    /// Point type: 0=T(Telemetry), 1=S(Signal), 2=C(Control), 3=A(Adjustment)
     pub point_type: u8,
-    /// 质量码: 0=Good, 其他见协议定义
+    /// Quality code: 0=Good, others per protocol definition
     pub quality: u8,
-    /// 预留扩展空间
+    /// Reserved for future expansion
     pub _reserved: [u8; 2],
 }
 
 impl DataPoint {
-    /// 创建新的数据点（仅 channel 级别，instance_id = 0）
+    /// Create a new data point (channel level only, instance_id = 0)
     #[inline]
     pub fn new(channel_id: u32, point_type: u8, point_id: u32, value: f64, quality: u8) -> Self {
         Self {
             timestamp_us: current_timestamp_us(),
             value,
             channel_id,
-            instance_id: 0, // 需要通过路由映射填充
+            instance_id: 0, // Needs to be populated via routing mapping
             point_id,
             point_type,
             quality,
@@ -74,7 +74,7 @@ impl DataPoint {
         }
     }
 
-    /// 创建完整数据点（包含 channel 和 instance）
+    /// Create a full data point (including channel and instance)
     #[inline]
     pub fn new_full(
         channel_id: u32,
@@ -96,7 +96,7 @@ impl DataPoint {
         }
     }
 
-    /// 使用指定时间戳创建
+    /// Create with a specified timestamp
     #[inline]
     pub fn with_timestamp(
         timestamp_us: u64,
@@ -121,34 +121,34 @@ impl DataPoint {
 }
 
 // ============================================================================
-// RingBufferHeader - 缓冲区头部元数据 (64 字节)
+// RingBufferHeader - Buffer Header Metadata (64 bytes)
 // ============================================================================
 
-/// 环形缓冲区头部
+/// Ring buffer header
 ///
-/// 位于共享内存文件开头，包含元数据和原子写指针。
+/// Located at the beginning of the shared memory file, contains metadata and atomic write pointer.
 #[repr(C)]
 pub struct RingBufferHeader {
-    /// 魔数 "VOLTRING" (0x564F4C54_52494E47)
+    /// Magic number "VOLTRING" (0x564F4C54_52494E47)
     pub magic: u64,
-    /// 版本号
+    /// Version number
     pub version: u32,
-    /// 缓冲区容量（数据点数量）
+    /// Buffer capacity (number of data points)
     pub capacity: u32,
-    /// 写指针（原子，单调递增）
+    /// Write pointer (atomic, monotonically increasing)
     pub head: AtomicU64,
-    /// 总写入次数
+    /// Total write count
     pub total_writes: AtomicU64,
-    /// 数据保留时长（微秒）
+    /// Data retention duration (microseconds)
     pub retention_us: u64,
-    /// 创建时间（微秒时间戳）
+    /// Creation time (microsecond timestamp)
     pub created_at: u64,
-    /// 预留空间
+    /// Reserved space
     _reserved: [u8; 16],
 }
 
 impl RingBufferHeader {
-    /// 初始化头部
+    /// Initialize header
     fn init(&mut self, capacity: u32, retention_us: u64) {
         self.magic = MAGIC;
         self.version = VERSION;
@@ -160,47 +160,47 @@ impl RingBufferHeader {
         self._reserved = [0; 16];
     }
 
-    /// 验证头部有效性
+    /// Validate header integrity
     fn validate(&self) -> bool {
         self.magic == MAGIC && self.version == VERSION && self.capacity > 0
     }
 }
 
 // ============================================================================
-// HighFreqRingBuffer - Lock-free 环形缓冲区
+// HighFreqRingBuffer - Lock-free Ring Buffer
 // ============================================================================
 
-/// 高频环形缓冲区
+/// High-frequency ring buffer
 ///
-/// **单生产者**、多读者的 Lock-free 实现，支持：
-/// - O(1) 写入（原子 fetch_add 分配 slot）
-/// - 时间范围查询
-/// - 零拷贝内存映射
+/// **Single-producer**, multi-reader lock-free implementation, supporting:
+/// - O(1) writes (atomic fetch_add for slot allocation)
+/// - Time range queries
+/// - Zero-copy memory mapping
 ///
 /// # Safety Contract
 ///
-/// **写入端（`push`/`push_batch`）必须限制在单一线程调用。**
-/// 虽然 `fetch_add` 保证每次写入获得唯一 slot，但 `write_volatile`
-/// 对 32 字节的 `DataPoint` 不是原子操作。多线程同时 push 时，
-/// 读者可能观察到撕裂数据（torn read）。
+/// **The write side (`push`/`push_batch`) must be restricted to a single thread.**
+/// While `fetch_add` guarantees a unique slot per write, `write_volatile`
+/// is not atomic for 32-byte `DataPoint`. Concurrent pushes from multiple threads
+/// may cause readers to observe torn reads.
 ///
-/// 读取方法（`read_range`/`read_latest` 等）可安全从任意线程调用。
+/// Read methods (`read_range`/`read_latest` etc.) can be safely called from any thread.
 ///
-/// Debug 构建中，`push()` 会通过 `AtomicBool` 守卫检测并发调用违规。
+/// In debug builds, `push()` detects concurrent call violations via an `AtomicBool` guard.
 pub struct HighFreqRingBuffer {
-    /// 内存起始指针（保留用于 Debug 和未来扩展）
+    /// Memory start pointer (retained for Debug and future expansion)
     #[allow(dead_code)]
     data: NonNull<u8>,
-    /// 头部指针
+    /// Header pointer
     header: *mut RingBufferHeader,
-    /// 数据区指针
+    /// Data region pointer
     points: *mut DataPoint,
-    /// 容量
+    /// Capacity
     capacity: usize,
-    /// 是否拥有内存（保留用于未来独立内存分配场景）
+    /// Whether memory is owned (retained for future standalone memory allocation scenarios)
     #[allow(dead_code)]
     owned: bool,
-    /// Debug 模式下检测 push() 并发调用
+    /// Detects concurrent push() calls in debug mode
     #[cfg(debug_assertions)]
     push_guard: AtomicBool,
 }
@@ -213,26 +213,30 @@ pub struct HighFreqRingBuffer {
 unsafe impl Send for HighFreqRingBuffer {}
 
 // SAFETY: HighFreqRingBuffer can be safely shared between threads (&self) because:
-// - 读取方法仅使用 atomic load + read_volatile，多读者安全
-// - push() 的 slot 分配通过 atomic fetch_add 保证唯一性
-// - **前提条件**：push() 必须限制在单一生产者线程调用。
-//   write_volatile 对 32 字节 DataPoint 非原子，多生产者会导致读者观察到撕裂数据。
-//   Debug 构建中通过 AtomicBool 守卫检测违规。
+// - Read methods only use atomic load + read_volatile, safe for multiple readers
+// - push() slot allocation is guaranteed unique via atomic fetch_add
+// - **Precondition**: push() must be restricted to a single producer thread.
+//   write_volatile is not atomic for 32-byte DataPoint; multiple producers cause torn reads.
+//   Debug builds detect violations via AtomicBool guard.
 unsafe impl Sync for HighFreqRingBuffer {}
 
 impl HighFreqRingBuffer {
-    /// 从原始内存创建（内部使用）
+    /// Create from raw memory (internal use)
     ///
     /// # Safety
-    /// - `data` 必须指向有效的、足够大的内存区域
-    /// - 内存必须已正确初始化或将被初始化
+    /// - `data` must point to a valid, sufficiently large memory region
+    /// - Memory must be properly initialized or will be initialized
     unsafe fn from_raw(data: NonNull<u8>, capacity: usize, init: bool, retention_us: u64) -> Self {
+        // SAFETY (all operations below rely on the caller's contract):
+        // - data points to a valid region of size >= size_of::<RingBufferHeader>() + capacity * size_of::<DataPoint>()
+        // - header is at offset 0, points array starts at offset size_of::<RingBufferHeader>()
+        // - if init is true, caller guarantees exclusive write access for initialization
         let header = data.as_ptr() as *mut RingBufferHeader;
         let points = data.as_ptr().add(std::mem::size_of::<RingBufferHeader>()) as *mut DataPoint;
 
         if init {
             (*header).init(capacity as u32, retention_us);
-            // 清零数据区
+            // Zero out data region
             std::ptr::write_bytes(points, 0, capacity);
         }
 
@@ -247,19 +251,19 @@ impl HighFreqRingBuffer {
         }
     }
 
-    /// 写入单个数据点 (Lock-free, 单生产者)
+    /// Write a single data point (lock-free, single producer)
     ///
-    /// 使用原子 `fetch_add` 获取唯一写位置，然后 `write_volatile` 写入数据。
+    /// Uses atomic `fetch_add` to obtain a unique write position, then `write_volatile` to write data.
     ///
     /// # Safety Contract
     ///
-    /// **此方法必须限制在单一线程调用。** `write_volatile` 对 32 字节
-    /// `DataPoint` 不是原子操作，多线程同时调用会导致读者观察到撕裂数据。
+    /// **This method must be restricted to a single thread.** `write_volatile` is not atomic
+    /// for 32-byte `DataPoint`; concurrent calls from multiple threads cause torn reads.
     ///
-    /// Debug 构建中会通过 `AtomicBool` 守卫在运行时检测并发调用违规。
+    /// In debug builds, an `AtomicBool` guard detects concurrent call violations at runtime.
     #[inline]
     pub fn push(&self, point: DataPoint) {
-        // Debug 模式：检测是否有另一个线程正在 push
+        // Debug mode: detect if another thread is currently pushing
         #[cfg(debug_assertions)]
         {
             debug_assert!(
@@ -269,11 +273,17 @@ impl HighFreqRingBuffer {
             );
         }
 
+        // SAFETY: self.header was set in from_raw() from a valid NonNull pointer.
+        // fetch_add is atomic and returns a unique position per call.
         let pos =
             unsafe { (*self.header).head.fetch_add(1, Ordering::Relaxed) as usize % self.capacity };
+        // SAFETY: pos = head % capacity, so pos < capacity, meaning self.points.add(pos)
+        // is within the data region. write_volatile ensures the write is not elided.
+        // Single-producer contract guarantees no concurrent write to the same slot.
         unsafe {
             std::ptr::write_volatile(self.points.add(pos), point);
         }
+        // SAFETY: self.header is valid (set in from_raw()). Atomic operation is safe.
         unsafe {
             (*self.header).total_writes.fetch_add(1, Ordering::Relaxed);
         }
@@ -284,7 +294,7 @@ impl HighFreqRingBuffer {
         }
     }
 
-    /// 批量写入
+    /// Batch write
     #[inline]
     pub fn push_batch(&self, points: &[DataPoint]) {
         for point in points {
@@ -292,56 +302,60 @@ impl HighFreqRingBuffer {
         }
     }
 
-    /// 获取当前写位置
+    /// Get current write position
     #[inline]
     pub fn head(&self) -> u64 {
+        // SAFETY: self.header is valid (set in from_raw()). Atomic load is always safe.
         unsafe { (*self.header).head.load(Ordering::Relaxed) }
     }
 
-    /// 获取总写入次数
+    /// Get total write count
     #[inline]
     pub fn total_writes(&self) -> u64 {
+        // SAFETY: self.header is valid (set in from_raw()). Atomic load is always safe.
         unsafe { (*self.header).total_writes.load(Ordering::Relaxed) }
     }
 
-    /// 获取容量
+    /// Get capacity
     #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
-    /// 读取指定时间范围内的数据点
+    /// Read data points within a specified time range
     ///
-    /// 从最新数据向后遍历，返回 [start_us, end_us] 范围内的点。
+    /// Traverses backwards from the newest data, returning points within [start_us, end_us].
     pub fn read_range(&self, start_us: u64, end_us: u64) -> Vec<DataPoint> {
         let mut result = Vec::new();
         let head = self.head() as usize;
         let cap = self.capacity;
 
-        // 从最新位置向后遍历
+        // Traverse backwards from the newest position
         for i in 0..cap {
             let idx = (head.wrapping_sub(1).wrapping_sub(i)) % cap;
+            // SAFETY: idx = (...) % cap, so idx < capacity. self.points.add(idx) is within
+            // the data region. read_volatile ensures we see the latest written value.
             let point = unsafe { std::ptr::read_volatile(self.points.add(idx)) };
 
-            // 跳过未写入的槽位
+            // Skip unwritten slots
             if point.timestamp_us == 0 {
                 continue;
             }
 
-            // 时间范围检查
+            // Time range check
             if point.timestamp_us < start_us {
-                break; // 已超出范围，停止
+                break; // Out of range, stop
             }
             if point.timestamp_us <= end_us {
                 result.push(point);
             }
         }
 
-        result.reverse(); // 按时间升序
+        result.reverse(); // Sort by ascending time
         result
     }
 
-    /// 读取最近 N 个数据点
+    /// Read the latest N data points
     pub fn read_latest(&self, count: usize) -> Vec<DataPoint> {
         let mut result = Vec::with_capacity(count.min(self.capacity));
         let head = self.head() as usize;
@@ -349,6 +363,7 @@ impl HighFreqRingBuffer {
 
         for i in 0..count.min(cap) {
             let idx = (head.wrapping_sub(1).wrapping_sub(i)) % cap;
+            // SAFETY: idx = (...) % cap, so idx < capacity. Pointer is within data region.
             let point = unsafe { std::ptr::read_volatile(self.points.add(idx)) };
 
             if point.timestamp_us == 0 {
@@ -361,9 +376,9 @@ impl HighFreqRingBuffer {
         result
     }
 
-    /// 导出事件快照（碰撞检测风格）
+    /// Export event snapshot (collision detection style)
     ///
-    /// 返回事件时间前后指定微秒范围内的数据。
+    /// Returns data within the specified microsecond range before and after the event time.
     pub fn export_snapshot(
         &self,
         event_time_us: u64,
@@ -375,7 +390,7 @@ impl HighFreqRingBuffer {
         self.read_range(start, end)
     }
 
-    /// 按通道过滤读取
+    /// Read filtered by channel
     pub fn read_channel(&self, channel_id: u32, count: usize) -> Vec<DataPoint> {
         let mut result = Vec::with_capacity(count);
         let head = self.head() as usize;
@@ -386,6 +401,7 @@ impl HighFreqRingBuffer {
                 break;
             }
             let idx = (head.wrapping_sub(1).wrapping_sub(i)) % cap;
+            // SAFETY: idx = (...) % cap, so idx < capacity. Pointer is within data region.
             let point = unsafe { std::ptr::read_volatile(self.points.add(idx)) };
 
             if point.timestamp_us == 0 {
@@ -400,7 +416,7 @@ impl HighFreqRingBuffer {
         result
     }
 
-    /// 按实例 ID 过滤读取（业务设备视角）
+    /// Read filtered by instance ID (business device perspective)
     pub fn read_instance(&self, instance_id: u32, count: usize) -> Vec<DataPoint> {
         let mut result = Vec::with_capacity(count);
         let head = self.head() as usize;
@@ -411,6 +427,7 @@ impl HighFreqRingBuffer {
                 break;
             }
             let idx = (head.wrapping_sub(1).wrapping_sub(i)) % cap;
+            // SAFETY: idx = (...) % cap, so idx < capacity. Pointer is within data region.
             let point = unsafe { std::ptr::read_volatile(self.points.add(idx)) };
 
             if point.timestamp_us == 0 {
@@ -427,12 +444,12 @@ impl HighFreqRingBuffer {
 }
 
 // ============================================================================
-// SharedRingBuffer - 共享内存封装
+// SharedRingBuffer - Shared Memory Wrapper
 // ============================================================================
 
-/// 共享内存环形缓冲区
+/// Shared memory ring buffer
 ///
-/// 使用 mmap 映射文件，支持跨进程访问。
+/// Uses mmap file mapping, supports cross-process access.
 pub struct SharedRingBuffer {
     inner: HighFreqRingBuffer,
     _mmap: MmapMut,
@@ -440,10 +457,10 @@ pub struct SharedRingBuffer {
 }
 
 impl SharedRingBuffer {
-    /// 创建或打开共享内存环形缓冲区
+    /// Create or open shared memory ring buffer
     ///
-    /// - 如果文件不存在，创建并初始化
-    /// - 如果文件存在，验证头部后直接映射
+    /// - If file does not exist, creates and initializes it
+    /// - If file exists, validates header then maps directly
     pub fn create_or_open(
         path: impl AsRef<Path>,
         capacity: usize,
@@ -452,7 +469,7 @@ impl SharedRingBuffer {
         let path = path.as_ref();
         let size = Self::calculate_size(capacity);
 
-        // 确保父目录存在
+        // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -462,25 +479,29 @@ impl SharedRingBuffer {
             .read(true)
             .write(true)
             .create(true)
-            .truncate(false) // 保留现有数据，不截断
+            .truncate(false) // Preserve existing data, do not truncate
             .open(path)?;
 
-        // 设置文件大小
+        // Set file size
         file.set_len(size as u64)?;
 
-        // 创建内存映射
+        // SAFETY: File is opened with read+write and sized to calculate_size(capacity).
+        // mmap region is valid for the lifetime of the MmapMut.
         let mut mmap = unsafe { MmapMut::map_mut(&file)? };
         let data = NonNull::new(mmap.as_mut_ptr())
             .ok_or_else(|| std::io::Error::other("mmap returned null pointer"))?;
 
         let need_init = if exists {
-            // 验证现有文件
+            // SAFETY: data is non-null and the mmap region is at least size_of::<RingBufferHeader>()
+            // bytes (calculate_size includes header). Alignment is satisfied by page-aligned mmap.
             let header = unsafe { &*(data.as_ptr() as *const RingBufferHeader) };
             !header.validate() || header.capacity as usize != capacity
         } else {
             true
         };
 
+        // SAFETY: data is non-null, mmap region is sized for header + capacity * DataPoint.
+        // need_init determines whether the header and data area are re-initialized.
         let inner =
             unsafe { HighFreqRingBuffer::from_raw(data, capacity, need_init, retention_us) };
 
@@ -491,15 +512,19 @@ impl SharedRingBuffer {
         })
     }
 
-    /// 只读打开（用于读取端）
+    /// Open read-only (for the reader side)
     pub fn open_readonly(path: impl AsRef<Path>) -> std::io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
 
+        // SAFETY: File is opened with read+write. The file was previously created by
+        // create_or_open() with a valid layout.
         let mut mmap = unsafe { MmapMut::map_mut(&file)? };
         let data = NonNull::new(mmap.as_mut_ptr())
             .ok_or_else(|| std::io::Error::other("mmap returned null pointer"))?;
 
-        // 验证头部
+        // Validate header
+        // SAFETY: data is non-null, mmap region includes at least the header.
+        // validate() is called immediately after to check magic, version, and capacity.
         let header = unsafe { &*(data.as_ptr() as *const RingBufferHeader) };
         if !header.validate() {
             return Err(std::io::Error::new(
@@ -509,6 +534,8 @@ impl SharedRingBuffer {
         }
 
         let capacity = header.capacity as usize;
+        // SAFETY: data is non-null, header was validated above. init=false skips
+        // initialization since the existing data is valid. capacity matches the header.
         let inner = unsafe { HighFreqRingBuffer::from_raw(data, capacity, false, 0) };
 
         Ok(Self {
@@ -518,18 +545,18 @@ impl SharedRingBuffer {
         })
     }
 
-    /// 计算所需内存大小
+    /// Calculate required memory size
     fn calculate_size(capacity: usize) -> usize {
         std::mem::size_of::<RingBufferHeader>() + capacity * std::mem::size_of::<DataPoint>()
     }
 
-    /// 获取内部缓冲区引用
+    /// Get inner buffer reference
     #[inline]
     pub fn buffer(&self) -> &HighFreqRingBuffer {
         &self.inner
     }
 
-    // 代理方法
+    // Proxy methods
     #[inline]
     pub fn push(&self, point: DataPoint) {
         self.inner.push(point);
@@ -566,7 +593,7 @@ impl SharedRingBuffer {
         self.inner.read_channel(channel_id, count)
     }
 
-    /// 按实例 ID 过滤读取（业务设备视角）
+    /// Read filtered by instance ID (business device perspective)
     #[inline]
     pub fn read_instance(&self, instance_id: u32, count: usize) -> Vec<DataPoint> {
         self.inner.read_instance(instance_id, count)
@@ -589,19 +616,19 @@ impl SharedRingBuffer {
 }
 
 // ============================================================================
-// RingBufferConfig - 配置
+// RingBufferConfig - Configuration
 // ============================================================================
 
-/// 环形缓冲区配置
+/// Ring buffer configuration
 #[derive(Debug, Clone)]
 pub struct RingBufferConfig {
-    /// 共享内存文件路径
+    /// Shared memory file path
     pub path: std::path::PathBuf,
-    /// 缓冲区容量（数据点数量）
+    /// Buffer capacity (number of data points)
     pub capacity: usize,
-    /// 数据保留时长（微秒）
+    /// Data retention duration (microseconds)
     pub retention_us: u64,
-    /// 是否启用
+    /// Whether enabled
     pub enabled: bool,
 }
 
@@ -609,15 +636,15 @@ impl Default for RingBufferConfig {
     fn default() -> Self {
         Self {
             path: std::path::PathBuf::from("/shm/rtdb/ring.bin"),
-            capacity: 1_000_000,      // 100 万点 ≈ 32MB
-            retention_us: 60_000_000, // 60 秒
+            capacity: 1_000_000,      // 1M points ≈ 32MB
+            retention_us: 60_000_000, // 60 seconds
             enabled: true,
         }
     }
 }
 
 impl RingBufferConfig {
-    /// 从环境变量加载
+    /// Load from environment variables
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
@@ -643,10 +670,10 @@ impl RingBufferConfig {
 }
 
 // ============================================================================
-// 辅助函数
+// Helper Functions
 // ============================================================================
 
-/// 获取当前微秒时间戳
+/// Get current microsecond timestamp
 #[inline]
 pub fn current_timestamp_us() -> u64 {
     std::time::SystemTime::now()
@@ -656,7 +683,7 @@ pub fn current_timestamp_us() -> u64 {
 }
 
 // ============================================================================
-// 测试
+// Tests
 // ============================================================================
 
 #[cfg(test)]
@@ -668,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_data_point_size() {
-        // 确保结构体正好是 32 字节
+        // Ensure the struct is exactly 32 bytes
         let size = std::mem::size_of::<DataPoint>();
         assert_eq!(size, 32, "DataPoint must be exactly 32 bytes, got {}", size);
     }
@@ -686,7 +713,7 @@ mod tests {
 
         let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
 
-        // 写入测试数据
+        // Write test data
         for i in 0..100 {
             buffer.push(DataPoint::new(1, 0, i, i as f64 * 1.5, 0));
         }
@@ -694,7 +721,7 @@ mod tests {
         assert_eq!(buffer.head(), 100);
         assert_eq!(buffer.total_writes(), 100);
 
-        // 读取最近数据
+        // Read latest data
         let latest = buffer.read_latest(10);
         assert_eq!(latest.len(), 10);
         assert_eq!(latest[9].point_id, 99);
@@ -707,7 +734,7 @@ mod tests {
 
         let buffer = SharedRingBuffer::create_or_open(&path, 100, 60_000_000).unwrap();
 
-        // 写入超过容量的数据
+        // Write data exceeding capacity
         for i in 0..250 {
             buffer.push(DataPoint::new(1, 0, i, i as f64, 0));
         }
@@ -715,7 +742,7 @@ mod tests {
         assert_eq!(buffer.head(), 250);
         assert_eq!(buffer.total_writes(), 250);
 
-        // 读取最近数据（应该是 150-249）
+        // Read latest data (should be 150-249)
         let latest = buffer.read_latest(100);
         assert_eq!(latest.len(), 100);
         assert_eq!(latest[0].point_id, 150);
@@ -729,13 +756,13 @@ mod tests {
 
         let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
 
-        // 写入多个通道的数据
+        // Write data for multiple channels
         for i in 0u32..100 {
-            let channel = (i % 3) + 1; // 通道 1, 2, 3
+            let channel = (i % 3) + 1; // Channels 1, 2, 3
             buffer.push(DataPoint::new(channel, 0, i, i as f64, 0));
         }
 
-        // 按通道过滤
+        // Filter by channel
         let ch1_data = buffer.read_channel(1, 50);
         assert!(!ch1_data.is_empty());
         for p in &ch1_data {
@@ -743,11 +770,11 @@ mod tests {
         }
     }
 
-    /// 测试多线程写入的原子计数正确性。
+    /// Test atomic counter correctness under multi-threaded writes.
     ///
-    /// 注意：HighFreqRingBuffer 设计为单生产者，debug 构建中 push() 守卫
-    /// 会检测并发调用。此测试仅在 release 构建中运行，验证 fetch_add
-    /// 计数器在极端情况下的正确性。
+    /// Note: HighFreqRingBuffer is designed as single-producer; debug builds' push() guard
+    /// detects concurrent calls. This test only runs in release builds, verifying fetch_add
+    /// counter correctness under extreme conditions.
     #[test]
     #[cfg_attr(debug_assertions, ignore)]
     fn test_concurrent_writes() {
@@ -779,7 +806,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("reopen_ring.bin");
 
-        // 创建并写入
+        // Create and write
         {
             let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
             for i in 0..50 {
@@ -787,7 +814,7 @@ mod tests {
             }
         }
 
-        // 重新打开
+        // Reopen
         {
             let buffer = SharedRingBuffer::open_readonly(&path).unwrap();
             assert_eq!(buffer.capacity(), 1000);
@@ -803,10 +830,10 @@ mod tests {
 
         let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
 
-        // 写入多个实例的数据（使用 new_full 包含 instance_id）
+        // Write data for multiple instances (using new_full to include instance_id)
         for i in 0..100u32 {
             let channel_id = 1;
-            let instance_id = (i % 3) + 1; // 实例 1, 2, 3
+            let instance_id = (i % 3) + 1; // Instances 1, 2, 3
             buffer.push(DataPoint::new_full(
                 channel_id,
                 instance_id,
@@ -817,7 +844,7 @@ mod tests {
             ));
         }
 
-        // 按实例过滤
+        // Filter by instance
         let inst1_data = buffer.read_instance(1, 50);
         assert!(!inst1_data.is_empty());
         for p in &inst1_data {

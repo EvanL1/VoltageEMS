@@ -3,6 +3,8 @@
 //! Provides orchestration functions for service startup, shutdown, and maintenance tasks
 //! as part of the runtime orchestration layer
 
+use std::time::Duration;
+
 use crate::core::channels::ChannelManager;
 use crate::core::config::ConfigManager;
 use crate::error::Result;
@@ -10,6 +12,22 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use voltage_rtdb::{RedisRtdb, Rtdb};
+
+// ============================================================================
+// Lifecycle timing constants
+// ============================================================================
+
+/// Brief wait after channel initialization to ensure all channels are ready
+const INIT_WAIT: Duration = Duration::from_millis(500);
+
+/// Per-channel timeout during graceful shutdown
+const CHANNEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval between periodic cleanup/statistics cycles
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Overall timeout for the service shutdown sequence
+const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Start the communication service with optimized performance and monitoring
 ///
@@ -208,7 +226,7 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
     );
 
     // Wait briefly to ensure all channels are initialized
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(INIT_WAIT).await;
 
     // Phase 2: Establish connections for all channels in batch
     info!("Starting connection phase for all initialized channels...");
@@ -327,7 +345,6 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
 
     // Stop all channels concurrently with per-channel timeout
     use futures::future::join_all;
-    const CHANNEL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     let shutdown_futures: Vec<_> = channel_ids
         .into_iter()
@@ -489,7 +506,7 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
     let task_token = token.clone();
 
     let handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+        let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
@@ -591,7 +608,7 @@ pub(crate) async fn shutdown_services_generic<R: Rtdb + 'static>(
     cleanup_handle.abort();
 
     // Wait for tasks with timeout
-    let shutdown_timeout = tokio::time::Duration::from_secs(30);
+    let shutdown_timeout = SERVICE_SHUTDOWN_TIMEOUT;
 
     // Wait for server task
     match tokio::time::timeout(shutdown_timeout, server_handle).await {

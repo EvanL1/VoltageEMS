@@ -897,7 +897,7 @@ pub struct ChannelManager<R: Rtdb> {
     /// Supports hot add/remove with ArcSwap for lock-free reads
     dynamic_channel_index: Option<Arc<ChannelIndex>>,
     /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
-    slot_bitmap: Option<Arc<std::sync::RwLock<SlotBitmap>>>,
+    slot_bitmap: Option<Arc<parking_lot::RwLock<SlotBitmap>>>,
 
     // ========== SHM Command Polling (M2C via SHM) ==========
     /// Shared memory reader for polling C/A timestamps (optional)
@@ -1082,7 +1082,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     pub fn with_dynamic_allocation(
         mut self,
         dynamic_index: Arc<ChannelIndex>,
-        slot_bitmap: Arc<std::sync::RwLock<SlotBitmap>>,
+        slot_bitmap: Arc<parking_lot::RwLock<SlotBitmap>>,
     ) -> Self {
         self.dynamic_channel_index = Some(dynamic_index);
         self.slot_bitmap = Some(slot_bitmap);
@@ -1175,9 +1175,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
     /// Get SlotBitmap stats (for monitoring)
     pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
-        self.slot_bitmap
-            .as_ref()
-            .and_then(|b| b.read().ok().map(|guard| guard.stats()))
+        self.slot_bitmap.as_ref().map(|b| b.read().stats())
     }
 
     /// Create channel
@@ -1312,23 +1310,17 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             ];
             let total: u32 = type_counts.iter().sum();
             if total > 0 {
-                match bitmap.write() {
-                    Ok(mut bitmap_guard) => {
-                        match index.add_channel(channel_id, type_counts, &mut bitmap_guard) {
-                            Ok(layout) => {
-                                debug!(
-                                    "Ch{} slot allocated: base={}, total={}",
-                                    channel_id, layout.base_slot, layout.total_points
-                                );
-                            },
-                            Err(e) => {
-                                // Log warning but don't fail - dynamic allocation is optional
-                                warn!("Ch{} slot allocation failed: {}", channel_id, e);
-                            },
-                        }
+                let mut bitmap_guard = bitmap.write();
+                match index.add_channel(channel_id, type_counts, &mut bitmap_guard) {
+                    Ok(layout) => {
+                        debug!(
+                            "Ch{} slot allocated: base={}, total={}",
+                            channel_id, layout.base_slot, layout.total_points
+                        );
                     },
                     Err(e) => {
-                        warn!("Ch{} bitmap lock poisoned: {}", channel_id, e);
+                        // Log warning but don't fail - dynamic allocation is optional
+                        warn!("Ch{} slot allocation failed: {}", channel_id, e);
                     },
                 }
             }
@@ -1826,23 +1818,17 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
 
             // 6. Dynamic Slot Deallocation: Remove channel from ChannelIndex and free slots
             if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
-                match bitmap.write() {
-                    Ok(mut bitmap_guard) => {
-                        match index.remove_channel(channel_id, &mut bitmap_guard) {
-                            Ok(layout) => {
-                                debug!(
-                                    "Ch{} slot freed: base={}, count={}",
-                                    channel_id, layout.base_slot, layout.total_points
-                                );
-                            },
-                            Err(e) => {
-                                // Log warning but don't fail - dynamic allocation is optional
-                                warn!("Ch{} slot deallocation failed: {}", channel_id, e);
-                            },
-                        }
+                let mut bitmap_guard = bitmap.write();
+                match index.remove_channel(channel_id, &mut bitmap_guard) {
+                    Ok(layout) => {
+                        debug!(
+                            "Ch{} slot freed: base={}, count={}",
+                            channel_id, layout.base_slot, layout.total_points
+                        );
                     },
                     Err(e) => {
-                        warn!("Ch{} bitmap lock poisoned: {}", channel_id, e);
+                        // Log warning but don't fail - dynamic allocation is optional
+                        warn!("Ch{} slot deallocation failed: {}", channel_id, e);
                     },
                 }
             }

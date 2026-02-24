@@ -97,8 +97,8 @@ pub async fn run_doctor(
     // Run all checks
     results.push(check_docker().await);
     results.push(check_redis().await);
-    results.push(check_service("comsrv", 6001).await);
-    results.push(check_service("modsrv", 6002).await);
+    results.push(check_service("comsrv", voltage_model::service_ports::COMSRV_PORT).await);
+    results.push(check_service("modsrv", voltage_model::service_ports::MODSRV_PORT).await);
     results.push(check_database(db_path).await);
     results.push(check_config_files(config_path).await);
     results.push(check_shared_memory().await);

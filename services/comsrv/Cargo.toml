@@ -29,9 +29,6 @@ voltage_j1939 = { version = "0.1", optional = true }
 async-opcua = { version = "0.14", default-features = false, features = ["client"], optional = true }
 tokio-serial = { version = "5.4", optional = true }
 
-# Lazy initialization
-once_cell = { workspace = true }
-
 # Core async runtime
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -73,6 +70,7 @@ tower-http = { workspace = true }
 dashmap = { workspace = true }
 itoa = { workspace = true }  # Stack-allocated integer formatting
 arc-swap = "1.7"
+parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
 bytes = { workspace = true }
 
 # Utils

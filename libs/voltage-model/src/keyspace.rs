@@ -223,10 +223,10 @@ impl KeySpaceConfig {
     /// Build channels hash key: comsrv:channels
     ///
     /// Stores all channel ID→name mappings in a single hash for efficient lookup.
-    /// - HSET: 设置单个 channel 名称
-    /// - HDEL: 删除单个 channel
-    /// - HGETALL: 获取所有 ID→名称映射
-    /// - HKEYS: 获取所有 channel ID
+    /// - HSET: Set a single channel name
+    /// - HDEL: Delete a single channel
+    /// - HGETALL: Get all ID→name mappings
+    /// - HKEYS: Get all channel IDs
     ///
     /// # Examples
     /// ```
@@ -385,39 +385,71 @@ impl KeySpaceConfig {
     // Product-related keys (modsrv)
     // ============================================================
 
+    /// Returns the environment prefix ("" for production, "test:" for test)
+    ///
+    /// Derived from `inst_prefix` — production uses "inst", test uses "test:inst".
+    fn env_prefix(&self) -> &str {
+        self.inst_prefix.strip_suffix("inst").unwrap_or("")
+    }
+
     /// Build product info key: modsrv:product:{product_name}
     pub fn product_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}", product_name)
+        format!("{}modsrv:product:{}", self.env_prefix(), product_name)
     }
 
     /// Build product children set key: modsrv:product:{product_name}:children
     pub fn product_children_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:children", product_name)
+        format!(
+            "{}modsrv:product:{}:children",
+            self.env_prefix(),
+            product_name
+        )
     }
 
     /// Build product measurements key: modsrv:product:{product_name}:measurements
     pub fn product_measurements_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:measurements", product_name)
+        format!(
+            "{}modsrv:product:{}:measurements",
+            self.env_prefix(),
+            product_name
+        )
     }
 
     /// Build product actions key: modsrv:product:{product_name}:actions
     pub fn product_actions_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:actions", product_name)
+        format!(
+            "{}modsrv:product:{}:actions",
+            self.env_prefix(),
+            product_name
+        )
     }
 
     /// Build product properties key: modsrv:product:{product_name}:properties
     pub fn product_properties_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:properties", product_name)
+        format!(
+            "{}modsrv:product:{}:properties",
+            self.env_prefix(),
+            product_name
+        )
     }
 
-    /// Product index set key: modsrv:products
-    pub fn product_index_key(&self) -> &'static str {
-        "modsrv:products"
+    /// Product index set key: modsrv:products (or test:modsrv:products)
+    pub fn product_index_key(&self) -> String {
+        format!("{}modsrv:products", self.env_prefix())
     }
 
-    /// Instance index set key: instance:index
-    pub fn instance_index_key(&self) -> &'static str {
-        "instance:index"
+    /// Instance index set key: instance:index (or test:instance:index)
+    pub fn instance_index_key(&self) -> String {
+        format!("{}instance:index", self.env_prefix())
+    }
+
+    // ============================================================
+    // Rule execution keys
+    // ============================================================
+
+    /// Build rule execution state key: rule:{rule_id}:exec
+    pub fn rule_exec_key(&self, rule_id: i64) -> String {
+        format!("{}rule:{}:exec", self.env_prefix(), rule_id)
     }
 }
 
@@ -642,5 +674,20 @@ mod tests {
 
         // Verify direct String return (no Cow overhead)
         assert_eq!(key, "comsrv:1001:T");
+    }
+
+    #[test]
+    fn test_product_and_index_keys_respect_env_prefix() {
+        let prod = KeySpaceConfig::production();
+        assert_eq!(prod.product_index_key(), "modsrv:products");
+        assert_eq!(prod.instance_index_key(), "instance:index");
+        assert_eq!(prod.product_key("sensor"), "modsrv:product:sensor");
+        assert_eq!(prod.rule_exec_key(42), "rule:42:exec");
+
+        let test = KeySpaceConfig::test();
+        assert_eq!(test.product_index_key(), "test:modsrv:products");
+        assert_eq!(test.instance_index_key(), "test:instance:index");
+        assert_eq!(test.product_key("sensor"), "test:modsrv:product:sensor");
+        assert_eq!(test.rule_exec_key(42), "test:rule:42:exec");
     }
 }

@@ -178,7 +178,7 @@ impl VirtualAddress {
 /// # Format
 ///
 /// Supports hexadecimal format with optional "0x" prefix:
-/// - `"0x02010100"` - A相电压
+/// - `"0x02010100"` - Phase A voltage
 /// - `"02010100"` - same as above, without prefix
 ///
 /// # Example
@@ -212,7 +212,7 @@ impl Dl645Address {
     ///
     /// - `"0x02010100"` → di_code = 0x02010100
     /// - `"02010100"` → di_code = 0x02010100
-    /// - `"00010000"` → di_code = 0x00010000 (正向有功总电能)
+    /// - `"00010000"` → di_code = 0x00010000 (total positive active energy)
     pub fn parse(s: &str) -> Result<Self, GatewayError> {
         let s = s.trim();
 

@@ -5,9 +5,9 @@
 //! including their measurements, actions, and properties.
 
 use anyhow::{Context, Result};
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::LazyLock;
 
 /// Point definition for measurements, actions, and properties
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +45,7 @@ pub struct BuiltinProduct {
 
 // Embed all product JSON files at compile time
 // Note: products/ is a git submodule (voltage-product-lib)
-static BUILTIN_PRODUCTS: Lazy<Vec<BuiltinProduct>> = Lazy::new(|| {
+static BUILTIN_PRODUCTS: LazyLock<Vec<BuiltinProduct>> = LazyLock::new(|| {
     let jsons: &[&str] = &[
         include_str!("products/Station.json"),
         include_str!("products/ESS.json"),

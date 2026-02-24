@@ -13,7 +13,7 @@
 //!
 //! # Supported Operations
 //!
-//! - Read data (遥测): Positive active energy, voltage, current, power, etc.
+//! - Read data (telemetry): Positive active energy, voltage, current, power, etc.
 //! - Control/Adjustment: Not supported (read-only protocol)
 
 use std::sync::Arc;
@@ -73,10 +73,10 @@ const MAX_FRAME_SIZE: usize = 256;
 /// Default serial port settings (DL/T 645-2007 standard)
 const DEFAULT_DATA_BITS: u8 = 8;
 const DEFAULT_STOP_BITS: u8 = 1;
-const DEFAULT_PARITY: &str = "even"; // DL/T 645 标准要求偶校验
+const DEFAULT_PARITY: &str = "even"; // DL/T 645 standard requires even parity
 
 // ============================================================================
-// Standard Data Points (硬编码点位)
+// Standard Data Points (hardcoded points)
 // ============================================================================
 
 /// Standard data points for DL/T 645-2007 protocol.
@@ -86,22 +86,37 @@ const DEFAULT_PARITY: &str = "even"; // DL/T 645 标准要求偶校验
 ///
 /// Format: (DI code, fixed point_id, name, data format)
 const STANDARD_POINTS: &[(u32, u32, &str, DataFormat)] = &[
-    // 电能量 (Energy)
-    (0x0001_0000, 1, "正向有功总电能", DataFormat::Energy),
-    (0x0002_0000, 2, "反向有功总电能", DataFormat::Energy),
-    // 电压 (Voltage)
-    (0x0201_0100, 3, "A相电压", DataFormat::Voltage),
-    (0x0201_0200, 4, "B相电压", DataFormat::Voltage),
-    (0x0201_0300, 5, "C相电压", DataFormat::Voltage),
-    // 电流 (Current)
-    (0x0202_0100, 6, "A相电流", DataFormat::Current),
-    (0x0202_0200, 7, "B相电流", DataFormat::Current),
-    (0x0202_0300, 8, "C相电流", DataFormat::Current),
-    // 功率 (Power)
-    (0x0203_0000, 9, "总有功功率", DataFormat::Power),
-    (0x0204_0000, 10, "总无功功率", DataFormat::Power),
-    // 功率因数 (Power Factor)
-    (0x0206_0000, 11, "总功率因数", DataFormat::PowerFactor),
+    // Energy
+    (
+        0x0001_0000,
+        1,
+        "Total positive active energy",
+        DataFormat::Energy,
+    ),
+    (
+        0x0002_0000,
+        2,
+        "Total reverse active energy",
+        DataFormat::Energy,
+    ),
+    // Voltage
+    (0x0201_0100, 3, "Phase A voltage", DataFormat::Voltage),
+    (0x0201_0200, 4, "Phase B voltage", DataFormat::Voltage),
+    (0x0201_0300, 5, "Phase C voltage", DataFormat::Voltage),
+    // Current
+    (0x0202_0100, 6, "Phase A current", DataFormat::Current),
+    (0x0202_0200, 7, "Phase B current", DataFormat::Current),
+    (0x0202_0300, 8, "Phase C current", DataFormat::Current),
+    // Power
+    (0x0203_0000, 9, "Total active power", DataFormat::Power),
+    (0x0204_0000, 10, "Total reactive power", DataFormat::Power),
+    // Power Factor
+    (
+        0x0206_0000,
+        11,
+        "Total power factor",
+        DataFormat::PowerFactor,
+    ),
 ];
 
 // ============================================================================
@@ -541,11 +556,11 @@ impl DataFormat {
         // Extract the high 16 bits for type classification
         let high_word = (di_code >> 16) & 0xFFFF;
         match high_word {
-            0x0001 | 0x0002 => Self::Energy, // 电能量
-            0x0201 => Self::Voltage,         // 电压
-            0x0202 => Self::Current,         // 电流
-            0x0203..=0x0205 => Self::Power,  // 功率
-            0x0206 => Self::PowerFactor,     // 功率因数
+            0x0001 | 0x0002 => Self::Energy, // Energy
+            0x0201 => Self::Voltage,         // Voltage
+            0x0202 => Self::Current,         // Current
+            0x0203..=0x0205 => Self::Power,  // Power
+            0x0206 => Self::PowerFactor,     // Power factor
             0x0207 => Self::PowerFactor,     // Also power factor related
             _ => Self::Raw,
         }
@@ -579,7 +594,7 @@ fn parse_energy(data: &[u8]) -> Result<f64> {
     }
 
     // BCD: [XX.XX] [XX.00] [00.XX] [XX.00] (LSB first)
-    // Bytes: data[0]=小数部分, data[1..3]=整数部分
+    // Bytes: data[0]=decimal part, data[1..3]=integer part
     let decimal = bcd_to_u32(data[0]);
     let integer = bcd_to_u32(data[1]) + bcd_to_u32(data[2]) * 100 + bcd_to_u32(data[3]) * 10000;
 
@@ -1122,7 +1137,8 @@ impl HasMetadata for Dl645Channel {
         DriverMetadata {
             name: "dl645",
             display_name: "DL/T 645-2007",
-            description: "DL/T 645-2007 智能电表协议（仅支持读取，使用标准点位）",
+            description:
+                "DL/T 645-2007 smart meter protocol (read-only, uses standard data points)",
             is_recommended: false,
             example_config: Value::Object(config),
             parameters: vec![],
@@ -1749,11 +1765,11 @@ mod tests {
 
     #[test]
     fn test_data_identifier_from_u32() {
-        // Test 正向有功总电能 (0x00010000)
+        // Test total positive active energy (0x00010000)
         let di = DataIdentifier::from_u32(0x0001_0000);
         assert_eq!(di.to_hex_string(), "00010000");
 
-        // Test A相电压 (0x02010100)
+        // Test phase A voltage (0x02010100)
         let di = DataIdentifier::from_u32(0x0201_0100);
         assert_eq!(di.to_hex_string(), "02010100");
 

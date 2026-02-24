@@ -1,6 +1,6 @@
-//! 工业通信协议层 (Protocol Layer)
+//! Industrial Communication Protocol Layer
 //!
-//! 此模块提供统一的工业协议抽象，支持多种通信协议：
+//! This module provides a unified industrial protocol abstraction supporting multiple communication protocols:
 //! - Modbus TCP/RTU
 //! - IEC 60870-5-104
 //! - OPC UA
@@ -11,11 +11,11 @@
 //! - GPIO
 //! - Virtual Channel
 //!
-//! ## 设计原则
+//! ## Design Principles
 //!
-//! - **协议无关**: 统一的数据模型和点位寻址
-//! - **双模式支持**: 轮询和事件驱动通信
-//! - **零业务耦合**: 纯协议层，不包含 SCADA 概念
+//! - **Protocol-agnostic**: Unified data model and point addressing
+//! - **Dual-mode support**: Polling and event-driven communication
+//! - **Zero business coupling**: Pure protocol layer, free of SCADA concepts
 
 pub mod adapters;
 pub mod codec;

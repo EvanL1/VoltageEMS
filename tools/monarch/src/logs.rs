@@ -47,14 +47,12 @@ struct SetLogLevelRequest {
 
 /// Get service port by name
 fn get_service_port(service: &str) -> Result<u16> {
-    match service.to_lowercase().as_str() {
-        "comsrv" => Ok(6001),
-        "modsrv" => Ok(6002),
-        _ => anyhow::bail!(
+    voltage_model::service_ports::default_port_for(&service.to_lowercase()).ok_or_else(|| {
+        anyhow::anyhow!(
             "Unknown service: {}. Use 'comsrv', 'modsrv', or 'all'",
             service
-        ),
-    }
+        )
+    })
 }
 
 /// Set log level for a service

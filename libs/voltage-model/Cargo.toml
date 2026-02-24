@@ -31,9 +31,6 @@ thiserror = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
-# Lazy initialization
-once_cell = { workspace = true }
-
 # Parsing (for error conversion compatibility)
 csv = { workspace = true }
 

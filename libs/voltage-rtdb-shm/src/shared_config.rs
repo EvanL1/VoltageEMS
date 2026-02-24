@@ -19,6 +19,9 @@ use voltage_model::PointType;
 /// Magic number for validation: "VOLTAGE_" in ASCII
 pub const SHARED_MAGIC: u64 = 0x564F4C544147455F;
 
+/// Default snapshot interval in seconds (5 minutes)
+pub const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 300;
+
 /// Default shared memory file path (Docker tmpfs mount point)
 /// This constant is kept for backward compatibility.
 /// Use `default_shm_path()` for intelligent path selection.
@@ -225,7 +228,9 @@ impl SharedConfig {
             }
         } else {
             // Default: 5 minutes
-            self.snapshot_interval = Some(std::time::Duration::from_secs(300));
+            self.snapshot_interval = Some(std::time::Duration::from_secs(
+                DEFAULT_SNAPSHOT_INTERVAL_SECS,
+            ));
         }
 
         // Restore on start

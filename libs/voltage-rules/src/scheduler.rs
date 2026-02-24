@@ -562,7 +562,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         rule_name: &str,
         result: &RuleExecutionResult,
     ) {
-        let exec_key = format!("rule:{}:exec", rule_id);
+        let exec_key = voltage_rtdb::KeySpaceConfig::production_cached().rule_exec_key(rule_id);
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("System time should be after UNIX epoch")

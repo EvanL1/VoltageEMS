@@ -510,7 +510,7 @@ pub trait ProtocolClient: Protocol {
     /// - `failures`: Points that failed to read (partial success supported)
     fn poll_once(&mut self) -> impl Future<Output = PollResult> + Send;
 
-    /// Write control commands (遥控).
+    /// Write control commands (remote control).
     ///
     /// Control commands are boolean operations (ON/OFF, OPEN/CLOSE) with
     /// optional pulse duration for momentary outputs.
@@ -519,7 +519,7 @@ pub trait ProtocolClient: Protocol {
         commands: &[ControlCommand],
     ) -> impl Future<Output = Result<WriteResult>> + Send;
 
-    /// Write adjustment commands (遥调).
+    /// Write adjustment commands (remote adjustment).
     ///
     /// Adjustment commands are setpoint operations with floating-point values.
     fn write_adjustment(

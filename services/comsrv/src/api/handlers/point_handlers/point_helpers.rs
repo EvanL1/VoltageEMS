@@ -105,13 +105,13 @@ pub async fn trigger_channel_reload_if_needed<R: Rtdb + 'static>(
     let state_clone = state.clone();
     // Fire-and-forget: channel reload is best-effort and non-critical
     // The task will complete on its own; errors are logged but not propagated
-    drop(tokio::spawn(async move {
+    tokio::spawn(async move {
         if let Err(e) = perform_channel_reload(channel_id, &state_clone).await {
             tracing::error!("Ch{} reload: {}", channel_id, e);
         } else {
             tracing::debug!("Ch{} reloaded", channel_id);
         }
-    }));
+    });
 }
 
 /// Perform channel reload (load config from SQLite and hot-reload)
@@ -146,13 +146,13 @@ async fn perform_channel_reload<R: Rtdb>(
 
     // 4. Connect in background (non-blocking, fire-and-forget)
     // Connection is best-effort; errors are logged but don't fail the reload
-    drop(tokio::spawn(async move {
+    tokio::spawn(async move {
         // Use ChannelEntry's direct connect method
         match entry.connect().await {
             Ok(_) => tracing::debug!("Ch{} connected", channel_id),
             Err(e) => tracing::warn!("Ch{} connect: {}", channel_id, e),
         }
-    }));
+    });
 
     Ok(())
 }

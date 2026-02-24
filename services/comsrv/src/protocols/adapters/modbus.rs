@@ -330,11 +330,11 @@ fn default_baud_rate() -> u32 {
 }
 
 fn default_connect_timeout_ms() -> u64 {
-    5000
+    DEFAULT_CONNECT_TIMEOUT_MS
 }
 
 fn default_io_timeout_ms() -> u64 {
-    3000
+    DEFAULT_IO_TIMEOUT_MS
 }
 
 fn default_max_batch_size_config() -> u16 {
@@ -382,6 +382,12 @@ impl ModbusChannelParamsConfig {
         }
     }
 }
+
+/// Default connection timeout in milliseconds
+const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5000;
+
+/// Default I/O operation timeout in milliseconds
+const DEFAULT_IO_TIMEOUT_MS: u64 = 3000;
 
 /// Default maximum registers per batch read
 const DEFAULT_MAX_BATCH_SIZE: u16 = 64;
@@ -684,8 +690,8 @@ impl ModbusChannelConfig {
         Self {
             connection_mode: ConnectionMode::Tcp,
             address: address.into(),
-            connect_timeout: Duration::from_secs(5),
-            io_timeout: Duration::from_secs(3),
+            connect_timeout: Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS),
+            io_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
             #[cfg(feature = "modbus")]
             rtu_device: String::new(),
             #[cfg(feature = "modbus")]
@@ -714,8 +720,8 @@ impl ModbusChannelConfig {
         Self {
             connection_mode: ConnectionMode::Rtu,
             address: String::new(), // Not used for RTU
-            connect_timeout: Duration::from_secs(5),
-            io_timeout: Duration::from_secs(3),
+            connect_timeout: Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS),
+            io_timeout: Duration::from_millis(DEFAULT_IO_TIMEOUT_MS),
             rtu_device: device.into(),
             baud_rate,
             points: Vec::new(),
@@ -878,100 +884,6 @@ impl ModbusChannel {
     /// Get the point configurations.
     pub fn points(&self) -> &[PointConfig] {
         &self.config.points
-    }
-
-    /// Read a single Modbus address and convert to DataPoint.
-    #[allow(dead_code)]
-    async fn read_modbus_point(&mut self, point: &PointConfig) -> Result<DataPoint> {
-        let client = self.client.as_mut().ok_or(GatewayError::NotConnected)?;
-
-        let modbus_addr = match &point.address {
-            ProtocolAddress::Modbus(addr) => addr,
-            _ => return Err(GatewayError::Config("Invalid address type".into())),
-        };
-
-        // Read registers based on function code
-        let value = match modbus_addr.function_code {
-            1 => {
-                // Read coils (FC01)
-                let coils = client
-                    .read_01(modbus_addr.slave_id, modbus_addr.register, 1)
-                    .await
-                    .map_err(|e| {
-                        GatewayError::Protocol(format!(
-                            "FC01 slave {} reg {}: {}",
-                            modbus_addr.slave_id, modbus_addr.register, e
-                        ))
-                    })?;
-                Value::Bool(coils.first().copied().unwrap_or(false))
-            },
-            2 => {
-                // Read discrete inputs (FC02)
-                let inputs = client
-                    .read_02(modbus_addr.slave_id, modbus_addr.register, 1)
-                    .await
-                    .map_err(|e| {
-                        GatewayError::Protocol(format!(
-                            "FC02 slave {} reg {}: {}",
-                            modbus_addr.slave_id, modbus_addr.register, e
-                        ))
-                    })?;
-                Value::Bool(inputs.first().copied().unwrap_or(false))
-            },
-            3 => {
-                // Read holding registers (FC03)
-                let count = modbus_addr.format.register_count();
-                let regs = client
-                    .read_03(modbus_addr.slave_id, modbus_addr.register, count)
-                    .await
-                    .map_err(|e| {
-                        GatewayError::Protocol(format!(
-                            "FC03 slave {} reg {}: {}",
-                            modbus_addr.slave_id, modbus_addr.register, e
-                        ))
-                    })?;
-                decode_registers(
-                    &regs,
-                    modbus_addr.format,
-                    modbus_addr.byte_order,
-                    modbus_addr.bit_position,
-                )?
-            },
-            4 => {
-                // Read input registers (FC04)
-                let count = modbus_addr.format.register_count();
-                let regs = client
-                    .read_04(modbus_addr.slave_id, modbus_addr.register, count)
-                    .await
-                    .map_err(|e| {
-                        GatewayError::Protocol(format!(
-                            "FC04 slave {} reg {}: {}",
-                            modbus_addr.slave_id, modbus_addr.register, e
-                        ))
-                    })?;
-                decode_registers(
-                    &regs,
-                    modbus_addr.format,
-                    modbus_addr.byte_order,
-                    modbus_addr.bit_position,
-                )?
-            },
-            _ => {
-                return Err(GatewayError::Unsupported(format!(
-                    "Function code {} not supported for read",
-                    modbus_addr.function_code
-                )))
-            },
-        };
-
-        // Apply transform
-        let transformed_value = apply_transform(value, &point.transform);
-
-        Ok(DataPoint::new(
-            point.id,
-            point.point_type,
-            transformed_value,
-        ))
     }
 
     /// Record an error in diagnostics.

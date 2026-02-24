@@ -175,7 +175,10 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                     "comsrv" => {
                         let client = reqwest::Client::builder().no_proxy().build()?;
                         let response = client
-                            .post("http://localhost:6001/api/channels/reload")
+                            .post(format!(
+                                "http://localhost:{}/api/channels/reload",
+                                voltage_model::service_ports::COMSRV_PORT
+                            ))
                             .send()
                             .await?;
 

@@ -545,7 +545,9 @@ impl ConfigExporter {
                 "service_name" => config.service.name = value,
                 "api_host" => config.api.host = value,
                 "service.port" | "api_port" | "port" => {
-                    config.api.port = value.parse().unwrap_or(6001)
+                    config.api.port = value
+                        .parse()
+                        .unwrap_or(voltage_model::service_ports::COMSRV_PORT)
                 },
                 "redis.url" | "redis_url" => config.redis.url = value,
                 _ => {},
@@ -702,7 +704,9 @@ impl ConfigExporter {
                 "service_name" => config.service.name = value,
                 "api_host" => config.api.host = value,
                 "service.port" | "api_port" | "port" => {
-                    config.api.port = value.parse().unwrap_or(6002)
+                    config.api.port = value
+                        .parse()
+                        .unwrap_or(voltage_model::service_ports::MODSRV_PORT)
                 },
                 "redis.url" | "redis_url" => config.redis.url = value,
                 // execution_interval and batch_size are deprecated

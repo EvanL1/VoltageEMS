@@ -1,12 +1,12 @@
-//! UDS 事件通知集成测试
+//! UDS event notification integration tests
 //!
-//! 验证 modsrv → comsrv 的 UDS 事件驱动通知机制
+//! Verifies the UDS event-driven notification mechanism from modsrv to comsrv
 //!
-//! ## 测试覆盖
+//! ## Test Coverage
 //!
-//! 1. UDS 通知发送和接收正确性
-//! 2. 端到端延迟验证 < 5ms
-//! 3. 降级场景：UDS 不可用时不阻塞
+//! 1. UDS notification send/receive correctness
+//! 2. End-to-end latency verification < 5ms
+//! 3. Degradation scenario: non-blocking when UDS is unavailable
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
 
@@ -19,16 +19,16 @@ use voltage_rtdb_shm::{ShmNotification, ShmNotifier};
 
 mod common;
 
-/// 测试 1: UDS 通知发送和接收正确性
+/// Test 1: UDS notification send/receive correctness
 ///
-/// 验证 ShmNotifier 发送的通知能被正确接收和解析
+/// Verifies that notifications sent by ShmNotifier can be correctly received and parsed
 #[tokio::test]
 async fn test_uds_notification_roundtrip() {
-    // 1. 创建测试 UDS 路径
+    // 1. Create test UDS path
     let test_uds_path = "/tmp/voltage-test-roundtrip.sock";
     let _ = std::fs::remove_file(test_uds_path);
 
-    // 2. 启动本地 UDS 监听器
+    // 2. Start local UDS listener
     let listener = UnixListener::bind(test_uds_path).unwrap();
     let (tx, mut rx) = mpsc::channel::<ShmNotification>(10);
 
@@ -43,18 +43,18 @@ async fn test_uds_notification_roundtrip() {
         }
     });
 
-    // 等待监听器启动
+    // Wait for listener to start
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    // 3. 创建 ShmNotifier 并连接
+    // 3. Create ShmNotifier and connect
     let mut notifier = ShmNotifier::connect(test_uds_path).await.unwrap();
     assert!(notifier.is_connected(), "Notifier should be connected");
 
-    // 4. 发送 Control 通知
+    // 4. Send Control notification
     let result = notifier.notify(1001, PointType::Control, 42).await;
     assert!(result.uds_sent, "UDS notification should be sent");
 
-    // 5. 验证接收
+    // 5. Verify reception
     let received = tokio::time::timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("Timeout waiting for notification")
@@ -68,7 +68,7 @@ async fn test_uds_notification_roundtrip() {
         "Point type should be Control"
     );
 
-    // 6. 发送 Adjustment 通知
+    // 6. Send Adjustment notification
     let result = notifier.notify(2002, PointType::Adjustment, 99).await;
     assert!(result.uds_sent, "UDS notification should be sent");
 
@@ -85,14 +85,14 @@ async fn test_uds_notification_roundtrip() {
         "Point type should be Adjustment"
     );
 
-    // 清理
+    // Cleanup
     listener_handle.abort();
     let _ = std::fs::remove_file(test_uds_path);
 }
 
-/// 测试 2: 端到端延迟验证 < 5ms
+/// Test 2: End-to-end latency verification < 5ms
 ///
-/// 发送 100 个通知，验证平均延迟在 5ms 以内
+/// Sends 100 notifications and verifies average latency is within 5ms
 #[tokio::test]
 async fn test_uds_latency_under_5ms() {
     let test_uds_path = "/tmp/voltage-latency-test.sock";
@@ -111,13 +111,13 @@ async fn test_uds_latency_under_5ms() {
         }
     });
 
-    // 等待监听器启动
+    // Wait for listener to start
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     let mut notifier = ShmNotifier::connect(test_uds_path).await.unwrap();
     assert!(notifier.is_connected());
 
-    // 发送 100 个通知，测量延迟
+    // Send 100 notifications and measure latency
     let mut latencies = vec![];
     for i in 0..100u32 {
         let start = Instant::now();
@@ -150,23 +150,23 @@ async fn test_uds_latency_under_5ms() {
     let _ = std::fs::remove_file(test_uds_path);
 }
 
-/// 测试 3: 降级场景 - UDS 不可用时不阻塞
+/// Test 3: Degradation scenario - non-blocking when UDS is unavailable
 ///
-/// 当 UDS 连接失败时，ShmNotifier 应该优雅降级，不 panic
+/// When UDS connection fails, ShmNotifier should degrade gracefully without panicking
 #[tokio::test]
 async fn test_uds_graceful_degradation() {
-    // 连接不存在的 UDS 路径
+    // Connect to a non-existent UDS path
     let notifier = ShmNotifier::connect("/tmp/nonexistent-socket-12345.sock")
         .await
         .unwrap();
 
-    // 应该返回成功但未连接的 notifier
+    // Should return a successful but unconnected notifier
     assert!(
         !notifier.is_connected(),
         "Should not be connected to non-existent socket"
     );
 
-    // 发送通知应该静默成功（因为 stream 为 None，会使用 fallback/disabled）
+    // Sending notifications should silently succeed (stream is None, uses fallback/disabled)
     let mut notifier = notifier;
     let result = notifier.notify(1001, PointType::Control, 1).await;
     // When not connected, UDS is disabled - notify still "succeeds" but doesn't send
@@ -176,9 +176,9 @@ async fn test_uds_graceful_degradation() {
     );
 }
 
-/// 测试 4: 多通知批量发送
+/// Test 4: Batch notification sending
 ///
-/// 验证批量发送多个通知的正确性
+/// Verifies correctness of sending multiple notifications in batch
 #[tokio::test]
 async fn test_uds_batch_notifications() {
     let test_uds_path = "/tmp/voltage-batch-test.sock";
@@ -202,7 +202,7 @@ async fn test_uds_batch_notifications() {
 
     let mut notifier = ShmNotifier::connect(test_uds_path).await.unwrap();
 
-    // 批量发送 50 个通知
+    // Send 50 notifications in batch
     let batch_size = 50u32;
     for i in 0..batch_size {
         let point_type = if i % 2 == 0 {
@@ -214,7 +214,7 @@ async fn test_uds_batch_notifications() {
         assert!(result.uds_sent, "UDS notification {} should be sent", i);
     }
 
-    // 验证接收
+    // Verify reception
     let mut received_count = 0u32;
     while let Ok(Some(notif)) = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
         assert_eq!(notif.channel_id, 1000 + received_count);
@@ -235,31 +235,31 @@ async fn test_uds_batch_notifications() {
     let _ = std::fs::remove_file(test_uds_path);
 }
 
-/// 测试 5: ShmNotification 序列化/反序列化
+/// Test 5: ShmNotification serialization/deserialization
 ///
-/// 验证 12 字节通知协议的正确性
+/// Verifies correctness of the 12-byte notification protocol
 #[test]
 fn test_notification_serialization() {
     let notification = ShmNotification::new(12345, PointType::Control, 67890);
 
-    // 验证字段
+    // Verify fields
     assert_eq!(notification.channel_id, 12345);
     assert_eq!(notification.point_id, 67890);
     assert_eq!(notification.get_point_type(), Some(PointType::Control));
 
-    // 序列化
+    // Serialize
     let bytes = notification.to_bytes();
     assert_eq!(bytes.len(), ShmNotification::SIZE);
     assert_eq!(bytes.len(), 12, "Notification should be exactly 12 bytes");
 
-    // 反序列化
+    // Deserialize
     let restored = ShmNotification::from_bytes(&bytes);
     assert_eq!(restored.channel_id, 12345);
     assert_eq!(restored.point_id, 67890);
     assert_eq!(restored.get_point_type(), Some(PointType::Control));
 }
 
-/// 测试 7: 不同 PointType 的序列化
+/// Test 7: Serialization of different PointTypes
 #[test]
 fn test_notification_point_types() {
     // Control
@@ -270,7 +270,7 @@ fn test_notification_point_types() {
     let adjustment = ShmNotification::new(1, PointType::Adjustment, 1);
     assert_eq!(adjustment.get_point_type(), Some(PointType::Adjustment));
 
-    // 往返测试
+    // Round-trip test
     let bytes = control.to_bytes();
     let restored = ShmNotification::from_bytes(&bytes);
     assert_eq!(restored.get_point_type(), Some(PointType::Control));

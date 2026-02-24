@@ -40,6 +40,14 @@ use voltage_iec104::{ClientConfig, Cp56Time2a, Iec104Client, Iec104Event};
 
 use async_trait::async_trait;
 
+// ============================================================================
+// Default timeout constants for IEC 104
+// ============================================================================
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_T1_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_T2_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_T3_TIMEOUT: Duration = Duration::from_secs(20);
+
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -93,10 +101,10 @@ impl Iec104ChannelConfig {
         Self {
             address: address.into(),
             common_address: 1,
-            connect_timeout: Duration::from_secs(10),
-            t1_timeout: Duration::from_secs(15),
-            t2_timeout: Duration::from_secs(10),
-            t3_timeout: Duration::from_secs(20),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            t1_timeout: DEFAULT_T1_TIMEOUT,
+            t2_timeout: DEFAULT_T2_TIMEOUT,
+            t3_timeout: DEFAULT_T3_TIMEOUT,
             k: 12,
             w: 8,
             points: Vec::new(),
@@ -205,19 +213,19 @@ fn default_common_address() -> u16 {
 }
 
 fn default_connect_timeout_ms() -> u64 {
-    10000
+    DEFAULT_CONNECT_TIMEOUT.as_millis() as u64
 }
 
 fn default_t1_timeout() -> u64 {
-    15
+    DEFAULT_T1_TIMEOUT.as_secs()
 }
 
 fn default_t2_timeout() -> u64 {
-    10
+    DEFAULT_T2_TIMEOUT.as_secs()
 }
 
 fn default_t3_timeout() -> u64 {
-    20
+    DEFAULT_T3_TIMEOUT.as_secs()
 }
 
 impl Iec104ParamsConfig {

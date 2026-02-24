@@ -72,7 +72,7 @@ pub struct InstanceManager<R: Rtdb> {
     /// Supports hot add/remove with ArcSwap for lock-free reads
     dynamic_instance_index: Option<Arc<InstanceIndex>>,
     /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
-    slot_bitmap: Option<Arc<std::sync::RwLock<SlotBitmap>>>,
+    slot_bitmap: Option<Arc<parking_lot::RwLock<SlotBitmap>>>,
     // ========== SHM Action Writer (M2C via SHM) ==========
     /// UnifiedWriter for writing Control/Adjustment points to SHM
     /// When set, M2C commands go directly to SHM (primary path)
@@ -119,7 +119,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub fn with_dynamic_allocation(
         mut self,
         dynamic_index: Arc<InstanceIndex>,
-        slot_bitmap: Arc<std::sync::RwLock<SlotBitmap>>,
+        slot_bitmap: Arc<parking_lot::RwLock<SlotBitmap>>,
     ) -> Self {
         self.dynamic_instance_index = Some(dynamic_index);
         self.slot_bitmap = Some(slot_bitmap);
@@ -162,16 +162,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     /// Get SlotBitmap stats (for monitoring)
     pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
-        self.slot_bitmap.as_ref().and_then(|b| match b.read() {
-            Ok(guard) => Some(guard.stats()),
-            Err(_poisoned) => {
-                #[cfg(debug_assertions)]
-                tracing::error!(
-                    "slot_bitmap RwLock poisoned - a thread panicked while holding the lock"
-                );
-                None
-            },
-        })
+        self.slot_bitmap.as_ref().map(|b| b.read().stats())
     }
 
     /// Get the routing cache reference
@@ -423,23 +414,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ];
             let total: u32 = own_counts.iter().sum();
             if total > 0 {
-                match bitmap.write() {
-                    Ok(mut bitmap_guard) => {
-                        match index.add_instance(instance_id, own_counts, Some(&mut bitmap_guard)) {
-                            Ok(layout) => {
-                                debug!(
-                                    "Inst{} slot allocated: base={}, total={}",
-                                    instance_id, layout.own_base, layout.own_total
-                                );
-                            },
-                            Err(e) => {
-                                // Log warning but don't fail - dynamic allocation is optional
-                                warn!("Inst{} slot allocation failed: {}", instance_id, e);
-                            },
-                        }
+                let mut bitmap_guard = bitmap.write();
+                match index.add_instance(instance_id, own_counts, Some(&mut bitmap_guard)) {
+                    Ok(layout) => {
+                        debug!(
+                            "Inst{} slot allocated: base={}, total={}",
+                            instance_id, layout.own_base, layout.own_total
+                        );
                     },
                     Err(e) => {
-                        warn!("Inst{} bitmap lock poisoned: {}", instance_id, e);
+                        // Log warning but don't fail - dynamic allocation is optional
+                        warn!("Inst{} slot allocation failed: {}", instance_id, e);
                     },
                 }
             }
@@ -930,23 +915,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // 6. Dynamic Slot Deallocation: Remove instance from InstanceIndex and free slots
         if let (Some(index), Some(bitmap)) = (&self.dynamic_instance_index, &self.slot_bitmap) {
-            match bitmap.write() {
-                Ok(mut bitmap_guard) => {
-                    match index.remove_instance(instance_id, Some(&mut bitmap_guard)) {
-                        Ok(layout) => {
-                            debug!(
-                                "Inst{} slot freed: base={}, count={}",
-                                instance_id, layout.own_base, layout.own_total
-                            );
-                        },
-                        Err(e) => {
-                            // Log warning but don't fail - dynamic allocation is optional
-                            warn!("Inst{} slot deallocation failed: {}", instance_id, e);
-                        },
-                    }
+            let mut bitmap_guard = bitmap.write();
+            match index.remove_instance(instance_id, Some(&mut bitmap_guard)) {
+                Ok(layout) => {
+                    debug!(
+                        "Inst{} slot freed: base={}, count={}",
+                        instance_id, layout.own_base, layout.own_total
+                    );
                 },
                 Err(e) => {
-                    warn!("Inst{} bitmap lock poisoned: {}", instance_id, e);
+                    // Log warning but don't fail - dynamic allocation is optional
+                    warn!("Inst{} slot deallocation failed: {}", instance_id, e);
                 },
             }
         }

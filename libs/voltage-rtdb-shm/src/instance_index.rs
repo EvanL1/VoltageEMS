@@ -10,9 +10,9 @@
 //! InstanceIndex (ArcSwap)
 //! ┌──────────────────────────────────────────────────────────┐
 //! │ 23 → DynamicInstanceLayout {                                    │
-//! │        own_base: 200,           // 私有槽起始             │
-//! │        own_counts: [M:5, A:3],  // 私有 M/A 点数          │
-//! │        shared_slots: [          // 引用 Channel 槽        │
+//! │        own_base: 200,           // Private slot base       │
+//! │        own_counts: [M:5, A:3],  // Private M/A point counts│
+//! │        shared_slots: [          // References to Channel slots│
 //! │          SharedSlotRef { slot: 42, M, 7 },               │
 //! │          SharedSlotRef { slot: 45, M, 8 },               │
 //! │        ]                                                  │
