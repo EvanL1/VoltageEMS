@@ -13,23 +13,11 @@ use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Editor, Helper};
-use std::io;
-use std::time::{Duration, Instant};
-use voltage_model::KeySpaceConfig;
+use std::time::Duration;
 use voltage_routing::RoutingCache;
 use voltage_rtdb_shm::{default_shm_path, SharedConfig, UnifiedReader};
 
-// TUI imports
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
-use crossterm::ExecutableCommand;
-use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, TableState};
-use ratatui::Terminal;
+use crate::shm_dashboard::run_dashboard;
 
 /// Clap subcommands (for one-shot mode)
 #[derive(Subcommand)]
@@ -59,7 +47,7 @@ pub enum ShmCommands {
 
 /// Parsed shared memory key
 #[derive(Debug, Clone)]
-enum ShmKey {
+pub(crate) enum ShmKey {
     /// Instance point: `inst:<id>:M|A:<point_id>`
     Instance {
         instance_id: u32,
@@ -111,7 +99,7 @@ impl std::fmt::Display for ShmKey {
 /// - `ch:<id>:S:<point_id>`   - Channel signal
 /// - `ch:<id>:C:<point_id>`   - Channel control
 /// - `ch:<id>:A:<point_id>`   - Channel adjustment
-fn parse_key(key: &str) -> Result<ShmKey> {
+pub(crate) fn parse_key(key: &str) -> Result<ShmKey> {
     let parts: Vec<&str> = key.split(':').collect();
 
     match parts.as_slice() {
@@ -316,7 +304,7 @@ pub fn handle_command(cmd: Option<ShmCommands>) -> Result<()> {
 ///
 /// Note: Instance-level access is disabled without routing configuration.
 /// Channel-level access remains fully functional.
-fn open_reader() -> Result<(UnifiedReader, RoutingCache)> {
+pub(crate) fn open_reader() -> Result<(UnifiedReader, RoutingCache)> {
     let path = default_shm_path();
     let config = SharedConfig::default().with_path(path.clone());
 
@@ -361,7 +349,11 @@ fn handle_single_command(cmd: ShmCommands) -> Result<()> {
 }
 
 /// Get value from shared memory
-fn get_value(reader: &UnifiedReader, key: &ShmKey, routing_cache: &RoutingCache) -> Option<f64> {
+pub(crate) fn get_value(
+    reader: &UnifiedReader,
+    key: &ShmKey,
+    routing_cache: &RoutingCache,
+) -> Option<f64> {
     match key {
         ShmKey::Instance {
             instance_id,
@@ -609,307 +601,6 @@ fn print_help() {
     println!("  GET ch:1001:T:2         Get channel 1001, telemetry point 2");
     println!("  WATCH inst:5:M:1        Watch instance 5, measurement point 1");
     println!("  WATCH inst:5:M:1 100    Watch with 100ms interval");
-}
-
-// ============================================================================
-// TUI Dashboard (htop-style)
-// ============================================================================
-
-/// Point data for display in TUI
-struct PointRow {
-    key: String,
-    kind: &'static str,
-    value: f64,
-}
-
-/// Dashboard application state
-struct DashboardState {
-    /// Collected point data
-    points: Vec<PointRow>,
-    /// Table selection state
-    table_state: TableState,
-    /// Scroll offset
-    scroll_offset: usize,
-    /// Last scan time (for cache invalidation)
-    last_scan: Instant,
-    /// Cached instance/channel counts
-    last_instance_count: usize,
-    last_channel_count: usize,
-}
-
-impl DashboardState {
-    fn new() -> Self {
-        Self {
-            points: Vec::new(),
-            table_state: TableState::default(),
-            scroll_offset: 0,
-            last_scan: Instant::now(),
-            last_instance_count: 0,
-            last_channel_count: 0,
-        }
-    }
-
-    fn scroll_up(&mut self) {
-        if self.scroll_offset > 0 {
-            self.scroll_offset -= 1;
-        }
-    }
-
-    fn scroll_down(&mut self, max: usize) {
-        if self.scroll_offset < max.saturating_sub(1) {
-            self.scroll_offset += 1;
-        }
-    }
-}
-
-/// Run the TUI dashboard
-fn run_dashboard() -> Result<()> {
-    // Initialize terminal
-    enable_raw_mode().context("Failed to enable raw mode")?;
-    let mut stdout = io::stdout();
-    stdout
-        .execute(EnterAlternateScreen)
-        .context("Failed to enter alternate screen")?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).context("Failed to create terminal")?;
-
-    // Open shared memory reader
-    let (reader, routing_cache) = open_reader()?;
-    let mut state = DashboardState::new();
-
-    // Main loop
-    let tick_rate = Duration::from_millis(250); // 4 FPS
-
-    let result = run_dashboard_loop(
-        &mut terminal,
-        &reader,
-        &routing_cache,
-        &mut state,
-        tick_rate,
-    );
-
-    // Restore terminal
-    disable_raw_mode().context("Failed to disable raw mode")?;
-    terminal
-        .backend_mut()
-        .execute(LeaveAlternateScreen)
-        .context("Failed to leave alternate screen")?;
-
-    result
-}
-
-/// Main dashboard loop
-fn run_dashboard_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
-    state: &mut DashboardState,
-    tick_rate: Duration,
-) -> Result<()> {
-    let mut last_tick = Instant::now();
-
-    loop {
-        // Refresh data if needed
-        refresh_point_data(reader, routing_cache, state);
-
-        // Draw UI
-        terminal.draw(|f| draw_dashboard(f, reader, routing_cache, state))?;
-
-        // Handle input with timeout
-        let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).context("Failed to poll events")? {
-            if let Event::Key(key) = event::read().context("Failed to read event")? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Up | KeyCode::Char('k') => state.scroll_up(),
-                        KeyCode::Down | KeyCode::Char('j') => state.scroll_down(state.points.len()),
-                        KeyCode::Char('r') => {
-                            // Force refresh
-                            state.last_instance_count = 0;
-                            state.last_channel_count = 0;
-                        },
-                        _ => {},
-                    }
-                }
-            }
-        }
-
-        if last_tick.elapsed() >= tick_rate {
-            last_tick = Instant::now();
-        }
-    }
-}
-
-/// Refresh point data by scanning shared memory
-fn refresh_point_data(
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
-    state: &mut DashboardState,
-) {
-    let instance_count = reader.instance_ids(routing_cache).len();
-    let channel_count = reader.channel_ids().len();
-
-    // Only rescan if counts changed or enough time has passed
-    let should_rescan = instance_count != state.last_instance_count
-        || channel_count != state.last_channel_count
-        || state.last_scan.elapsed() > Duration::from_secs(5);
-
-    if should_rescan {
-        state.points = collect_all_points(reader, routing_cache);
-        state.last_instance_count = instance_count;
-        state.last_channel_count = channel_count;
-        state.last_scan = Instant::now();
-    } else {
-        // Just update values for existing points
-        update_point_values(reader, routing_cache, &mut state.points);
-    }
-}
-
-/// Collect all points by iterating over registered instances and channels
-///
-/// Uses the new iteration API which only visits registered points,
-/// eliminating the need to blindly scan ID ranges.
-fn collect_all_points(reader: &UnifiedReader, routing_cache: &RoutingCache) -> Vec<PointRow> {
-    let mut rows = Vec::new();
-    let keyspace = KeySpaceConfig::production_cached();
-
-    // Iterate over all registered instances
-    for inst_id in reader.instance_ids(routing_cache) {
-        // Measurement points
-        reader.iter_instance_measurements(inst_id, routing_cache, |point_id, value| {
-            rows.push(PointRow {
-                key: keyspace.instance_measurement_point_key(inst_id, &point_id.to_string()),
-                kind: "M",
-                value,
-            });
-        });
-        // Action points
-        reader.iter_instance_actions(inst_id, routing_cache, |point_id, value| {
-            rows.push(PointRow {
-                key: keyspace.instance_action_point_key(inst_id, &point_id.to_string()),
-                kind: "A",
-                value,
-            });
-        });
-    }
-
-    // Iterate over all registered channels
-    for &ch_id in reader.channel_ids() {
-        for point_type in [
-            PointType::Telemetry,
-            PointType::Signal,
-            PointType::Control,
-            PointType::Adjustment,
-        ] {
-            reader.iter_channel_points(ch_id, point_type, |point_id, value| {
-                rows.push(PointRow {
-                    key: format!("ch:{}:{}:{}", ch_id, point_type.as_str(), point_id),
-                    kind: point_type.as_str(),
-                    value,
-                });
-            });
-        }
-    }
-
-    rows
-}
-
-/// Update values for existing points (faster than full rescan)
-fn update_point_values(
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
-    points: &mut [PointRow],
-) {
-    for point in points.iter_mut() {
-        if let Ok(key) = parse_key(&point.key) {
-            if let Some(value) = get_value(reader, &key, routing_cache) {
-                point.value = value;
-            }
-        }
-    }
-}
-
-/// Draw the dashboard UI
-fn draw_dashboard(
-    f: &mut ratatui::Frame,
-    reader: &UnifiedReader,
-    routing_cache: &RoutingCache,
-    state: &DashboardState,
-) {
-    let alive = reader.is_writer_alive(5000);
-    let heartbeat = reader.writer_heartbeat();
-    let heartbeat_age = voltage_rtdb_shm::timestamp_ms().saturating_sub(heartbeat);
-
-    // Layout: status bar + data table
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5)])
-        .split(f.area());
-
-    // Status bar
-    let writer_status = if alive {
-        format!("● alive ({}ms)", heartbeat_age)
-    } else {
-        format!("○ dead ({}ms)", heartbeat_age)
-    };
-
-    let status_text = format!(
-        " Instances: {}  Channels: {}  Points: {}  Writer: {}  │  [q]uit [↑↓]scroll [r]efresh",
-        reader.instance_ids(routing_cache).len(),
-        reader.channel_ids().len(),
-        state.points.len(),
-        writer_status
-    );
-
-    let status_style = if alive {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::Red)
-    };
-
-    let status = Paragraph::new(status_text).style(status_style).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(" Voltage Shared Memory Monitor "),
-    );
-    f.render_widget(status, chunks[0]);
-
-    // Data table
-    let header_style = Style::default()
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD);
-
-    let header = Row::new(["Key", "Type", "Value"])
-        .style(header_style)
-        .height(1);
-
-    let visible_rows: Vec<Row> = state
-        .points
-        .iter()
-        .skip(state.scroll_offset)
-        .map(|p| {
-            let value_str = format!("{:.6}", p.value);
-            Row::new([p.key.clone(), p.kind.to_string(), value_str])
-        })
-        .collect();
-
-    let widths = [
-        Constraint::Length(20),
-        Constraint::Length(6),
-        Constraint::Min(15),
-    ];
-
-    let table = Table::new(visible_rows, widths)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            " Points ({}/{}) ",
-            state.scroll_offset + 1,
-            state.points.len().max(1)
-        )))
-        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
-
-    f.render_stateful_widget(table, chunks[1], &mut state.table_state.clone());
 }
 
 // ============================================================================
@@ -1286,58 +977,5 @@ mod tests {
     fn test_format_epoch_secs_padding() {
         // 3661 seconds = 01:01:01, check zero padding
         assert_eq!(format_epoch_secs(3661), "01:01:01 UTC");
-    }
-
-    // ========================================================================
-    // DashboardState Tests
-    // ========================================================================
-
-    #[test]
-    fn test_dashboard_state_new() {
-        let state = DashboardState::new();
-        assert!(state.points.is_empty());
-        assert_eq!(state.scroll_offset, 0);
-        assert_eq!(state.last_instance_count, 0);
-        assert_eq!(state.last_channel_count, 0);
-    }
-
-    #[test]
-    fn test_dashboard_state_scroll_up() {
-        let mut state = DashboardState::new();
-        state.scroll_offset = 5;
-
-        state.scroll_up();
-        assert_eq!(state.scroll_offset, 4);
-
-        // Should not go below 0
-        state.scroll_offset = 0;
-        state.scroll_up();
-        assert_eq!(state.scroll_offset, 0);
-    }
-
-    #[test]
-    fn test_dashboard_state_scroll_down() {
-        let mut state = DashboardState::new();
-
-        state.scroll_down(10);
-        assert_eq!(state.scroll_offset, 1);
-
-        state.scroll_offset = 8;
-        state.scroll_down(10);
-        assert_eq!(state.scroll_offset, 9);
-
-        // Should not exceed max - 1
-        state.scroll_offset = 9;
-        state.scroll_down(10);
-        assert_eq!(state.scroll_offset, 9);
-    }
-
-    #[test]
-    fn test_dashboard_state_scroll_down_empty() {
-        let mut state = DashboardState::new();
-
-        // With max = 0, should stay at 0
-        state.scroll_down(0);
-        assert_eq!(state.scroll_offset, 0);
     }
 }

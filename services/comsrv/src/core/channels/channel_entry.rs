@@ -1,0 +1,411 @@
+//! Channel entry types and metadata
+//!
+//! Contains ChannelEntry, ChannelMetadata, ChannelStats, and related helpers.
+
+use arc_swap::ArcSwapOption;
+use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::task::JoinHandle;
+use tracing::warn;
+
+use crate::core::config::ChannelConfig;
+use crate::protocols::core::logging::ChannelLogHandler;
+use crate::protocols::gateway::ChannelRuntime;
+use crate::runtime::reconnect::ReconnectPolicy;
+use crate::store::RedisDataStore;
+use voltage_rtdb::Rtdb;
+
+use super::channel_task::run_unified_channel_task;
+
+/// Maximum number of channel slots (pre-allocated for O(1) access)
+/// Channel IDs must be < MAX_CHANNELS
+pub(crate) const MAX_CHANNELS: usize = 10000;
+
+// ============================================================================
+// Channel Types
+// ============================================================================
+
+/// Channel metadata
+#[derive(Debug)]
+pub struct ChannelMetadata {
+    pub name: Arc<str>,
+    pub protocol_type: String,
+    pub created_at: Instant,
+    /// Last accessed timestamp in milliseconds since Unix epoch (lock-free)
+    pub last_accessed_ms: AtomicI64,
+}
+
+impl Clone for ChannelMetadata {
+    fn clone(&self) -> Self {
+        Self {
+            name: Arc::clone(&self.name),
+            protocol_type: self.protocol_type.clone(),
+            created_at: self.created_at,
+            last_accessed_ms: AtomicI64::new(self.last_accessed_ms.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+/// Helper function to get current Unix timestamp in milliseconds
+pub fn unix_timestamp_ms() -> i64 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_millis() as i64,
+        Err(e) => {
+            warn!("System time error (clock before UNIX epoch?): {}", e);
+            0
+        },
+    }
+}
+
+/// Channel entry with integrated protocol runtime and storage
+///
+/// ## Lock-Free Architecture
+///
+/// This struct uses message-passing instead of shared locks:
+/// - Protocol client is owned by the unified channel task (not shared)
+/// - External code sends `ProtocolCommand` via `protocol_tx` channel
+/// - The unified task processes commands in its `tokio::select!` loop
+/// - Results are returned via embedded `oneshot::Sender`
+///
+/// This eliminates lock contention between polling and command execution.
+#[derive(Clone)]
+pub struct ChannelEntry<R: Rtdb> {
+    /// Protocol command sender - for connect/disconnect/diagnostics operations
+    /// Commands are processed by the unified channel task
+    pub protocol_tx: tokio::sync::mpsc::Sender<super::types::ProtocolCommand>,
+    /// Data store for persisting polled data
+    pub store: Arc<RedisDataStore<R>>,
+    /// Unified channel task handle (polling + command execution)
+    task_handle: Arc<std::sync::Mutex<Option<JoinHandle<()>>>>,
+    /// Channel metadata (name, protocol type, etc.)
+    pub metadata: ChannelMetadata,
+
+    /// Channel configuration
+    pub channel_config: Arc<ChannelConfig>,
+    /// Direct command sender for M2C business commands (control/adjustment)
+    pub command_tx: Option<tokio::sync::mpsc::Sender<super::traits::ChannelCommand>>,
+    /// Cached connection state for non-blocking access (updated by unified task)
+    cached_connection_state: Arc<AtomicU8>,
+    /// Cached diagnostics for non-blocking access (updated by unified task after each poll)
+    cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
+}
+
+impl<R: Rtdb> std::fmt::Debug for ChannelEntry<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChannelEntry")
+            .field("metadata", &self.metadata)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Channel statistics
+#[derive(Debug, Clone)]
+pub struct ChannelStats {
+    pub channel_id: u32,
+    pub name: String,
+    pub protocol_type: String,
+    pub is_connected: bool,
+    pub created_at: Instant,
+    /// Last accessed timestamp in milliseconds since Unix epoch
+    pub last_accessed_ms: i64,
+}
+
+impl<R: Rtdb + 'static> ChannelEntry<R> {
+    /// Create new channel entry and start the unified channel task
+    ///
+    /// This method spawns a background task that owns the protocol client
+    /// and processes both polling and commands via `tokio::select!`.
+    pub fn new(
+        protocol: Box<dyn ChannelRuntime>,
+        store: Arc<RedisDataStore<R>>,
+        channel_config: Arc<ChannelConfig>,
+        protocol_type: String,
+        poll_interval_ms: u64,
+        log_handler: Arc<dyn ChannelLogHandler>,
+    ) -> Self {
+        let metadata = ChannelMetadata {
+            name: Arc::from(channel_config.name()),
+            protocol_type,
+            created_at: Instant::now(),
+            last_accessed_ms: AtomicI64::new(unix_timestamp_ms()),
+        };
+
+        let channel_id = channel_config.id();
+
+        // Create protocol command channel (for connect/disconnect/diagnostics)
+        let (protocol_tx, protocol_rx) =
+            tokio::sync::mpsc::channel::<super::types::ProtocolCommand>(32);
+
+        // Create business command channel (for control/adjustment from M2C SHM)
+        // Buffer size 1024 prevents backpressure drops during burst M2C traffic
+        let (business_tx, business_rx) =
+            tokio::sync::mpsc::channel::<super::traits::ChannelCommand>(1024);
+
+        // Create shared connection state cache (initialized as Connecting)
+        let cached_state = Arc::new(AtomicU8::new(
+            super::types::ConnectionState::Connecting.as_u8(),
+        ));
+        let cached_state_clone = Arc::clone(&cached_state);
+
+        // Create shared diagnostics cache (initialized as None)
+        let cached_diagnostics = Arc::new(ArcSwapOption::empty());
+        let cached_diagnostics_clone = Arc::clone(&cached_diagnostics);
+
+        // Parse reconnection policy from channel parameters
+        let reconnect_policy = parse_reconnect_policy(&channel_config.parameters);
+
+        // Spawn the unified channel task
+        let store_clone = Arc::clone(&store);
+        let task_handle = tokio::spawn(async move {
+            run_unified_channel_task(
+                protocol,
+                protocol_rx,
+                business_rx,
+                store_clone,
+                channel_id,
+                poll_interval_ms,
+                cached_state_clone,
+                cached_diagnostics_clone,
+                log_handler,
+                reconnect_policy,
+            )
+            .await;
+        });
+
+        Self {
+            protocol_tx,
+            store,
+            task_handle: Arc::new(std::sync::Mutex::new(Some(task_handle))),
+            metadata,
+            channel_config,
+            command_tx: Some(business_tx),
+            cached_connection_state: cached_state,
+            cached_diagnostics,
+        }
+    }
+
+    /// Get channel statistics
+    pub async fn get_stats(&self, channel_id: u32) -> ChannelStats {
+        ChannelStats {
+            channel_id,
+            name: self.metadata.name.to_string(),
+            protocol_type: self.metadata.protocol_type.clone(),
+            is_connected: self.is_connected(),
+            created_at: self.metadata.created_at,
+            last_accessed_ms: self.metadata.last_accessed_ms.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Update last accessed time (lock-free)
+    pub fn touch(&self) {
+        self.metadata
+            .last_accessed_ms
+            .store(unix_timestamp_ms(), Ordering::Relaxed);
+    }
+
+    /// Check if channel is connected.
+    ///
+    /// Returns the cached connection state for non-blocking access.
+    /// The cache is updated by the unified channel task after each poll cycle.
+    pub fn is_connected(&self) -> bool {
+        let state_u8 = self.cached_connection_state.load(Ordering::Relaxed);
+        super::types::ConnectionState::from_u8(state_u8).is_connected()
+    }
+
+    /// Get cached connection state (non-blocking).
+    pub fn get_cached_connection_state(&self) -> super::types::ConnectionState {
+        let state_u8 = self.cached_connection_state.load(Ordering::Relaxed);
+        super::types::ConnectionState::from_u8(state_u8)
+    }
+
+    /// Get channel status.
+    pub async fn get_status(&self) -> super::types::ChannelStatus {
+        super::types::ChannelStatus {
+            is_connected: self.is_connected(),
+            last_update: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    /// Get cached diagnostics information (non-blocking).
+    ///
+    /// Returns the cached diagnostics that is updated by the unified channel task
+    /// after each poll cycle. This is safe to call from API handlers without
+    /// blocking on slow protocol operations.
+    #[allow(clippy::disallowed_methods)]
+    pub fn get_diagnostics(&self, channel_id: u32) -> serde_json::Value {
+        match self.cached_diagnostics.load().as_deref() {
+            Some(d) => serde_json::json!({
+                "protocol_type": "unified",
+                "connected": d.connection_state.is_connected(),
+                "channel_id": channel_id,
+                "error_count": d.error_count,
+                "last_error": d.last_error,
+                "read_count": d.read_count,
+                "write_count": d.write_count,
+                "protocol": d.protocol,
+                "extra": d.extra
+            }),
+            None => serde_json::json!({
+                "protocol_type": "unified",
+                "connected": false,
+                "channel_id": channel_id,
+                "error_count": 0,
+                "last_error": null
+            }),
+        }
+    }
+
+    /// Connect the channel
+    ///
+    /// Sends a Connect command to the unified channel task.
+    pub async fn connect(&self) -> crate::error::Result<()> {
+        use super::types::ProtocolCommand;
+        use std::time::Duration;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.protocol_tx
+            .send(ProtocolCommand::Connect { response_tx })
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        // Add 30s timeout to prevent indefinite blocking on connect
+        tokio::time::timeout(Duration::from_secs(30), response_rx)
+            .await
+            .map_err(|_| {
+                crate::error::ComSrvError::timeout(format!(
+                    "Ch{} connect timeout (30s)",
+                    self.channel_config.id()
+                ))
+            })?
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?
+            .map_err(crate::error::ComSrvError::from)
+    }
+
+    /// Disconnect the channel
+    ///
+    /// Sends a Disconnect command to the unified channel task.
+    pub async fn disconnect(&self) -> crate::error::Result<()> {
+        use super::types::ProtocolCommand;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.protocol_tx
+            .send(ProtocolCommand::Disconnect { response_tx })
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        response_rx
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        Ok(())
+    }
+
+    /// Set the channel log level dynamically.
+    ///
+    /// Sends a SetLogLevel command to the unified channel task.
+    /// Valid levels: "debug" (verbose), "info" (standard), "error" (minimal)
+    pub async fn set_log_level(&self, level: &str) -> crate::error::Result<()> {
+        use super::types::ProtocolCommand;
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.protocol_tx
+            .send(ProtocolCommand::SetLogLevel {
+                level: level.to_string(),
+                response_tx,
+            })
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?;
+
+        response_rx
+            .await
+            .map_err(|_| crate::error::ComSrvError::channel_not_found(self.channel_config.id()))?
+            .map_err(crate::error::ComSrvError::ValidationError)
+    }
+
+    /// Get the channel ID from metadata name (parsed from config)
+    pub fn channel_id(&self) -> u32 {
+        self.channel_config.id()
+    }
+
+    /// Shutdown the unified channel task gracefully.
+    ///
+    /// Sends a Shutdown command to the unified task. The task will process
+    /// the command and exit its loop cleanly, allowing proper resource cleanup.
+    ///
+    /// NOTE: This method does NOT abort the task immediately. Use `abort_task()`
+    /// if you need to force-terminate after a timeout.
+    pub fn shutdown(&self) {
+        use super::types::ProtocolCommand;
+
+        // Send shutdown command (fire-and-forget)
+        // The unified task will receive this and break out of its loop
+        let _ = self.protocol_tx.try_send(ProtocolCommand::Shutdown);
+    }
+
+    /// Force-abort the unified channel task.
+    ///
+    /// Use this only after `shutdown()` if the task doesn't exit in time.
+    /// This is a last resort that may cause resource leaks.
+    pub fn abort_task(&self) {
+        if let Ok(mut handle) = self.task_handle.lock() {
+            if let Some(h) = handle.take() {
+                if !h.is_finished() {
+                    warn!(
+                        "Ch{} task did not exit gracefully, aborting",
+                        self.channel_id()
+                    );
+                    h.abort();
+                }
+            }
+        }
+    }
+
+    /// Check if the unified task has finished.
+    pub fn is_task_finished(&self) -> bool {
+        if let Ok(handle) = self.task_handle.lock() {
+            match handle.as_ref() {
+                Some(h) => h.is_finished(),
+                None => true, // Task was already taken/aborted
+            }
+        } else {
+            true // Lock poisoned, assume finished
+        }
+    }
+}
+
+/// Parse reconnection policy from channel parameters.
+///
+/// Supports: reconnect_max_attempts, reconnect_initial_delay_ms,
+///           reconnect_max_delay_ms, reconnect_backoff_multiplier
+fn parse_reconnect_policy(
+    params: &std::collections::HashMap<String, serde_json::Value>,
+) -> ReconnectPolicy {
+    let max_attempts = params
+        .get("reconnect_max_attempts")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(0); // 0 = unlimited
+
+    let initial_delay_ms = params
+        .get("reconnect_initial_delay_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1000);
+
+    let max_delay_ms = params
+        .get("reconnect_max_delay_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(60000);
+
+    let backoff_multiplier = params
+        .get("reconnect_backoff_multiplier")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(2.0);
+
+    ReconnectPolicy::from_config(
+        max_attempts,
+        initial_delay_ms,
+        max_delay_ms,
+        backoff_multiplier,
+    )
+}

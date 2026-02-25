@@ -8,6 +8,7 @@ pub mod error;
 pub mod file_logging;
 #[cfg(feature = "json-mapping")]
 pub mod json_mapper;
+pub mod log_handlers;
 pub mod logging;
 pub mod metadata;
 pub mod point;

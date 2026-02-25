@@ -200,9 +200,9 @@ fn process_rtu_request(
 
     match function_code {
         // ====================================================================
-        // FC01: Read Coils
+        // FC01: Read Coils / FC02: Read Discrete Inputs
         // ====================================================================
-        FC_READ_COILS => {
+        FC_READ_COILS | FC_READ_DISCRETE_INPUTS => {
             if data.len() < 4 {
                 return Some(build_rtu_exception(
                     slave_id,
@@ -214,11 +214,6 @@ fn process_rtu_request(
             let start_addr = u16::from_be_bytes([data[0], data[1]]);
             let quantity = u16::from_be_bytes([data[2], data[3]]);
 
-            debug!(
-                "RTU Read coils: slave={}, addr={}, count={}",
-                slave_id, start_addr, quantity
-            );
-
             if quantity == 0 || quantity > 2000 {
                 return Some(build_rtu_exception(
                     slave_id,
@@ -227,47 +222,24 @@ fn process_rtu_request(
                 ));
             }
 
-            let coils = coil_store.read_coils(slave_id, start_addr, quantity);
+            let bits = if function_code == FC_READ_COILS {
+                debug!(
+                    "RTU Read coils: slave={}, addr={}, count={}",
+                    slave_id, start_addr, quantity
+                );
+                coil_store.read_coils(slave_id, start_addr, quantity)
+            } else {
+                debug!(
+                    "RTU Read discrete inputs: slave={}, addr={}, count={}",
+                    slave_id, start_addr, quantity
+                );
+                coil_store.read_discrete_inputs(slave_id, start_addr, quantity)
+            };
+
             Some(build_rtu_read_coils_response(
                 slave_id,
                 function_code,
-                &coils,
-            ))
-        },
-
-        // ====================================================================
-        // FC02: Read Discrete Inputs
-        // ====================================================================
-        FC_READ_DISCRETE_INPUTS => {
-            if data.len() < 4 {
-                return Some(build_rtu_exception(
-                    slave_id,
-                    function_code,
-                    EX_ILLEGAL_DATA_VALUE,
-                ));
-            }
-
-            let start_addr = u16::from_be_bytes([data[0], data[1]]);
-            let quantity = u16::from_be_bytes([data[2], data[3]]);
-
-            debug!(
-                "RTU Read discrete inputs: slave={}, addr={}, count={}",
-                slave_id, start_addr, quantity
-            );
-
-            if quantity == 0 || quantity > 2000 {
-                return Some(build_rtu_exception(
-                    slave_id,
-                    function_code,
-                    EX_ILLEGAL_DATA_VALUE,
-                ));
-            }
-
-            let inputs = coil_store.read_discrete_inputs(slave_id, start_addr, quantity);
-            Some(build_rtu_read_coils_response(
-                slave_id,
-                function_code,
-                &inputs,
+                &bits,
             ))
         },
 

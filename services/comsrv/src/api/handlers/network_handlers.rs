@@ -374,6 +374,69 @@ async fn get_mac_address(name: &str) -> Option<String> {
 }
 
 // ============================================================================
+// Shared Helpers
+// ============================================================================
+
+/// Enrich interface config with runtime status (is_up, mac_address) from sysfs
+async fn enrich_runtime_status(config: &mut NetworkInterfaceConfig) {
+    if config.name.is_empty() {
+        return;
+    }
+    config.is_up = get_interface_status(&config.name).await;
+    if config.mac_address.is_none() {
+        config.mac_address = get_mac_address(&config.name).await;
+    }
+}
+
+/// Load and parse all network config files, enriching each with runtime status
+async fn load_all_configs() -> Result<Vec<NetworkInterfaceConfig>, AppError> {
+    let files = find_network_files().await.map_err(|e| {
+        AppError::internal_error(format!("Failed to read network config directory: {}", e))
+    })?;
+
+    let mut interfaces = Vec::new();
+    for file_path in files {
+        let content = match tokio::fs::read_to_string(&file_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to read {}: {}", file_path.display(), e);
+                continue;
+            },
+        };
+        let mut config = parse_network_file(&content);
+        config.config_file = Some(file_path.to_string_lossy().to_string());
+        enrich_runtime_status(&mut config).await;
+        interfaces.push(config);
+    }
+    Ok(interfaces)
+}
+
+/// Find a specific interface config by name, returning file path and config
+async fn find_interface_config(name: &str) -> Result<(PathBuf, NetworkInterfaceConfig), AppError> {
+    let files = find_network_files().await.map_err(|e| {
+        AppError::internal_error(format!("Failed to read network config directory: {}", e))
+    })?;
+
+    for file_path in files {
+        let content = match tokio::fs::read_to_string(&file_path).await {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut config = parse_network_file(&content);
+        if config.name == name {
+            config.config_file = Some(file_path.to_string_lossy().to_string());
+            enrich_runtime_status(&mut config).await;
+            return Ok((file_path, config));
+        }
+    }
+
+    Err(AppError::not_found(format!(
+        "Network interface '{}' not found",
+        name
+    )))
+}
+
+// ============================================================================
 // HTTP Handlers
 // ============================================================================
 
@@ -396,34 +459,7 @@ async fn get_mac_address(name: &str) -> Option<String> {
 pub async fn list_network_interfaces<R: Rtdb>(
     State(_state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<NetworkInterfaceList>>, AppError> {
-    let files = find_network_files().await.map_err(|e| {
-        AppError::internal_error(format!("Failed to read network config directory: {}", e))
-    })?;
-
-    let mut interfaces = Vec::new();
-
-    for file_path in files {
-        let content = match tokio::fs::read_to_string(&file_path).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Failed to read {}: {}", file_path.display(), e);
-                continue;
-            },
-        };
-
-        let mut config = parse_network_file(&content);
-        config.config_file = Some(file_path.to_string_lossy().to_string());
-
-        // Get runtime status
-        if !config.name.is_empty() {
-            config.is_up = get_interface_status(&config.name).await;
-            if config.mac_address.is_none() {
-                config.mac_address = get_mac_address(&config.name).await;
-            }
-        }
-
-        interfaces.push(config);
-    }
+    let interfaces = load_all_configs().await?;
 
     let result = NetworkInterfaceList {
         total: interfaces.len(),
@@ -457,36 +493,9 @@ pub async fn get_network_interface<R: Rtdb>(
     State(_state): State<AppState<R>>,
     Path(name): Path<String>,
 ) -> Result<Json<SuccessResponse<NetworkInterfaceConfig>>, AppError> {
-    // Validate interface name to prevent path traversal
     validate_interface_name(&name).map_err(AppError::bad_request)?;
-
-    let files = find_network_files().await.map_err(|e| {
-        AppError::internal_error(format!("Failed to read network config directory: {}", e))
-    })?;
-
-    for file_path in files {
-        let content = match tokio::fs::read_to_string(&file_path).await {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let mut config = parse_network_file(&content);
-
-        if config.name == name {
-            config.config_file = Some(file_path.to_string_lossy().to_string());
-            config.is_up = get_interface_status(&name).await;
-            if config.mac_address.is_none() {
-                config.mac_address = get_mac_address(&name).await;
-            }
-
-            return Ok(Json(SuccessResponse::new(config)));
-        }
-    }
-
-    Err(AppError::not_found(format!(
-        "Network interface '{}' not found",
-        name
-    )))
+    let (_path, config) = find_interface_config(&name).await?;
+    Ok(Json(SuccessResponse::new(config)))
 }
 
 /// Update network interface configuration
@@ -520,40 +529,8 @@ pub async fn update_network_interface<R: Rtdb>(
     Path(name): Path<String>,
     Json(request): Json<NetworkConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<NetworkConfigUpdateResult>>, AppError> {
-    // Validate interface name to prevent path traversal
     validate_interface_name(&name).map_err(AppError::bad_request)?;
-
-    // Find existing configuration file
-    let files = find_network_files().await.map_err(|e| {
-        AppError::internal_error(format!("Failed to read network config directory: {}", e))
-    })?;
-
-    let mut found_file: Option<PathBuf> = None;
-    let mut current_config: Option<NetworkInterfaceConfig> = None;
-
-    for file_path in &files {
-        let content = match tokio::fs::read_to_string(file_path).await {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let config = parse_network_file(&content);
-        if config.name == name {
-            found_file = Some(file_path.clone());
-            current_config = Some(config);
-            break;
-        }
-    }
-
-    let (file_path, mut config) = match (found_file, current_config) {
-        (Some(f), Some(c)) => (f, c),
-        _ => {
-            return Err(AppError::not_found(format!(
-                "Network interface '{}' not found",
-                name
-            )));
-        },
-    };
+    let (file_path, mut config) = find_interface_config(&name).await?;
 
     // Apply updates
     if let Some(dhcp) = request.dhcp {

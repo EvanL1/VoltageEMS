@@ -11,6 +11,7 @@
 #![allow(clippy::type_complexity)] // parse_channel_config return type
 
 use crate::api::routes::AppState;
+use crate::core::channels::ChannelManager;
 use crate::core::config::{ChannelCore, ChannelLoggingConfig};
 use crate::dto::{AppError, ParameterChangeType, SuccessResponse};
 use axum::{
@@ -133,6 +134,49 @@ fn build_channel_config_json(
     config_obj.insert("logging".to_string(), logging_json);
 
     serde_json::to_string(&config_obj)
+}
+
+/// Load channel configuration from database, returns error if not found
+async fn load_channel_from_db(
+    pool: &sqlx::SqlitePool,
+    id: u32,
+) -> Result<(String, String, bool, Option<String>), AppError> {
+    sqlx::query_as("SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?")
+        .bind(id as i64)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Load channel {}: {}", id, e);
+            AppError::internal_error("Database operation failed")
+        })?
+        .ok_or_else(|| AppError::not_found(format!("Channel {} not found in database", id)))
+}
+
+/// Check that a channel ID is available in both runtime and database
+async fn check_channel_id_available<R: Rtdb>(
+    id: u32,
+    pool: &sqlx::SqlitePool,
+    manager: &ChannelManager<R>,
+) -> Result<(), AppError> {
+    if manager.get_channel(id).is_some() {
+        return Err(AppError::conflict(format!(
+            "Channel {} already exists in runtime",
+            id
+        )));
+    }
+    let db_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channels WHERE channel_id = ?)")
+            .bind(id as i64)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
+    if db_exists {
+        return Err(AppError::conflict(format!(
+            "Channel {} already exists in database",
+            id
+        )));
+    }
+    Ok(())
 }
 
 /// Analyze parameter changes to determine if reload is needed
@@ -403,31 +447,7 @@ pub async fn create_channel_handler<R: Rtdb>(
 
     // 2. Determine channel ID (auto-assign or use provided)
     let channel_id = if let Some(id) = req.channel_id {
-        // Manual ID specified - validate it doesn't exist
-        // Direct access without RwLock (lock-free)
-        let manager = &state.channel_manager;
-        if manager.get_channel(id).is_some() {
-            return Err(AppError::conflict(format!(
-                "Channel ID {} already exists in runtime",
-                id
-            )));
-        }
-
-        // Check if ID exists in database
-        let db_exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channels WHERE channel_id = ?)")
-                .bind(id as i64)
-                .fetch_one(&state.sqlite_pool)
-                .await
-                .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
-
-        if db_exists {
-            return Err(AppError::conflict(format!(
-                "Channel ID {} already exists in database",
-                id
-            )));
-        }
-
+        check_channel_id_available(id, &state.sqlite_pool, &state.channel_manager).await?;
         tracing::debug!("Manual ID: {}", id);
         id
     } else {
@@ -637,48 +657,16 @@ async fn change_channel_id<R: Rtdb + 'static>(
     req: crate::dto::ChannelConfigUpdateRequest,
     state: &AppState<R>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
-    use crate::core::channels::ChannelManager;
     use crate::core::config::ChannelConfig;
     use std::time::Duration;
 
-    // 1. Validate new_id doesn't exist in runtime
+    // 1-2. Validate new_id doesn't exist in runtime or database
     let manager = &state.channel_manager;
-    if manager.get_channel(new_id).is_some() {
-        return Err(AppError::conflict(format!(
-            "Channel {} already exists in runtime",
-            new_id
-        )));
-    }
-
-    // 2. Validate new_id doesn't exist in database
-    let db_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM channels WHERE channel_id = ?)")
-            .bind(new_id as i64)
-            .fetch_one(&state.sqlite_pool)
-            .await
-            .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
-
-    if db_exists {
-        return Err(AppError::conflict(format!(
-            "Channel {} already exists in database",
-            new_id
-        )));
-    }
+    check_channel_id_available(new_id, &state.sqlite_pool, manager).await?;
 
     // 3. Load current configuration from database
-    let current: Option<(String, String, bool, Option<String>)> =
-        sqlx::query_as("SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?")
-            .bind(old_id as i64)
-            .fetch_optional(&state.sqlite_pool)
-            .await
-            .map_err(|e| AppError::internal_error(format!("Database error: {}", e)))?;
-
-    let Some((current_name, current_protocol, enabled, current_config_str)) = current else {
-        return Err(AppError::not_found(format!(
-            "Channel {} not found in database",
-            old_id
-        )));
-    };
+    let (current_name, current_protocol, enabled, current_config_str) =
+        load_channel_from_db(&state.sqlite_pool, old_id).await?;
 
     // 4. Parse current config
     let (current_description, current_parameters, current_logging) =
@@ -896,22 +884,8 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
     };
 
     // 2. Load current configuration from database
-    let current: Option<(String, String, bool, Option<String>)> =
-        sqlx::query_as("SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?")
-            .bind(id as i64)
-            .fetch_optional(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("DB err: {}", e);
-                AppError::internal_error("Database operation failed")
-            })?;
-
-    let Some((current_name, current_protocol, enabled, current_config_str)) = current else {
-        return Err(AppError::not_found(format!(
-            "Channel {} not found in database",
-            id
-        )));
-    };
+    let (current_name, current_protocol, enabled, current_config_str) =
+        load_channel_from_db(&state.sqlite_pool, id).await?;
 
     // 3. Begin database transaction
     let mut tx = state
@@ -1052,49 +1026,13 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
 
                 "running".to_string()
             },
-            NonCritical => {
-                // Performance parameters changed, proceed with hot reload
-                tracing::debug!("Ch{} non-critical change, hot reload", id);
+            NonCritical | Critical => {
+                tracing::debug!("Ch{} {:?} change, hot reload", id, change_type);
 
-                // Commit database first
                 tx.commit().await.map_err(|e| {
                     AppError::internal_error(format!("Database operation failed: {}", e))
                 })?;
 
-                // Build new config
-                let new_config = crate::core::config::ChannelConfig {
-                    core: ChannelCore {
-                        id,
-                        name: name.clone(),
-                        description: description.clone(),
-                        protocol: protocol.clone(),
-                        enabled,
-                    },
-                    parameters: parameters.clone(),
-                    logging: logging.clone(),
-                };
-
-                // Spawn background hot reload
-                // Fire-and-forget: hot reload is best-effort, errors are logged
-                let state_clone = state.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
-                        tracing::error!("Ch{} hot reload: {}", id, e);
-                    }
-                });
-
-                "updated".to_string()
-            },
-            Critical => {
-                // Critical parameters changed, proceed with hot reload
-                tracing::debug!("Ch{} critical change, hot reload", id);
-
-                // Commit database first
-                tx.commit().await.map_err(|e| {
-                    AppError::internal_error(format!("Database operation failed: {}", e))
-                })?;
-
-                // Build new config
                 let new_config = crate::core::config::ChannelConfig {
                     core: ChannelCore {
                         id,
@@ -1107,8 +1045,6 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
                     logging,
                 };
 
-                // Spawn background hot reload
-                // Fire-and-forget: hot reload is best-effort, errors are logged
                 let state_clone = state.clone();
                 tokio::spawn(async move {
                     if let Err(e) = perform_hot_reload(id, &state_clone, new_config).await {
@@ -1206,22 +1142,8 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
     tracing::debug!("Ch{} enabled={}", id, req.enabled);
 
     // 1. Load current configuration from database
-    let current: Option<(String, String, bool, Option<String>)> =
-        sqlx::query_as("SELECT name, protocol, enabled, config FROM channels WHERE channel_id = ?")
-            .bind(id as i64)
-            .fetch_optional(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("DB err: {}", e);
-                AppError::internal_error("Database operation failed")
-            })?;
-
-    let Some((name, protocol, current_enabled, config_str)) = current else {
-        return Err(AppError::not_found(format!(
-            "Channel {} not found in database",
-            id
-        )));
-    };
+    let (name, protocol, current_enabled, config_str) =
+        load_channel_from_db(&state.sqlite_pool, id).await?;
 
     // 2. Parse config for runtime (before early return so we can populate description correctly)
     let (description, parameters, _logging) = parse_channel_config(id, config_str)?;
@@ -1539,28 +1461,50 @@ pub async fn reload_configuration_handler<R: Rtdb>(
         }
     }
 
-    // 5. Add new channels from SQLite
-    for id in &to_add {
-        if let Some((_, name, protocol, enabled)) =
-            db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == *id)
-        {
-            // Load description and parameters from config JSON
-            let config_str: Option<String> =
-                sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
-                    .bind(*id as i64)
-                    .fetch_optional(&state.sqlite_pool)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Load channel {} config: {}", id, e);
-                        AppError::internal_error("Database operation failed")
-                    })?
-                    .flatten();
+    // 5-6. Add new and update existing channels
+    let combined = to_add
+        .iter()
+        .map(|id| (*id, false))
+        .chain(to_update.iter().map(|id| (*id, true)));
 
-            let (description, parameters, _logging) = parse_channel_config(*id, config_str)?;
+    let manager = &state.channel_manager;
+    for (id, is_update) in combined {
+        let label = if is_update { "update" } else { "add" };
+        let Some((_, name, protocol, enabled)) =
+            db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == id)
+        else {
+            continue;
+        };
 
+        let config_str: Option<String> =
+            sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
+                .bind(id as i64)
+                .fetch_optional(&state.sqlite_pool)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Load channel {} config: {}", id, e);
+                    AppError::internal_error("Database operation failed")
+                })?
+                .flatten();
+
+        let (description, parameters, _logging) = parse_channel_config(id, config_str)?;
+
+        if is_update {
+            if let Err(e) = manager.remove_channel(id).await {
+                tracing::debug!("Ch{} not in runtime: {}", id, e);
+            }
+        }
+
+        let result_vec = if is_update {
+            &mut channels_updated
+        } else {
+            &mut channels_added
+        };
+
+        if *enabled {
             let channel_config = ChannelConfig {
                 core: ChannelCore {
-                    id: *id,
+                    id,
                     name: name.clone(),
                     description,
                     protocol: protocol.clone(),
@@ -1570,90 +1514,21 @@ pub async fn reload_configuration_handler<R: Rtdb>(
                 logging: ChannelLoggingConfig::default(),
             };
 
-            // Only create and connect if enabled
-            if *enabled {
-                // Direct access without RwLock (lock-free)
-                let manager = &state.channel_manager;
-                match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(entry) => {
-                        // Try to connect using ChannelEntry's connect method
-                        if let Err(e) = entry.connect().await {
-                            tracing::warn!("Ch{} connect: {}", id, e);
-                        }
-                        channels_added.push(*id);
-                        tracing::debug!("Ch{} added", id);
-                    },
-                    Err(e) => {
-                        errors.push(format!("Failed to add channel {}: {}", id, e));
-                    },
-                }
-            } else {
-                // Channel is disabled, don't create runtime instance
-                channels_added.push(*id);
-                tracing::debug!("Ch{} added (disabled)", id);
+            match manager.create_channel(Arc::new(channel_config)).await {
+                Ok(entry) => {
+                    if let Err(e) = entry.connect().await {
+                        tracing::warn!("Ch{} connect: {}", id, e);
+                    }
+                    result_vec.push(id);
+                    tracing::debug!("Ch{} {}d", id, label);
+                },
+                Err(e) => {
+                    errors.push(format!("Failed to {} channel {}: {}", label, id, e));
+                },
             }
-        }
-    }
-
-    // 6. Update existing channels (reload them)
-    for id in &to_update {
-        if let Some((_, name, protocol, enabled)) =
-            db_channels.iter().find(|(cid, _, _, _)| *cid as u32 == *id)
-        {
-            // Load description and parameters from config JSON
-            let config_str: Option<String> =
-                sqlx::query_scalar("SELECT config FROM channels WHERE channel_id = ?")
-                    .bind(*id as i64)
-                    .fetch_optional(&state.sqlite_pool)
-                    .await
-                    .map_err(|e| {
-                        tracing::error!("Load channel {} config: {}", id, e);
-                        AppError::internal_error("Database operation failed")
-                    })?
-                    .flatten();
-
-            let (description, parameters, _logging) = parse_channel_config(*id, config_str)?;
-
-            // Direct access without RwLock (lock-free)
-            let manager = &state.channel_manager;
-
-            // Remove old channel (if exists)
-            if let Err(e) = manager.remove_channel(*id).await {
-                tracing::debug!("Ch{} not in runtime: {}", id, e);
-            }
-
-            // Only create and connect if enabled
-            if *enabled {
-                let channel_config = ChannelConfig {
-                    core: ChannelCore {
-                        id: *id,
-                        name: name.clone(),
-                        description,
-                        protocol: protocol.clone(),
-                        enabled: *enabled,
-                    },
-                    parameters,
-                    logging: ChannelLoggingConfig::default(),
-                };
-
-                match manager.create_channel(Arc::new(channel_config)).await {
-                    Ok(entry) => {
-                        // Connect using ChannelEntry's direct method
-                        if let Err(e) = entry.connect().await {
-                            tracing::warn!("Ch{} connect: {}", id, e);
-                        }
-                        channels_updated.push(*id);
-                        tracing::debug!("Ch{} updated", id);
-                    },
-                    Err(e) => {
-                        errors.push(format!("Failed to update channel {}: {}", id, e));
-                    },
-                }
-            } else {
-                // Channel is disabled, don't create runtime instance
-                channels_updated.push(*id);
-                tracing::debug!("Ch{} updated (disabled)", id);
-            }
+        } else {
+            result_vec.push(id);
+            tracing::debug!("Ch{} {}d (disabled)", id, label);
         }
     }
 
@@ -1696,8 +1571,6 @@ pub async fn reload_configuration_handler<R: Rtdb>(
 pub async fn reload_routing_handler<R: Rtdb>(
     State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::RoutingReloadResult>>, AppError> {
-    use crate::core::channels::ChannelManager;
-
     tracing::debug!("Reloading routing");
 
     let start_time = std::time::Instant::now();

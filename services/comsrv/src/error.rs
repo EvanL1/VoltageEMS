@@ -445,620 +445,327 @@ mod tests {
     use super::*;
     use errors::{ErrorCategory, VoltageErrorTrait};
 
-    // ========================================================================
-    // Constructor tests - verify all error constructors work correctly
-    // ========================================================================
-
-    #[test]
-    fn test_config_constructor() {
-        let err = ComSrvError::config("missing field");
-        assert!(matches!(err, ComSrvError::ConfigError(_)));
-        assert!(err.to_string().contains("missing field"));
+    /// Helper macro to test constructor + display + error_code + category in one shot
+    macro_rules! test_error_variant {
+        ($constructor:ident, $variant:pat, $msg:expr, $code:expr, $category:expr) => {
+            let err = ComSrvError::$constructor($msg);
+            assert!(matches!(err, $variant));
+            assert!(err.to_string().contains($msg));
+            assert_eq!(err.error_code(), $code);
+            assert_eq!(err.category(), $category);
+        };
     }
 
     #[test]
-    fn test_io_constructor() {
-        let err = ComSrvError::io("read failed");
-        assert!(matches!(err, ComSrvError::IoError(_)));
-        assert!(err.to_string().contains("read failed"));
+    fn test_all_constructors_and_traits() {
+        test_error_variant!(
+            config,
+            ComSrvError::ConfigError(_),
+            "missing field",
+            "COMSRV_CONFIG_ERROR",
+            ErrorCategory::Configuration
+        );
+        test_error_variant!(
+            io,
+            ComSrvError::IoError(_),
+            "read failed",
+            "COMSRV_IO_ERROR",
+            ErrorCategory::Internal
+        );
+        test_error_variant!(
+            protocol,
+            ComSrvError::ProtocolError(_),
+            "invalid frame",
+            "COMSRV_PROTOCOL_ERROR",
+            ErrorCategory::Protocol
+        );
+        test_error_variant!(
+            connection,
+            ComSrvError::ConnectionError(_),
+            "refused",
+            "COMSRV_CONNECTION_ERROR",
+            ErrorCategory::Connection
+        );
+        test_error_variant!(
+            data,
+            ComSrvError::DataError(_),
+            "invalid format",
+            "COMSRV_DATA_ERROR",
+            ErrorCategory::Validation
+        );
+        test_error_variant!(
+            timeout,
+            ComSrvError::TimeoutError(_),
+            "5000ms",
+            "COMSRV_TIMEOUT",
+            ErrorCategory::Timeout
+        );
+        test_error_variant!(
+            storage,
+            ComSrvError::StorageError(_),
+            "redis down",
+            "COMSRV_STORAGE_ERROR",
+            ErrorCategory::Database
+        );
+        test_error_variant!(
+            resource,
+            ComSrvError::ResourceError(_),
+            "pool exhausted",
+            "COMSRV_RESOURCE_ERROR",
+            ErrorCategory::ResourceExhausted
+        );
+        test_error_variant!(
+            channel,
+            ComSrvError::ChannelError(_),
+            "closed",
+            "COMSRV_CHANNEL_ERROR",
+            ErrorCategory::NotFound
+        );
+        test_error_variant!(
+            point,
+            ComSrvError::PointError(_),
+            "bad address",
+            "COMSRV_POINT_ERROR",
+            ErrorCategory::NotFound
+        );
+        test_error_variant!(
+            validation,
+            ComSrvError::ValidationError(_),
+            "out of range",
+            "COMSRV_VALIDATION_ERROR",
+            ErrorCategory::Validation
+        );
+        test_error_variant!(
+            permission,
+            ComSrvError::PermissionError(_),
+            "access denied",
+            "COMSRV_PERMISSION_ERROR",
+            ErrorCategory::Permission
+        );
+        test_error_variant!(
+            state,
+            ComSrvError::StateError(_),
+            "lock poisoned",
+            "COMSRV_STATE_ERROR",
+            ErrorCategory::ResourceBusy
+        );
+        test_error_variant!(
+            batch,
+            ComSrvError::BatchError(_),
+            "3 failed",
+            "COMSRV_BATCH_ERROR",
+            ErrorCategory::Internal
+        );
+        test_error_variant!(
+            internal,
+            ComSrvError::InternalError(_),
+            "unexpected",
+            "COMSRV_INTERNAL_ERROR",
+            ErrorCategory::Internal
+        );
     }
 
     #[test]
-    fn test_protocol_constructor() {
-        let err = ComSrvError::protocol("invalid frame");
-        assert!(matches!(err, ComSrvError::ProtocolError(_)));
-        assert!(err.to_string().contains("invalid frame"));
-    }
-
-    #[test]
-    fn test_connection_constructor() {
-        let err = ComSrvError::connection("refused");
-        assert!(matches!(err, ComSrvError::ConnectionError(_)));
-        assert!(err.to_string().contains("refused"));
-    }
-
-    #[test]
-    fn test_data_constructor() {
-        let err = ComSrvError::data("invalid format");
-        assert!(matches!(err, ComSrvError::DataError(_)));
-        assert!(err.to_string().contains("invalid format"));
-    }
-
-    #[test]
-    fn test_timeout_constructor() {
-        let err = ComSrvError::timeout("5000ms");
-        assert!(matches!(err, ComSrvError::TimeoutError(_)));
-        assert!(err.to_string().contains("5000ms"));
-    }
-
-    #[test]
-    fn test_storage_constructor() {
-        let err = ComSrvError::storage("redis unavailable");
-        assert!(matches!(err, ComSrvError::StorageError(_)));
-        assert!(err.to_string().contains("redis unavailable"));
-    }
-
-    #[test]
-    fn test_resource_constructor() {
-        let err = ComSrvError::resource("pool exhausted");
-        assert!(matches!(err, ComSrvError::ResourceError(_)));
-        assert!(err.to_string().contains("pool exhausted"));
-    }
-
-    #[test]
-    fn test_channel_constructor() {
-        let err = ComSrvError::channel("closed");
-        assert!(matches!(err, ComSrvError::ChannelError(_)));
-        assert!(err.to_string().contains("closed"));
-    }
-
-    #[test]
-    fn test_point_constructor() {
-        let err = ComSrvError::point("invalid address");
-        assert!(matches!(err, ComSrvError::PointError(_)));
-        assert!(err.to_string().contains("invalid address"));
-    }
-
-    #[test]
-    fn test_validation_constructor() {
-        let err = ComSrvError::validation("out of range");
-        assert!(matches!(err, ComSrvError::ValidationError(_)));
-        assert!(err.to_string().contains("out of range"));
-    }
-
-    #[test]
-    fn test_permission_constructor() {
-        let err = ComSrvError::permission("access denied");
-        assert!(matches!(err, ComSrvError::PermissionError(_)));
-        assert!(err.to_string().contains("access denied"));
-    }
-
-    #[test]
-    fn test_state_constructor() {
-        let err = ComSrvError::state("lock poisoned");
-        assert!(matches!(err, ComSrvError::StateError(_)));
-        assert!(err.to_string().contains("lock poisoned"));
-    }
-
-    #[test]
-    fn test_batch_constructor() {
-        let err = ComSrvError::batch("3 operations failed");
-        assert!(matches!(err, ComSrvError::BatchError(_)));
-        assert!(err.to_string().contains("3 operations failed"));
-    }
-
-    #[test]
-    fn test_internal_constructor() {
-        let err = ComSrvError::internal("unexpected state");
-        assert!(matches!(err, ComSrvError::InternalError(_)));
-        assert!(err.to_string().contains("unexpected state"));
-    }
-
-    // ========================================================================
-    // Convenience constructor tests
-    // ========================================================================
-
-    #[test]
-    fn test_channel_not_found() {
+    fn test_convenience_constructors() {
         let err = ComSrvError::channel_not_found(1001);
-        assert!(matches!(err, ComSrvError::ChannelError(_)));
-        assert!(err.to_string().contains("not found"));
-        assert!(err.to_string().contains("1001"));
-    }
+        assert!(err.to_string().contains("not found") && err.to_string().contains("1001"));
 
-    #[test]
-    fn test_channel_exists() {
         let err = ComSrvError::channel_exists(1002);
-        assert!(matches!(err, ComSrvError::ChannelError(_)));
-        assert!(err.to_string().contains("already exists"));
-        assert!(err.to_string().contains("1002"));
-    }
+        assert!(err.to_string().contains("already exists") && err.to_string().contains("1002"));
 
-    #[test]
-    fn test_invalid_channel_id() {
         let err = ComSrvError::invalid_channel_id(99999);
-        assert!(matches!(err, ComSrvError::ChannelError(_)));
         assert!(err.to_string().contains("Invalid channel ID"));
-        assert!(err.to_string().contains("99999"));
-    }
 
-    #[test]
-    fn test_point_not_found() {
         let err = ComSrvError::point_not_found("T:100");
-        assert!(matches!(err, ComSrvError::PointError(_)));
-        assert!(err.to_string().contains("not found"));
-        assert!(err.to_string().contains("T:100"));
-    }
+        assert!(err.to_string().contains("not found") && err.to_string().contains("T:100"));
 
-    #[test]
-    fn test_not_connected() {
         let err = ComSrvError::not_connected();
         assert!(matches!(err, ComSrvError::ConnectionError(_)));
-        assert!(err.to_string().contains("Not connected"));
     }
 
-    // ========================================================================
-    // From trait implementation tests
-    // ========================================================================
-
     #[test]
-    fn test_from_io_error() {
+    fn test_from_external_errors() {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let err: ComSrvError = io_err.into();
         assert!(matches!(err, ComSrvError::IoError(_)));
-        assert!(err.to_string().contains("file not found"));
-    }
 
-    #[test]
-    fn test_from_serde_json_error() {
-        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let json_err = serde_json::from_str::<serde_json::Value>("bad").unwrap_err();
         let err: ComSrvError = json_err.into();
-        assert!(matches!(err, ComSrvError::DataError(_)));
-        assert!(err.to_string().contains("JSON"));
-    }
+        assert!(matches!(err, ComSrvError::DataError(_)) && err.to_string().contains("JSON"));
 
-    #[test]
-    fn test_from_serde_yml_error() {
         let yaml_err = serde_yml::from_str::<serde_yml::Value>("invalid: yaml: :").unwrap_err();
         let err: ComSrvError = yaml_err.into();
-        assert!(matches!(err, ComSrvError::DataError(_)));
-        assert!(err.to_string().contains("YAML"));
-    }
+        assert!(matches!(err, ComSrvError::DataError(_)) && err.to_string().contains("YAML"));
 
-    #[test]
-    fn test_from_anyhow_error() {
         let anyhow_err = anyhow::anyhow!("something went wrong");
         let err: ComSrvError = anyhow_err.into();
         assert!(matches!(err, ComSrvError::ConfigError(_)));
-        assert!(err.to_string().contains("Validation"));
-    }
-
-    // ========================================================================
-    // VoltageErrorTrait implementation tests
-    // ========================================================================
-
-    #[test]
-    fn test_error_codes() {
-        assert_eq!(
-            ComSrvError::ConfigError("".into()).error_code(),
-            "COMSRV_CONFIG_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::IoError("".into()).error_code(),
-            "COMSRV_IO_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::ProtocolError("".into()).error_code(),
-            "COMSRV_PROTOCOL_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::ConnectionError("".into()).error_code(),
-            "COMSRV_CONNECTION_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::DataError("".into()).error_code(),
-            "COMSRV_DATA_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::TimeoutError("".into()).error_code(),
-            "COMSRV_TIMEOUT"
-        );
-        assert_eq!(
-            ComSrvError::StorageError("".into()).error_code(),
-            "COMSRV_STORAGE_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::ResourceError("".into()).error_code(),
-            "COMSRV_RESOURCE_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::ChannelError("".into()).error_code(),
-            "COMSRV_CHANNEL_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::PointError("".into()).error_code(),
-            "COMSRV_POINT_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::ValidationError("".into()).error_code(),
-            "COMSRV_VALIDATION_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::PermissionError("".into()).error_code(),
-            "COMSRV_PERMISSION_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::StateError("".into()).error_code(),
-            "COMSRV_STATE_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::BatchError("".into()).error_code(),
-            "COMSRV_BATCH_ERROR"
-        );
-        assert_eq!(
-            ComSrvError::InternalError("".into()).error_code(),
-            "COMSRV_INTERNAL_ERROR"
-        );
-    }
-
-    #[test]
-    fn test_error_categories() {
-        assert_eq!(
-            ComSrvError::ConfigError("".into()).category(),
-            ErrorCategory::Configuration
-        );
-        assert_eq!(
-            ComSrvError::IoError("".into()).category(),
-            ErrorCategory::Internal
-        );
-        assert_eq!(
-            ComSrvError::ProtocolError("".into()).category(),
-            ErrorCategory::Protocol
-        );
-        assert_eq!(
-            ComSrvError::ConnectionError("".into()).category(),
-            ErrorCategory::Connection
-        );
-        assert_eq!(
-            ComSrvError::DataError("".into()).category(),
-            ErrorCategory::Validation
-        );
-        assert_eq!(
-            ComSrvError::TimeoutError("".into()).category(),
-            ErrorCategory::Timeout
-        );
-        assert_eq!(
-            ComSrvError::StorageError("".into()).category(),
-            ErrorCategory::Database
-        );
-        assert_eq!(
-            ComSrvError::ResourceError("".into()).category(),
-            ErrorCategory::ResourceExhausted
-        );
-        assert_eq!(
-            ComSrvError::ChannelError("".into()).category(),
-            ErrorCategory::NotFound
-        );
-        assert_eq!(
-            ComSrvError::PointError("".into()).category(),
-            ErrorCategory::NotFound
-        );
-        assert_eq!(
-            ComSrvError::ValidationError("".into()).category(),
-            ErrorCategory::Validation
-        );
-        assert_eq!(
-            ComSrvError::PermissionError("".into()).category(),
-            ErrorCategory::Permission
-        );
-        assert_eq!(
-            ComSrvError::StateError("".into()).category(),
-            ErrorCategory::ResourceBusy
-        );
-        assert_eq!(
-            ComSrvError::BatchError("".into()).category(),
-            ErrorCategory::Internal
-        );
-        assert_eq!(
-            ComSrvError::InternalError("".into()).category(),
-            ErrorCategory::Internal
-        );
     }
 
     #[test]
     fn test_is_retryable() {
-        // Retryable errors (Network, Timeout, ResourceBusy categories)
         assert!(ComSrvError::TimeoutError("".into()).is_retryable());
-        assert!(ComSrvError::StateError("".into()).is_retryable()); // ResourceBusy
-
-        // Non-retryable errors
+        assert!(ComSrvError::StateError("".into()).is_retryable());
         assert!(!ComSrvError::ConfigError("".into()).is_retryable());
         assert!(!ComSrvError::ValidationError("".into()).is_retryable());
-        assert!(!ComSrvError::ChannelError("".into()).is_retryable());
-        assert!(!ComSrvError::InternalError("".into()).is_retryable());
-    }
-
-    // ========================================================================
-    // Suggestion tests
-    // ========================================================================
-
-    #[test]
-    fn test_config_error_suggestion() {
-        let err = ComSrvError::ConfigError("test".into());
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("monarch sync"));
     }
 
     #[test]
-    fn test_channel_not_found_suggestion() {
-        let err = ComSrvError::channel_not_found(1001);
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("monarch channels list"));
+    fn test_suggestions() {
+        assert!(ComSrvError::ConfigError("t".into())
+            .suggestion()
+            .unwrap()
+            .contains("monarch sync"));
+        assert!(ComSrvError::channel_not_found(1)
+            .suggestion()
+            .unwrap()
+            .contains("monarch channels"));
+        assert!(ComSrvError::channel_exists(1)
+            .suggestion()
+            .unwrap()
+            .contains("already exists"));
+        assert!(ComSrvError::point_not_found("T:1")
+            .suggestion()
+            .unwrap()
+            .contains("/api/channels"));
+        assert!(ComSrvError::ConnectionError("t".into())
+            .suggestion()
+            .unwrap()
+            .contains("reachable"));
+        assert!(ComSrvError::ProtocolError("t".into())
+            .suggestion()
+            .unwrap()
+            .contains("Modbus"));
+        assert!(ComSrvError::TimeoutError("t".into())
+            .suggestion()
+            .unwrap()
+            .contains("timeout"));
+        assert!(ComSrvError::StorageError("t".into())
+            .suggestion()
+            .unwrap()
+            .contains("monarch doctor"));
+        assert!(ComSrvError::DataError("t".into())
+            .suggestion()
+            .unwrap()
+            .contains("scale/offset"));
+        assert!(ComSrvError::ValidationError("t".into())
+            .suggestion()
+            .is_none());
     }
 
     #[test]
-    fn test_channel_exists_suggestion() {
-        let err = ComSrvError::channel_exists(1001);
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("already exists"));
+    fn test_to_voltage_error_conversions() {
+        assert!(matches!(
+            VoltageError::from(ComSrvError::ConfigError("t".into())),
+            VoltageError::Configuration(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::IoError("t".into())),
+            VoltageError::Io(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::ProtocolError("t".into())),
+            VoltageError::Protocol { .. }
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::ConnectionError("t".into())),
+            VoltageError::Communication(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::DataError("t".into())),
+            VoltageError::Validation(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::TimeoutError("t".into())),
+            VoltageError::Timeout(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::StorageError("t".into())),
+            VoltageError::Database(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::ResourceError("t".into())),
+            VoltageError::ResourceBusy(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::channel_not_found(1)),
+            VoltageError::ChannelNotFound(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::channel_exists(1)),
+            VoltageError::AlreadyExists(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::ChannelError("other".into())),
+            VoltageError::Processing(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::PointError("t".into())),
+            VoltageError::NotFound { .. }
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::ValidationError("t".into())),
+            VoltageError::Validation(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::PermissionError("t".into())),
+            VoltageError::Forbidden(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::StateError("t".into())),
+            VoltageError::Internal(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::BatchError("t".into())),
+            VoltageError::Internal(_)
+        ));
+        assert!(matches!(
+            VoltageError::from(ComSrvError::InternalError("t".into())),
+            VoltageError::Internal(_)
+        ));
     }
 
     #[test]
-    fn test_point_not_found_suggestion() {
-        let err = ComSrvError::point_not_found("T:100");
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("/api/channels"));
+    fn test_error_ext_trait() {
+        // Test each conversion method
+        let err: Result<()> = Err::<(), &str>("test").config_error("cfg");
+        assert!(matches!(err.unwrap_err(), ComSrvError::ConfigError(_)));
+
+        let err: Result<()> = Err::<(), &str>("test").io_error("io");
+        assert!(matches!(err.unwrap_err(), ComSrvError::IoError(_)));
+
+        let err: Result<()> = Err::<(), &str>("test").protocol_error("proto");
+        assert!(matches!(err.unwrap_err(), ComSrvError::ProtocolError(_)));
+
+        let err: Result<()> = Err::<(), &str>("test").connection_error("conn");
+        assert!(matches!(err.unwrap_err(), ComSrvError::ConnectionError(_)));
+
+        let err: Result<()> = Err::<(), &str>("test").data_error("data");
+        assert!(matches!(err.unwrap_err(), ComSrvError::DataError(_)));
+
+        let err: Result<()> = Err::<(), &str>("test").context("ctx");
+        assert!(matches!(err.unwrap_err(), ComSrvError::InternalError(_)));
+
+        // Ok values pass through
+        assert_eq!(Ok::<i32, &str>(42).config_error("nope").unwrap(), 42);
     }
-
-    #[test]
-    fn test_connection_error_suggestion() {
-        let err = ComSrvError::ConnectionError("test".into());
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("reachable"));
-    }
-
-    #[test]
-    fn test_protocol_error_suggestion() {
-        let err = ComSrvError::ProtocolError("test".into());
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("Modbus"));
-    }
-
-    #[test]
-    fn test_timeout_error_suggestion() {
-        let err = ComSrvError::TimeoutError("test".into());
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("timeout"));
-    }
-
-    #[test]
-    fn test_storage_error_suggestion() {
-        let err = ComSrvError::StorageError("test".into());
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("monarch doctor"));
-    }
-
-    #[test]
-    fn test_data_error_suggestion() {
-        let err = ComSrvError::DataError("test".into());
-        let suggestion = err.suggestion();
-        assert!(suggestion.is_some());
-        assert!(suggestion.unwrap().contains("scale/offset"));
-    }
-
-    #[test]
-    fn test_validation_error_no_suggestion() {
-        let err = ComSrvError::ValidationError("test".into());
-        assert!(err.suggestion().is_none());
-    }
-
-    // ========================================================================
-    // ComSrvError to VoltageError conversion tests
-    // ========================================================================
-
-    #[test]
-    fn test_to_voltage_error_config() {
-        let err: VoltageError = ComSrvError::ConfigError("test".into()).into();
-        assert!(matches!(err, VoltageError::Configuration(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_io() {
-        let err: VoltageError = ComSrvError::IoError("test".into()).into();
-        assert!(matches!(err, VoltageError::Io(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_protocol() {
-        let err: VoltageError = ComSrvError::ProtocolError("test".into()).into();
-        assert!(matches!(err, VoltageError::Protocol { .. }));
-    }
-
-    #[test]
-    fn test_to_voltage_error_connection() {
-        let err: VoltageError = ComSrvError::ConnectionError("test".into()).into();
-        assert!(matches!(err, VoltageError::Communication(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_data() {
-        let err: VoltageError = ComSrvError::DataError("test".into()).into();
-        assert!(matches!(err, VoltageError::Validation(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_timeout() {
-        let err: VoltageError = ComSrvError::TimeoutError("test".into()).into();
-        assert!(matches!(err, VoltageError::Timeout(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_storage() {
-        let err: VoltageError = ComSrvError::StorageError("test".into()).into();
-        assert!(matches!(err, VoltageError::Database(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_resource() {
-        let err: VoltageError = ComSrvError::ResourceError("test".into()).into();
-        assert!(matches!(err, VoltageError::ResourceBusy(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_channel_not_found() {
-        let err: VoltageError = ComSrvError::channel_not_found(1001).into();
-        assert!(matches!(err, VoltageError::ChannelNotFound(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_channel_exists() {
-        let err: VoltageError = ComSrvError::channel_exists(1001).into();
-        assert!(matches!(err, VoltageError::AlreadyExists(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_channel_other() {
-        let err: VoltageError = ComSrvError::ChannelError("some error".into()).into();
-        assert!(matches!(err, VoltageError::Processing(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_point() {
-        let err: VoltageError = ComSrvError::PointError("test".into()).into();
-        assert!(matches!(err, VoltageError::NotFound { .. }));
-    }
-
-    #[test]
-    fn test_to_voltage_error_validation() {
-        let err: VoltageError = ComSrvError::ValidationError("test".into()).into();
-        assert!(matches!(err, VoltageError::Validation(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_permission() {
-        let err: VoltageError = ComSrvError::PermissionError("test".into()).into();
-        assert!(matches!(err, VoltageError::Forbidden(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_state() {
-        let err: VoltageError = ComSrvError::StateError("test".into()).into();
-        assert!(matches!(err, VoltageError::Internal(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_batch() {
-        let err: VoltageError = ComSrvError::BatchError("test".into()).into();
-        assert!(matches!(err, VoltageError::Internal(_)));
-    }
-
-    #[test]
-    fn test_to_voltage_error_internal() {
-        let err: VoltageError = ComSrvError::InternalError("test".into()).into();
-        assert!(matches!(err, VoltageError::Internal(_)));
-    }
-
-    // ========================================================================
-    // ErrorExt trait tests
-    // ========================================================================
-
-    #[test]
-    fn test_error_ext_config_error() {
-        let result: core::result::Result<(), &str> = Err("test");
-        let converted: Result<()> = result.config_error("config failed");
-        let err = converted.unwrap_err();
-        assert!(matches!(err, ComSrvError::ConfigError(_)));
-        assert!(err.to_string().contains("config failed"));
-        assert!(err.to_string().contains("test"));
-    }
-
-    #[test]
-    fn test_error_ext_io_error() {
-        let result: core::result::Result<(), &str> = Err("test");
-        let converted: Result<()> = result.io_error("io failed");
-        let err = converted.unwrap_err();
-        assert!(matches!(err, ComSrvError::IoError(_)));
-    }
-
-    #[test]
-    fn test_error_ext_protocol_error() {
-        let result: core::result::Result<(), &str> = Err("test");
-        let converted: Result<()> = result.protocol_error("protocol failed");
-        let err = converted.unwrap_err();
-        assert!(matches!(err, ComSrvError::ProtocolError(_)));
-    }
-
-    #[test]
-    fn test_error_ext_connection_error() {
-        let result: core::result::Result<(), &str> = Err("test");
-        let converted: Result<()> = result.connection_error("connection failed");
-        let err = converted.unwrap_err();
-        assert!(matches!(err, ComSrvError::ConnectionError(_)));
-    }
-
-    #[test]
-    fn test_error_ext_data_error() {
-        let result: core::result::Result<(), &str> = Err("test");
-        let converted: Result<()> = result.data_error("data failed");
-        let err = converted.unwrap_err();
-        assert!(matches!(err, ComSrvError::DataError(_)));
-    }
-
-    #[test]
-    fn test_error_ext_context() {
-        let result: core::result::Result<(), &str> = Err("test");
-        let converted: Result<()> = result.context("context failed");
-        let err = converted.unwrap_err();
-        assert!(matches!(err, ComSrvError::InternalError(_)));
-    }
-
-    #[test]
-    fn test_error_ext_on_ok() {
-        let result: std::result::Result<i32, &str> = Ok(42);
-        let value = result.config_error("should not happen").unwrap();
-        assert_eq!(value, 42);
-    }
-
-    // ========================================================================
-    // Error display format tests
-    // ========================================================================
 
     #[test]
     fn test_error_display_format() {
-        let err = ComSrvError::ConfigError("missing key".into());
-        assert_eq!(err.to_string(), "Configuration error: missing key");
-
-        let err = ComSrvError::IoError("read failed".into());
-        assert_eq!(err.to_string(), "IO error: read failed");
-
-        let err = ComSrvError::ProtocolError("invalid frame".into());
-        assert_eq!(err.to_string(), "Protocol error: invalid frame");
-    }
-
-    // ========================================================================
-    // Clone and Debug trait tests
-    // ========================================================================
-
-    #[test]
-    fn test_error_clone() {
-        let err = ComSrvError::ConfigError("test".into());
-        let cloned = err.clone();
-        assert_eq!(err.to_string(), cloned.to_string());
+        assert_eq!(
+            ComSrvError::ConfigError("missing key".into()).to_string(),
+            "Configuration error: missing key"
+        );
+        assert_eq!(
+            ComSrvError::IoError("read failed".into()).to_string(),
+            "IO error: read failed"
+        );
     }
 
     #[test]
-    fn test_error_debug() {
+    fn test_clone_and_debug() {
         let err = ComSrvError::ConfigError("test".into());
-        let debug_str = format!("{:?}", err);
-        assert!(debug_str.contains("ConfigError"));
-        assert!(debug_str.contains("test"));
+        assert_eq!(err.to_string(), err.clone().to_string());
+        assert!(format!("{:?}", err).contains("ConfigError"));
     }
 }

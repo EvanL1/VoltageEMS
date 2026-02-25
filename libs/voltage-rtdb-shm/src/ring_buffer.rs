@@ -355,13 +355,22 @@ impl HighFreqRingBuffer {
         result
     }
 
-    /// Read the latest N data points
-    pub fn read_latest(&self, count: usize) -> Vec<DataPoint> {
+    /// Read up to `count` data points matching `predicate`, traversing backwards from head.
+    ///
+    /// Shared traversal logic for `read_latest`, `read_channel`, and `read_instance`.
+    fn read_filtered(
+        &self,
+        count: usize,
+        predicate: impl Fn(&DataPoint) -> bool,
+    ) -> Vec<DataPoint> {
         let mut result = Vec::with_capacity(count.min(self.capacity));
         let head = self.head() as usize;
         let cap = self.capacity;
 
-        for i in 0..count.min(cap) {
+        for i in 0..cap {
+            if result.len() >= count {
+                break;
+            }
             let idx = (head.wrapping_sub(1).wrapping_sub(i)) % cap;
             // SAFETY: idx = (...) % cap, so idx < capacity. Pointer is within data region.
             let point = unsafe { std::ptr::read_volatile(self.points.add(idx)) };
@@ -369,11 +378,19 @@ impl HighFreqRingBuffer {
             if point.timestamp_us == 0 {
                 break;
             }
-            result.push(point);
+            if predicate(&point) {
+                result.push(point);
+            }
         }
 
         result.reverse();
         result
+    }
+
+    /// Read the latest N data points
+    #[inline]
+    pub fn read_latest(&self, count: usize) -> Vec<DataPoint> {
+        self.read_filtered(count, |_| true)
     }
 
     /// Export event snapshot (collision detection style)
@@ -391,55 +408,15 @@ impl HighFreqRingBuffer {
     }
 
     /// Read filtered by channel
+    #[inline]
     pub fn read_channel(&self, channel_id: u32, count: usize) -> Vec<DataPoint> {
-        let mut result = Vec::with_capacity(count);
-        let head = self.head() as usize;
-        let cap = self.capacity;
-
-        for i in 0..cap {
-            if result.len() >= count {
-                break;
-            }
-            let idx = (head.wrapping_sub(1).wrapping_sub(i)) % cap;
-            // SAFETY: idx = (...) % cap, so idx < capacity. Pointer is within data region.
-            let point = unsafe { std::ptr::read_volatile(self.points.add(idx)) };
-
-            if point.timestamp_us == 0 {
-                break;
-            }
-            if point.channel_id == channel_id {
-                result.push(point);
-            }
-        }
-
-        result.reverse();
-        result
+        self.read_filtered(count, |p| p.channel_id == channel_id)
     }
 
     /// Read filtered by instance ID (business device perspective)
+    #[inline]
     pub fn read_instance(&self, instance_id: u32, count: usize) -> Vec<DataPoint> {
-        let mut result = Vec::with_capacity(count);
-        let head = self.head() as usize;
-        let cap = self.capacity;
-
-        for i in 0..cap {
-            if result.len() >= count {
-                break;
-            }
-            let idx = (head.wrapping_sub(1).wrapping_sub(i)) % cap;
-            // SAFETY: idx = (...) % cap, so idx < capacity. Pointer is within data region.
-            let point = unsafe { std::ptr::read_volatile(self.points.add(idx)) };
-
-            if point.timestamp_us == 0 {
-                break;
-            }
-            if point.instance_id == instance_id {
-                result.push(point);
-            }
-        }
-
-        result.reverse();
-        result
+        self.read_filtered(count, |p| p.instance_id == instance_id)
     }
 }
 

@@ -118,36 +118,37 @@ fn parse_c2m_target(s: &str) -> Option<C2MTarget> {
     })
 }
 
-/// Parse C2C target from string "channel_id:type:point_id"
-fn parse_c2c_target(s: &str) -> Option<C2CTarget> {
+/// Parse channel point target from string "channel_id:type:point_id"
+///
+/// Used for both C2C and M2C targets (which have identical field structure).
+/// Callers construct the specific target type from the returned tuple.
+fn parse_channel_point(s: &str) -> Option<(u32, PointType, u32)> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 3 {
         return None;
     }
-    let channel_id = parts[0].parse().ok()?;
+    let id = parts[0].parse().ok()?;
     let point_type = parse_point_type(parts[1])?;
     let point_id = parts[2].parse().ok()?;
-    Some(C2CTarget {
-        channel_id,
-        point_type,
-        point_id,
-    })
+    Some((id, point_type, point_id))
 }
 
-/// Parse M2C target from string "channel_id:type:point_id"
-fn parse_m2c_target(s: &str) -> Option<M2CTarget> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let channel_id = parts[0].parse().ok()?;
-    let point_type = parse_point_type(parts[1])?;
-    let point_id = parts[2].parse().ok()?;
-    Some(M2CTarget {
+#[inline]
+fn c2c_from_parts((channel_id, point_type, point_id): (u32, PointType, u32)) -> C2CTarget {
+    C2CTarget {
         channel_id,
         point_type,
         point_id,
-    })
+    }
+}
+
+#[inline]
+fn m2c_from_parts((channel_id, point_type, point_id): (u32, PointType, u32)) -> M2CTarget {
+    M2CTarget {
+        channel_id,
+        point_type,
+        point_id,
+    }
 }
 
 /// Parse point type string to PointType enum
@@ -201,6 +202,65 @@ fn parse_prefix(prefix: &str) -> Option<(u32, Option<PointType>)> {
 #[inline]
 fn format_route_key(key: &StructuredRouteKey) -> String {
     format!("{}:{}:{}", key.0, key.1.as_str(), key.2)
+}
+
+// ============================================================================
+// Shared Helpers
+// ============================================================================
+
+/// Filter a routing table by prefix, formatting keys for output (cold path)
+fn filter_by_prefix<T: Copy>(
+    table: &FxHashMap<StructuredRouteKey, T>,
+    prefix: &str,
+) -> Vec<(Arc<str>, T)> {
+    let Some((id, point_type_filter)) = parse_prefix(prefix) else {
+        return vec![];
+    };
+    table
+        .iter()
+        .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
+        .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
+        .collect()
+}
+
+// ============================================================================
+// Table Building (shared between from_maps and update)
+// ============================================================================
+
+/// Build structured routing tables from string maps
+///
+/// Parses string keys/values into structured types. Invalid entries are skipped.
+/// Used by both `from_maps()` and `update()` to eliminate duplicate parsing logic.
+fn build_tables(
+    c2m_data: HashMap<String, String>,
+    m2c_data: HashMap<String, String>,
+    c2c_data: HashMap<String, String>,
+) -> (
+    FxHashMap<StructuredRouteKey, C2MTarget>,
+    FxHashMap<StructuredM2CKey, M2CTarget>,
+    FxHashMap<StructuredRouteKey, C2CTarget>,
+) {
+    let mut c2m = FxHashMap::default();
+    let mut m2c = FxHashMap::default();
+    let mut c2c = FxHashMap::default();
+
+    for (k, v) in c2m_data {
+        if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2m_target(&v)) {
+            c2m.insert(key, target);
+        }
+    }
+    for (k, v) in m2c_data {
+        if let (Some(key), Some(parts)) = (parse_route_key(&k), parse_channel_point(&v)) {
+            m2c.insert(key, m2c_from_parts(parts));
+        }
+    }
+    for (k, v) in c2c_data {
+        if let (Some(key), Some(parts)) = (parse_route_key(&k), parse_channel_point(&v)) {
+            c2c.insert(key, c2c_from_parts(parts));
+        }
+    }
+
+    (c2m, m2c, c2c)
 }
 
 // ============================================================================
@@ -267,28 +327,7 @@ impl RoutingCache {
         m2c_data: HashMap<String, String>,
         c2c_data: HashMap<String, String>,
     ) -> Self {
-        let mut c2m = FxHashMap::default();
-        let mut c2c = FxHashMap::default();
-        let mut m2c = FxHashMap::default();
-
-        for (k, v) in c2m_data {
-            if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2m_target(&v)) {
-                c2m.insert(key, target);
-            }
-        }
-
-        for (k, v) in m2c_data {
-            if let (Some(key), Some(target)) = (parse_route_key(&k), parse_m2c_target(&v)) {
-                m2c.insert(key, target);
-            }
-        }
-
-        for (k, v) in c2c_data {
-            if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2c_target(&v)) {
-                c2c.insert(key, target);
-            }
-        }
-
+        let (c2m, m2c, c2c) = build_tables(c2m_data, m2c_data, c2c_data);
         Self {
             c2m: ArcSwap::from_pointee(c2m),
             c2c: ArcSwap::from_pointee(c2c),
@@ -310,28 +349,7 @@ impl RoutingCache {
         m2c_data: HashMap<String, String>,
         c2c_data: HashMap<String, String>,
     ) {
-        let mut new_c2m = FxHashMap::default();
-        let mut new_c2c = FxHashMap::default();
-        let mut new_m2c = FxHashMap::default();
-
-        for (k, v) in c2m_data {
-            if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2m_target(&v)) {
-                new_c2m.insert(key, target);
-            }
-        }
-
-        for (k, v) in m2c_data {
-            if let (Some(key), Some(target)) = (parse_route_key(&k), parse_m2c_target(&v)) {
-                new_m2c.insert(key, target);
-            }
-        }
-
-        for (k, v) in c2c_data {
-            if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2c_target(&v)) {
-                new_c2c.insert(key, target);
-            }
-        }
-
+        let (new_c2m, new_m2c, new_c2c) = build_tables(c2m_data, m2c_data, c2c_data);
         // Independent replacement - each table is atomically swapped
         self.c2m.store(Arc::new(new_c2m));
         self.c2c.store(Arc::new(new_c2c));
@@ -494,10 +512,10 @@ impl RoutingCache {
     /// Note: This is a cold-path operation. For bulk updates, use `update()`.
     pub fn insert_c2c(&self, source_key: impl AsRef<str>, target_key: &str) {
         let source_key = source_key.as_ref();
-        if let (Some(key), Some(target)) =
-            (parse_route_key(source_key), parse_c2c_target(target_key))
+        if let (Some(key), Some(parts)) =
+            (parse_route_key(source_key), parse_channel_point(target_key))
         {
-            self.insert_c2c_by_parts(key.0, key.1, key.2, target);
+            self.insert_c2c_by_parts(key.0, key.1, key.2, c2c_from_parts(parts));
         }
     }
 
@@ -556,49 +574,19 @@ impl RoutingCache {
         Some(target)
     }
 
-    /// Get all C2C routing entries matching a prefix
-    ///
-    /// Iterates and filters the tuple index, formatting keys for output.
-    /// This is a cold path operation (CLI tools).
+    /// Get all C2C routing entries matching a prefix (cold path, CLI tools)
     pub fn get_c2c_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, C2CTarget)> {
-        let Some((id, point_type_filter)) = parse_prefix(prefix) else {
-            return vec![];
-        };
-        let c2c = self.c2c.load();
-        c2c.iter()
-            .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
-            .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
-            .collect()
+        filter_by_prefix(&self.c2c.load(), prefix)
     }
 
-    /// Get all C2M routing entries matching a prefix
-    ///
-    /// Iterates and filters the tuple index, formatting keys for output.
-    /// This is a cold path operation (CLI tools).
+    /// Get all C2M routing entries matching a prefix (cold path, CLI tools)
     pub fn get_c2m_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, C2MTarget)> {
-        let Some((id, point_type_filter)) = parse_prefix(prefix) else {
-            return vec![];
-        };
-        let c2m = self.c2m.load();
-        c2m.iter()
-            .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
-            .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
-            .collect()
+        filter_by_prefix(&self.c2m.load(), prefix)
     }
 
-    /// Get all M2C routing entries matching a prefix
-    ///
-    /// Iterates and filters the tuple index, formatting keys for output.
-    /// This is a cold path operation (CLI tools).
+    /// Get all M2C routing entries matching a prefix (cold path, CLI tools)
     pub fn get_m2c_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, M2CTarget)> {
-        let Some((id, point_type_filter)) = parse_prefix(prefix) else {
-            return vec![];
-        };
-        let m2c = self.m2c.load();
-        m2c.iter()
-            .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
-            .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
-            .collect()
+        filter_by_prefix(&self.m2c.load(), prefix)
     }
 
     /// Get cache statistics

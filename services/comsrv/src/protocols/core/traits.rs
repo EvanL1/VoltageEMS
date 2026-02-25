@@ -128,13 +128,6 @@ pub struct ReadRequest {
 }
 
 impl ReadRequest {
-    /// Create a request for specific points.
-    pub fn by_ids(ids: Vec<u32>) -> Self {
-        Self {
-            point_ids: Some(ids),
-        }
-    }
-
     /// Create a request for all configured points.
     pub fn all() -> Self {
         Self { point_ids: None }
@@ -157,65 +150,7 @@ pub struct ReadResponse {
     pub partial_errors: Vec<(u32, String)>,
 }
 
-impl ReadResponse {
-    /// Create a successful response with no errors.
-    pub fn success(data: DataBatch) -> Self {
-        Self {
-            data,
-            failed_count: 0,
-            partial_errors: Vec::new(),
-        }
-    }
-
-    /// Create a response with partial failures (count only, for backward compat).
-    pub fn partial(data: DataBatch, failed: usize) -> Self {
-        Self {
-            data,
-            failed_count: failed,
-            partial_errors: Vec::new(),
-        }
-    }
-
-    /// Create a response with detailed error information.
-    pub fn with_errors(data: DataBatch, errors: Vec<(u32, String)>) -> Self {
-        let failed_count = errors.len();
-        Self {
-            data,
-            failed_count,
-            partial_errors: errors,
-        }
-    }
-
-    /// Check if any reads failed.
-    ///
-    /// Returns true if either:
-    /// - `failed_count > 0` (from partial() or with_errors())
-    /// - `partial_errors` is not empty
-    pub fn has_errors(&self) -> bool {
-        self.failed_count > 0 || !self.partial_errors.is_empty()
-    }
-
-    /// Get a summary of errors suitable for logging.
-    ///
-    /// Returns `Some((total_count, first_few_errors))` if there are errors,
-    /// where first_few_errors contains at most 3 error messages.
-    /// Returns `None` if no errors.
-    pub fn error_summary(&self) -> Option<(usize, Vec<&str>)> {
-        if !self.has_errors() {
-            return None;
-        }
-
-        let count = self.failed_count.max(self.partial_errors.len());
-        let first_few: Vec<&str> = self
-            .partial_errors
-            .iter()
-            .take(3)
-            .map(|(_, msg)| msg.as_str())
-            .collect();
-
-        Some((count, first_few))
-    }
-}
+// ReadResponse constructors are added as needed by protocol adapters.
 
 /// A control command to write.
 #[derive(Debug, Clone)]

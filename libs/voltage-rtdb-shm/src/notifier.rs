@@ -25,10 +25,6 @@ use crate::notification::ShmNotification;
 /// Default UDS path
 pub const DEFAULT_UDS_PATH: &str = "/tmp/voltage-m2c.sock";
 
-// ============================================================================
-// NotifyResult - Notification Result Status
-// ============================================================================
-
 /// UDS notification result
 ///
 /// Provides detailed send status, allowing callers to take action based on the result.
@@ -43,6 +39,30 @@ pub struct NotifyResult {
 }
 
 impl NotifyResult {
+    /// UDS send succeeded
+    fn sent() -> Self {
+        Self {
+            uds_sent: true,
+            ..Self::default()
+        }
+    }
+
+    /// UDS failed, degraded to polling fallback
+    fn degraded() -> Self {
+        Self {
+            fallback_used: true,
+            ..Self::default()
+        }
+    }
+
+    /// Notifications completely disabled
+    fn off() -> Self {
+        Self {
+            disabled: true,
+            ..Self::default()
+        }
+    }
+
     /// Check if sent successfully (via UDS)
     #[inline]
     pub fn is_success(&self) -> bool {
@@ -55,10 +75,6 @@ impl NotifyResult {
         self.fallback_used
     }
 }
-
-// ============================================================================
-// UdsHealth - Connection Health Status
-// ============================================================================
 
 /// UDS connection health status
 #[derive(Debug, Clone)]
@@ -185,47 +201,35 @@ impl ShmNotifier {
         point_type: PointType,
         point_id: u32,
     ) -> NotifyResult {
-        // If path is empty, notifications are disabled
         if self.path.is_empty() {
-            return NotifyResult {
-                disabled: true,
-                ..Default::default()
-            };
+            return NotifyResult::off();
         }
 
-        // If not connected, attempt reconnection
         self.try_reconnect().await;
 
         if let Some(ref mut stream) = self.stream {
-            let notification = ShmNotification::new(channel_id, point_type, point_id);
-            let bytes = notification.to_bytes();
+            let bytes = ShmNotification::new(channel_id, point_type, point_id).to_bytes();
 
-            // Retry logic: up to MAX_RETRIES attempts
             for attempt in 0..Self::MAX_RETRIES {
                 match stream.write_all(&bytes).await {
                     Ok(_) => {
                         debug!(
-                            "ShmNotifier: sent notification channel={} type={:?} point={}",
+                            "ShmNotifier: sent ch={} type={:?} point={}",
                             channel_id, point_type, point_id
                         );
-                        return NotifyResult {
-                            uds_sent: true,
-                            ..Default::default()
-                        };
+                        return NotifyResult::sent();
                     },
                     Err(e) if attempt < Self::MAX_RETRIES - 1 => {
                         warn!(
-                            "ShmNotifier: send attempt {} failed: {}, retrying...",
+                            "ShmNotifier: attempt {} failed: {}, retrying",
                             attempt + 1,
                             e
                         );
                         tokio::time::sleep(Duration::from_millis(Self::RETRY_DELAY_MS)).await;
                     },
                     Err(e) => {
-                        // All retries failed, mark as disconnected
                         warn!(
-                            "ShmNotifier: all {} retries failed for ch{}:{}:{}, \
-                             falling back to poller: {}",
+                            "ShmNotifier: all {} retries failed for ch{}:{}:{}: {}",
                             Self::MAX_RETRIES,
                             channel_id,
                             point_type.as_str(),
@@ -234,21 +238,13 @@ impl ShmNotifier {
                         );
                         self.stream = None;
                         self.last_connect_attempt = Some(Instant::now());
-                        // Return degraded status so caller can trigger immediate polling
-                        return NotifyResult {
-                            fallback_used: true,
-                            ..Default::default()
-                        };
+                        return NotifyResult::degraded();
                     },
                 }
             }
         }
 
-        // Not connected and reconnection failed, return degraded status
-        NotifyResult {
-            fallback_used: true,
-            ..Default::default()
-        }
+        NotifyResult::degraded()
     }
 
     /// Attempt reconnection (if disconnected and backoff time has elapsed)
@@ -281,42 +277,6 @@ impl ShmNotifier {
         }
     }
 
-    /// Send a pre-built notification (with auto-reconnection)
-    ///
-    /// Returns `NotifyResult`, consistent with `notify()` behavior.
-    pub async fn notify_raw(&mut self, notification: &ShmNotification) -> NotifyResult {
-        // If path is empty, notifications are disabled
-        if self.path.is_empty() {
-            return NotifyResult {
-                disabled: true,
-                ..Default::default()
-            };
-        }
-
-        self.try_reconnect().await;
-
-        if let Some(ref mut stream) = self.stream {
-            match stream.write_all(&notification.to_bytes()).await {
-                Ok(_) => {
-                    return NotifyResult {
-                        uds_sent: true,
-                        ..Default::default()
-                    };
-                },
-                Err(e) => {
-                    warn!("ShmNotifier: send_raw failed, marking disconnected: {}", e);
-                    self.stream = None;
-                    self.last_connect_attempt = Some(Instant::now());
-                },
-            }
-        }
-
-        NotifyResult {
-            fallback_used: true,
-            ..Default::default()
-        }
-    }
-
     /// Check UDS connection health status
     ///
     /// Used for monitoring and diagnostics.
@@ -332,28 +292,6 @@ impl ShmNotifier {
                 since: self.last_connect_attempt,
                 backoff_ms: self.backoff_ms,
             }
-        }
-    }
-
-    /// Manually force reconnection (bypasses backoff mechanism)
-    pub async fn reconnect(&mut self) -> io::Result<bool> {
-        if self.path.is_empty() {
-            return Ok(false);
-        }
-
-        match UnixStream::connect(&self.path).await {
-            Ok(stream) => {
-                info!("ShmNotifier: force reconnected to {}", self.path);
-                self.stream = Some(stream);
-                self.backoff_ms = Self::MIN_BACKOFF_MS;
-                self.last_connect_attempt = None;
-                Ok(true)
-            },
-            Err(e) => {
-                warn!("ShmNotifier: force reconnect failed: {}", e);
-                self.last_connect_attempt = Some(Instant::now());
-                Ok(false)
-            },
         }
     }
 }
@@ -387,27 +325,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_notify_result_helpers() {
-        // Success
-        let success = NotifyResult {
-            uds_sent: true,
-            ..Default::default()
-        };
+        let success = NotifyResult::sent();
         assert!(success.is_success());
         assert!(!success.needs_immediate_poll());
 
-        // Degraded
-        let fallback = NotifyResult {
-            fallback_used: true,
-            ..Default::default()
-        };
+        let fallback = NotifyResult::degraded();
         assert!(!fallback.is_success());
         assert!(fallback.needs_immediate_poll());
 
-        // Disabled
-        let disabled = NotifyResult {
-            disabled: true,
-            ..Default::default()
-        };
+        let disabled = NotifyResult::off();
         assert!(!disabled.is_success());
         assert!(!disabled.needs_immediate_poll());
     }

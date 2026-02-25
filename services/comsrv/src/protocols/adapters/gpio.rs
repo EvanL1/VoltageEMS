@@ -14,18 +14,8 @@
 //!
 //! # Driver Architecture
 //!
-//! The GPIO module uses a trait-based driver system for extensibility:
-//!
-//! ```text
-//!              ┌─────────────────────────┐
-//!              │     GpioDriver trait    │
-//!              └───────────┬─────────────┘
-//!                          │
-//!      ┌───────────┬───────┼───────┬───────────┐
-//!      ▼           ▼       ▼       ▼           ▼
-//!   GpiodDriver  SysfsDriver  (future)  MockDriver  ...
-//!   (chardev)    (/sys/)               (testing)
-//! ```
+//! The GPIO module uses a trait-based driver system: `GpioDriver` trait with
+//! `GpiodDriver` (chardev) and `SysfsDriver` (legacy) implementations.
 //!
 //! # Example
 //!
@@ -112,70 +102,6 @@ impl Default for GpioDriverType {
 // ============================================================================
 // Strongly-typed mapping configs for JSON deserialization
 // ============================================================================
-
-/// GPIO point mapping configuration (deserialized from protocol_mappings JSON).
-///
-/// # Required Fields
-/// - `gpio_number`: The GPIO pin number. This field is **required** and
-///   deserialization will fail if missing.
-///
-/// # Optional Fields
-/// - `gpio_chip`: GPIO chip name (default: "gpiochip0")
-/// - `active_low`: Invert the logic level (default: false)
-/// - `debounce_us`: Debounce time in microseconds (default: 0)
-///
-/// # Example JSON
-/// ```json
-/// {
-///     "gpio_number": 496,
-///     "gpio_chip": "gpiochip0",
-///     "active_low": false
-/// }
-/// ```
-#[derive(Debug, Clone, Deserialize)]
-pub struct GpioMappingConfig {
-    /// GPIO pin number (sysfs number or chip offset). **Required field**.
-    pub gpio_number: u32,
-
-    /// GPIO chip name (default: "gpiochip0").
-    #[serde(default = "default_gpio_chip")]
-    pub gpio_chip: String,
-
-    /// Active low - invert the logic level.
-    #[serde(default)]
-    pub active_low: bool,
-
-    /// Debounce time in microseconds.
-    #[serde(default)]
-    pub debounce_us: u64,
-}
-
-fn default_gpio_chip() -> String {
-    "gpiochip0".to_string()
-}
-
-impl GpioMappingConfig {
-    /// Convert to GpioPinConfig for input (DI).
-    ///
-    /// If `gpio_chip` is "gpiochip0" (default) and `gpio_number` >= 32,
-    /// the driver will auto-resolve the global GPIO number to the correct chip.
-    pub fn to_input_pin_config(&self, point_id: u32) -> GpioPinConfig {
-        GpioPinConfig::digital_input(&self.gpio_chip, self.gpio_number, point_id)
-            .with_gpio_number(self.gpio_number) // Enable auto-resolution
-            .with_active_low(self.active_low)
-            .with_debounce(self.debounce_us)
-    }
-
-    /// Convert to GpioPinConfig for output (DO).
-    ///
-    /// If `gpio_chip` is "gpiochip0" (default) and `gpio_number` >= 32,
-    /// the driver will auto-resolve the global GPIO number to the correct chip.
-    pub fn to_output_pin_config(&self, point_id: u32) -> GpioPinConfig {
-        GpioPinConfig::digital_output(&self.gpio_chip, self.gpio_number, point_id)
-            .with_gpio_number(self.gpio_number) // Enable auto-resolution
-            .with_active_low(self.active_low)
-    }
-}
 
 /// GPIO channel parameters configuration (deserialized from parameters_json).
 ///
@@ -562,6 +488,16 @@ impl SysfsDriver {
         }
     }
 
+    /// Extract gpio_number from pin config, required for sysfs driver.
+    fn require_gpio_number(pin: &GpioPinConfig) -> Result<u32> {
+        pin.gpio_number.ok_or_else(|| {
+            GatewayError::Protocol(format!(
+                "GPIO number not set for pin {} (required for sysfs driver)",
+                pin.point_id
+            ))
+        })
+    }
+
     /// Get the path for a GPIO's value file.
     fn value_path(&self, gpio_num: u32) -> std::path::PathBuf {
         std::path::PathBuf::from(&self.base_path)
@@ -677,12 +613,7 @@ impl GpioDriver for SysfsDriver {
     }
 
     async fn read_pin(&self, pin: &GpioPinConfig) -> Result<bool> {
-        let gpio_num = pin.gpio_number.ok_or_else(|| {
-            GatewayError::Protocol(format!(
-                "GPIO number not set for pin {} (required for sysfs driver)",
-                pin.point_id
-            ))
-        })?;
+        let gpio_num = Self::require_gpio_number(pin)?;
 
         // Read value (GPIO should already be exported and configured by OS/device tree)
         let value_str = tokio::fs::read_to_string(self.value_path(gpio_num))
@@ -696,12 +627,7 @@ impl GpioDriver for SysfsDriver {
     }
 
     async fn write_pin(&self, pin: &GpioPinConfig, value: bool) -> Result<()> {
-        let gpio_num = pin.gpio_number.ok_or_else(|| {
-            GatewayError::Protocol(format!(
-                "GPIO number not set for pin {} (required for sysfs driver)",
-                pin.point_id
-            ))
-        })?;
+        let gpio_num = Self::require_gpio_number(pin)?;
 
         // Ensure GPIO is exported and set as output (only if not already)
         self.ensure_output(gpio_num).await?;
@@ -718,12 +644,7 @@ impl GpioDriver for SysfsDriver {
     }
 
     async fn init_output_pin(&self, pin: &GpioPinConfig) -> Result<()> {
-        let gpio_num = pin.gpio_number.ok_or_else(|| {
-            GatewayError::Protocol(format!(
-                "GPIO number not set for pin {} (required for sysfs driver)",
-                pin.point_id
-            ))
-        })?;
+        let gpio_num = Self::require_gpio_number(pin)?;
 
         // Export and set direction to out at startup
         self.ensure_output(gpio_num).await?;
@@ -977,26 +898,11 @@ impl GpioChannel {
     /// GPIO channels are always "connected" since they operate on local hardware
     /// without requiring external network connections (unlike Modbus TCP).
     pub fn new(config: GpioChannelConfig, channel_id: u32, name: String) -> Self {
-        // Collect output pin IDs for lock-free AtomicBoolStore
-        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
-
-        // Create driver based on configuration
         let driver: Box<dyn GpioDriver> = match &config.driver {
             GpioDriverType::Gpiod => Box::new(GpiodDriver::new()),
             GpioDriverType::Sysfs { base_path } => Box::new(SysfsDriver::new(base_path.clone())),
         };
-        Self {
-            channel_id,
-            name,
-            config,
-            driver,
-            // GPIO is always "connected" - it's local hardware, no external connection needed
-            state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
-            diagnostics: Arc::new(AtomicDiagnostics::new()),
-            poll_task: None,
-            output_states: AtomicBoolStore::from_pins(&output_pin_ids),
-            log_ctx: LogContext::new(channel_id),
-        }
+        Self::with_driver(config, driver, channel_id, name)
     }
 
     /// Create a GPIO channel with a custom driver.
@@ -1009,7 +915,6 @@ impl GpioChannel {
         channel_id: u32,
         name: String,
     ) -> Self {
-        // Collect output pin IDs for lock-free AtomicBoolStore
         let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
 
         Self {
@@ -1017,7 +922,6 @@ impl GpioChannel {
             name,
             config,
             driver,
-            // GPIO is always "connected" - it's local hardware, no external connection needed
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
             diagnostics: Arc::new(AtomicDiagnostics::new()),
             poll_task: None,
@@ -1389,53 +1293,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    /// Mock GPIO driver for testing without real hardware.
-    struct MockGpioDriver {
-        /// Simulated pin values: point_id -> value
-        values: Mutex<HashMap<u32, bool>>,
-    }
-
-    impl MockGpioDriver {
-        fn new() -> Self {
-            Self {
-                values: Mutex::new(HashMap::new()),
-            }
-        }
-
-        /// Set pin value (for simulating DI input)
-        #[allow(dead_code)]
-        fn set_pin_value(&self, point_id: u32, value: bool) {
-            let mut values = self.values.lock().unwrap();
-            values.insert(point_id, value);
-        }
-
-        /// Get raw written value (for verifying active_low handling)
-        #[allow(dead_code)]
-        fn get_raw_value(&self, point_id: u32) -> Option<bool> {
-            let values = self.values.lock().unwrap();
-            values.get(&point_id).copied()
-        }
-    }
-
-    #[async_trait]
-    impl GpioDriver for MockGpioDriver {
-        fn name(&self) -> &'static str {
-            "mock"
-        }
-
-        async fn read_pin(&self, pin: &GpioPinConfig) -> Result<bool> {
-            let values = self.values.lock().unwrap();
-            Ok(*values.get(&pin.point_id).unwrap_or(&false))
-        }
-
-        async fn write_pin(&self, pin: &GpioPinConfig, value: bool) -> Result<()> {
-            let mut values = self.values.lock().unwrap();
-            values.insert(pin.point_id, value);
-            Ok(())
-        }
-    }
-
-    /// Shared mock driver for testing (allows pre-setting values and verifying writes).
+    /// Mock driver for testing (allows pre-setting values and verifying writes).
     struct SharedMockDriver {
         inner: Arc<Mutex<HashMap<u32, bool>>>,
     }
@@ -1492,14 +1350,10 @@ mod tests {
         }
     }
 
-    /// Create a GpioChannel with MockGpioDriver for testing.
+    /// Create a GpioChannel with mock driver for testing.
     fn create_mock_gpio(config: GpioChannelConfig, channel_id: u32, name: &str) -> GpioChannel {
-        GpioChannel::with_driver(
-            config,
-            Box::new(MockGpioDriver::new()),
-            channel_id,
-            name.to_string(),
-        )
+        let shared = SharedMockDriver::new();
+        create_mock_gpio_with_shared_driver(config, channel_id, name, &shared)
     }
 
     /// Create a GpioChannel with shared mock driver for advanced testing.

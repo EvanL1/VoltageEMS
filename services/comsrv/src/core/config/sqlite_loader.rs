@@ -237,6 +237,32 @@ impl ComsrvSqliteLoader {
         Ok(channels)
     }
 
+    /// Parse common base point fields from a SQLite row
+    fn parse_base_point(row: &sqlx::sqlite::SqliteRow) -> Result<Point> {
+        let point_id: i64 = row
+            .try_get("point_id")
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to get point_id: {}", e)))?;
+        let signal_name: String = row
+            .try_get("signal_name")
+            .map_err(|e| ComSrvError::ConfigError(format!("Failed to get signal_name: {}", e)))?;
+        let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
+        let description: Option<String> = row.try_get("description").ok();
+        let protocol_mappings: Option<String> = row
+            .try_get("protocol_mappings")
+            .ok()
+            .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
+        let point_id_u32 = u32::try_from(point_id).map_err(|_| {
+            ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
+        })?;
+        Ok(Point {
+            point_id: point_id_u32,
+            signal_name,
+            description,
+            unit,
+            protocol_mappings,
+        })
+    }
+
     /// Load all points for a RuntimeChannelConfig with protocol-aware mapping
     pub async fn load_runtime_channel_points(
         &self,
@@ -302,163 +328,62 @@ impl ComsrvSqliteLoader {
 
         // Process telemetry points
         for row in telem_rows {
-            let point_id: i64 = row
-                .try_get("point_id")
-                .map_err(|e| ComSrvError::ConfigError(format!("Failed to get point_id: {}", e)))?;
-            let signal_name: String = row.try_get("signal_name").map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to get signal_name: {}", e))
-            })?;
+            let base = Self::parse_base_point(&row)?;
             let scale: f64 = row.try_get("scale").unwrap_or(1.0);
             let offset: f64 = row.try_get("offset").unwrap_or(0.0);
-            let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
             let reverse: bool = row.try_get("reverse").unwrap_or(false);
             let data_type: String = row
                 .try_get("data_type")
                 .unwrap_or_else(|_| "float32".to_string());
-            let description: Option<String> = row.try_get("description").ok();
-            let protocol_mappings: Option<String> = row
-                .try_get("protocol_mappings")
-                .ok()
-                .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
-
-            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
-                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
-            })?;
-
-            let base_point = Point {
-                point_id: point_id_u32,
-                signal_name,
-                description,
-                unit,
-                protocol_mappings,
-            };
-
-            let point = TelemetryPoint {
-                base: base_point,
+            runtime_config.telemetry_points.push(TelemetryPoint {
+                base,
                 scale,
                 offset,
                 data_type,
                 reverse,
-            };
-            runtime_config.telemetry_points.push(point);
+            });
         }
 
         // Process signal points
         for row in signal_rows {
-            let point_id: i64 = row
-                .try_get("point_id")
-                .map_err(|e| ComSrvError::ConfigError(format!("Failed to get point_id: {}", e)))?;
-            let signal_name: String = row.try_get("signal_name").map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to get signal_name: {}", e))
-            })?;
-            let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
+            let base = Self::parse_base_point(&row)?;
             let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            let description: Option<String> = row.try_get("description").ok();
-            let protocol_mappings: Option<String> = row
-                .try_get("protocol_mappings")
-                .ok()
-                .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
-
-            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
-                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
-            })?;
-
-            let base_point = Point {
-                point_id: point_id_u32,
-                signal_name,
-                description,
-                unit,
-                protocol_mappings,
-            };
-
-            let point = SignalPoint {
-                base: base_point,
-                reverse,
-            };
-            runtime_config.signal_points.push(point);
+            runtime_config
+                .signal_points
+                .push(SignalPoint { base, reverse });
         }
 
         // Process control points
         for row in control_rows {
-            let point_id: i64 = row
-                .try_get("point_id")
-                .map_err(|e| ComSrvError::ConfigError(format!("Failed to get point_id: {}", e)))?;
-            let signal_name: String = row.try_get("signal_name").map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to get signal_name: {}", e))
-            })?;
-            let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
+            let base = Self::parse_base_point(&row)?;
             let reverse: bool = row.try_get("reverse").unwrap_or(false);
-            let description: Option<String> = row.try_get("description").ok();
-            let protocol_mappings: Option<String> = row
-                .try_get("protocol_mappings")
-                .ok()
-                .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
-
-            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
-                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
-            })?;
-
-            let base_point = Point {
-                point_id: point_id_u32,
-                signal_name,
-                description,
-                unit,
-                protocol_mappings,
-            };
-
-            let point = ControlPoint {
-                base: base_point,
+            runtime_config.control_points.push(ControlPoint {
+                base,
                 reverse,
                 control_type: "momentary".to_string(),
                 on_value: 1,
                 off_value: 0,
                 pulse_duration_ms: Some(100),
-            };
-            runtime_config.control_points.push(point);
+            });
         }
 
         // Process adjustment points
         for row in adjustment_rows {
-            let point_id: i64 = row
-                .try_get("point_id")
-                .map_err(|e| ComSrvError::ConfigError(format!("Failed to get point_id: {}", e)))?;
-            let signal_name: String = row.try_get("signal_name").map_err(|e| {
-                ComSrvError::ConfigError(format!("Failed to get signal_name: {}", e))
-            })?;
+            let base = Self::parse_base_point(&row)?;
             let scale: f64 = row.try_get("scale").unwrap_or(1.0);
             let offset: f64 = row.try_get("offset").unwrap_or(0.0);
-            let unit: Option<String> = row.try_get("unit").ok().filter(|s: &String| !s.is_empty());
             let data_type: String = row
                 .try_get("data_type")
                 .unwrap_or_else(|_| "float32".to_string());
-            let description: Option<String> = row.try_get("description").ok();
-            let protocol_mappings: Option<String> = row
-                .try_get("protocol_mappings")
-                .ok()
-                .filter(|s: &String| !s.is_empty() && s != "null" && s != "{}");
-
-            let point_id_u32 = u32::try_from(point_id).map_err(|_| {
-                ComSrvError::ConfigError(format!("point_id {} out of u32 range", point_id))
-            })?;
-
-            let base_point = Point {
-                point_id: point_id_u32,
-                signal_name,
-                description,
-                unit,
-                protocol_mappings,
-            };
-
-            let point = AdjustmentPoint {
-                base: base_point,
+            runtime_config.adjustment_points.push(AdjustmentPoint {
+                base,
                 min_value: None,
                 max_value: None,
                 step: 1.0,
                 data_type,
                 scale,
                 offset,
-            };
-            runtime_config.adjustment_points.push(point);
+            });
         }
 
         info!(

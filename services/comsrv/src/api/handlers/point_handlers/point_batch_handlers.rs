@@ -350,9 +350,6 @@ pub async fn batch_point_operations_handler<R: Rtdb>(
 }
 
 // ----------------------------------------------------------------------------
-// Batch Operation Helpers
-// ----------------------------------------------------------------------------
-
 /// Process single create operation
 async fn process_create_operation<R: Rtdb>(
     channel_id: u32,

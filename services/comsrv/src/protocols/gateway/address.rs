@@ -4,7 +4,8 @@
 
 use crate::protocols::core::error::{GatewayError, Result};
 use crate::protocols::core::point::{
-    Iec104Address, ModbusAddress, OpcUaAddress, ProtocolAddress, VirtualAddress,
+    ByteOrder, DataFormat, Iec104Address, ModbusAddress, OpcUaAddress, ProtocolAddress,
+    VirtualAddress,
 };
 
 #[cfg(feature = "gpio")]
@@ -15,6 +16,12 @@ use crate::protocols::core::point::CanAddress;
 
 #[cfg(feature = "dl645")]
 use crate::protocols::core::point::Dl645Address;
+
+/// Parse a numeric field from a string, returning a config error on failure.
+fn parse_field<T: std::str::FromStr>(s: &str, field: &str) -> Result<T> {
+    s.parse::<T>()
+        .map_err(|_| GatewayError::Config(format!("Invalid {field}: {s}")))
+}
 
 /// Parse a shorthand address string into a `ProtocolAddress`.
 ///
@@ -72,7 +79,6 @@ pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
 
 /// Parse Modbus address: "slave_id:register" or "slave_id:register:function_code"
 fn parse_modbus_address(address: &str) -> Result<ProtocolAddress> {
-    // Use splitn to avoid Vec allocation
     let mut parts = address.splitn(3, ':');
 
     let slave_id_str = parts
@@ -84,98 +90,61 @@ fn parse_modbus_address(address: &str) -> Result<ProtocolAddress> {
             address
         ))
     })?;
-    let fc_str = parts.next(); // Optional third part
 
-    let slave_id = slave_id_str
-        .parse::<u8>()
-        .map_err(|_| GatewayError::Config(format!("Invalid slave_id: {}", slave_id_str)))?;
-    let register = register_str
-        .parse::<u16>()
-        .map_err(|_| GatewayError::Config(format!("Invalid register: {}", register_str)))?;
+    let slave_id = parse_field::<u8>(slave_id_str, "slave_id")?;
+    let register = parse_field::<u16>(register_str, "register")?;
+    let function_code = match parts.next() {
+        Some(fc) => parse_field::<u8>(fc, "function_code")?,
+        None => 3, // Default: holding register (FC03)
+    };
 
-    match fc_str {
-        None => Ok(ProtocolAddress::Modbus(ModbusAddress::holding_register(
-            slave_id,
-            register,
-            crate::protocols::core::point::DataFormat::default(),
-        ))),
-        Some(fc) => {
-            let function_code = fc
-                .parse::<u8>()
-                .map_err(|_| GatewayError::Config(format!("Invalid function_code: {}", fc)))?;
-
-            Ok(ProtocolAddress::Modbus(ModbusAddress {
-                slave_id,
-                register,
-                function_code,
-                format: crate::protocols::core::point::DataFormat::default(),
-                byte_order: crate::protocols::core::point::ByteOrder::default(),
-                bit_position: None,
-            }))
-        },
-    }
+    Ok(ProtocolAddress::Modbus(ModbusAddress {
+        slave_id,
+        register,
+        function_code,
+        format: DataFormat::default(),
+        byte_order: ByteOrder::default(),
+        bit_position: None,
+    }))
 }
 
 /// Parse IEC104 address: "ioa" or "ioa:type_id"
 fn parse_iec104_address(address: &str) -> Result<ProtocolAddress> {
-    // Use split_once to avoid Vec allocation
-    match address.split_once(':') {
-        None => {
-            // Just "ioa"
-            let ioa = address
-                .parse::<u32>()
-                .map_err(|_| GatewayError::Config(format!("Invalid IOA: {}", address)))?;
+    let (ioa_str, type_id_str) = address.split_once(':').unwrap_or((address, ""));
 
-            Ok(ProtocolAddress::Iec104(Iec104Address {
-                ioa,
-                type_id: 0, // Will be inferred from data
-                common_address: 1,
-            }))
-        },
-        Some((ioa_str, type_id_str)) => {
-            let ioa = ioa_str
-                .parse::<u32>()
-                .map_err(|_| GatewayError::Config(format!("Invalid IOA: {}", ioa_str)))?;
-            let type_id = type_id_str
-                .parse::<u8>()
-                .map_err(|_| GatewayError::Config(format!("Invalid type_id: {}", type_id_str)))?;
+    let ioa = parse_field::<u32>(ioa_str, "IOA")?;
+    let type_id = if type_id_str.is_empty() {
+        0 // Will be inferred from data
+    } else {
+        parse_field::<u8>(type_id_str, "type_id")?
+    };
 
-            Ok(ProtocolAddress::Iec104(Iec104Address {
-                ioa,
-                type_id,
-                common_address: 1,
-            }))
-        },
-    }
+    Ok(ProtocolAddress::Iec104(Iec104Address {
+        ioa,
+        type_id,
+        common_address: 1,
+    }))
 }
 
 /// Parse OPC UA address: "ns=N;i=ID" or "ns=N;s=Name" or "i=ID"
 fn parse_opcua_address(address: &str) -> Result<ProtocolAddress> {
     let (namespace_index, node_id_str) = if address.starts_with("ns=") {
-        // Has namespace prefix
-        if let Some(semi_pos) = address.find(';') {
-            let ns_str = &address[3..semi_pos];
-            let ns_idx = ns_str
-                .parse()
-                .map_err(|_| GatewayError::Config(format!("Invalid namespace: {}", ns_str)))?;
-            (ns_idx, &address[semi_pos + 1..])
-        } else {
-            return Err(GatewayError::Config(format!(
+        let semi_pos = address.find(';').ok_or_else(|| {
+            GatewayError::Config(format!(
                 "Invalid OPC UA address format: {}. Expected 'ns=N;i=ID' or 'ns=N;s=Name'",
                 address
-            )));
-        }
+            ))
+        })?;
+        let ns_idx = parse_field::<u16>(&address[3..semi_pos], "namespace")?;
+        (ns_idx, &address[semi_pos + 1..])
     } else {
-        // No namespace prefix, default to 0
         (0u16, address)
     };
 
-    // Validate node ID format
-    if !node_id_str.starts_with("i=")
-        && !node_id_str.starts_with("s=")
-        && !node_id_str.starts_with("g=")
-        && !node_id_str.starts_with("b=")
-    {
+    if !matches!(
+        node_id_str.as_bytes(),
+        [b'i' | b's' | b'g' | b'b', b'=', ..]
+    ) {
         return Err(GatewayError::Config(format!(
             "Invalid OPC UA node ID: {}. Expected 'i=N', 's=Name', 'g=GUID', or 'b=Base64'",
             node_id_str
@@ -183,7 +152,7 @@ fn parse_opcua_address(address: &str) -> Result<ProtocolAddress> {
     }
 
     Ok(ProtocolAddress::OpcUa(OpcUaAddress {
-        node_id: node_id_str.to_string(), // Single allocation at the end
+        node_id: node_id_str.to_string(),
         namespace_index,
     }))
 }
@@ -214,10 +183,7 @@ fn parse_gpio_address(address: &str) -> Result<ProtocolAddress> {
 
     match parts.next() {
         None => {
-            // Just pin number, default chip
-            let pin = first
-                .parse::<u32>()
-                .map_err(|_| GatewayError::Config(format!("Invalid GPIO pin: {}", first)))?;
+            let pin = parse_field::<u32>(first, "GPIO pin")?;
             Ok(ProtocolAddress::Gpio(GpioAddress::digital_input(
                 "gpiochip0",
                 pin,
@@ -225,9 +191,7 @@ fn parse_gpio_address(address: &str) -> Result<ProtocolAddress> {
         },
         Some(pin_str) => {
             let chip = first.to_string();
-            let pin = pin_str
-                .parse::<u32>()
-                .map_err(|_| GatewayError::Config(format!("Invalid GPIO pin: {}", pin_str)))?;
+            let pin = parse_field::<u32>(pin_str, "GPIO pin")?;
 
             match parts.next() {
                 None => {

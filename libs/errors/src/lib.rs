@@ -125,9 +125,6 @@ pub enum VoltageError {
     #[error("Modbus error: {0}")]
     Modbus(String),
 
-    #[error("gRPC error: {0}")]
-    Grpc(String),
-
     // ======================================
     // Calculation & Processing Errors
     // ======================================
@@ -136,9 +133,6 @@ pub enum VoltageError {
 
     #[error("Invalid expression: {expression}: {error}")]
     InvalidExpression { expression: String, error: String },
-
-    #[error("Division by zero in calculation: {context}")]
-    DivisionByZero { context: String },
 
     #[error("Data type mismatch: expected {expected}, got {actual}")]
     TypeMismatch { expected: String, actual: String },
@@ -149,12 +143,6 @@ pub enum VoltageError {
     // ======================================
     // API & HTTP Errors
     // ======================================
-    #[error("API error: {0}")]
-    Api(String),
-
-    #[error("Bad request: {0}")]
-    BadRequest(String),
-
     #[error("Not found: {resource}")]
     NotFound { resource: String },
 
@@ -167,9 +155,6 @@ pub enum VoltageError {
     #[error("Forbidden: {0}")]
     Forbidden(String),
 
-    #[error("Rate limit exceeded")]
-    RateLimitExceeded,
-
     // ======================================
     // Validation Errors
     // ======================================
@@ -178,16 +163,6 @@ pub enum VoltageError {
 
     #[error("Invalid parameter: {param}: {reason}")]
     InvalidParameter { param: String, reason: String },
-
-    #[error("Out of range: {value} not in [{min}, {max}]")]
-    OutOfRange {
-        value: String,
-        min: String,
-        max: String,
-    },
-
-    #[error("Pattern mismatch: {value} does not match {pattern}")]
-    PatternMismatch { value: String, pattern: String },
 
     // ======================================
     // Resource & Instance Errors
@@ -219,9 +194,6 @@ pub enum VoltageError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("File not found: {0}")]
-    FileNotFound(String),
-
     #[error("Parse error: {file}: {error}")]
     ParseError { file: String, error: String },
 
@@ -252,23 +224,8 @@ pub enum VoltageError {
     // ======================================
     // External Service Errors
     // ======================================
-    #[error("External service error: {service}: {message}")]
-    ExternalService { service: String, message: String },
-
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
-
-    // ======================================
-    // Mapping & Routing Errors
-    // ======================================
-    #[error("Mapping not found: {from} -> {to}")]
-    MappingNotFound { from: String, to: String },
-
-    #[error("Routing error: {0}")]
-    RoutingError(String),
-
-    #[error("Circular dependency detected: {0}")]
-    CircularDependency(String),
 
     // ======================================
     // Catch-all for other errors
@@ -285,72 +242,27 @@ pub type VoltageResult<T> = Result<T, VoltageError>;
 
 impl VoltageError {
     /// Get the appropriate HTTP status code for this error
+    ///
+    /// Uses `category()` as the default mapping, with explicit overrides for
+    /// variants whose HTTP status differs from their semantic category.
     pub fn status_code(&self) -> u16 {
+        // Variants where status_code differs from the category-based default
         match self {
-            // 400 Bad Request
-            Self::BadRequest(_)
-            | Self::Validation(_)
-            | Self::InvalidParameter { .. }
-            | Self::OutOfRange { .. }
-            | Self::PatternMismatch { .. }
-            | Self::InvalidExpression { .. }
-            | Self::TypeMismatch { .. } => 400,
-
-            // 401 Unauthorized
-            Self::Unauthorized(_) => 401,
-
-            // 403 Forbidden
-            Self::Forbidden(_) => 403,
-
-            // 404 Not Found
-            Self::NotFound { .. }
-            | Self::InstanceNotFound(_)
-            | Self::ProductNotFound(_)
-            | Self::ChannelNotFound(_)
-            | Self::PointNotFound { .. }
-            | Self::RuleNotFound(_)
-            | Self::FileNotFound(_)
-            | Self::MappingNotFound { .. } => 404,
-
-            // 409 Conflict
-            Self::Conflict { .. } | Self::AlreadyExists(_) | Self::CircularDependency(_) => 409,
-
-            // 429 Too Many Requests
-            Self::RateLimitExceeded => 429,
-
-            // 500 Internal Server Error
-            Self::Configuration(_)
-            | Self::InvalidConfig { .. }
-            | Self::MissingConfig(_)
-            | Self::DatabaseNotFound { .. }
-            | Self::Database(_)
-            | Self::Sqlite(_)
-            | Self::Redis(_)
-            | Self::QueryFailed { .. }
-            | Self::Calculation(_)
-            | Self::DivisionByZero { .. }
-            | Self::Processing(_)
-            | Self::Internal(_)
-            | Self::Runtime(_)
-            | Self::Unknown(_)
-            | Self::Other(_) => 500,
-
-            // 502 Bad Gateway
-            Self::Protocol { .. }
-            | Self::Communication(_)
-            | Self::ConnectionFailed { .. }
-            | Self::Modbus(_)
-            | Self::Grpc(_)
-            | Self::ExternalService { .. }
-            | Self::HttpClient(_) => 502,
-
-            // 503 Service Unavailable
-            Self::ServiceUnavailable(_) | Self::StartupFailed(_) | Self::ResourceBusy(_) => 503,
-
-            // 504 Gateway Timeout
-            Self::Timeout(_) => 504,
-
-            // Other errors default to 500
+            Self::Unauthorized(_) => return 401,
+            Self::InvalidExpression { .. } | Self::TypeMismatch { .. } => return 400,
+            Self::ServiceUnavailable(_) | Self::StartupFailed(_) => return 503,
+            _ => {},
+        }
+        // Category-based default mapping
+        match self.category() {
+            ErrorCategory::Validation => 400,
+            ErrorCategory::Permission => 403,
+            ErrorCategory::NotFound => 404,
+            ErrorCategory::Conflict => 409,
+            ErrorCategory::ResourceExhausted => 429,
+            ErrorCategory::Protocol | ErrorCategory::Connection | ErrorCategory::Network => 502,
+            ErrorCategory::ResourceBusy => 503,
+            ErrorCategory::Timeout => 504,
             _ => 500,
         }
     }
@@ -471,29 +383,22 @@ impl VoltageErrorTrait for VoltageError {
             Self::ConnectionFailed { .. } => "CONNECTION_FAILED",
             Self::Timeout(_) => "TIMEOUT",
             Self::Modbus(_) => "MODBUS_ERROR",
-            Self::Grpc(_) => "GRPC_ERROR",
 
             // Calculation & Processing
             Self::Calculation(_) => "CALCULATION_ERROR",
             Self::InvalidExpression { .. } => "INVALID_EXPRESSION",
-            Self::DivisionByZero { .. } => "DIVISION_BY_ZERO",
             Self::TypeMismatch { .. } => "TYPE_MISMATCH",
             Self::Processing(_) => "PROCESSING_ERROR",
 
             // API & HTTP
-            Self::Api(_) => "API_ERROR",
-            Self::BadRequest(_) => "BAD_REQUEST",
             Self::NotFound { .. } => "NOT_FOUND",
             Self::Conflict { .. } => "CONFLICT",
             Self::Unauthorized(_) => "UNAUTHORIZED",
             Self::Forbidden(_) => "FORBIDDEN",
-            Self::RateLimitExceeded => "RATE_LIMIT_EXCEEDED",
 
             // Validation
             Self::Validation(_) => "VALIDATION_ERROR",
             Self::InvalidParameter { .. } => "INVALID_PARAMETER",
-            Self::OutOfRange { .. } => "OUT_OF_RANGE",
-            Self::PatternMismatch { .. } => "PATTERN_MISMATCH",
 
             // Resources
             Self::InstanceNotFound(_) => "INSTANCE_NOT_FOUND",
@@ -506,7 +411,6 @@ impl VoltageErrorTrait for VoltageError {
 
             // File & I/O
             Self::Io(_) => "IO_ERROR",
-            Self::FileNotFound(_) => "FILE_NOT_FOUND",
             Self::ParseError { .. } => "PARSE_ERROR",
             Self::Serialization(_) => "SERIALIZATION_ERROR",
             Self::Deserialization(_) => "DESERIALIZATION_ERROR",
@@ -519,13 +423,7 @@ impl VoltageErrorTrait for VoltageError {
             Self::Internal(_) => "INTERNAL_ERROR",
 
             // External Services
-            Self::ExternalService { .. } => "EXTERNAL_SERVICE_ERROR",
             Self::HttpClient(_) => "HTTP_CLIENT_ERROR",
-
-            // Mapping & Routing
-            Self::MappingNotFound { .. } => "MAPPING_NOT_FOUND",
-            Self::RoutingError(_) => "ROUTING_ERROR",
-            Self::CircularDependency(_) => "CIRCULAR_DEPENDENCY",
 
             // Other
             Self::Unknown(_) => "UNKNOWN_ERROR",
@@ -547,7 +445,7 @@ impl VoltageErrorTrait for VoltageError {
             },
 
             // Protocol -> Protocol
-            Self::Protocol { .. } | Self::Modbus(_) | Self::Grpc(_) => ErrorCategory::Protocol,
+            Self::Protocol { .. } | Self::Modbus(_) => ErrorCategory::Protocol,
 
             // Connection -> Connection
             Self::ConnectionFailed { .. } => ErrorCategory::Connection,
@@ -563,16 +461,11 @@ impl VoltageErrorTrait for VoltageError {
             // Calculation -> Calculation
             Self::Calculation(_)
             | Self::InvalidExpression { .. }
-            | Self::DivisionByZero { .. }
             | Self::TypeMismatch { .. }
             | Self::Processing(_) => ErrorCategory::Calculation,
 
             // Validation -> Validation
-            Self::Validation(_)
-            | Self::InvalidParameter { .. }
-            | Self::OutOfRange { .. }
-            | Self::PatternMismatch { .. }
-            | Self::BadRequest(_) => ErrorCategory::Validation,
+            Self::Validation(_) | Self::InvalidParameter { .. } => ErrorCategory::Validation,
 
             // NotFound -> NotFound
             Self::NotFound { .. }
@@ -580,8 +473,7 @@ impl VoltageErrorTrait for VoltageError {
             | Self::ProductNotFound(_)
             | Self::ChannelNotFound(_)
             | Self::PointNotFound { .. }
-            | Self::RuleNotFound(_)
-            | Self::FileNotFound(_) => ErrorCategory::NotFound,
+            | Self::RuleNotFound(_) => ErrorCategory::NotFound,
 
             // Conflict -> Conflict
             Self::Conflict { .. } | Self::AlreadyExists(_) => ErrorCategory::Conflict,
@@ -592,29 +484,17 @@ impl VoltageErrorTrait for VoltageError {
             // ResourceBusy -> ResourceBusy
             Self::ResourceBusy(_) => ErrorCategory::ResourceBusy,
 
-            // ResourceExhausted -> ResourceExhausted
-            Self::RateLimitExceeded => ErrorCategory::ResourceExhausted,
-
             // Internal -> Internal
             Self::Internal(_)
             | Self::Runtime(_)
-            | Self::Api(_)
             | Self::StartupFailed(_)
             | Self::ShutdownError(_) => ErrorCategory::Internal,
-
-            // Routing/Mapping -> Internal (mapping errors are considered internal)
-            Self::MappingNotFound { .. } | Self::RoutingError(_) | Self::CircularDependency(_) => {
-                ErrorCategory::Internal
-            },
 
             // Serialization/IO -> Internal
             Self::Io(_)
             | Self::ParseError { .. }
             | Self::Serialization(_)
             | Self::Deserialization(_) => ErrorCategory::Internal,
-
-            // External Service -> Network
-            Self::ExternalService { .. } => ErrorCategory::Network,
 
             // Unknown -> Unknown
             Self::Unknown(_) | Self::Other(_) => ErrorCategory::Unknown,
@@ -824,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_error_status_codes() {
-        assert_eq!(VoltageError::BadRequest("test".into()).status_code(), 400);
+        assert_eq!(VoltageError::Validation("test".into()).status_code(), 400);
         assert_eq!(VoltageError::Unauthorized("test".into()).status_code(), 401);
         assert_eq!(
             VoltageError::NotFound {
@@ -844,7 +724,7 @@ mod tests {
     fn test_error_retryable() {
         assert!(VoltageError::Timeout("test".into()).is_retryable());
         assert!(VoltageError::ServiceUnavailable("test".into()).is_retryable());
-        assert!(!VoltageError::BadRequest("test".into()).is_retryable());
+        assert!(!VoltageError::Validation("test".into()).is_retryable());
         assert!(!VoltageError::NotFound {
             resource: "test".into()
         }

@@ -314,90 +314,64 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Validate a measurement routing entry
-    ///
-    /// Checks if a measurement routing configuration is valid by verifying:
-    /// - Instance exists
-    /// - Channel type is input (T or S)
-    /// - Measurement point exists for the instance's product
     pub async fn validate_measurement_routing(
         &self,
         routing: &MeasurementRoutingRow,
         instance_name: &str,
     ) -> Result<ValidationResult> {
-        let mut errors = Vec::new();
-
-        // Validate instance exists
-        let instance_exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_name = ?)",
+        self.validate_routing_impl(
+            instance_name,
+            routing.measurement_id,
+            "measurement",
+            &routing.channel_type,
+            |ct| ct.is_input(),
+            "T or S",
+            |product| {
+                product
+                    .measurements
+                    .iter()
+                    .any(|m| m.measurement_id == routing.measurement_id)
+            },
         )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await?;
-
-        if !instance_exists {
-            errors.push(format!("Instance {} does not exist", instance_name));
-        }
-
-        // Validate channel_type (skip if None - unbound routing is valid)
-        if let Some(ref ct) = routing.channel_type {
-            if !ct.is_input() {
-                errors.push(format!(
-                    "Invalid channel_type for measurement: {}. Must be T or S",
-                    ct
-                ));
-            }
-        }
-
-        // Validate measurement point exists (from built-in product definitions)
-        let point_exists = if instance_exists {
-            let product_name = sqlx::query_scalar::<_, String>(
-                "SELECT product_name FROM instances WHERE instance_name = ?",
-            )
-            .bind(instance_name)
-            .fetch_one(&self.pool)
-            .await?;
-
-            self.product_loader
-                .get_product(&product_name)
-                .map(|product| {
-                    product
-                        .measurements
-                        .iter()
-                        .any(|m| m.measurement_id == routing.measurement_id)
-                })
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
-        if !point_exists {
-            errors.push(format!(
-                "Measurement point {} not found for instance {}",
-                routing.measurement_id, instance_name
-            ));
-        }
-
-        let mut result = ValidationResult::new(ValidationLevel::Business);
-        for error in errors {
-            result.add_error(error);
-        }
-        Ok(result)
+        .await
     }
 
     /// Validate an action routing entry
-    ///
-    /// Checks if an action routing configuration is valid by verifying:
-    /// - Instance exists
-    /// - Channel type is output (C or A)
-    /// - Action point exists for the instance's product
     pub async fn validate_action_routing(
         &self,
         routing: &ActionRoutingRow,
         instance_name: &str,
     ) -> Result<ValidationResult> {
+        self.validate_routing_impl(
+            instance_name,
+            routing.action_id,
+            "action",
+            &routing.channel_type,
+            |ct| ct.is_output(),
+            "C or A",
+            |product| {
+                product
+                    .actions
+                    .iter()
+                    .any(|a| a.action_id == routing.action_id)
+            },
+        )
+        .await
+    }
+
+    /// Common validation logic for routing entries (measurement or action)
+    async fn validate_routing_impl(
+        &self,
+        instance_name: &str,
+        point_id: u32,
+        point_label: &str,
+        channel_type: &Option<common::FourRemote>,
+        is_valid_direction: impl Fn(&common::FourRemote) -> bool,
+        direction_label: &str,
+        check_point_in_product: impl FnOnce(&crate::config::Product) -> bool,
+    ) -> Result<ValidationResult> {
         let mut errors = Vec::new();
 
-        // Validate instance exists
         let instance_exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_name = ?)",
         )
@@ -409,17 +383,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             errors.push(format!("Instance {} does not exist", instance_name));
         }
 
-        // Validate channel_type (skip if None - unbound routing is valid)
-        if let Some(ref ct) = routing.channel_type {
-            if !ct.is_output() {
+        if let Some(ref ct) = channel_type {
+            if !is_valid_direction(ct) {
                 errors.push(format!(
-                    "Invalid channel_type for action: {}. Must be C or A",
-                    ct
+                    "Invalid channel_type for {}: {}. Must be {}",
+                    point_label, ct, direction_label
                 ));
             }
         }
 
-        // Validate action point exists (from built-in product definitions)
         let point_exists = if instance_exists {
             let product_name = sqlx::query_scalar::<_, String>(
                 "SELECT product_name FROM instances WHERE instance_name = ?",
@@ -430,12 +402,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
             self.product_loader
                 .get_product(&product_name)
-                .map(|product| {
-                    product
-                        .actions
-                        .iter()
-                        .any(|a| a.action_id == routing.action_id)
-                })
+                .as_ref()
+                .map(check_point_in_product)
                 .unwrap_or(false)
         } else {
             false
@@ -443,8 +411,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         if !point_exists {
             errors.push(format!(
-                "Action point {} not found for instance {}",
-                routing.action_id, instance_name
+                "{} point {} not found for instance {}",
+                point_label, point_id, instance_name
             ));
         }
 

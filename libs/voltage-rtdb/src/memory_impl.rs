@@ -13,6 +13,27 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::sync::Arc;
 
+/// Normalize Redis-style list indices (supporting negative offsets)
+///
+/// Converts Redis-compatible (start, stop) range with negative index support
+/// into a (start_idx, stop_idx) pair of positive indices for slicing.
+/// Returns `(0, 0)` for empty/invalid ranges.
+#[inline]
+fn normalize_list_indices(len: usize, start: isize, stop: isize) -> (usize, usize) {
+    let len = len as isize;
+    let start_idx = if start < 0 {
+        (len + start).max(0) as usize
+    } else {
+        start.min(len) as usize
+    };
+    let stop_idx = if stop < 0 {
+        (len + stop + 1).max(0) as usize
+    } else {
+        (stop + 1).min(len) as usize
+    };
+    (start_idx, stop_idx)
+}
+
 /// In-memory RTDB implementation with concurrent access support
 ///
 /// This is a pure storage abstraction. For routing logic, use the
@@ -311,23 +332,8 @@ impl Rtdb for MemoryRtdb {
     ) -> impl Future<Output = Result<Vec<Bytes>>> + Send + '_ {
         let result = if let Some(list) = self.list_store.get(key) {
             let list = list.read();
-            let len = list.len() as isize;
-
-            // Handle negative indices
-            let start_idx = if start < 0 {
-                (len + start).max(0) as usize
-            } else {
-                start.min(len) as usize
-            };
-
-            let stop_idx = if stop < 0 {
-                (len + stop + 1).max(0) as usize
-            } else {
-                (stop + 1).min(len) as usize
-            };
-
+            let (start_idx, stop_idx) = normalize_list_indices(list.len(), start, stop);
             if start_idx < stop_idx {
-                // Pre-allocate Vec with exact capacity
                 let count = stop_idx - start_idx;
                 let mut result = Vec::with_capacity(count);
                 for item in list.iter().skip(start_idx).take(count) {
@@ -351,20 +357,7 @@ impl Rtdb for MemoryRtdb {
     ) -> impl Future<Output = Result<()>> + Send + '_ {
         if let Some(list) = self.list_store.get(key) {
             let mut list = list.write();
-            let len = list.len() as isize;
-
-            let start_idx = if start < 0 {
-                (len + start).max(0) as usize
-            } else {
-                start.min(len) as usize
-            };
-
-            let stop_idx = if stop < 0 {
-                (len + stop + 1).max(0) as usize
-            } else {
-                (stop + 1).min(len) as usize
-            };
-
+            let (start_idx, stop_idx) = normalize_list_indices(list.len(), start, stop);
             if start_idx < stop_idx && stop_idx <= list.len() {
                 *list = list
                     .iter()
@@ -522,6 +515,22 @@ impl Rtdb for MemoryRtdb {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
+    use tokio::task::JoinSet;
+
+    /// Spawn `$count` concurrent tasks on a fresh `MemoryRtdb`.
+    /// Each task receives an `Arc<MemoryRtdb>` and loop index.
+    macro_rules! concurrent_test {
+        ($count:expr, |$rtdb:ident, $i:ident| $body:expr) => {{
+            let rtdb = Arc::new(MemoryRtdb::new());
+            let mut tasks = JoinSet::new();
+            for $i in 0..$count as usize {
+                let $rtdb = rtdb.clone();
+                tasks.spawn(async move { $body });
+            }
+            while tasks.join_next().await.is_some() {}
+            rtdb
+        }};
+    }
 
     #[tokio::test]
     async fn test_memory_rtdb_kv_operations() {
@@ -794,27 +803,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_kv_operations() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // Spawn 100 concurrent writers
-        for i in 0..100 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                rtdb_clone
-                    .set(&format!("key{}", i), Bytes::from(format!("value{}", i)))
-                    .await
-                    .unwrap();
-            });
-        }
-
-        // Wait for all writes
-        while tasks.join_next().await.is_some() {}
-
-        // Verify all writes succeeded
+        let rtdb = concurrent_test!(100, |r, i| {
+            r.set(&format!("key{}", i), Bytes::from(format!("value{}", i)))
+                .await
+                .unwrap();
+        });
         for i in 0..100 {
             let value = rtdb.get(&format!("key{}", i)).await.unwrap();
             assert_eq!(value, Some(Bytes::from(format!("value{}", i))));
@@ -919,136 +912,57 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_set_operations() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // Spawn 50 concurrent sadd operations
-        for i in 0..50 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                rtdb_clone
-                    .sadd("shared_set", &format!("member{}", i))
-                    .await
-                    .unwrap();
-            });
-        }
-
-        while tasks.join_next().await.is_some() {}
-
-        // Verify all members exist
+        let rtdb = concurrent_test!(50, |r, i| {
+            r.sadd("shared_set", &format!("member{}", i)).await.unwrap();
+        });
         let members = rtdb.smembers("shared_set").await.unwrap();
         assert_eq!(members.len(), 50);
     }
 
     #[tokio::test]
     async fn test_concurrent_hincrby_operations() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // Spawn 100 concurrent increments
-        for _ in 0..100 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                rtdb_clone.hincrby("test:hash", "counter", 1).await.unwrap();
-            });
-        }
-
-        while tasks.join_next().await.is_some() {}
-
-        // Final value should be 100
+        let rtdb = concurrent_test!(100, |r, _i| {
+            r.hincrby("test:hash", "counter", 1).await.unwrap();
+        });
         let result = rtdb.hincrby("test:hash", "counter", 0).await.unwrap();
         assert_eq!(result, 100);
     }
 
     #[tokio::test]
     async fn test_concurrent_hash_operations() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // Spawn 50 concurrent hash writers to same key
-        for i in 0..50 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                rtdb_clone
-                    .hash_set(
-                        "shared_hash",
-                        &format!("field{}", i),
-                        Bytes::from(format!("value{}", i)),
-                    )
-                    .await
-                    .unwrap();
-            });
-        }
-
-        while tasks.join_next().await.is_some() {}
-
-        // Verify all fields exist
+        let rtdb = concurrent_test!(50, |r, i| {
+            r.hash_set(
+                "shared_hash",
+                &format!("field{}", i),
+                Bytes::from(format!("value{}", i)),
+            )
+            .await
+            .unwrap();
+        });
         let all = rtdb.hash_get_all("shared_hash").await.unwrap();
         assert_eq!(all.len(), 50);
     }
 
     #[tokio::test]
     async fn test_concurrent_list_operations() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // Spawn 100 concurrent list pushers
-        for i in 0..100 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                rtdb_clone
-                    .list_lpush("shared_list", Bytes::from(format!("value{}", i)))
-                    .await
-                    .unwrap();
-            });
-        }
-
-        while tasks.join_next().await.is_some() {}
-
-        // Verify list has 100 elements
+        let rtdb = concurrent_test!(100, |r, i| {
+            r.list_lpush("shared_list", Bytes::from(format!("value{}", i)))
+                .await
+                .unwrap();
+        });
         let range = rtdb.list_range("shared_list", 0, -1).await.unwrap();
         assert_eq!(range.len(), 100);
     }
 
     #[tokio::test]
     async fn test_concurrent_mixed_operations() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // Mix of reads and writes
-        for i in 0..50 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                // Write
-                rtdb_clone
-                    .set(&format!("key{}", i), Bytes::from(format!("value{}", i)))
-                    .await
-                    .unwrap();
-                // Read
-                let _ = rtdb_clone.get(&format!("key{}", i)).await;
-                // Delete
-                rtdb_clone.del(&format!("key{}", i)).await.unwrap();
-            });
-        }
-
-        while tasks.join_next().await.is_some() {}
-
-        // All keys should be deleted
+        let rtdb = concurrent_test!(50, |r, i| {
+            r.set(&format!("key{}", i), Bytes::from(format!("value{}", i)))
+                .await
+                .unwrap();
+            let _ = r.get(&format!("key{}", i)).await;
+            r.del(&format!("key{}", i)).await.unwrap();
+        });
         for i in 0..50 {
             assert!(!rtdb.exists(&format!("key{}", i)).await.unwrap());
         }
@@ -1059,46 +973,18 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_hincrby_multithread() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // 4 threads × 250 increments = 1000 total
-        for _ in 0..1000 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                rtdb_clone.hincrby("test:hash", "counter", 1).await.unwrap();
-            });
-        }
-
-        while tasks.join_next().await.is_some() {}
-
-        // Final value must be exactly 1000 (no lost updates)
+        let rtdb = concurrent_test!(1000, |r, _i| {
+            r.hincrby("test:hash", "counter", 1).await.unwrap();
+        });
         let result = rtdb.hincrby("test:hash", "counter", 0).await.unwrap();
         assert_eq!(result, 1000, "Concurrent increments should sum correctly");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_incrbyfloat_multithread() {
-        use std::sync::Arc;
-        use tokio::task::JoinSet;
-
-        let rtdb = Arc::new(MemoryRtdb::new());
-        let mut tasks = JoinSet::new();
-
-        // 4 threads × 250 increments = 1000 total
-        for _ in 0..1000 {
-            let rtdb_clone = rtdb.clone();
-            tasks.spawn(async move {
-                rtdb_clone.incrbyfloat("counter", 1.0).await.unwrap();
-            });
-        }
-
-        while tasks.join_next().await.is_some() {}
-
-        // Final value must be 1000.0 (allowing floating point tolerance)
+        let rtdb = concurrent_test!(1000, |r, _i| {
+            r.incrbyfloat("counter", 1.0).await.unwrap();
+        });
         let result = rtdb.incrbyfloat("counter", 0.0).await.unwrap();
         assert!(
             (result - 1000.0).abs() < 0.001,

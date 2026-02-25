@@ -119,6 +119,14 @@ const STANDARD_POINTS: &[(u32, u32, &str, DataFormat)] = &[
     ),
 ];
 
+/// Create failure entries for all standard points with the same error message.
+fn fail_all_standard_points(msg: &str) -> Vec<PointFailure> {
+    STANDARD_POINTS
+        .iter()
+        .map(|(_, point_id, _, _)| PointFailure::with_error(*point_id, msg.to_string()))
+        .collect()
+}
+
 // ============================================================================
 // Address Types
 // ============================================================================
@@ -535,12 +543,7 @@ impl DataFormat {
     /// Get the format based on data identifier.
     #[must_use]
     pub fn from_data_id(di: &DataIdentifier) -> Self {
-        Self::from_di_code(
-            di.bytes[3] as u32 * 0x1000000
-                + di.bytes[2] as u32 * 0x10000
-                + di.bytes[1] as u32 * 0x100
-                + di.bytes[0] as u32,
-        )
+        Self::from_di_code(u32::from_le_bytes(di.bytes))
     }
 
     /// Get the format based on DI code (u32).
@@ -773,8 +776,12 @@ impl Dl645Transport {
     /// Send a frame and receive the response (unified interface).
     pub async fn transact(&mut self, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>> {
         match self {
-            Self::Tcp(stream) => tcp_transact(stream, frame, timeout_ms).await,
-            Self::Serial(stream) => serial_transact(stream, frame, timeout_ms).await,
+            Self::Tcp(stream) => {
+                transact_stream(stream, frame, timeout_ms, "Connection closed by remote").await
+            },
+            Self::Serial(stream) => {
+                transact_stream(stream, frame, timeout_ms, "Serial port closed").await
+            },
         }
     }
 
@@ -793,32 +800,18 @@ impl Dl645Transport {
     }
 }
 
-/// TCP transaction: send frame and receive response.
-async fn tcp_transact(stream: &mut TcpStream, frame: &[u8], timeout_ms: u64) -> Result<Vec<u8>> {
-    // Send frame
-    timeout(Duration::from_millis(timeout_ms), stream.write_all(frame))
-        .await
-        .map_err(|_| GatewayError::WriteTimeout)?
-        .map_err(GatewayError::Io)?;
-
-    // Receive response
-    receive_frame(stream, timeout_ms, "Connection closed by remote").await
-}
-
-/// Serial transaction: send frame and receive response.
-async fn serial_transact(
-    stream: &mut SerialStream,
+/// Send frame and receive response over any async stream.
+async fn transact_stream<T: AsyncReadExt + AsyncWriteExt + Unpin>(
+    stream: &mut T,
     frame: &[u8],
     timeout_ms: u64,
+    closed_msg: &str,
 ) -> Result<Vec<u8>> {
-    // Send frame
     timeout(Duration::from_millis(timeout_ms), stream.write_all(frame))
         .await
         .map_err(|_| GatewayError::WriteTimeout)?
         .map_err(GatewayError::Io)?;
-
-    // Receive response
-    receive_frame(stream, timeout_ms, "Serial port closed").await
+    receive_frame(stream, timeout_ms, closed_msg).await
 }
 
 /// Common frame receiving logic for both TCP and Serial transports.
@@ -1064,7 +1057,7 @@ impl Dl645Channel {
     }
 
     /// Get a description of the current endpoint for logging.
-    fn get_endpoint_description(&self) -> String {
+    fn endpoint_description(&self) -> String {
         if let Some(host) = &self.config.host {
             format!("{}:{}", host, self.config.port)
         } else if let Some(device) = &self.config.device {
@@ -1074,9 +1067,29 @@ impl Dl645Channel {
         }
     }
 
-    /// Read a single data item by data identifier.
-    ///
-    /// Uses the meter address from channel config and the provided DI code.
+    /// Create transport based on channel config (TCP or Serial).
+    async fn create_transport(&self) -> Result<Dl645Transport> {
+        if let Some(host) = &self.config.host {
+            info!(
+                "[DL645:{}] Connecting via TCP to {}:{}",
+                self.channel_id, host, self.config.port
+            );
+            let timeout_ms = self.config.connect_timeout.as_millis() as u64;
+            Dl645Transport::connect_tcp(host, self.config.port, timeout_ms).await
+        } else if let Some(device) = &self.config.device {
+            info!(
+                "[DL645:{}] Connecting via Serial to {} @ {} baud",
+                self.channel_id, device, self.config.baud_rate
+            );
+            Dl645Transport::connect_serial(&self.config)
+        } else {
+            Err(GatewayError::Config(
+                "Either 'host' (TCP) or 'device' (Serial) must be specified".into(),
+            ))
+        }
+    }
+
+    /// Read a single data item by data identifier with retries.
     async fn read_single_di(
         &mut self,
         meter_addr: &MeterAddress,
@@ -1096,20 +1109,64 @@ impl Dl645Channel {
 
             match transport.transact(&request, timeout_ms).await {
                 Ok(response) => match decode_response(&response) {
-                    Ok(resp) => {
-                        return Ok(resp.data);
-                    },
-                    Err(e) => {
-                        last_error = Some(e);
-                    },
+                    Ok(resp) => return Ok(resp.data),
+                    Err(e) => last_error = Some(e),
                 },
-                Err(e) => {
-                    last_error = Some(e);
-                },
+                Err(e) => last_error = Some(e),
             }
         }
 
         Err(last_error.unwrap_or_else(|| GatewayError::Protocol("Unknown error".into())))
+    }
+
+    /// Read all standard data points sequentially (DL/T 645 is request-response).
+    async fn read_standard_points(
+        &mut self,
+        meter_addr: &MeterAddress,
+    ) -> (DataBatch, Vec<PointFailure>, u64, u64) {
+        let mut batch = DataBatch::default();
+        let mut failures = Vec::new();
+        let mut read_count = 0u64;
+        let mut error_count = 0u64;
+
+        for (di_code, point_id, _name, format) in STANDARD_POINTS {
+            if read_count > 0 || error_count > 0 {
+                tokio::time::sleep(self.config.frame_delay).await;
+            }
+
+            let di = DataIdentifier::from_u32(*di_code);
+
+            match self.read_single_di(meter_addr, &di).await {
+                Ok(raw_data) => match parse_bcd_data(&raw_data, *format) {
+                    Ok(value) => {
+                        batch.add(DataPoint::new(*point_id, PointType::Telemetry, value));
+                        read_count += 1;
+                        debug!(
+                            "[DL645:{}] Read DI {:08X} -> point {} = {}",
+                            self.channel_id, di_code, point_id, value
+                        );
+                    },
+                    Err(e) => {
+                        error_count += 1;
+                        warn!(
+                            "[DL645:{}] Failed to parse DI {:08X} (point {}): {}",
+                            self.channel_id, di_code, point_id, e
+                        );
+                        failures.push(PointFailure::with_error(*point_id, e.to_string()));
+                    },
+                },
+                Err(e) => {
+                    error_count += 1;
+                    warn!(
+                        "[DL645:{}] Failed to read DI {:08X} (point {}): {}",
+                        self.channel_id, di_code, point_id, e
+                    );
+                    failures.push(PointFailure::with_error(*point_id, e.to_string()));
+                },
+            }
+        }
+
+        (batch, failures, read_count, error_count)
     }
 }
 
@@ -1203,7 +1260,6 @@ impl ProtocolClient for Dl645Channel {
         let start_time = std::time::Instant::now();
         let old_state = self.get_state();
         self.set_state(ConnectionState::Connecting).await;
-
         self.log_context
             .log_state_changed(old_state, ConnectionState::Connecting)
             .await;
@@ -1218,36 +1274,14 @@ impl ProtocolClient for Dl645Channel {
             return Err(GatewayError::Config(err_msg));
         }
 
-        // Determine connection type
-        let connect_result = if let Some(host) = &self.config.host {
-            // TCP connection
-            info!(
-                "[DL645:{}] Connecting via TCP to {}:{}",
-                self.channel_id, host, self.config.port
-            );
-            let timeout_ms = self.config.connect_timeout.as_millis() as u64;
-            Dl645Transport::connect_tcp(host, self.config.port, timeout_ms).await
-        } else if let Some(device) = &self.config.device {
-            // Serial connection
-            info!(
-                "[DL645:{}] Connecting via Serial to {} @ {} baud",
-                self.channel_id, device, self.config.baud_rate
-            );
-            Dl645Transport::connect_serial(&self.config)
-        } else {
-            Err(GatewayError::Config(
-                "Either 'host' (TCP) or 'device' (Serial) must be specified".into(),
-            ))
-        };
-
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
-        match connect_result {
+        match self.create_transport().await {
             Ok(transport) => {
                 self.transport = Some(transport);
                 self.set_state(ConnectionState::Connected).await;
 
-                let endpoint = self.get_endpoint_description();
+                let endpoint = self.endpoint_description();
                 info!(
                     "[DL645:{}] Connected to {} (meter: {})",
                     self.channel_id, endpoint, self.config.meter_address
@@ -1256,20 +1290,16 @@ impl ProtocolClient for Dl645Channel {
                 self.log_context
                     .log_state_changed(ConnectionState::Connecting, ConnectionState::Connected)
                     .await;
-
                 Ok(())
             },
             Err(e) => {
                 self.set_state(ConnectionState::Error).await;
-                let err_msg = e.to_string();
-
                 self.log_context
-                    .log_error(&err_msg, ErrorContext::Connection)
+                    .log_error(&e.to_string(), ErrorContext::Connection)
                     .await;
                 self.log_context
                     .log_state_changed(ConnectionState::Connecting, ConnectionState::Error)
                     .await;
-
                 Err(e)
             },
         }
@@ -1300,14 +1330,7 @@ impl ProtocolClient for Dl645Channel {
             self.log_context
                 .log_error("Not connected", ErrorContext::Polling)
                 .await;
-            // Return failures for all standard points
-            let failures: Vec<_> = STANDARD_POINTS
-                .iter()
-                .map(|(_, point_id, _, _)| {
-                    PointFailure::with_error(*point_id, "Not connected".to_string())
-                })
-                .collect();
-            return PollResult::failed(failures);
+            return PollResult::failed(fail_all_standard_points("Not connected"));
         }
 
         // Parse meter address from config
@@ -1318,67 +1341,17 @@ impl ProtocolClient for Dl645Channel {
                 self.log_context
                     .log_error(&err_msg, ErrorContext::Polling)
                     .await;
-                let failures: Vec<_> = STANDARD_POINTS
-                    .iter()
-                    .map(|(_, point_id, _, _)| PointFailure::with_error(*point_id, err_msg.clone()))
-                    .collect();
-                return PollResult::failed(failures);
+                return PollResult::failed(fail_all_standard_points(&err_msg));
             },
         };
 
-        let mut batch = DataBatch::default();
-        let mut failures = Vec::new();
-        let mut read_count = 0u64;
-        let mut error_count = 0u64;
+        let (batch, failures, read_count, error_count) =
+            self.read_standard_points(&meter_addr).await;
 
-        // Read all 11 standard points sequentially (DL/T 645 is request-response)
-        for (di_code, point_id, _name, format) in STANDARD_POINTS {
-            // Add frame delay between reads
-            if read_count > 0 || error_count > 0 {
-                tokio::time::sleep(self.config.frame_delay).await;
-            }
-
-            let di = DataIdentifier::from_u32(*di_code);
-
-            match self.read_single_di(&meter_addr, &di).await {
-                Ok(raw_data) => {
-                    match parse_bcd_data(&raw_data, *format) {
-                        Ok(value) => {
-                            // Use fixed point_id from STANDARD_POINTS (all are Telemetry)
-                            batch.add(DataPoint::new(*point_id, PointType::Telemetry, value));
-                            read_count += 1;
-                            debug!(
-                                "[DL645:{}] Read DI {:08X} -> point {} = {}",
-                                self.channel_id, di_code, point_id, value
-                            );
-                        },
-                        Err(e) => {
-                            error_count += 1;
-                            warn!(
-                                "[DL645:{}] Failed to parse DI {:08X} (point {}): {}",
-                                self.channel_id, di_code, point_id, e
-                            );
-                            failures.push(PointFailure::with_error(*point_id, e.to_string()));
-                        },
-                    }
-                },
-                Err(e) => {
-                    error_count += 1;
-                    warn!(
-                        "[DL645:{}] Failed to read DI {:08X} (point {}): {}",
-                        self.channel_id, di_code, point_id, e
-                    );
-                    failures.push(PointFailure::with_error(*point_id, e.to_string()));
-                },
-            }
-        }
-
-        // Update diagnostics
         self.diagnostics.add_read(read_count);
         self.diagnostics.add_error(error_count);
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
-
         debug!(
             "[DL645:{}] poll_once: read {} points, {} failures in {}ms",
             self.channel_id,
@@ -1486,16 +1459,7 @@ impl ChannelRuntime for Dl645Channel {
     }
 
     async fn diagnostics(&self) -> Result<Diagnostics> {
-        let snapshot = self.diagnostics.snapshot();
-        Ok(Diagnostics {
-            protocol: "dl645".to_string(),
-            connection_state: self.get_state(),
-            read_count: snapshot.read_count,
-            write_count: snapshot.write_count,
-            error_count: snapshot.error_count,
-            last_error: None,
-            extra: serde_json::Value::Null,
-        })
+        <Self as Protocol>::diagnostics(self).await
     }
 
     fn connection_state(&self) -> ConnectionState {

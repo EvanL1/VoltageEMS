@@ -447,103 +447,57 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     /// List all instances, optionally filtered by product_name
     pub async fn list_instances(&self, product_name: Option<&str>) -> Result<Vec<Instance>> {
-        let query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
-                FROM instances
-                WHERE product_name = ?
-                ORDER BY instance_id ASC
-                "#,
-            )
-            .bind(pname)
-        } else {
-            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
-                FROM instances
-                ORDER BY instance_id ASC
-                "#,
-            )
-        };
-
-        let rows = query.fetch_all(&self.pool).await?;
-
-        let instances = rows
-            .into_iter()
-            .map(build_instance_from_row)
-            .collect::<Result<Vec<_>>>()?;
-
+        let (_, instances) = self
+            .list_instances_paginated(product_name, 1, u32::MAX)
+            .await?;
         Ok(instances)
     }
 
     /// List instances with pagination
+    ///
+    /// Uses SQL `? IS NULL OR product_name = ?` pattern to handle optional filter
+    /// in a single query without Rust-side branching.
     pub async fn list_instances_paginated(
         &self,
         product_name: Option<&str>,
         page: u32,
         page_size: u32,
     ) -> Result<(u32, Vec<Instance>)> {
-        // Calculate offset
         let offset = (page - 1) * page_size;
 
-        // Get total count
-        let count_query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (i64,)>(
-                r#"
-                SELECT COUNT(*) FROM instances WHERE product_name = ?
-                "#,
-            )
-            .bind(pname)
-        } else {
-            sqlx::query_as::<_, (i64,)>(
-                r#"
-                SELECT COUNT(*) FROM instances
-                "#,
-            )
-        };
+        let (total,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM instances WHERE (? IS NULL OR product_name = ?)")
+                .bind(product_name)
+                .bind(product_name)
+                .fetch_one(&self.pool)
+                .await?;
 
-        let (total,) = count_query.fetch_one(&self.pool).await?;
-
-        // Get paginated data
-        let data_query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
-                FROM instances
-                WHERE product_name = ?
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(pname)
-            .bind(page_size as i64)
-            .bind(offset as i64)
-        } else {
-            sqlx::query_as::<_, (u32, String, String, Option<u32>, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
-                FROM instances
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(page_size as i64)
-            .bind(offset as i64)
-        };
-
-        let rows = data_query.fetch_all(&self.pool).await?;
+        let rows: Vec<InstanceRow> = sqlx::query_as(
+            r#"SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
+               FROM instances
+               WHERE (? IS NULL OR product_name = ?)
+               ORDER BY instance_id ASC
+               LIMIT ? OFFSET ?"#,
+        )
+        .bind(product_name)
+        .bind(product_name)
+        .bind(page_size as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
 
         let instances = rows
             .into_iter()
             .map(build_instance_from_row)
             .collect::<Result<Vec<_>>>()?;
 
-        let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
-        Ok((total_u32, instances))
+        Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
     }
 
     /// Search instances by name with fuzzy matching
+    ///
+    /// Uses SQL `? IS NULL OR product_name = ?` pattern to handle optional filter
+    /// in a single query without Rust-side branching.
     pub async fn search_instances(
         &self,
         keyword: &str,
@@ -554,71 +508,36 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let offset = (page - 1) * page_size;
         let like_pattern = format!("%{}%", keyword);
 
-        // Get total count
-        let (total,): (i64,) = if let Some(pname) = product_name {
-            sqlx::query_as(
-                r#"
-                SELECT COUNT(*) FROM instances
-                WHERE instance_name LIKE ? AND product_name = ?
-                "#,
-            )
-            .bind(&like_pattern)
-            .bind(pname)
-            .fetch_one(&self.pool)
-            .await?
-        } else {
-            sqlx::query_as(
-                r#"
-                SELECT COUNT(*) FROM instances
-                WHERE instance_name LIKE ?
-                "#,
-            )
-            .bind(&like_pattern)
-            .fetch_one(&self.pool)
-            .await?
-        };
+        let (total,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM instances WHERE instance_name LIKE ? AND (? IS NULL OR product_name = ?)",
+        )
+        .bind(&like_pattern)
+        .bind(product_name)
+        .bind(product_name)
+        .fetch_one(&self.pool)
+        .await?;
 
-        // Get paginated data
-        let rows: Vec<InstanceRow> = if let Some(pname) = product_name {
-            sqlx::query_as(
-                r#"
-                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
-                FROM instances
-                WHERE instance_name LIKE ? AND product_name = ?
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(&like_pattern)
-            .bind(pname)
-            .bind(page_size as i64)
-            .bind(offset as i64)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            sqlx::query_as(
-                r#"
-                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
-                FROM instances
-                WHERE instance_name LIKE ?
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(&like_pattern)
-            .bind(page_size as i64)
-            .bind(offset as i64)
-            .fetch_all(&self.pool)
-            .await?
-        };
+        let rows: Vec<InstanceRow> = sqlx::query_as(
+            r#"SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
+               FROM instances
+               WHERE instance_name LIKE ? AND (? IS NULL OR product_name = ?)
+               ORDER BY instance_id ASC
+               LIMIT ? OFFSET ?"#,
+        )
+        .bind(&like_pattern)
+        .bind(product_name)
+        .bind(product_name)
+        .bind(page_size as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
 
         let instances = rows
             .into_iter()
             .map(build_instance_from_row)
             .collect::<Result<Vec<_>>>()?;
 
-        let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
-        Ok((total_u32, instances))
+        Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
     }
 
     /// Rename an instance

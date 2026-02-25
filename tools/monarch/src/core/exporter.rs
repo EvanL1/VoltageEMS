@@ -16,6 +16,39 @@ use comsrv::core::config::{ChannelConfig, ChannelCore, ComsrvConfig};
 use modsrv::config::{ModsrvConfig, RuleConfig, RuleCore, RulesConfig};
 use voltage_model::product_lib;
 
+/// CSV column headers for point exports
+const POINT_CSV_HEADERS: [&str; 8] = [
+    "point_id",
+    "signal_name",
+    "scale",
+    "offset",
+    "unit",
+    "reverse",
+    "data_type",
+    "description",
+];
+
+/// CSV column headers for Modbus mapping exports
+const MAPPING_CSV_HEADERS: [&str; 7] = [
+    "point_id",
+    "slave_id",
+    "function_code",
+    "register_address",
+    "data_type",
+    "byte_order",
+    "bit_position",
+];
+
+/// CSV column headers for instance mapping exports
+const INSTANCE_MAPPING_CSV_HEADERS: [&str; 6] = [
+    "channel_id",
+    "channel_type",
+    "channel_point_id",
+    "instance_type",
+    "instance_point_id",
+    "description",
+];
+
 /// Result type for export operations
 #[derive(Debug, Default)]
 pub struct ExportResult {
@@ -84,36 +117,15 @@ impl ConfigExporter {
         std::fs::write(&yaml_path, yaml_content)?;
         result.files_exported.push("comsrv.yaml".to_string());
 
-        // Export telemetry points to CSV
-        let telemetry_points = self.export_points("telemetry").await?;
-        if !telemetry_points.is_empty() {
-            self.write_points_csv(output_dir.join("telemetry.csv"), &telemetry_points)?;
-            result.files_exported.push("telemetry.csv".to_string());
-            result.records_exported += telemetry_points.len();
-        }
-
-        // Export signal points to CSV
-        let signal_points = self.export_points("signal").await?;
-        if !signal_points.is_empty() {
-            self.write_points_csv(output_dir.join("signal.csv"), &signal_points)?;
-            result.files_exported.push("signal.csv".to_string());
-            result.records_exported += signal_points.len();
-        }
-
-        // Export control points to CSV
-        let control_points = self.export_points("control").await?;
-        if !control_points.is_empty() {
-            self.write_points_csv(output_dir.join("control.csv"), &control_points)?;
-            result.files_exported.push("control.csv".to_string());
-            result.records_exported += control_points.len();
-        }
-
-        // Export adjustment points to CSV
-        let adjustment_points = self.export_points("adjustment").await?;
-        if !adjustment_points.is_empty() {
-            self.write_points_csv(output_dir.join("adjustment.csv"), &adjustment_points)?;
-            result.files_exported.push("adjustment.csv".to_string());
-            result.records_exported += adjustment_points.len();
+        // Export all point types to CSV
+        for point_type in ["telemetry", "signal", "control", "adjustment"] {
+            let points = self.export_points(point_type).await?;
+            if !points.is_empty() {
+                let csv_name = format!("{}.csv", point_type);
+                self.write_csv(output_dir.join(&csv_name), &POINT_CSV_HEADERS, &points)?;
+                result.files_exported.push(csv_name);
+                result.records_exported += points.len();
+            }
         }
 
         // Export protocol mappings for each channel
@@ -125,7 +137,7 @@ impl ConfigExporter {
                     std::fs::create_dir_all(&mapping_dir)?;
 
                     let csv_path = mapping_dir.join(format!("{}.csv", mapping_type));
-                    self.write_mappings_csv(&csv_path, &mappings)?;
+                    self.write_csv(&csv_path, &MAPPING_CSV_HEADERS, &mappings)?;
 
                     let relative_path = format!("{}/mapping/{}.csv", channel.id(), mapping_type);
                     result.files_exported.push(relative_path);
@@ -178,7 +190,7 @@ impl ConfigExporter {
                 std::fs::create_dir_all(&instance_dir)?;
 
                 let csv_path = instance_dir.join("channel_routing.csv");
-                self.write_instance_mappings_csv(&csv_path, &mappings)?;
+                self.write_csv(&csv_path, &INSTANCE_MAPPING_CSV_HEADERS, &mappings)?;
 
                 let relative_path = format!("instances/{}/channel_routing.csv", instance_name);
                 result.files_exported.push(relative_path);
@@ -635,8 +647,13 @@ impl ConfigExporter {
 
         let mut mappings = Vec::new();
 
-        // Process measurement mappings
-        for row in measurement_rows {
+        // Process both measurement and action mappings
+        let all_rows = measurement_rows
+            .iter()
+            .map(|r| ("M", r))
+            .chain(action_rows.iter().map(|r| ("A", r)));
+
+        for (instance_type, row) in all_rows {
             let mut mapping = HashMap::new();
             mapping.insert(
                 "channel_id".to_string(),
@@ -647,32 +664,7 @@ impl ConfigExporter {
                 "channel_point_id".to_string(),
                 row.try_get::<i64, _>("channel_point_id")?.to_string(),
             );
-            mapping.insert("instance_type".to_string(), "M".to_string());
-            mapping.insert(
-                "instance_point_id".to_string(),
-                row.try_get::<i64, _>("instance_point_id")?.to_string(),
-            );
-
-            if let Ok(Some(desc)) = row.try_get::<Option<String>, _>("description") {
-                mapping.insert("description".to_string(), desc);
-            }
-
-            mappings.push(mapping);
-        }
-
-        // Process action mappings
-        for row in action_rows {
-            let mut mapping = HashMap::new();
-            mapping.insert(
-                "channel_id".to_string(),
-                row.try_get::<i64, _>("channel_id")?.to_string(),
-            );
-            mapping.insert("channel_type".to_string(), row.try_get("channel_type")?);
-            mapping.insert(
-                "channel_point_id".to_string(),
-                row.try_get::<i64, _>("channel_point_id")?.to_string(),
-            );
-            mapping.insert("instance_type".to_string(), "A".to_string());
+            mapping.insert("instance_type".to_string(), instance_type.to_string());
             mapping.insert(
                 "instance_point_id".to_string(),
                 row.try_get::<i64, _>("instance_point_id")?.to_string(),
@@ -754,103 +746,25 @@ impl ConfigExporter {
         Ok(rules_list)
     }
 
-    // CSV writing helpers
-    fn write_points_csv(
+    /// Write records to a CSV file with the given column headers
+    fn write_csv(
         &self,
         path: impl AsRef<Path>,
-        points: &[HashMap<String, String>],
+        headers: &[&str],
+        rows: &[HashMap<String, String>],
     ) -> Result<()> {
-        let mut wtr = csv::Writer::from_path(path)?;
-
-        // Write header
-        let headers = [
-            "point_id",
-            "signal_name",
-            "scale",
-            "offset",
-            "unit",
-            "reverse",
-            "data_type",
-            "description",
-        ];
-        wtr.write_record(headers)?;
-
-        // Write data rows
-        for point in points {
-            let mut row = Vec::new();
-            for header in &headers {
-                row.push(point.get(*header).map(|s| s.as_str()).unwrap_or(""));
-            }
-            wtr.write_record(&row)?;
-        }
-
-        wtr.flush()?;
-        Ok(())
-    }
-
-    fn write_mappings_csv(&self, path: &Path, mappings: &[HashMap<String, String>]) -> Result<()> {
-        if mappings.is_empty() {
+        if rows.is_empty() {
             return Ok(());
         }
-
         let mut wtr = csv::Writer::from_path(path)?;
-
-        // Write header based on available fields
-        let headers = [
-            "point_id",
-            "slave_id",
-            "function_code",
-            "register_address",
-            "data_type",
-            "byte_order",
-            "bit_position",
-        ];
         wtr.write_record(headers)?;
-
-        // Write data rows
-        for mapping in mappings {
-            let mut row = Vec::new();
-            for header in &headers {
-                row.push(mapping.get(*header).map(|s| s.as_str()).unwrap_or(""));
-            }
-            wtr.write_record(&row)?;
+        for row in rows {
+            let record: Vec<&str> = headers
+                .iter()
+                .map(|h| row.get(*h).map(|s| s.as_str()).unwrap_or(""))
+                .collect();
+            wtr.write_record(&record)?;
         }
-
-        wtr.flush()?;
-        Ok(())
-    }
-
-    fn write_instance_mappings_csv(
-        &self,
-        path: &Path,
-        mappings: &[HashMap<String, String>],
-    ) -> Result<()> {
-        if mappings.is_empty() {
-            return Ok(());
-        }
-
-        let mut wtr = csv::Writer::from_path(path)?;
-
-        // Write header
-        let headers = [
-            "channel_id",
-            "channel_type",
-            "channel_point_id",
-            "instance_type",
-            "instance_point_id",
-            "description",
-        ];
-        wtr.write_record(headers)?;
-
-        // Write data rows
-        for mapping in mappings {
-            let mut row = Vec::new();
-            for header in &headers {
-                row.push(mapping.get(*header).map(|s| s.as_str()).unwrap_or(""));
-            }
-            wtr.write_record(&row)?;
-        }
-
         wtr.flush()?;
         Ok(())
     }

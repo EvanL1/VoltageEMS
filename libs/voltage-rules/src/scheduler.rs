@@ -109,98 +109,6 @@ impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
             max_concurrency: 4,
         }
     }
-
-    /// Create with UnifiedReader for two-tier priority reads (uses MemoryStateStore)
-    ///
-    /// Enables SharedMemory layer in the executor:
-    /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
-    /// 2. Redis (~1ms) - remote fallback
-    ///
-    /// SharedMemory is populated by comsrv and works on any filesystem.
-    /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture
-    pub fn with_shared_reader(
-        rtdb: Arc<R>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-        shared_reader: Option<Arc<UnifiedReader>>,
-    ) -> Self {
-        Self::with_shm(
-            rtdb,
-            routing_cache,
-            pool,
-            tick_ms,
-            log_root,
-            shared_reader,
-            None,
-        )
-    }
-
-    /// Create with both UnifiedReader (for reads) and UnifiedWriter (for M2C actions)
-    /// (uses MemoryStateStore - state lost on restart)
-    ///
-    /// Enables full SHM two-tier architecture:
-    /// - Reads: SharedMemory (~5μs) > Redis (~1ms)
-    /// - Writes: SHM (primary) + Redis TODO (fallback)
-    pub fn with_shm(
-        rtdb: Arc<R>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-        shared_reader: Option<Arc<UnifiedReader>>,
-        shm_action_writer: Option<Arc<UnifiedWriter>>,
-    ) -> Self {
-        Self::with_shm_full(
-            rtdb,
-            routing_cache,
-            pool,
-            tick_ms,
-            log_root,
-            shared_reader,
-            shm_action_writer,
-            None,
-        )
-    }
-
-    /// Create with full SHM support including UDS notifier (uses MemoryStateStore)
-    ///
-    /// Enables complete M2C path:
-    /// - SHM write (UnifiedWriter) for data
-    /// - UDS notification (ShmNotifier) for immediate dispatch (~1-2ms)
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_shm_full(
-        rtdb: Arc<R>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-        shared_reader: Option<Arc<UnifiedReader>>,
-        shm_action_writer: Option<Arc<UnifiedWriter>>,
-        shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
-    ) -> Self {
-        let mut executor = RuleExecutor::new(Arc::clone(&rtdb), routing_cache);
-        if let Some(reader) = shared_reader {
-            executor = executor.with_shared_reader(reader);
-        }
-        if let Some(writer) = shm_action_writer {
-            executor = executor.with_shm_action_writer(writer);
-        }
-        if let Some(notifier) = shm_notifier {
-            executor = executor.with_shm_notifier(notifier);
-        }
-        Self {
-            rtdb,
-            executor: Arc::new(executor),
-            pool,
-            rules: Arc::new(RwLock::new(Vec::new())),
-            shutdown: CancellationToken::new(),
-            tick_ms,
-            logger_manager: RuleLoggerManager::new(log_root),
-            max_concurrency: 4,
-        }
-    }
 }
 
 impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
@@ -538,14 +446,6 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         self.executor.execute(&rule).await
     }
 
-    /// Get execution results for a rule (if cached)
-    ///
-    /// Note: Results are persisted to Redis via `write_rule_exec_to_redis()`.
-    /// In-memory caching is not implemented - read from Redis if needed.
-    pub async fn get_last_results(&self, _rule_id: i64) -> Option<RuleExecutionResult> {
-        None
-    }
-
     /// Write rule execution result to Redis
     ///
     /// Stores result in `rule:{rule_id}:exec` Hash with fields:
@@ -646,53 +546,6 @@ mod tests {
                 nodes,
             },
         }
-    }
-
-    #[test]
-    fn test_scheduled_rule_uses_arc() {
-        // Create a rule and wrap it in Arc
-        let rule = create_test_rule(1, "Test Rule", 1000);
-        let arc_rule = Arc::new(rule);
-
-        // Create ScheduledRule with Arc<Rule>
-        let scheduled = ScheduledRule {
-            rule: Arc::clone(&arc_rule),
-            trigger: TriggerConfig::default(),
-            last_execution: None,
-            last_cooldown_start: None,
-        };
-
-        // Verify Arc works correctly
-        assert_eq!(scheduled.rule.id, 1);
-        assert_eq!(scheduled.rule.name, "Test Rule");
-        assert_eq!(scheduled.rule.cooldown_ms, 1000);
-
-        // Verify Arc::clone is cheap (same underlying data)
-        let cloned_arc = Arc::clone(&scheduled.rule);
-        assert!(Arc::ptr_eq(&scheduled.rule, &cloned_arc));
-    }
-
-    #[test]
-    fn test_arc_clone_is_pointer_copy() {
-        let rule = create_test_rule(42, "Arc Test", 5000);
-        let arc1 = Arc::new(rule);
-
-        // Clone multiple times
-        let arc2 = Arc::clone(&arc1);
-        let arc3 = Arc::clone(&arc1);
-        let arc4 = Arc::clone(&arc2);
-
-        // All point to the same data
-        assert!(Arc::ptr_eq(&arc1, &arc2));
-        assert!(Arc::ptr_eq(&arc2, &arc3));
-        assert!(Arc::ptr_eq(&arc3, &arc4));
-
-        // Strong count should be 4
-        assert_eq!(Arc::strong_count(&arc1), 4);
-
-        // Data is shared, not copied
-        assert_eq!(arc1.id, arc4.id);
-        assert_eq!(arc1.name, arc4.name);
     }
 
     #[test]

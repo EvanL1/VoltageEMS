@@ -19,6 +19,7 @@ pub mod service_config;
 pub mod admin_api;
 pub mod api_types;
 pub mod config_loader;
+pub mod log_rotation;
 pub mod logging;
 pub mod serde_helpers;
 pub mod service_bootstrap;
@@ -35,7 +36,6 @@ pub use service_config::{
     // Helpers
     helpers,
     parse_four_remote,
-    timeouts,
     // Config types
     ApiConfig,
     BaseServiceConfig,

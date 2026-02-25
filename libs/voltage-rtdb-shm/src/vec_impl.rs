@@ -137,19 +137,41 @@ impl PointSlot {
 
     /// Load all point data with consistency guarantee (seqlock read protocol).
     ///
-    /// This method ensures that the returned (value, raw, timestamp) tuple is consistent:
-    /// - The value and raw correspond to the same write as the timestamp
-    /// - No "torn read" where some fields are from different write cycles
+    /// Loops [`try_load_consistent`](Self::try_load_consistent) up to
+    /// [`MAX_CONSISTENCY_RETRIES`](Self::MAX_CONSISTENCY_RETRIES) times.
+    /// On exhaustion, falls back to an unprotected read (may be inconsistent).
+    ///
+    /// See `try_load_consistent` for the seqlock algorithm and memory ordering details.
+    #[inline]
+    pub fn load_consistent(&self) -> (f64, f64, u64) {
+        for _ in 0..Self::MAX_CONSISTENCY_RETRIES {
+            if let Some(result) = self.try_load_consistent() {
+                return result;
+            }
+            std::hint::spin_loop();
+        }
+
+        tracing::warn!(
+            "load_consistent exceeded {} retries, returning possibly stale data",
+            Self::MAX_CONSISTENCY_RETRIES
+        );
+        self.load_relaxed()
+    }
+
+    /// Single-attempt seqlock read. Returns `None` on contention instead of retrying.
+    ///
+    /// This is the core seqlock read protocol used by both `load_consistent` (retrying)
+    /// and callers that prefer to skip stale data rather than spin.
     ///
     /// ## Algorithm
     ///
     /// 1. Read flags (Relaxed) to get sequence counter
-    /// 2. If sequence is odd (write in progress), spin and retry
+    /// 2. If sequence is odd (write in progress), return None
     /// 3. **fence(SeqCst)** — full memory barrier (`dmb ish` on ARM)
     /// 4. Read value, raw, timestamp (Relaxed)
     /// 5. **fence(SeqCst)** — full memory barrier
     /// 6. Re-read flags (Relaxed)
-    /// 7. If sequence unchanged, data is consistent; otherwise retry
+    /// 7. If sequence unchanged → `Some(data)`; otherwise `None`
     ///
     /// ## Memory Ordering (pure fence-based, AArch64-safe)
     ///
@@ -161,78 +183,6 @@ impl PointSlot {
     ///
     /// On x86 (TSO), `fence(SeqCst)` compiles to `mfence` and Relaxed
     /// loads/stores compile to plain `mov`.
-    ///
-    /// ## Returns
-    ///
-    /// `(value, raw, timestamp)` - all from the same consistent write
-    /// Note: If max retries exceeded, returns latest values which may be inconsistent
-    #[inline]
-    pub fn load_consistent(&self) -> (f64, f64, u64) {
-        for _ in 0..Self::MAX_CONSISTENCY_RETRIES {
-            // Step 1: Read sequence counter (Relaxed — fence below handles ordering)
-            let flags1 = self.flags.load(Ordering::Relaxed);
-            let seq1 = flags1 >> 32;
-
-            // Step 2: Odd sequence = write in progress, retry immediately
-            if seq1 & 1 != 0 {
-                std::hint::spin_loop();
-                continue;
-            }
-
-            // Step 3: FULL BARRIER (dmb ish on ARM):
-            // Ensures data loads below cannot return values that were stored
-            // BEFORE the even sequence was published. Without this fence,
-            // AArch64 can reorder loads from different addresses, allowing
-            // the reader to see stale data for some fields.
-            fence(Ordering::SeqCst);
-
-            // Step 4: Read data fields (Relaxed — fence-enclosed)
-            let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
-            let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
-            let ts = self.timestamp.load(Ordering::Relaxed);
-
-            // Step 5: FULL BARRIER:
-            // Ensures ALL data loads above complete before re-reading the
-            // sequence counter. Without this, the second seq read could be
-            // speculatively executed before data loads, defeating the check.
-            fence(Ordering::SeqCst);
-
-            // Step 6: Re-read sequence counter
-            let flags2 = self.flags.load(Ordering::Relaxed);
-            let seq2 = flags2 >> 32;
-
-            // Step 7: If sequence unchanged, data is from a single write cycle
-            if seq1 == seq2 {
-                return (value, raw, ts);
-            }
-
-            // Concurrent write detected, retry
-            std::hint::spin_loop();
-        }
-
-        // Max retries exceeded - return latest values (may be inconsistent but won't hang)
-        tracing::warn!(
-            "load_consistent exceeded {} retries, returning possibly stale data",
-            Self::MAX_CONSISTENCY_RETRIES
-        );
-        fence(Ordering::SeqCst);
-        let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
-        let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
-        let ts = self.timestamp.load(Ordering::Relaxed);
-        (value, raw, ts)
-    }
-
-    /// Load all point data with consistency guarantee, returning None if read during write.
-    ///
-    /// Non-blocking variant that returns None instead of retrying.
-    /// Useful when caller prefers to skip stale data rather than wait.
-    ///
-    /// Uses the same fence-based AArch64-safe ordering as `load_consistent()`.
-    ///
-    /// ## Returns
-    ///
-    /// - `Some((value, raw, timestamp))` - consistent read
-    /// - `None` - write in progress or concurrent write detected
     #[inline]
     pub fn try_load_consistent(&self) -> Option<(f64, f64, u64)> {
         let flags1 = self.flags.load(Ordering::Relaxed);
@@ -258,6 +208,19 @@ impl PointSlot {
         } else {
             None
         }
+    }
+
+    /// Unprotected read of all fields (no seqlock guarantee).
+    ///
+    /// Used only as a last-resort fallback after retries are exhausted.
+    /// A leading `fence(SeqCst)` provides best-effort freshness.
+    #[inline]
+    fn load_relaxed(&self) -> (f64, f64, u64) {
+        fence(Ordering::SeqCst);
+        let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
+        let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
+        let ts = self.timestamp.load(Ordering::Relaxed);
+        (value, raw, ts)
     }
 
     /// Set all point data with seqlock write protocol.
@@ -385,48 +348,39 @@ impl ChannelVecStore {
         }
     }
 
-    /// Get point data by point ID
-    ///
-    /// Returns (value, raw_value, timestamp) or None if not found.
-    ///
-    /// # Performance
-    /// O(1) direct array access (~1-5ns) - no hashing or collision handling.
+    /// O(1) slot lookup by point_id (bounds check + direct array index).
     #[inline]
-    pub fn get(&self, point_id: u32) -> Option<(f64, f64, u64)> {
-        // Bounds check: point_id must be within mapping array
+    fn get_slot(&self, point_id: u32) -> Option<&PointSlot> {
         if point_id > self.max_point_id {
             return None;
         }
-        // Direct array lookup
         let slot_idx = self.point_to_slot[point_id as usize];
         if slot_idx == Self::INVALID_SLOT {
             return None;
         }
-        // Access slot data
-        let slot = &self.slots[slot_idx as usize];
+        Some(&self.slots[slot_idx as usize])
+    }
+
+    /// Get point data by point ID
+    ///
+    /// Returns (value, raw_value, timestamp) or None if not found.
+    #[inline]
+    pub fn get(&self, point_id: u32) -> Option<(f64, f64, u64)> {
+        let slot = self.get_slot(point_id)?;
         Some((slot.get_value(), slot.get_raw(), slot.get_timestamp()))
     }
 
     /// Set point data by point ID
     ///
     /// Returns true if the point exists and was updated.
-    ///
-    /// # Performance
-    /// O(1) direct array access (~1-5ns) - no hashing or collision handling.
     #[inline]
     pub fn set(&self, point_id: u32, value: f64, raw: f64, timestamp: u64) -> bool {
-        // Bounds check
-        if point_id > self.max_point_id {
-            return false;
+        if let Some(slot) = self.get_slot(point_id) {
+            slot.set(value, raw, timestamp);
+            true
+        } else {
+            false
         }
-        // Direct array lookup
-        let slot_idx = self.point_to_slot[point_id as usize];
-        if slot_idx == Self::INVALID_SLOT {
-            return false;
-        }
-        // Write to slot
-        self.slots[slot_idx as usize].set(value, raw, timestamp);
-        true
     }
 
     /// Get channel ID

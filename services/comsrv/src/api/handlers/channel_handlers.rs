@@ -151,27 +151,11 @@ pub async fn get_all_channels<R: Rtdb>(
         };
 
         // Apply filters
-        let mut should_include = true;
+        let matches = query.protocol.as_ref().is_none_or(|p| &protocol == p)
+            && query.enabled.is_none_or(|e| enabled == e)
+            && query.connected.is_none_or(|c| connected == c);
 
-        if let Some(ref filter_protocol) = query.protocol {
-            if &protocol != filter_protocol {
-                should_include = false;
-            }
-        }
-
-        if let Some(filter_enabled) = query.enabled {
-            if enabled != filter_enabled {
-                should_include = false;
-            }
-        }
-
-        if let Some(filter_connected) = query.connected {
-            if connected != filter_connected {
-                should_include = false;
-            }
-        }
-
-        if should_include {
+        if matches {
             all_channels.push(channel_response);
         }
     }
@@ -421,33 +405,21 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
     };
 
     // Query actual point counts by type for this channel
-    let telemetry_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM telemetry_points WHERE channel_id = ?")
+    let point_tables = [
+        "telemetry_points",
+        "signal_points",
+        "control_points",
+        "adjustment_points",
+    ];
+    let mut counts = [0usize; 4];
+    for (i, table) in point_tables.iter().enumerate() {
+        let sql = format!("SELECT COUNT(*) FROM {} WHERE channel_id = ?", table);
+        counts[i] = sqlx::query_scalar::<_, i64>(&sql)
             .bind(id_u16 as i64)
             .fetch_one(&state.sqlite_pool)
             .await
-            .unwrap_or(0);
-
-    let signal_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM signal_points WHERE channel_id = ?")
-            .bind(id_u16 as i64)
-            .fetch_one(&state.sqlite_pool)
-            .await
-            .unwrap_or(0);
-
-    let control_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM control_points WHERE channel_id = ?")
-            .bind(id_u16 as i64)
-            .fetch_one(&state.sqlite_pool)
-            .await
-            .unwrap_or(0);
-
-    let adjustment_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM adjustment_points WHERE channel_id = ?")
-            .bind(id_u16 as i64)
-            .fetch_one(&state.sqlite_pool)
-            .await
-            .unwrap_or(0);
+            .unwrap_or(0) as usize;
+    }
 
     let detail = ChannelDetail {
         config,
@@ -458,10 +430,10 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
             statistics,
         },
         point_counts: PointCounts {
-            telemetry: telemetry_count as usize,
-            signal: signal_count as usize,
-            control: control_count as usize,
-            adjustment: adjustment_count as usize,
+            telemetry: counts[0],
+            signal: counts[1],
+            control: counts[2],
+            adjustment: counts[3],
         },
     };
 

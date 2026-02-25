@@ -373,26 +373,22 @@ impl ChannelFileLogHandler {
         format!("[STATE] {} -> {}", old_state, new_state)
     }
 
-    /// Format a control write event as log line (debug mode only).
-    fn format_control_write(
-        &self,
+    /// Format a write result (control or adjustment) as log line.
+    fn format_write_result(
+        tag: &str,
         commands_count: usize,
         result: &Result<crate::protocols::core::WriteResult, String>,
         duration_ms: u64,
     ) -> String {
         match result {
-            Ok(write_result) => {
-                format!(
-                    "[CONTROL] cmds={} ok ({}) ({}ms)",
-                    commands_count, write_result.success_count, duration_ms
-                )
-            },
-            Err(e) => {
-                format!(
-                    "[CONTROL] cmds={} FAILED: {} ({}ms)",
-                    commands_count, e, duration_ms
-                )
-            },
+            Ok(wr) => format!(
+                "[{}] cmds={} ok ({}) ({}ms)",
+                tag, commands_count, wr.success_count, duration_ms
+            ),
+            Err(e) => format!(
+                "[{}] cmds={} FAILED: {} ({}ms)",
+                tag, commands_count, e, duration_ms
+            ),
         }
     }
 
@@ -572,31 +568,14 @@ impl ChannelLogHandler for ChannelFileLogHandler {
                 result,
                 duration_ms,
                 ..
-            } => self.format_control_write(commands.len(), result, *duration_ms),
+            } => Self::format_write_result("CONTROL", commands.len(), result, *duration_ms),
 
             ChannelLogEvent::AdjustmentWrite {
                 commands,
                 result,
                 duration_ms,
                 ..
-            } => match result {
-                Ok(write_result) => {
-                    format!(
-                        "[ADJUST] cmds={} ok ({}) ({}ms)",
-                        commands.len(),
-                        write_result.success_count,
-                        duration_ms
-                    )
-                },
-                Err(e) => {
-                    format!(
-                        "[ADJUST] cmds={} FAILED: {} ({}ms)",
-                        commands.len(),
-                        e,
-                        duration_ms
-                    )
-                },
-            },
+            } => Self::format_write_result("ADJUST", commands.len(), result, *duration_ms),
 
             ChannelLogEvent::ReconnectAttempt {
                 attempt,

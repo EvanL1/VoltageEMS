@@ -70,6 +70,40 @@ struct GpioMappingValidator {
     gpio_number: u32,
 }
 
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// Map four_remote type code to database table name
+fn four_remote_to_table(four_remote: &str) -> Result<&'static str, AppError> {
+    match four_remote {
+        "T" => Ok("telemetry_points"),
+        "S" => Ok("signal_points"),
+        "C" => Ok("control_points"),
+        "A" => Ok("adjustment_points"),
+        other => Err(AppError::bad_request(format!(
+            "Invalid four_remote type: '{}'. Must be T, S, C, or A",
+            other
+        ))),
+    }
+}
+
+/// Parse protocol_mappings JSON, defaulting to empty object on null/error
+fn parse_protocol_json(json_str: Option<&str>, table: &str, point_id: i64) -> serde_json::Value {
+    let value = match json_str {
+        Some(s) => serde_json::from_str(s).unwrap_or_else(|e| {
+            tracing::error!("Parse mapping {}:{}: {}", table, point_id, e);
+            json!({})
+        }),
+        None => json!({}),
+    };
+    if value.is_null() {
+        json!({})
+    } else {
+        value
+    }
+}
+
 /// Get all mapping configurations for a channel
 ///
 /// Returns all protocol-specific mapping configurations for the channel.
@@ -94,29 +128,8 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
     Path(channel_id): Path<u32>,
     State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<crate::dto::GroupedMappings>>, AppError> {
-    // 1. Verify channel exists
-    let channel_exists: Option<(i64,)> =
-        sqlx::query_as("SELECT channel_id FROM channels WHERE channel_id = ?")
-            .bind(channel_id as i64)
-            .fetch_optional(&state.sqlite_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Ch check: {}", e);
-                AppError::internal_error("Database operation failed")
-            })?;
-
-    if channel_exists.is_none() {
-        return Err(AppError::not_found(format!(
-            "Channel {} not found",
-            channel_id
-        )));
-    }
-
-    // 2. Query all four point tables and collect mappings by type
-    let mut telemetry_mappings = Vec::new();
-    let mut signal_mappings = Vec::new();
-    let mut control_mappings = Vec::new();
-    let mut adjustment_mappings = Vec::new();
+    crate::api::handlers::point_handlers::validate_channel_exists(&state.sqlite_pool, channel_id)
+        .await?;
 
     let tables = [
         "telemetry_points",
@@ -125,7 +138,9 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
         "adjustment_points",
     ];
 
-    for (table_idx, table) in tables.iter().enumerate() {
+    let mut results: [Vec<crate::dto::PointMappingDetail>; 4] = Default::default();
+
+    for (i, table) in tables.iter().enumerate() {
         let query = format!(
             "SELECT point_id, signal_name, protocol_mappings FROM {} WHERE channel_id = ? ORDER BY point_id",
             table
@@ -139,46 +154,12 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
                 AppError::internal_error("Database operation failed")
             })?;
 
-        // Select target vector based on table type
-        let target_vec = match table_idx {
-            0 => &mut telemetry_mappings,
-            1 => &mut signal_mappings,
-            2 => &mut control_mappings,
-            3 => &mut adjustment_mappings,
-            _ => {
-                return Err(AppError::internal_error(format!(
-                    "Invalid table index: {}",
-                    table_idx
-                )));
-            },
-        };
-
-        for (point_id, signal_name, protocol_mappings_json) in rows {
-            // Parse protocol_mappings JSON if present
-            let protocol_data = if let Some(json_str) = protocol_mappings_json {
-                match serde_json::from_str::<serde_json::Value>(&json_str) {
-                    Ok(value) => {
-                        // Convert null to empty object for consistent API response
-                        if value.is_null() {
-                            serde_json::Value::Object(serde_json::Map::new())
-                        } else {
-                            value
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("Parse mapping {}:{}: {}", table, point_id, e);
-                        serde_json::Value::Object(serde_json::Map::new())
-                    },
-                }
-            } else {
-                serde_json::Value::Object(serde_json::Map::new())
-            };
-
+        for (point_id, signal_name, json_str) in rows {
+            let protocol_data = parse_protocol_json(json_str.as_deref(), table, point_id);
             let point_id_u32 = u32::try_from(point_id).map_err(|_| {
                 AppError::internal_error(format!("point_id {} out of range", point_id))
             })?;
-
-            target_vec.push(crate::dto::PointMappingDetail {
+            results[i].push(crate::dto::PointMappingDetail {
                 point_id: point_id_u32,
                 signal_name,
                 protocol_data,
@@ -186,11 +167,12 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
         }
     }
 
+    let [telemetry, signal, control, adjustment] = results;
     Ok(Json(SuccessResponse::new(crate::dto::GroupedMappings {
-        telemetry: telemetry_mappings,
-        signal: signal_mappings,
-        control: control_mappings,
-        adjustment: adjustment_mappings,
+        telemetry,
+        signal,
+        control,
+        adjustment,
     })))
 }
 
@@ -541,12 +523,9 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
     // Structural validation: table & point existence
     let mut structure_errors = Vec::new();
     for (idx, item) in req.mappings.iter().enumerate() {
-        let table = match item.four_remote.as_str() {
-            "T" => "telemetry_points",
-            "S" => "signal_points",
-            "C" => "control_points",
-            "A" => "adjustment_points",
-            _ => {
+        let table = match four_remote_to_table(&item.four_remote) {
+            Ok(t) => t,
+            Err(_) => {
                 structure_errors.push(format!(
                     "Item {}: invalid four_remote {}",
                     idx, item.four_remote
@@ -591,18 +570,7 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
 
     let mut updated = 0usize;
     for item in &req.mappings {
-        let table = match item.four_remote.as_str() {
-            "T" => "telemetry_points",
-            "S" => "signal_points",
-            "C" => "control_points",
-            "A" => "adjustment_points",
-            other => {
-                return Err(AppError::bad_request(format!(
-                    "Invalid four_remote type: '{}'. Must be T, S, C, or A",
-                    other
-                )));
-            },
-        };
+        let table = four_remote_to_table(&item.four_remote)?;
 
         // Merge/Replace
         let mut new_json = match req.mode {
@@ -685,25 +653,19 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
     )
     .await;
 
-    let message = if reload_query.auto_reload {
-        format!(
-            "Updated {} mapping(s) in {} mode and triggered channel reload",
-            updated,
-            match req.mode {
-                MappingUpdateMode::Replace => "replace",
-                MappingUpdateMode::Merge => "merge",
-            }
-        )
-    } else {
-        format!(
-            "Updated {} mapping(s) in {} mode (reload disabled)",
-            updated,
-            match req.mode {
-                MappingUpdateMode::Replace => "replace",
-                MappingUpdateMode::Merge => "merge",
-            }
-        )
+    let mode_str = match req.mode {
+        MappingUpdateMode::Replace => "replace",
+        MappingUpdateMode::Merge => "merge",
     };
+    let reload_suffix = if reload_query.auto_reload {
+        "and triggered channel reload"
+    } else {
+        "(reload disabled)"
+    };
+    let message = format!(
+        "Updated {} mapping(s) in {} mode {}",
+        updated, mode_str, reload_suffix
+    );
 
     Ok(Json(SuccessResponse::new(MappingBatchUpdateResult {
         updated_count: updated,
@@ -711,74 +673,6 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
         validation_errors: vec![],
         message,
     })))
-
-    // Original implementation commented out - requires redesign for JSON-based mappings
-    /*
-    let mut tx = state
-        .sqlite_pool
-        .begin()
-        .await
-        .map_err(|e| AppError::internal_error(format!("Database operation failed: {}", e)))?;
-
-    // ... original code ...
-
-    tx.commit()
-        .await
-        .map_err(|e| AppError::internal_error(format!("Database operation failed: {}", e)))?;
-    */
-
-    // Note: Channel reload and result return code below is also disabled
-    // since the batch update functionality is temporarily unavailable
-
-    /*
-    // 7. Optionally reload channel if it's running
-    let channel_reloaded = if req.reload_channel && is_enabled {
-        let is_running = {
-            let factory = state.factory.read().await;
-            factory.get_channel(channel_id).is_some()
-        };
-
-        if is_running {
-            // Trigger channel reload by calling reload handler internally
-            tracing::debug!("Ch{} auto-reload", channel_id);
-
-            // Simple reload: disconnect and reconnect using ChannelEntry's interface
-            let factory = state.factory.read().await;
-            if let Some(channel_impl) = factory.get_channel(channel_id) {
-                if let Err(e) = channel_impl.disconnect().await {
-                    tracing::warn!("Ch{} disconnect: {}", channel_id, e);
-                }
-                if let Err(e) = channel_impl.connect().await {
-                    tracing::error!("Ch{} reconnect: {}", channel_id, e);
-                    return Err(AppError::internal_error(format!(
-                        "Mappings updated but channel reload failed: {}",
-                        e
-                    )));
-                }
-            }
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    let message = if channel_reloaded {
-        format!("Updated {} mappings and reloaded channel", updated_count)
-    } else {
-        format!("Updated {} mappings", updated_count)
-    };
-
-    Ok(Json(SuccessResponse::new(
-        crate::dto::MappingBatchUpdateResult {
-            updated_count,
-            channel_reloaded,
-            validation_errors: vec![],
-            message,
-        },
-    )))
-    */
 }
 
 /// Validate mapping configurations based on protocol

@@ -8,16 +8,127 @@
 #[cfg(any(feature = "modbus", all(feature = "can", target_os = "linux")))]
 use tracing::warn;
 
-use crate::core::config::RuntimeChannelConfig;
+use crate::core::config::{
+    AdjustmentPoint, ControlPoint, Point, RuntimeChannelConfig, SignalPoint, TelemetryPoint,
+};
 use crate::protocols::core::point::{
     PointConfig, ProtocolAddress, TransformConfig, VirtualAddress,
 };
+use voltage_model::PointType;
 
 #[cfg(feature = "modbus")]
 use crate::protocols::core::point::{ByteOrder, DataFormat, ModbusAddress};
 
 #[cfg(all(feature = "can", target_os = "linux"))]
 use crate::protocols::adapters::can::{CanDataType, CanPoint};
+
+// ============================================================================
+// Point conversion trait + helpers
+// ============================================================================
+
+/// Trait for extracting common data needed during point -> PointConfig conversion.
+///
+/// Each concrete point type (Telemetry, Signal, Control, Adjustment) has different
+/// transform parameters (scale/offset/reverse), but they all share the same
+/// conversion pattern: base point + point type + transform -> PointConfig.
+trait PointConvertible {
+    fn base(&self) -> &Point;
+    fn point_type() -> PointType;
+    fn transform(&self) -> TransformConfig;
+}
+
+impl PointConvertible for TelemetryPoint {
+    fn base(&self) -> &Point {
+        &self.base
+    }
+    fn point_type() -> PointType {
+        PointType::Telemetry
+    }
+    fn transform(&self) -> TransformConfig {
+        TransformConfig {
+            scale: self.scale,
+            offset: self.offset,
+            reverse: self.reverse,
+            ..Default::default()
+        }
+    }
+}
+
+impl PointConvertible for SignalPoint {
+    fn base(&self) -> &Point {
+        &self.base
+    }
+    fn point_type() -> PointType {
+        PointType::Signal
+    }
+    fn transform(&self) -> TransformConfig {
+        TransformConfig {
+            reverse: self.reverse,
+            ..Default::default()
+        }
+    }
+}
+
+impl PointConvertible for ControlPoint {
+    fn base(&self) -> &Point {
+        &self.base
+    }
+    fn point_type() -> PointType {
+        PointType::Control
+    }
+    fn transform(&self) -> TransformConfig {
+        TransformConfig {
+            reverse: self.reverse,
+            ..Default::default()
+        }
+    }
+}
+
+impl PointConvertible for AdjustmentPoint {
+    fn base(&self) -> &Point {
+        &self.base
+    }
+    fn point_type() -> PointType {
+        PointType::Adjustment
+    }
+    fn transform(&self) -> TransformConfig {
+        TransformConfig {
+            scale: self.scale,
+            offset: self.offset,
+            ..Default::default()
+        }
+    }
+}
+
+/// Convert a slice of typed points to PointConfig using the given address builder.
+fn convert_points<P: PointConvertible>(
+    points: &[P],
+    addr_fn: &impl Fn(&Point) -> Option<ProtocolAddress>,
+) -> Vec<PointConfig> {
+    points
+        .iter()
+        .filter_map(|pt| {
+            let addr = addr_fn(pt.base())?;
+            Some(
+                PointConfig::new(pt.base().point_id, P::point_type(), addr)
+                    .with_name(&pt.base().signal_name)
+                    .with_transform(pt.transform()),
+            )
+        })
+        .collect()
+}
+
+/// Collect PointConfigs from all four point types on a RuntimeChannelConfig.
+fn convert_all_points(
+    rc: &RuntimeChannelConfig,
+    addr_fn: &impl Fn(&Point) -> Option<ProtocolAddress>,
+) -> Vec<PointConfig> {
+    let mut configs = convert_points(&rc.telemetry_points, addr_fn);
+    configs.extend(convert_points(&rc.signal_points, addr_fn));
+    configs.extend(convert_points(&rc.control_points, addr_fn));
+    configs.extend(convert_points(&rc.adjustment_points, addr_fn));
+    configs
+}
 
 // ============================================================================
 // Virtual Channel Point Conversion
@@ -34,72 +145,11 @@ use crate::protocols::adapters::can::{CanDataType, CanPoint};
 /// Each PointConfig carries an explicit `point_type` field that routes
 /// the data to the correct Redis key (e.g., `comsrv:1001:T` for Telemetry).
 pub fn convert_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    let mut configs = Vec::new();
-
-    // Convert telemetry points with scale/offset transformation
-    for pt in &runtime_config.telemetry_points {
-        configs.push(
-            PointConfig::telemetry(
-                pt.base.point_id,
-                ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
-            )
-            .with_name(&pt.base.signal_name)
-            .with_transform(TransformConfig {
-                scale: pt.scale,
-                offset: pt.offset,
-                reverse: pt.reverse,
-                ..Default::default()
-            }),
-        );
-    }
-
-    // Convert signal points with reverse transformation
-    for pt in &runtime_config.signal_points {
-        configs.push(
-            PointConfig::signal(
-                pt.base.point_id,
-                ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
-            )
-            .with_name(&pt.base.signal_name)
-            .with_transform(TransformConfig {
-                reverse: pt.reverse,
-                ..Default::default()
-            }),
-        );
-    }
-
-    // Convert control points with reverse transformation
-    for pt in &runtime_config.control_points {
-        configs.push(
-            PointConfig::control(
-                pt.base.point_id,
-                ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
-            )
-            .with_name(&pt.base.signal_name)
-            .with_transform(TransformConfig {
-                reverse: pt.reverse,
-                ..Default::default()
-            }),
-        );
-    }
-
-    // Convert adjustment points with scale/offset transformation
-    for pt in &runtime_config.adjustment_points {
-        configs.push(
-            PointConfig::adjustment(
-                pt.base.point_id,
-                ProtocolAddress::Virtual(VirtualAddress::new(pt.base.point_id.to_string())),
-            )
-            .with_name(&pt.base.signal_name)
-            .with_transform(TransformConfig {
-                scale: pt.scale,
-                offset: pt.offset,
-                ..Default::default()
-            }),
-        );
-    }
-
-    configs
+    convert_all_points(runtime_config, &|base: &Point| {
+        Some(ProtocolAddress::Virtual(VirtualAddress::new(
+            base.point_id.to_string(),
+        )))
+    })
 }
 
 // ============================================================================
@@ -114,8 +164,6 @@ pub fn convert_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<Po
 /// Each PointConfig carries an explicit `point_type` field for routing.
 #[cfg(feature = "modbus")]
 pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    let mut configs = Vec::new();
-
     // Helper to parse modbus config from protocol_mappings JSON
     // Returns: (slave_id, function_code, register, data_type, byte_order, bit_position)
     fn parse_modbus_mapping(
@@ -201,142 +249,18 @@ pub fn convert_to_modbus_point_configs(runtime_config: &RuntimeChannelConfig) ->
         ))
     }
 
-    // Process telemetry points
-    for point in &runtime_config.telemetry_points {
-        if let Some(ref mappings_json) = point.base.protocol_mappings {
-            if let Some((
-                slave_id,
-                function_code,
-                register,
-                data_type_str,
-                byte_order_str,
-                bit_pos,
-            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
-            {
-                let modbus_addr = ModbusAddress {
-                    slave_id,
-                    function_code,
-                    register,
-                    format: parse_data_format(&data_type_str),
-                    byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: bit_pos,
-                };
-                let transform = TransformConfig {
-                    scale: point.scale,
-                    offset: point.offset,
-                    reverse: point.reverse,
-                    ..Default::default()
-                };
-                let config = PointConfig::telemetry(
-                    point.base.point_id,
-                    ProtocolAddress::Modbus(modbus_addr),
-                )
-                .with_transform(transform);
-                configs.push(config);
-            }
-        }
-    }
-
-    // Process signal points
-    for point in &runtime_config.signal_points {
-        if let Some(ref mappings_json) = point.base.protocol_mappings {
-            if let Some((
-                slave_id,
-                function_code,
-                register,
-                data_type_str,
-                byte_order_str,
-                bit_pos,
-            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
-            {
-                let modbus_addr = ModbusAddress {
-                    slave_id,
-                    function_code,
-                    register,
-                    format: parse_data_format(&data_type_str),
-                    byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: bit_pos,
-                };
-                let transform = TransformConfig {
-                    reverse: point.reverse,
-                    ..Default::default()
-                };
-                let config =
-                    PointConfig::signal(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
-                        .with_transform(transform);
-                configs.push(config);
-            }
-        }
-    }
-
-    // Process control points
-    for point in &runtime_config.control_points {
-        if let Some(ref mappings_json) = point.base.protocol_mappings {
-            if let Some((
-                slave_id,
-                function_code,
-                register,
-                data_type_str,
-                byte_order_str,
-                bit_pos,
-            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
-            {
-                let modbus_addr = ModbusAddress {
-                    slave_id,
-                    function_code,
-                    register,
-                    format: parse_data_format(&data_type_str),
-                    byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: bit_pos,
-                };
-                let transform = TransformConfig {
-                    reverse: point.reverse,
-                    ..Default::default()
-                };
-                let config =
-                    PointConfig::control(point.base.point_id, ProtocolAddress::Modbus(modbus_addr))
-                        .with_transform(transform);
-                configs.push(config);
-            }
-        }
-    }
-
-    // Process adjustment points
-    for point in &runtime_config.adjustment_points {
-        if let Some(ref mappings_json) = point.base.protocol_mappings {
-            if let Some((
-                slave_id,
-                function_code,
-                register,
-                data_type_str,
-                byte_order_str,
-                bit_pos,
-            )) = parse_modbus_mapping(mappings_json, point.base.point_id)
-            {
-                let modbus_addr = ModbusAddress {
-                    slave_id,
-                    function_code,
-                    register,
-                    format: parse_data_format(&data_type_str),
-                    byte_order: parse_byte_order(&byte_order_str),
-                    bit_position: bit_pos,
-                };
-                let transform = TransformConfig {
-                    scale: point.scale,
-                    offset: point.offset,
-                    ..Default::default()
-                };
-                let config = PointConfig::adjustment(
-                    point.base.point_id,
-                    ProtocolAddress::Modbus(modbus_addr),
-                )
-                .with_transform(transform);
-                configs.push(config);
-            }
-        }
-    }
-
-    configs
+    convert_all_points(runtime_config, &|base: &Point| {
+        let json = base.protocol_mappings.as_ref()?;
+        let (slave_id, fc, reg, dt, bo, bp) = parse_modbus_mapping(json, base.point_id)?;
+        Some(ProtocolAddress::Modbus(ModbusAddress {
+            slave_id,
+            function_code: fc,
+            register: reg,
+            format: parse_data_format(&dt),
+            byte_order: parse_byte_order(&bo),
+            bit_position: bp,
+        }))
+    })
 }
 
 /// Parse data format string to DataFormat enum.
@@ -392,85 +316,49 @@ fn default_scale() -> f64 {
     1.0
 }
 
+/// Collect CanPoints from a slice of typed points.
+#[cfg(all(feature = "can", target_os = "linux"))]
+fn collect_can_points<P: PointConvertible>(points: &[P]) -> Vec<CanPoint> {
+    points
+        .iter()
+        .filter_map(|pt| {
+            let json_str = pt.base().protocol_mappings.as_ref()?;
+            let mapping: CanProtocolMapping = serde_json::from_str(json_str)
+                .map_err(|e| {
+                    tracing::warn!(
+                        point_id = pt.base().point_id,
+                        point_type = ?P::point_type(),
+                        error = %e,
+                        "Failed to parse CAN protocol_mappings JSON"
+                    );
+                    e
+                })
+                .ok()?;
+            Some(CanPoint {
+                point_id: pt.base().point_id,
+                point_type: P::point_type(),
+                can_id: mapping.can_id,
+                byte_offset: (mapping.start_bit / 8) as u8,
+                bit_position: (mapping.start_bit % 8) as u8,
+                bit_length: mapping.bit_length as u8,
+                data_type: mapping.data_type,
+                scale: mapping.scale,
+                offset: mapping.offset,
+            })
+        })
+        .collect()
+}
+
 /// Convert RuntimeChannelConfig to CanPoint list for CAN protocol.
 ///
 /// Parses CAN configuration from each point's protocol_mappings JSON field.
 /// Scale and offset are applied during decoding in the protocol layer.
 #[cfg(all(feature = "can", target_os = "linux"))]
 pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<CanPoint> {
-    use voltage_model::PointType;
-
-    let mut configs = Vec::new();
-
-    // Helper to parse protocol_mappings JSON and create CanPoint
-    let parse_can_point = |point_id: u32,
-                           point_type: PointType,
-                           protocol_mappings: &Option<String>|
-     -> Option<CanPoint> {
-        let json_str = protocol_mappings.as_ref()?;
-        let mapping: CanProtocolMapping = serde_json::from_str(json_str)
-            .map_err(|e| {
-                tracing::warn!(
-                    point_id,
-                    ?point_type,
-                    error = %e,
-                    "Failed to parse CAN protocol_mappings JSON"
-                );
-                e
-            })
-            .ok()?;
-
-        Some(CanPoint {
-            point_id,
-            point_type,
-            can_id: mapping.can_id,
-            byte_offset: (mapping.start_bit / 8) as u8,
-            bit_position: (mapping.start_bit % 8) as u8,
-            bit_length: mapping.bit_length as u8,
-            data_type: mapping.data_type,
-            scale: mapping.scale,
-            offset: mapping.offset,
-        })
-    };
-
-    // Collect from all point types with explicit point_type
-    for pt in &runtime_config.telemetry_points {
-        if let Some(can_point) = parse_can_point(
-            pt.base.point_id,
-            PointType::Telemetry,
-            &pt.base.protocol_mappings,
-        ) {
-            configs.push(can_point);
-        }
-    }
-    for pt in &runtime_config.signal_points {
-        if let Some(can_point) = parse_can_point(
-            pt.base.point_id,
-            PointType::Signal,
-            &pt.base.protocol_mappings,
-        ) {
-            configs.push(can_point);
-        }
-    }
-    for pt in &runtime_config.control_points {
-        if let Some(can_point) = parse_can_point(
-            pt.base.point_id,
-            PointType::Control,
-            &pt.base.protocol_mappings,
-        ) {
-            configs.push(can_point);
-        }
-    }
-    for pt in &runtime_config.adjustment_points {
-        if let Some(can_point) = parse_can_point(
-            pt.base.point_id,
-            PointType::Adjustment,
-            &pt.base.protocol_mappings,
-        ) {
-            configs.push(can_point);
-        }
-    }
-
+    let mut configs = collect_can_points(&runtime_config.telemetry_points);
+    configs.extend(collect_can_points(&runtime_config.signal_points));
+    configs.extend(collect_can_points(&runtime_config.control_points));
+    configs.extend(collect_can_points(&runtime_config.adjustment_points));
     configs
 }
 
@@ -481,74 +369,14 @@ pub fn convert_to_can_point_configs(runtime_config: &RuntimeChannelConfig) -> Ve
 /// Parses CAN configuration from each point's protocol_mappings JSON field.
 #[cfg(all(feature = "can", target_os = "linux"))]
 pub fn convert_can_to_point_configs(runtime_config: &RuntimeChannelConfig) -> Vec<PointConfig> {
-    let mut configs = Vec::new();
-
-    // Helper to build protocol address from CAN mapping
-    let build_protocol_addr = |protocol_mappings: &Option<String>| -> Option<ProtocolAddress> {
-        let json_str = protocol_mappings.as_ref()?;
+    convert_all_points(runtime_config, &|base: &Point| {
+        let json_str = base.protocol_mappings.as_ref()?;
         let mapping: CanProtocolMapping = serde_json::from_str(json_str).ok()?;
         Some(ProtocolAddress::Generic(format!(
             "can_id:0x{:X},start_bit:{},len:{}",
             mapping.can_id, mapping.start_bit, mapping.bit_length
         )))
-    };
-
-    // Telemetry points
-    for pt in &runtime_config.telemetry_points {
-        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
-            let transform = TransformConfig {
-                scale: pt.scale,
-                offset: pt.offset,
-                reverse: pt.reverse,
-                ..Default::default()
-            };
-            let config =
-                PointConfig::telemetry(pt.base.point_id, protocol_addr).with_transform(transform);
-            configs.push(config);
-        }
-    }
-
-    // Signal points
-    for pt in &runtime_config.signal_points {
-        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
-            let transform = TransformConfig {
-                reverse: pt.reverse,
-                ..Default::default()
-            };
-            let config =
-                PointConfig::signal(pt.base.point_id, protocol_addr).with_transform(transform);
-            configs.push(config);
-        }
-    }
-
-    // Control points
-    for pt in &runtime_config.control_points {
-        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
-            let transform = TransformConfig {
-                reverse: pt.reverse,
-                ..Default::default()
-            };
-            let config =
-                PointConfig::control(pt.base.point_id, protocol_addr).with_transform(transform);
-            configs.push(config);
-        }
-    }
-
-    // Adjustment points
-    for pt in &runtime_config.adjustment_points {
-        if let Some(protocol_addr) = build_protocol_addr(&pt.base.protocol_mappings) {
-            let transform = TransformConfig {
-                scale: pt.scale,
-                offset: pt.offset,
-                ..Default::default()
-            };
-            let config =
-                PointConfig::adjustment(pt.base.point_id, protocol_addr).with_transform(transform);
-            configs.push(config);
-        }
-    }
-
-    configs
+    })
 }
 
 // ============================================================================

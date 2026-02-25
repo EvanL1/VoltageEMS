@@ -1969,7 +1969,7 @@ async fn test_get_point_mapping_with_invalid_type_returns_400() {
     assert!(response["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("Invalid four-remote type 'X'"));
+        .contains("Invalid point type 'X'"));
 }
 
 #[tokio::test]

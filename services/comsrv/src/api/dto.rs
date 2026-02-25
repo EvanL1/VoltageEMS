@@ -13,10 +13,6 @@ pub use common::{
     ServiceStatus as SharedServiceStatus, SuccessResponse,
 };
 
-// ============================================================================
-// New simplified API models
-// ============================================================================
-
 /// Control command (remote control)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ControlRequest {
@@ -91,56 +87,7 @@ pub struct AdjustmentValueRequest {
     pub value: f64,
 }
 
-/// Telemetry value request for manual data injection (testing purpose)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct TelemetryValueRequest {
-    #[schema(example = 380.5)]
-    pub value: f64,
-}
-
-/// Signal value request for manual data injection (testing purpose)
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct SignalValueRequest {
-    #[schema(example = 1.0)]
-    pub value: f64, // 0.0 or 1.0
-}
-
-// ============================================================================
-// Unified Write Point API (New Design)
-// ============================================================================
-
-/// Unified write point request (supports all point types: T/S/C/A, single and batch)
-///
-/// This is the unified endpoint for writing values to channel points.
-/// Supports both single point writes and batch operations.
-///
-/// ## Point Types (supports short names and full names)
-/// - **T** / **Telemetry**: Measurement values (normally read-only, write for testing)
-/// - **S** / **Signal**: Status signals (normally read-only, write for testing)
-/// - **C** / **Control**: Remote control commands (0/1 for on/off)
-/// - **A** / **Adjustment**: Setpoint adjustments (floating point values)
-///
-/// ## Example Requests
-///
-/// **Single Point Write**:
-/// ```json
-/// {
-///   "type": "A",
-///   "id": "1",
-///   "value": 50.0
-/// }
-/// ```
-///
-/// **Batch Write (same type)**:
-/// ```json
-/// {
-///   "type": "Control",
-///   "points": [
-///     {"id": "1", "value": 1.0},
-///     {"id": "2", "value": 0.0}
-///   ]
-/// }
-/// ```
+/// Unified write point request — supports all point types (T/S/C/A), single and batch
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WritePointRequest {
     /// Point type: T/Telemetry, S/Signal, C/Control, or A/Adjustment
@@ -180,29 +127,12 @@ pub struct PointValue {
 }
 
 /// Write point response with operation details
-///
-/// This response provides information about the write operation:
-/// what was written, when it was written, without queue management details.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WritePointResponse {
-    /// Channel ID
-    #[schema(example = 1001)]
     pub channel_id: u32,
-
-    /// Point type that was written (T/S/C/A)
-    #[schema(example = "A")]
     pub point_type: String,
-
-    /// Point ID that was written
-    #[schema(example = 1)]
     pub point_id: u32,
-
-    /// Value that was written
-    #[schema(example = 50.0)]
     pub value: f64,
-
-    /// Timestamp when the write occurred (milliseconds since Unix epoch)
-    #[schema(example = 1699876543210_i64)]
     pub timestamp_ms: i64,
 }
 
@@ -260,7 +190,7 @@ impl From<crate::core::channels::ChannelStatus> for ChannelStatusDto {
     }
 }
 
-// Helper function to create a simple health status
+/// Create a health status with memory and CPU checks
 pub fn create_health_status(
     status: &str,
     uptime: u64,
@@ -273,32 +203,29 @@ pub fn create_health_status(
         _ => SharedServiceStatus::Unhealthy,
     };
 
-    let mut checks = HashMap::new();
-    checks.insert(
-        "memory".to_string(),
-        ComponentHealth {
-            status: if memory_usage < 1024 * 1024 * 1024 {
-                // < 1GB
-                SharedServiceStatus::Healthy
-            } else {
-                SharedServiceStatus::Degraded
-            },
-            message: Some(format!("Memory usage: {} bytes", memory_usage)),
-            duration_ms: None,
+    let health_check = |ok: bool, msg: String| ComponentHealth {
+        status: if ok {
+            SharedServiceStatus::Healthy
+        } else {
+            SharedServiceStatus::Degraded
         },
-    );
-    checks.insert(
-        "cpu".to_string(),
-        ComponentHealth {
-            status: if cpu_usage < 80.0 {
-                SharedServiceStatus::Healthy
-            } else {
-                SharedServiceStatus::Degraded
-            },
-            message: Some(format!("CPU usage: {:.2}%", cpu_usage)),
-            duration_ms: None,
-        },
-    );
+        message: Some(msg),
+        duration_ms: None,
+    };
+
+    let checks = HashMap::from([
+        (
+            "memory".into(),
+            health_check(
+                memory_usage < 1_073_741_824,
+                format!("Memory usage: {} bytes", memory_usage),
+            ),
+        ),
+        (
+            "cpu".into(),
+            health_check(cpu_usage < 80.0, format!("CPU usage: {:.2}%", cpu_usage)),
+        ),
+    ]);
 
     HealthStatus {
         status: service_status,
@@ -322,150 +249,42 @@ pub struct ChannelOperation {
 
 /// Channel creation request
 ///
-/// ## ID Assignment Strategy
-/// - `channel_id` is optional and auto-assigned if not provided
-/// - Auto-assignment uses MAX(channel_id) + 1 strategy
-/// - Manual ID specification supported for configuration imports
-/// - Both runtime and database ID conflicts are validated
-///
-/// ## Name Uniqueness
-/// - Channel `name` must be unique across all channels
-/// - Uniqueness is enforced at API level with clear error messages
-///
-/// ## Protocol-Specific Parameters
-///
-/// ### Modbus TCP
-/// ```json
-/// {
-///   "host": "192.168.1.100",
-///   "port": 502,
-///   "timeout_ms": 5000,
-///   "retry_count": 3
-/// }
-/// ```
-///
-/// ### Modbus RTU
-/// ```json
-/// {
-///   "device": "/dev/ttyUSB0",
-///   "baud_rate": 9600,
-///   "data_bits": 8,
-///   "stop_bits": 1,
-///   "parity": "None",
-///   "timeout_ms": 1000
-/// }
-/// ```
-///
-/// ### CAN Bus
-/// ```json
-/// {
-///   "interface": "can0",
-///   "bitrate": 500000,
-///   "timeout_ms": 100
-/// }
-/// ```
-///
-/// ### Virtual Protocol (for testing)
-/// ```json
-/// {
-///   "update_interval_ms": 1000
-/// }
-/// ```
+/// - `channel_id` is optional (auto-assigned if not provided)
+/// - `name` must be unique across all channels
+/// - `parameters` are protocol-specific (see OpenAPI schema examples)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelCreateRequest {
-    /// Channel ID (optional, auto-assigned if not provided)
-    ///
-    /// - Leave as `null` for automatic ID assignment (recommended)
-    /// - Specify for configuration imports or ID preservation
-    /// - Auto-assigned IDs start from MAX(existing_id) + 1
+    /// Channel ID (optional, auto-assigned via MAX+1 if null)
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(
-        example = json!(null),
-        nullable = true
-    )]
+    #[schema(example = json!(null), nullable = true)]
     pub channel_id: Option<u32>,
 
-    /// Channel name (must be unique across all channels)
-    ///
-    /// - Uniqueness enforced at API level
-    /// - Used for channel identification in UI and logs
-    /// - Recommended format: descriptive names like "PV Inverter 01"
+    /// Channel name (must be unique)
     #[schema(example = "PV Inverter Channel")]
     pub name: String,
 
-    /// Channel description (optional)
     #[schema(example = "Primary PV inverter communication channel")]
     pub description: Option<String>,
 
     /// Protocol type: modbus_tcp, modbus_rtu, can, virtual
-    ///
-    /// Available values: modbus_tcp, modbus_rtu, can, virtual
-    #[schema(
-        example = "modbus_tcp",
-        value_type = String,
-        pattern = "^(modbus_tcp|modbus_rtu|can|virtual)$"
-    )]
+    #[schema(example = "modbus_tcp", value_type = String)]
     pub protocol: String,
 
     /// Enable channel immediately after creation (default: true)
-    ///
-    /// - true: Channel created and started automatically
-    /// - false: Channel created in disabled state, requires manual enable
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = true, nullable = true)]
     pub enabled: Option<bool>,
 
-    /// Protocol-specific parameters
-    ///
-    /// **Modbus TCP**:
-    /// - host (string, required): Server IP address
-    /// - port (number, optional, default: 502): Modbus TCP port
-    /// - timeout_ms (number, optional, default: 5000): Timeout in milliseconds
-    /// - retry_count (number, optional, default: 3): Number of retries
-    ///
-    /// **Modbus RTU**:
-    /// - device (string, required): Serial port path (e.g., "/dev/ttyUSB0")
-    /// - baud_rate (number, required): Baud rate (9600, 19200, 38400, 57600, 115200)
-    /// - data_bits (number, required): Data bits (7 or 8)
-    /// - stop_bits (number, required): Stop bits (1 or 2)
-    /// - parity (string, required): Parity ("None", "Odd", "Even")
-    /// - timeout_ms (number, optional, default: 1000): Timeout in milliseconds
-    /// - retry_count (number, optional, default: 3): Number of retries
-    /// - poll_interval_ms (number, optional): Polling interval in milliseconds
-    ///
-    /// **CAN**:
-    /// - interface (string, required): CAN interface name (e.g., "can0")
-    /// - bitrate (number, required): Bitrate (125000, 250000, 500000, 1000000)
-    /// - timeout_ms (number, optional, default: 100): Timeout in milliseconds
-    /// - loopback (boolean, optional, default: false): Loopback mode for testing
-    /// - listen_only (boolean, optional, default: false): Listen-only mode
-    /// - fd_mode (boolean, optional, default: false): CAN FD mode
-    /// - data_bitrate (number, optional): CAN FD data segment bitrate
-    ///
-    /// **Virtual**:
-    /// - update_interval_ms (number, optional, default: 1000): Update interval in milliseconds
-    #[schema(
-        value_type = Object,
-        example = json!({"host": "192.168.1.100", "port": 502, "timeout_ms": 5000})
-    )]
+    /// Protocol-specific parameters (see OpenAPI schema for per-protocol fields)
+    #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502}))]
     pub parameters: HashMap<String, serde_json::Value>,
 }
 
-/// Channel configuration update request
-/// Note: Use PUT /api/channels/{id}/enabled to change enabled state
-///
-/// ## Channel ID Migration
-/// If `channel_id` is provided and differs from the path ID, the channel will be
-/// migrated to the new ID. This includes:
-/// - Updating all related tables (points, mappings, routing)
-/// - Clearing old Redis keys
-/// - Restarting the channel with the new ID
+/// Channel configuration update request (PATCH semantics, null fields unchanged)
+/// If `channel_id` differs from path ID, triggers ID migration.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChannelConfigUpdateRequest {
-    /// New channel ID (optional, triggers ID migration if provided and different from path ID)
-    ///
-    /// When specified, the channel will be migrated from the current ID (in URL path)
-    /// to this new ID. All related data (points, mappings, routing) will be updated.
+    /// New channel ID (triggers migration if different from path ID)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(example = 6, nullable = true)]
     pub channel_id: Option<u32>,
@@ -546,10 +365,6 @@ pub struct RoutingReloadResult {
     pub duration_ms: u64,
 }
 
-// ============================================================================
-// Phase 1: Channel Detail and Pagination
-// ============================================================================
-
 /// Complete channel details (configuration + runtime status + statistics)
 /// Uses ChannelConfig to eliminate field duplication
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -614,30 +429,16 @@ fn default_page_size() -> usize {
     20
 }
 
-/// Auto-reload query parameter for CRUD operations
-///
-/// Controls whether the channel should be automatically reloaded after configuration changes.
-/// Default is `true` for immediate effect and better user experience.
+/// Auto-reload query parameter (default true = changes take effect immediately)
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AutoReloadQuery {
-    /// Whether to automatically reload channel after operation
-    ///
-    /// - `true` (default): Changes take effect immediately (channel is hot-reloaded)
-    /// - `false`: Changes are saved to database only, manual reload required via `/api/channels/reload`
-    ///
-    /// Use `false` for batch operations to avoid multiple reloads.
     #[serde(default = "default_auto_reload")]
-    #[schema(example = true)]
     pub auto_reload: bool,
 }
 
 fn default_auto_reload() -> bool {
-    true // Default: auto-reload enabled for immediate effect
+    true
 }
-
-// ============================================================================
-// Phase 2: Smart Hot Reload
-// ============================================================================
 
 /// Parameter change classification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
@@ -650,43 +451,19 @@ pub enum ParameterChangeType {
     Critical,
 }
 
-// ============================================================================
-// Phase 3: Point and Mapping Management
-// ============================================================================
-
 /// Point definition (from Points table)
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PointDefinition {
-    #[schema(example = 101)]
     pub point_id: u32,
-    #[schema(example = "DC_Voltage")]
     pub signal_name: String,
-    #[schema(example = 0.1)]
     pub scale: f64,
-    #[schema(example = 0.0)]
     pub offset: f64,
-    #[schema(example = "V")]
     pub unit: String,
-    #[schema(example = "float32")]
     pub data_type: String,
-    #[schema(example = false)]
     pub reverse: bool,
-    #[schema(example = "DC bus voltage")]
     pub description: String,
-
-    /// Protocol-specific mapping data (optional)
-    /// Contains protocol parameters like CAN's start_bit/bit_length, Modbus's register_address, etc.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Object, example = json!({
-        "can_id": 41234,
-        "start_bit": 0,
-        "bit_length": 16,
-        "byte_order": "AB",
-        "data_type": "uint16",
-        "signed": false,
-        "scale": 0.1,
-        "offset": 0.0
-    }))]
+    #[schema(value_type = Object)]
     pub protocol_mapping: Option<serde_json::Value>,
 }
 
@@ -718,24 +495,9 @@ pub struct PointMappingDetail {
     #[schema(example = 101)]
     pub point_id: u32,
     #[schema(example = "DC_Voltage")]
-    pub signal_name: String, // For display convenience
-
-    /// Protocol-specific mapping data (JSON format)
-    /// Example for Modbus:
-    /// {
-    ///   "slave_id": 1,
-    ///   "function_code": 3,
-    ///   "register_address": 100,
-    ///   "data_type": "float32",
-    ///   "byte_order": "ABCD"
-    /// }
-    #[schema(value_type = Object, example = json!({
-        "slave_id": 1,
-        "function_code": 3,
-        "register_address": 100,
-        "data_type": "float32",
-        "byte_order": "ABCD"
-    }))]
+    pub signal_name: String,
+    /// Protocol-specific mapping data (JSON)
+    #[schema(value_type = Object)]
     pub protocol_data: serde_json::Value,
 }
 
@@ -766,95 +528,34 @@ pub struct PointMappingItem {
     #[schema(example = 101)]
     pub point_id: u32,
 
-    /// Four-remote type for this point (T/S/C/A)
-    ///
-    /// - T: Telemetry - Read-only measurements
-    /// - S: Signal - Read-only status signals
-    /// - C: Control - Write control commands
-    /// - A: Adjustment - Write setpoint adjustments
-    #[schema(
-        value_type = String,
-        example = "T",
-        pattern = "^(T|S|C|A)$"
-    )]
+    /// Four-remote type: T/S/C/A
+    #[schema(value_type = String, example = "T")]
     pub four_remote: String,
 
-    /// Protocol-specific mapping data (JSON format)
-    /// Example for Modbus:
-    /// {
-    ///   "slave_id": 1,
-    ///   "function_code": 3,
-    ///   "register_address": 100,
-    ///   "data_type": "float32",
-    ///   "byte_order": "ABCD"
-    /// }
-    #[schema(value_type = Object, example = json!({
-        "slave_id": 1,
-        "function_code": 3,
-        "register_address": 100,
-        "data_type": "float32",
-        "byte_order": "ABCD"
-    }))]
+    /// Protocol-specific mapping data (JSON)
+    #[schema(value_type = Object, example = json!({"slave_id": 1, "register_address": 100}))]
     pub protocol_data: serde_json::Value,
 }
 
 /// Request to batch update protocol mappings
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MappingBatchUpdateRequest {
-    /// List of mapping items to update
-    #[schema(example = json!([
-        {
-            "point_id": 101,
-            "protocol_data": {
-                "slave_id": 1,
-                "function_code": 3,
-                "register_address": 100,
-                "data_type": "float32",
-                "byte_order": "ABCD"
-            }
-        },
-        {
-            "point_id": 102,
-            "protocol_data": {
-                "slave_id": 1,
-                "function_code": 3,
-                "register_address": 102,
-                "data_type": "uint16",
-                "byte_order": "ABCD"
-            }
-        }
-    ]))]
     pub mappings: Vec<PointMappingItem>,
-
-    /// Whether to reload the channel after update
     #[serde(default)]
-    #[schema(example = false)]
     pub reload_channel: bool,
-
-    /// Validate only without writing to database
     #[serde(default)]
-    #[schema(example = false)]
     pub validate_only: bool,
-
-    /// Update mode: replace (overwrite) or merge (shallow merge protocol_data)
+    /// Update mode: replace (overwrite) or merge (shallow merge)
     #[serde(default)]
-    #[schema(example = "merge")]
     pub mode: MappingUpdateMode,
 }
 
 /// Result of batch mapping update operation
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MappingBatchUpdateResult {
-    #[schema(example = 2)]
     pub updated_count: usize,
-
-    #[schema(example = false)]
     pub channel_reloaded: bool,
-
-    #[schema(example = json!([]))]
     pub validation_errors: Vec<String>,
-
-    #[schema(example = "Successfully updated 2 mappings")]
     pub message: String,
 }
 
