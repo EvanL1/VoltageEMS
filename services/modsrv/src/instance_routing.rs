@@ -360,6 +360,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Common validation logic for routing entries (measurement or action)
+    #[allow(clippy::too_many_arguments)]
     async fn validate_routing_impl(
         &self,
         instance_name: &str,
