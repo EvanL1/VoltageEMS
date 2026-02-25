@@ -1,0 +1,28 @@
+# Clippy configuration for VoltageEMS
+# Enforces code quality standards across the workspace
+
+# Disallow unwrap() in production code to prevent panics
+# Test code should use #[allow(clippy::disallowed_methods)] attribute
+disallowed-methods = [
+    { path = "std::option::Option::unwrap", reason = "use `?` operator, `.context()`, or `.unwrap_or_default()` instead to handle errors gracefully" },
+    { path = "std::result::Result::unwrap", reason = "use `?` operator or `.context()` to propagate errors with context" },
+]
+
+# Note: expect() is allowed in all code when error messages are descriptive
+# Test code, build scripts, and macros are exempt via #[allow] attributes
+
+# Additional quality checks
+cognitive-complexity-threshold = 25  # Warn on overly complex functions
+
+# Allow mixed inlined and uninlined format args
+# Enables new syntax while retaining old syntax
+allow-mixed-uninlined-format-args = true
+
+# Set max function arguments threshold
+too-many-arguments-threshold = 8
+
+# Set maximum lines threshold
+too-many-lines-threshold = 200
+
+# Avoid breaking exported API
+avoid-breaking-exported-api = true

@@ -25,6 +25,7 @@ benchmarks
 !.env.example
 !.gitignore
 !.gitmodules
+!.clippy.toml
 !.github/
 !.dockerignore
 !.prettierrc.json
