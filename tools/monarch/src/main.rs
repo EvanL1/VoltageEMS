@@ -355,6 +355,8 @@ async fn sync_command(
 
     println!();
 
+    let mut modsrv_changed = false;
+
     for (idx, cfg) in configs.iter().enumerate() {
         print!(
             "{} [{}/{}] Syncing {}... ",
@@ -395,6 +397,10 @@ async fn sync_command(
                     println!("{} ({} errors)", "WARN".yellow(), result.errors.len());
                 }
 
+                if *cfg == "modsrv" && (result.items_synced > 0 || result.items_deleted > 0) {
+                    modsrv_changed = true;
+                }
+
                 if detailed {
                     println!("     {} items synced", result.items_synced);
                     if result.items_deleted > 0 {
@@ -420,6 +426,15 @@ async fn sync_command(
     }
 
     println!("\n{} Configuration synced successfully!", "DONE".green());
+
+    if modsrv_changed {
+        println!(
+            "\n{} Instance/product config changed. Run: {}",
+            "HINT".bright_blue(),
+            "monarch services restart".bright_yellow()
+        );
+    }
+
     Ok(())
 }
 

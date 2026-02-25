@@ -118,8 +118,25 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
         ServiceCommands::Restart { services } => {
             ensure_shm_file_exists();
 
-            let args = build_docker_compose_args("restart", "", services);
-            execute_docker_compose_str(&args)?;
+            let filtered: Vec<String> = services
+                .into_iter()
+                .filter(|s| !s.eq_ignore_ascii_case("all"))
+                .collect();
+
+            if filtered.is_empty() {
+                // Restart all: dependency-aware order
+                // comsrv writes SHM, modsrv reads it — comsrv must start first
+                println!("Restarting services in dependency order...");
+                println!("  [1/3] comsrv (SHM writer)");
+                execute_docker_compose(&["restart", "comsrv"])?;
+                println!("  [2/3] modsrv (SHM reader)");
+                execute_docker_compose(&["restart", "modsrv"])?;
+                println!("  [3/3] remaining services");
+                execute_docker_compose(&["restart", "apigateway", "hissrv", "alarmsrv", "netsrv"])?;
+            } else {
+                let args = build_docker_compose_args("restart", "", filtered);
+                execute_docker_compose_str(&args)?;
+            }
             println!("Services restarted");
         },
         ServiceCommands::Status { services } => {
