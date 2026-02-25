@@ -129,6 +129,10 @@ fn normalize_product_name(name: &str) -> &str {
             warn!("Legacy product name 'pv_inverter' → 'PVInverter'. Please update instances.yaml");
             "PVInverter"
         },
+        "pv_dcdc" | "PV_DCDC" => {
+            warn!("Legacy product name '{name}' → 'PV DCDC'. Please update instances.yaml");
+            "PV DCDC"
+        },
         _ => name,
     }
 }
