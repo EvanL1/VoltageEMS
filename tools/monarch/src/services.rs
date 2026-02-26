@@ -171,10 +171,8 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
             execute_docker_compose(&args)?;
         },
         ServiceCommands::Reload { services } => {
-            // Define all services that support hot reload
-            let hot_reload_services = vec!["comsrv"];
+            let hot_reload_services = vec!["comsrv", "modsrv"];
 
-            // Determine which services to reload
             let services_to_reload =
                 if services.is_empty() || services.iter().any(|s| s.to_lowercase() == "all") {
                     hot_reload_services.clone()
@@ -186,34 +184,10 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                         .collect()
                 };
 
-            // For services that support configuration reload via API
             for service in services_to_reload {
-                match service {
-                    "comsrv" => {
-                        let client = reqwest::Client::builder().no_proxy().build()?;
-                        let response = client
-                            .post(format!(
-                                "http://localhost:{}/api/channels/reload",
-                                voltage_model::service_ports::COMSRV_PORT
-                            ))
-                            .send()
-                            .await?;
-
-                        if response.status().is_success() {
-                            println!("Reloaded comsrv configuration");
-                        } else {
-                            return Err(anyhow::anyhow!(
-                                "Failed to reload comsrv config: {}",
-                                response.status()
-                            ));
-                        }
-                    },
-                    _ => {
-                        println!(
-                            "Service {} doesn't support hot reload, restart required",
-                            service
-                        );
-                    },
+                match reload_service(service).await {
+                    Ok(()) => println!("Reloaded {} configuration", service),
+                    Err(e) => eprintln!("Failed to reload {}: {}", service, e),
                 }
             }
         },
@@ -444,6 +418,62 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
         },
     }
     Ok(())
+}
+
+/// Reload a single service via its HTTP API.
+async fn reload_service(service: &str) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .no_proxy()
+        .build()?;
+
+    match service {
+        "comsrv" => {
+            let url = format!(
+                "http://localhost:{}/api/channels/reload",
+                voltage_model::service_ports::COMSRV_PORT
+            );
+            let resp = client.post(&url).send().await?;
+            if !resp.status().is_success() {
+                return Err(anyhow::anyhow!("HTTP {}", resp.status()));
+            }
+        },
+        "modsrv" => {
+            let url = format!(
+                "http://localhost:{}/api/instances/reload",
+                voltage_model::service_ports::MODSRV_PORT
+            );
+            let resp = client.post(&url).send().await?;
+            if !resp.status().is_success() {
+                return Err(anyhow::anyhow!("HTTP {}", resp.status()));
+            }
+        },
+        _ => return Err(anyhow::anyhow!("{} does not support hot reload", service)),
+    }
+    Ok(())
+}
+
+/// Try to reload comsrv + modsrv after sync.
+/// Silently skips if services are not running.
+pub async fn try_reload_services() {
+    let services = ["comsrv", "modsrv"];
+    let mut any_reloaded = false;
+
+    for service in &services {
+        match reload_service(service).await {
+            Ok(()) => {
+                println!("  Reloaded {}", service);
+                any_reloaded = true;
+            },
+            Err(_) => {
+                // Service not running or unreachable — skip silently
+            },
+        }
+    }
+
+    if !any_reloaded {
+        println!("  Services not running. Start with: monarch services start");
+    }
 }
 
 /// Ensure shared memory file exists (not directory)
