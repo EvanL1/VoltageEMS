@@ -732,8 +732,8 @@ mod tests {
             (ZclValue::Int16(-1000), -1000.0),
             (ZclValue::UInt32(100_000), 100_000.0),
             (ZclValue::Int32(-99999), -99999.0),
-            (ZclValue::Float(3.14), 3.14_f32 as f64),
-            (ZclValue::Double(2.718), 2.718),
+            (ZclValue::Float(3.5), 3.5_f32 as f64),
+            (ZclValue::Double(2.5), 2.5),
         ];
 
         for (i, (zcl_val, expected)) in zcl_values_and_expected.into_iter().enumerate() {

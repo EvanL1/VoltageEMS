@@ -471,8 +471,8 @@ mod tests {
         assert_eq!(ZclValue::Int8(-10).to_f64(), -10.0);
         assert_eq!(ZclValue::Int16(-500).to_f64(), -500.0);
         assert_eq!(ZclValue::Int32(-100_000).to_f64(), -100_000.0);
-        assert!((ZclValue::Float(3.14).to_f64() - 3.14).abs() < 0.001);
-        assert_eq!(ZclValue::Double(2.718).to_f64(), 2.718);
+        assert!((ZclValue::Float(3.5).to_f64() - 3.5).abs() < 0.001);
+        assert_eq!(ZclValue::Double(2.5).to_f64(), 2.5);
         assert_eq!(ZclValue::String("hello".to_string()).to_f64(), 0.0);
         assert_eq!(ZclValue::Bytes(vec![1, 2, 3]).to_f64(), 0.0);
     }
@@ -826,8 +826,8 @@ mod tests {
             ZclValue::Int8(-10),
             ZclValue::Int16(-500),
             ZclValue::Int32(-100_000),
-            ZclValue::Float(3.14),
-            ZclValue::Double(2.718),
+            ZclValue::Float(3.5),
+            ZclValue::Double(2.5),
             ZclValue::String("hello".to_string()),
             ZclValue::Bytes(vec![1, 2, 3]),
         ];

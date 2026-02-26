@@ -895,9 +895,9 @@ mod tests {
 
     #[test]
     fn test_parse_value_float32() {
-        let data = 3.14f32.to_le_bytes();
+        let data = 3.5f32.to_le_bytes();
         let result = BleChannel::parse_value(&data, DataFormat::Float32);
-        assert!((result.unwrap() - 3.14).abs() < 0.001);
+        assert!((result.unwrap() - 3.5).abs() < 0.001);
     }
 
     #[test]
@@ -920,8 +920,8 @@ mod tests {
 
     #[test]
     fn test_encode_value_float32() {
-        let bytes = BleChannel::encode_value(3.14, DataFormat::Float32);
-        assert_eq!(bytes, (3.14f32).to_le_bytes().to_vec());
+        let bytes = BleChannel::encode_value(3.5, DataFormat::Float32);
+        assert_eq!(bytes, (3.5f32).to_le_bytes().to_vec());
     }
 
     #[test]
@@ -988,9 +988,9 @@ mod tests {
 
     #[test]
     fn test_parse_value_float64() {
-        let data = 2.718281828459045f64.to_le_bytes();
+        let data = 2.5f64.to_le_bytes();
         let result = BleChannel::parse_value(&data, DataFormat::Float64);
-        assert!((result.unwrap() - 2.718281828459045).abs() < 1e-12);
+        assert!((result.unwrap() - 2.5).abs() < 1e-12);
     }
 
     #[test]
@@ -1039,8 +1039,8 @@ mod tests {
 
     #[test]
     fn test_encode_value_float64() {
-        let bytes = BleChannel::encode_value(2.718281828459045, DataFormat::Float64);
-        assert_eq!(bytes, 2.718281828459045f64.to_le_bytes().to_vec());
+        let bytes = BleChannel::encode_value(2.5, DataFormat::Float64);
+        assert_eq!(bytes, 2.5f64.to_le_bytes().to_vec());
     }
 
     #[test]
@@ -1073,8 +1073,8 @@ mod tests {
             (DataFormat::Int16, -100.0),
             (DataFormat::UInt32, 70000.0),
             (DataFormat::Int32, -50000.0),
-            (DataFormat::Float32, 3.14),
-            (DataFormat::Float64, 2.718281828459045),
+            (DataFormat::Float32, 3.5),
+            (DataFormat::Float64, 2.5),
             (DataFormat::UInt64, 1_000_000.0),
             (DataFormat::Int64, -1_000_000.0),
         ];
