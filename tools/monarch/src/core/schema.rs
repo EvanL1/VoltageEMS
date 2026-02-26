@@ -10,9 +10,9 @@ use tracing::{info, warn};
 
 // Import DDL constants from common (shared schema definitions)
 use common::test_utils::schema::{
-    ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE,
-    INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE,
-    SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
+    ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CHANNEL_TEMPLATES_TABLE,
+    CONTROL_POINTS_TABLE, INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE,
+    SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
 };
 
 use super::file_utils;
@@ -91,7 +91,7 @@ const RULE_HISTORY_TABLE: &str = r#"
 //   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
 
 /// Current schema structure version — increment when adding migrations
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 /// Run pending schema migrations based on `PRAGMA user_version`
 ///
@@ -118,6 +118,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 
     if current < 2 {
         migrate_v2(&mut conn).await.context("Migration v2 failed")?;
+    }
+
+    if current < 3 {
+        migrate_v3(&mut conn).await.context("Migration v3 failed")?;
     }
 
     sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -253,6 +257,21 @@ async fn migrate_v2(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     Ok(())
 }
 
+/// v3: Add `channel_templates` table for protocol point-table template management
+///
+/// Stores JSON snapshots of channel point definitions and protocol mappings,
+/// enabling "save once → apply many" workflows for identically-configured devices.
+async fn migrate_v3(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    info!("Migration v3: creating channel_templates table");
+
+    sqlx::query(CHANNEL_TEMPLATES_TABLE)
+        .execute(&mut **conn)
+        .await?;
+
+    info!("Migration v3: complete");
+    Ok(())
+}
+
 // ============================================================================
 // Legacy Ad-hoc Migrations (kept for backward compatibility)
 // ============================================================================
@@ -334,6 +353,9 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     sqlx::query(JSON_POINT_MAPPINGS_TABLE)
         .execute(&pool)
         .await?;
+
+    // === Channel templates table ===
+    sqlx::query(CHANNEL_TEMPLATES_TABLE).execute(&pool).await?;
 
     // === Instance tables ===
     // Note: Product tables have been removed.

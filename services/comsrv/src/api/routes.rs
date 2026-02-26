@@ -22,6 +22,7 @@ use crate::api::{
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
         mapping_handlers::*, network_handlers::*, point_handlers::*, protocol_handlers::*,
+        template_handlers::*,
     },
 };
 use common::admin_api::{get_log_level, set_log_level};
@@ -322,6 +323,11 @@ pub fn create_api_routes_generic<R: Rtdb>(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
+        // Template management endpoints
+        .route("/api/templates", get(list_templates).post(create_template))
+        .route("/api/templates/from-channel/{channel_id}", post(create_template_from_channel))
+        .route("/api/templates/{id}", get(get_template).put(update_template).delete(delete_template))
+        .route("/api/templates/{id}/apply/{channel_id}", post(apply_template))
         // Network configuration endpoints
         .route("/api/network/interfaces", get(list_network_interfaces))
         .route(

@@ -111,6 +111,28 @@ pub const ADJUSTMENT_POINTS_TABLE: &str = r#"
 "#;
 
 // ============================================================================
+// Channel Templates DDL
+// ============================================================================
+
+/// Channel templates table DDL — stores point configuration snapshots as JSON
+///
+/// Templates capture a channel's complete point definitions and protocol mappings,
+/// enabling "save once → apply many" workflows for devices with identical configurations.
+pub const CHANNEL_TEMPLATES_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS channel_templates (
+        template_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        name              TEXT NOT NULL UNIQUE,
+        description       TEXT,
+        protocol          TEXT NOT NULL,
+        points_snapshot   TEXT NOT NULL,
+        mappings_snapshot TEXT NOT NULL,
+        source_channel_id INTEGER,
+        created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+"#;
+
+// ============================================================================
 // Modsrv Table DDL (matches modsrv::config schemas)
 // ============================================================================
 
@@ -230,6 +252,9 @@ pub async fn init_comsrv_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::query(CONTROL_POINTS_TABLE).execute(pool).await?;
     sqlx::query(ADJUSTMENT_POINTS_TABLE).execute(pool).await?;
 
+    // Channel templates table
+    sqlx::query(CHANNEL_TEMPLATES_TABLE).execute(pool).await?;
+
     Ok(())
 }
 
@@ -300,10 +325,10 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Should have 7 tables: service_config, sync_metadata, channels, 4 point tables
+        // Should have 8 tables: service_config, sync_metadata, channels, 4 point tables, channel_templates
         assert!(
-            result.0 >= 7,
-            "Expected at least 7 tables, found {}",
+            result.0 >= 8,
+            "Expected at least 8 tables, found {}",
             result.0
         );
     }

@@ -586,6 +586,97 @@ pub struct MappingListResponse {
     pub mappings: Vec<PointMappingDetail>,
 }
 
+// ============================================================================
+// Channel Template DTOs
+// ============================================================================
+
+/// Template list item (metadata only, no snapshots)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TemplateListItem {
+    pub template_id: i64,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub protocol: String,
+    pub point_counts: PointCounts,
+    pub created_at: String,
+}
+
+/// Template detail (includes full snapshots)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TemplateDetail {
+    pub template_id: i64,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub protocol: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_channel_id: Option<i64>,
+    #[schema(value_type = Object)]
+    pub points_snapshot: serde_json::Value,
+    #[schema(value_type = Object)]
+    pub mappings_snapshot: serde_json::Value,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request to create a template from an existing channel
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateTemplateFromChannelReq {
+    #[schema(example = "PCS Modbus Template")]
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Request to create a template manually (direct JSON)
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateTemplateReq {
+    #[schema(example = "Battery BMS Template")]
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[schema(example = "modbus_tcp")]
+    pub protocol: String,
+    #[schema(value_type = Object)]
+    pub points_snapshot: serde_json::Value,
+    #[schema(value_type = Object)]
+    pub mappings_snapshot: serde_json::Value,
+}
+
+/// Request to update template metadata
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateTemplateReq {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Request to apply a template to a channel
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ApplyTemplateReq {
+    /// Override slave_id in all protocol mappings (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = json!(null), nullable = true)]
+    pub slave_id_override: Option<u8>,
+    /// Clear existing points before applying (default: true)
+    #[serde(default = "default_clear_existing")]
+    #[schema(example = true)]
+    pub clear_existing: bool,
+}
+
+fn default_clear_existing() -> bool {
+    true
+}
+
+/// Template list query parameters
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct TemplateListQuery {
+    /// Filter by protocol type
+    pub protocol: Option<String>,
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
