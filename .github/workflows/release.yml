@@ -56,7 +56,7 @@ jobs:
   # ============================================================================
   build:
     name: Build ${{ matrix.arch }} Installer
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     needs: pre-check
     strategy:
       fail-fast: false
@@ -65,9 +65,13 @@ jobs:
           - arch: arm64
             target: aarch64-unknown-linux-musl
             docker_platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            zig_arch: aarch64
           - arch: amd64
             target: x86_64-unknown-linux-musl
             docker_platform: linux/amd64
+            runner: ubuntu-latest
+            zig_arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -115,10 +119,11 @@ jobs:
       - name: Install Cross-Compilation Tools
         run: |
           ZIG_VERSION="0.13.0"
-          echo "Installing Zig ${ZIG_VERSION}..."
-          wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
-          tar -xf "zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
-          sudo mv "zig-linux-x86_64-${ZIG_VERSION}" /opt/zig
+          ZIG_ARCH="${{ matrix.zig_arch }}"
+          echo "Installing Zig ${ZIG_VERSION} for ${ZIG_ARCH}..."
+          wget -q "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          tar -xf "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}.tar.xz"
+          sudo mv "zig-linux-${ZIG_ARCH}-${ZIG_VERSION}" /opt/zig
           echo "/opt/zig" >> $GITHUB_PATH
 
           echo "Installing cargo-zigbuild..."
@@ -130,11 +135,13 @@ jobs:
           sudo apt-get install -y makeself
 
       - name: Set up QEMU
+        if: matrix.arch == 'amd64'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: ${{ matrix.docker_platform }}
 
       - name: Set up Docker Buildx
+        if: matrix.arch == 'amd64'
         uses: docker/setup-buildx-action@v3
         with:
           platforms: ${{ matrix.docker_platform }}
