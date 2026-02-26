@@ -54,6 +54,11 @@ pub fn create_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         return create_http_channel(config);
     }
 
+    #[cfg(feature = "ble")]
+    if protocol.eq_ignore_ascii_case("ble") {
+        return create_ble_channel(config);
+    }
+
     if protocol.eq_ignore_ascii_case("virtual") {
         return create_virtual_channel(config);
     }
@@ -267,6 +272,30 @@ fn create_http_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>
         channel_config,
         config.id,
         config.name.clone(),
+    );
+
+    Ok(Box::new(channel))
+}
+
+#[cfg(feature = "ble")]
+fn create_ble_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::ble_config::BleParamsConfig;
+
+    // Parse parameters
+    let params: BleParamsConfig = serde_json::from_value(config.parameters.clone())
+        .map_err(|e| GatewayError::Config(format!("Invalid BLE parameters: {}", e)))?;
+
+    // Build runtime config
+    let ble_config = params.to_config();
+
+    // Build point configs
+    let points = build_point_configs(config)?;
+
+    let channel = crate::protocols::adapters::ble::BleChannel::new(
+        ble_config,
+        config.id,
+        config.name.clone(),
+        points,
     );
 
     Ok(Box::new(channel))

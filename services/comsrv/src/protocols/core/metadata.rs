@@ -248,6 +248,21 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
+    // Register BLE protocol
+    #[cfg(feature = "ble")]
+    {
+        use crate::protocols::adapters::ble::BleChannel;
+        let ble_meta = BleChannel::metadata();
+        registry.register(ProtocolMetadata {
+            name: "ble",
+            display_name: "BLE GATT",
+            description: "Bluetooth Low Energy GATT client",
+            protocol_type: "ble",
+            drivers: vec![ble_meta],
+            supports_points: true,
+        });
+    }
+
     // Register Virtual protocol
     {
         use crate::protocols::adapters::virtual_channel::VirtualChannel;
