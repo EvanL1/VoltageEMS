@@ -30,6 +30,13 @@ runs:
         echo "=== After cleanup ==="
         df -h /
 
+    # Install system libraries needed by optional features (e.g. btleplug → dbus)
+    - name: Install System Dependencies
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq libdbus-1-dev pkg-config
+
     # Install protoc for gRPC compilation (optional)
     - name: Install Protoc
       if: inputs.install-protoc == 'true'
