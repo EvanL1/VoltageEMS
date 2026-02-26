@@ -51,3 +51,9 @@ pub mod mqtt;
 
 #[cfg(feature = "http")]
 pub mod http;
+
+#[cfg(feature = "ble")]
+pub mod ble;
+
+#[cfg(feature = "ble")]
+pub mod ble_config;

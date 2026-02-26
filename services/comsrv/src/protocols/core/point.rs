@@ -89,6 +89,8 @@ pub enum ProtocolAddress {
     Generic(String),
     #[cfg(feature = "dl645")]
     Dl645(Dl645Address),
+    #[cfg(feature = "ble")]
+    Ble(BleAddress),
 }
 
 /// Virtual channel address (no physical device).
@@ -193,6 +195,31 @@ impl Dl645Address {
     pub fn to_hex_string(&self) -> String {
         format!("{:08X}", self.di_code)
     }
+}
+
+/// BLE GATT address: service UUID + characteristic UUID.
+///
+/// Identifies a specific GATT characteristic on a BLE peripheral.
+/// The peripheral device address is configured at the channel level.
+///
+/// # Address Format
+///
+/// UUIDs support both short (16-bit) and full (128-bit) formats:
+/// - Short: `"180f"` expands to `"0000180f-0000-1000-8000-00805f9b34fb"`
+/// - Full: `"12345678-1234-1234-1234-123456789abc"`
+#[cfg(feature = "ble")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BleAddress {
+    /// GATT Service UUID (short or full format)
+    pub service_uuid: String,
+    /// GATT Characteristic UUID (short or full format)
+    pub characteristic_uuid: String,
+    /// Value data format for parsing raw bytes
+    #[serde(default)]
+    pub data_format: DataFormat,
+    /// Whether to subscribe via Notify (otherwise poll-read)
+    #[serde(default)]
+    pub notify: bool,
 }
 
 /// GPIO pin direction.

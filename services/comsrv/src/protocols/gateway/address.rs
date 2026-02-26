@@ -17,6 +17,9 @@ use crate::protocols::core::point::CanAddress;
 #[cfg(feature = "dl645")]
 use crate::protocols::core::point::Dl645Address;
 
+#[cfg(feature = "ble")]
+use crate::protocols::core::point::BleAddress;
+
 /// Parse a numeric field from a string, returning a config error on failure.
 fn parse_field<T: std::str::FromStr>(s: &str, field: &str) -> Result<T> {
     s.parse::<T>()
@@ -69,6 +72,10 @@ pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
         #[cfg(feature = "dl645")]
         if protocol.eq_ignore_ascii_case("dl645") {
             return parse_dl645_address(address);
+        }
+        #[cfg(feature = "ble")]
+        if protocol.eq_ignore_ascii_case("ble") {
+            return parse_ble_address(address);
         }
         Err(GatewayError::Config(format!(
             "Unknown protocol: {}",
@@ -234,6 +241,51 @@ fn parse_gpio_address(address: &str) -> Result<ProtocolAddress> {
 fn parse_dl645_address(address: &str) -> Result<ProtocolAddress> {
     let dl645_addr = Dl645Address::parse(address)?;
     Ok(ProtocolAddress::Dl645(dl645_addr))
+}
+
+/// Parse BLE address: "service_uuid/char_uuid" or "service_uuid/char_uuid:notify"
+///
+/// The UUID fields support short format (e.g., "180f") which gets expanded to
+/// full 128-bit UUID at runtime by the BLE adapter.
+///
+/// # Examples
+///
+/// - `"180f/2a19"` → Battery Service / Battery Level (poll-read)
+/// - `"180f/2a19:notify"` → Battery Service / Battery Level (notify subscription)
+/// - `"12345678-1234-1234-1234-123456789abc/abcdef01-1234-5678-abcd-123456789abc:notify"`
+#[cfg(feature = "ble")]
+fn parse_ble_address(address: &str) -> Result<ProtocolAddress> {
+    let address = address.trim();
+
+    let (uuid_part, notify) = if let Some(stripped) = address.strip_suffix(":notify") {
+        (stripped, true)
+    } else {
+        (address, false)
+    };
+
+    let (service_str, char_str) = uuid_part.split_once('/').ok_or_else(|| {
+        GatewayError::Config(format!(
+            "Invalid BLE address format: '{}'. Expected 'service_uuid/char_uuid' or 'service_uuid/char_uuid:notify'",
+            address
+        ))
+    })?;
+
+    let service_uuid = service_str.trim().to_string();
+    let characteristic_uuid = char_str.trim().to_string();
+
+    if service_uuid.is_empty() || characteristic_uuid.is_empty() {
+        return Err(GatewayError::Config(format!(
+            "BLE address has empty UUID component: '{}'",
+            address
+        )));
+    }
+
+    Ok(ProtocolAddress::Ble(BleAddress {
+        service_uuid,
+        characteristic_uuid,
+        data_format: crate::protocols::core::point::DataFormat::default(),
+        notify,
+    }))
 }
 
 #[cfg(test)]
@@ -428,5 +480,83 @@ mod tests {
         };
         assert_eq!(o.namespace_index, 3);
         assert_eq!(o.node_id, "s=Temperature");
+    }
+
+    // ========== BLE Address Tests ==========
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn test_parse_ble_address_short_uuids() {
+        let addr = parse_ble_address("180f/2a19").unwrap();
+        let ProtocolAddress::Ble(b) = addr else {
+            unreachable!("parse_ble_address always returns Ble variant")
+        };
+        assert_eq!(b.service_uuid, "180f");
+        assert_eq!(b.characteristic_uuid, "2a19");
+        assert!(!b.notify);
+    }
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn test_parse_ble_address_with_notify() {
+        let addr = parse_ble_address("180f/2a19:notify").unwrap();
+        let ProtocolAddress::Ble(b) = addr else {
+            unreachable!("parse_ble_address always returns Ble variant")
+        };
+        assert_eq!(b.service_uuid, "180f");
+        assert_eq!(b.characteristic_uuid, "2a19");
+        assert!(b.notify);
+    }
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn test_parse_ble_address_full_uuids() {
+        let addr = parse_ble_address(
+            "12345678-1234-1234-1234-123456789abc/abcdef01-1234-5678-abcd-123456789abc:notify",
+        )
+        .unwrap();
+        let ProtocolAddress::Ble(b) = addr else {
+            unreachable!("parse_ble_address always returns Ble variant")
+        };
+        assert_eq!(b.service_uuid, "12345678-1234-1234-1234-123456789abc");
+        assert_eq!(
+            b.characteristic_uuid,
+            "abcdef01-1234-5678-abcd-123456789abc"
+        );
+        assert!(b.notify);
+    }
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn test_parse_ble_address_missing_slash() {
+        let result = parse_ble_address("180f2a19");
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn test_parse_ble_address_empty_uuid() {
+        let result = parse_ble_address("/2a19");
+        assert!(result.is_err());
+        let result = parse_ble_address("180f/");
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn test_parse_address_ble_via_dispatch() {
+        let addr = parse_address("ble", "180f/2a19:notify").unwrap();
+        let ProtocolAddress::Ble(b) = addr else {
+            unreachable!("parse_address(\"ble\", ..) should return Ble variant")
+        };
+        assert_eq!(b.service_uuid, "180f");
+        assert!(b.notify);
+    }
+
+    #[cfg(feature = "ble")]
+    #[test]
+    fn test_parse_address_ble_case_insensitive() {
+        assert!(parse_address("BLE", "180f/2a19").is_ok());
+        assert!(parse_address("Ble", "180f/2a19").is_ok());
     }
 }

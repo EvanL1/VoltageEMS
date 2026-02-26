@@ -55,6 +55,9 @@ rumqttc = { version = "0.24", optional = true }
 # HTTP client for polling/webhook data collection
 reqwest = { workspace = true, optional = true }
 
+# BLE GATT client for Bluetooth Low Energy devices
+btleplug = { version = "0.11", optional = true }
+
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -106,6 +109,7 @@ dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP �
 json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protocols
 mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
 http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
+ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []
