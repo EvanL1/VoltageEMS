@@ -731,6 +731,93 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_attribute_report_int8() {
+        let codec = RawFrameCodec;
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0x00124B0018ED1234u64.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&0x0402u16.to_le_bytes());
+        payload.extend_from_slice(&0x0001u16.to_le_bytes());
+        payload.push(0x28); // ZCL type: int8
+        payload.push((-25i8) as u8);
+
+        let raw = build_raw_frame(FRAME_TYPE_ATTR_REPORT, &payload);
+        let mut buf = BytesMut::from(raw.as_slice());
+
+        let frame = codec.decode(&mut buf).unwrap().unwrap();
+        match frame {
+            ZigbeeFrame::AttributeReport(report) => {
+                assert_eq!(report.value, ZclValue::Int8(-25));
+            }
+            _ => panic!("Expected AttributeReport"),
+        }
+    }
+
+    #[test]
+    fn test_decode_attribute_report_float() {
+        let codec = RawFrameCodec;
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0x00124B0018ED1234u64.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&0x0402u16.to_le_bytes());
+        payload.extend_from_slice(&0x0000u16.to_le_bytes());
+        payload.push(0x39); // ZCL type: float
+        payload.extend_from_slice(&25.5f32.to_bits().to_le_bytes());
+
+        let raw = build_raw_frame(FRAME_TYPE_ATTR_REPORT, &payload);
+        let mut buf = BytesMut::from(raw.as_slice());
+
+        let frame = codec.decode(&mut buf).unwrap().unwrap();
+        match frame {
+            ZigbeeFrame::AttributeReport(report) => {
+                assert_eq!(report.value, ZclValue::Float(25.5));
+            }
+            _ => panic!("Expected AttributeReport"),
+        }
+    }
+
+    #[test]
+    fn test_checksum_xor_properties() {
+        // XOR checksum: empty slice → 0
+        assert_eq!(RawFrameCodec::checksum(&[]), 0);
+        // Single byte → itself
+        assert_eq!(RawFrameCodec::checksum(&[0x42]), 0x42);
+        // Self-inverse: x ^ x == 0
+        assert_eq!(RawFrameCodec::checksum(&[0xAB, 0xAB]), 0);
+        // Known value
+        assert_eq!(RawFrameCodec::checksum(&[0x01, 0x02, 0x04]), 0x07);
+    }
+
+    #[test]
+    fn test_encode_decode_large_payload() {
+        let codec = RawFrameCodec;
+
+        // Build an attribute report with a large string value
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0x00124B0018ED1234u64.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&0x0402u16.to_le_bytes());
+        payload.extend_from_slice(&0x0000u16.to_le_bytes());
+        payload.push(0x42); // ZCL type: string
+        let long_string = "A".repeat(200);
+        payload.push(long_string.len() as u8);
+        payload.extend_from_slice(long_string.as_bytes());
+
+        let raw = build_raw_frame(FRAME_TYPE_ATTR_REPORT, &payload);
+        let mut buf = BytesMut::from(raw.as_slice());
+
+        let frame = codec.decode(&mut buf).unwrap().unwrap();
+        match frame {
+            ZigbeeFrame::AttributeReport(report) => {
+                assert_eq!(report.value, ZclValue::String(long_string));
+            }
+            _ => panic!("Expected AttributeReport"),
+        }
+    }
+
+    #[test]
     fn test_encode_zcl_value_roundtrip() {
         let values = vec![
             ZclValue::Bool(true),

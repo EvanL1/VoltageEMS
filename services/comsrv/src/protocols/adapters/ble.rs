@@ -959,4 +959,218 @@ mod tests {
         assert_eq!(BleChannel::encode_value(1.0, DataFormat::Bool), vec![1]);
         assert_eq!(BleChannel::encode_value(0.0, DataFormat::Bool), vec![0]);
     }
+
+    // === Channel creation & trait tests ===
+
+    /// Helper to build a minimal BleConfig for unit tests.
+    fn test_config() -> BleConfig {
+        BleConfig {
+            device_address: "AA:BB:CC:DD:EE:FF".to_string(),
+            adapter_name: None,
+            scan_timeout: std::time::Duration::from_secs(10),
+            connect_timeout: std::time::Duration::from_secs(5),
+            reconnect_interval: std::time::Duration::from_secs(5),
+            mtu: None,
+        }
+    }
+
+    #[test]
+    fn test_ble_channel_creation() {
+        let ch = BleChannel::new(test_config(), 42, "ble-sensor".to_string(), Vec::new());
+        assert_eq!(ch.id(), 42);
+        assert_eq!(ch.name(), "ble-sensor");
+        assert_eq!(ch.protocol(), "ble");
+        assert!(ch.is_event_driven());
+        assert_eq!(ch.connection_state(), ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn test_ble_metadata() {
+        let meta = BleChannel::metadata();
+        assert_eq!(meta.name, "ble");
+        assert!(meta.is_recommended);
+        assert!(!meta.parameters.is_empty());
+        // Verify required parameter exists
+        assert!(meta.parameters.iter().any(|p| p.name == "device_address"));
+    }
+
+    #[test]
+    fn test_ble_subscribe_returns_some() {
+        let ch = BleChannel::new(test_config(), 1, "test".to_string(), Vec::new());
+        assert!(ch.subscribe().is_some());
+    }
+
+    // === Additional data format parse tests ===
+
+    #[test]
+    fn test_parse_value_uint32() {
+        let data = 70000u32.to_le_bytes();
+        let result = BleChannel::parse_value(&data, DataFormat::UInt32);
+        assert_eq!(result, Some(70000.0));
+    }
+
+    #[test]
+    fn test_parse_value_int32() {
+        let data = (-50000i32).to_le_bytes();
+        let result = BleChannel::parse_value(&data, DataFormat::Int32);
+        assert_eq!(result, Some(-50000.0));
+    }
+
+    #[test]
+    fn test_parse_value_float64() {
+        let data = 2.718281828459045f64.to_le_bytes();
+        let result = BleChannel::parse_value(&data, DataFormat::Float64);
+        assert!((result.unwrap() - 2.718281828459045).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_parse_value_uint64() {
+        let val = 1_000_000_000u64;
+        let data = val.to_le_bytes();
+        let result = BleChannel::parse_value(&data, DataFormat::UInt64);
+        assert_eq!(result, Some(val as f64));
+    }
+
+    #[test]
+    fn test_parse_value_int64() {
+        let val = -1_000_000_000i64;
+        let data = val.to_le_bytes();
+        let result = BleChannel::parse_value(&data, DataFormat::Int64);
+        assert_eq!(result, Some(val as f64));
+    }
+
+    #[test]
+    fn test_parse_value_string_returns_none() {
+        // String format is not meaningful as f64
+        let data = b"hello";
+        let result = BleChannel::parse_value(data, DataFormat::String);
+        assert_eq!(result, None);
+    }
+
+    // === Additional encode tests ===
+
+    #[test]
+    fn test_encode_value_int16() {
+        let bytes = BleChannel::encode_value(-300.0, DataFormat::Int16);
+        assert_eq!(bytes, (-300i16).to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_encode_value_uint32() {
+        let bytes = BleChannel::encode_value(70000.0, DataFormat::UInt32);
+        assert_eq!(bytes, 70000u32.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_encode_value_int32() {
+        let bytes = BleChannel::encode_value(-50000.0, DataFormat::Int32);
+        assert_eq!(bytes, (-50000i32).to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_encode_value_float64() {
+        let bytes = BleChannel::encode_value(2.718281828459045, DataFormat::Float64);
+        assert_eq!(bytes, 2.718281828459045f64.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_encode_value_uint64() {
+        let bytes = BleChannel::encode_value(1_000_000.0, DataFormat::UInt64);
+        assert_eq!(bytes, 1_000_000u64.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_encode_value_int64() {
+        let bytes = BleChannel::encode_value(-1_000_000.0, DataFormat::Int64);
+        assert_eq!(bytes, (-1_000_000i64).to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn test_encode_value_string() {
+        let bytes = BleChannel::encode_value(42.5, DataFormat::String);
+        assert_eq!(bytes, b"42.5");
+    }
+
+    // === Roundtrip tests ===
+
+    #[test]
+    fn test_parse_encode_roundtrip() {
+        // Test encode -> parse roundtrip for all numeric DataFormat variants
+        let test_cases: Vec<(DataFormat, f64)> = vec![
+            (DataFormat::Bool, 1.0),
+            (DataFormat::Bool, 0.0),
+            (DataFormat::UInt16, 1024.0),
+            (DataFormat::Int16, -100.0),
+            (DataFormat::UInt32, 70000.0),
+            (DataFormat::Int32, -50000.0),
+            (DataFormat::Float32, 3.14),
+            (DataFormat::Float64, 2.718281828459045),
+            (DataFormat::UInt64, 1_000_000.0),
+            (DataFormat::Int64, -1_000_000.0),
+        ];
+
+        for (format, value) in test_cases {
+            let encoded = BleChannel::encode_value(value, format);
+            let decoded = BleChannel::parse_value(&encoded, format);
+            match format {
+                DataFormat::Float32 => {
+                    // Float32 has precision loss through f64->f32->f64
+                    let d = decoded.expect("Float32 roundtrip should decode");
+                    assert!(
+                        (d - value).abs() < 0.01,
+                        "Float32 roundtrip failed: encoded {value}, decoded {d}"
+                    );
+                },
+                _ => {
+                    assert_eq!(
+                        decoded,
+                        Some(value),
+                        "Roundtrip failed for {format:?} with value {value}"
+                    );
+                },
+            }
+        }
+    }
+
+    // === Boundary / edge cases ===
+
+    #[test]
+    fn test_parse_value_empty_bytes() {
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::Bool), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::UInt16), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::Int16), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::UInt32), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::Int32), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::Float32), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::Float64), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::UInt64), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::Int64), None);
+        assert_eq!(BleChannel::parse_value(&[], DataFormat::String), None);
+    }
+
+    #[test]
+    fn test_expand_uuid_empty_string() {
+        assert!(expand_uuid("").is_err());
+    }
+
+    #[test]
+    fn test_parse_value_insufficient_bytes_extended() {
+        // 3 bytes is insufficient for UInt32/Int32/Float32 (need 4)
+        assert_eq!(BleChannel::parse_value(&[0, 0, 0], DataFormat::UInt32), None);
+        assert_eq!(BleChannel::parse_value(&[0, 0, 0], DataFormat::Int32), None);
+        assert_eq!(BleChannel::parse_value(&[0, 0, 0], DataFormat::Float32), None);
+        // 7 bytes is insufficient for 64-bit types (need 8)
+        assert_eq!(
+            BleChannel::parse_value(&[0, 0, 0, 0, 0, 0, 0], DataFormat::Float64),
+            None
+        );
+        assert_eq!(
+            BleChannel::parse_value(&[0, 0, 0, 0, 0, 0, 0], DataFormat::UInt64),
+            None
+        );
+        assert_eq!(
+            BleChannel::parse_value(&[0, 0, 0, 0, 0, 0, 0], DataFormat::Int64),
+            None
+        );
+    }
 }

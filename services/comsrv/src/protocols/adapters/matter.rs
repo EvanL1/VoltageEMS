@@ -914,4 +914,195 @@ mod tests {
         let rx = channel.subscribe();
         assert!(rx.is_some());
     }
+
+    #[test]
+    fn test_matter_channel_with_points() {
+        use crate::protocols::core::point::{MatterAddress, PointConfig, ProtocolAddress};
+
+        let config = test_config();
+        let points = vec![
+            PointConfig::telemetry(
+                100,
+                ProtocolAddress::Matter(MatterAddress::new(1, 0x0402, 0x0000)),
+            ),
+            PointConfig::control(
+                200,
+                ProtocolAddress::Matter(MatterAddress::new(1, 0x0006, 0x0000)),
+            ),
+            PointConfig::adjustment(
+                300,
+                ProtocolAddress::Matter(MatterAddress::new(2, 0x0201, 0x0012)),
+            ),
+        ];
+
+        let channel =
+            MatterChannel::new(config, 1, "test_with_points".to_string()).with_points(points);
+
+        assert_eq!(channel.points.len(), 3);
+        assert!(channel.points.contains_key(&100));
+        assert!(channel.points.contains_key(&200));
+        assert!(channel.points.contains_key(&300));
+
+        // Verify point data is preserved
+        let p100 = &channel.points[&100];
+        assert_eq!(p100.id, 100);
+        match &p100.address {
+            ProtocolAddress::Matter(addr) => {
+                assert_eq!(addr.endpoint, 1);
+                assert_eq!(addr.cluster_id, 0x0402);
+                assert_eq!(addr.attribute_id, 0x0000);
+            },
+            _ => panic!("Expected Matter address"),
+        }
+    }
+
+    #[test]
+    fn test_matter_channel_protocol() {
+        let config = test_config();
+        let channel = MatterChannel::new(config, 1, "proto_test".to_string());
+        assert_eq!(channel.protocol(), "matter");
+    }
+
+    #[test]
+    fn test_matter_channel_is_event_driven() {
+        let config = test_config();
+        let channel = MatterChannel::new(config, 1, "event_test".to_string());
+        assert!(channel.is_event_driven());
+    }
+
+    #[tokio::test]
+    async fn test_matter_channel_initial_diagnostics() {
+        let config = test_config();
+        let channel = MatterChannel::new(config, 1, "diag_test".to_string());
+        let diag = channel.diagnostics().await.unwrap();
+
+        assert_eq!(diag.protocol, "matter");
+        assert_eq!(diag.connection_state, ConnectionState::Disconnected);
+        assert_eq!(diag.read_count, 0);
+        assert_eq!(diag.write_count, 0);
+        assert_eq!(diag.error_count, 0);
+        assert!(diag.last_error.is_none());
+    }
+
+    #[test]
+    fn test_matter_frame_encode_empty_payload() {
+        let frame = MatterFrame {
+            message_type: MatterMessageType::StatusReport,
+            exchange_id: 0,
+            payload: vec![],
+        };
+
+        let encoded = frame.encode();
+        // Header only: 1 (msg_type) + 2 (exchange_id) + 2 (payload_len) = 5
+        assert_eq!(encoded.len(), 5);
+        assert_eq!(encoded[0], MatterMessageType::StatusReport as u8);
+        assert_eq!(u16::from_le_bytes([encoded[1], encoded[2]]), 0); // exchange_id
+        assert_eq!(u16::from_le_bytes([encoded[3], encoded[4]]), 0); // payload_len
+
+        // Round-trip decode
+        let decoded = MatterFrame::decode(&encoded).unwrap();
+        assert_eq!(decoded.exchange_id, 0);
+        assert!(decoded.payload.is_empty());
+    }
+
+    #[test]
+    fn test_matter_frame_all_message_types() {
+        let types = [
+            MatterMessageType::StatusReport,
+            MatterMessageType::ReadRequest,
+            MatterMessageType::ReportData,
+            MatterMessageType::WriteRequest,
+            MatterMessageType::InvokeRequest,
+        ];
+
+        for msg_type in types {
+            let frame = MatterFrame {
+                message_type: msg_type,
+                exchange_id: 1000,
+                payload: vec![0xAA, 0xBB],
+            };
+
+            let encoded = frame.encode();
+            // Verify the first byte is the message type discriminant
+            assert_eq!(encoded[0], msg_type as u8);
+            // Verify total length: 5 header + 2 payload
+            assert_eq!(encoded.len(), 7);
+
+            // Decode round-trip preserves exchange_id and payload
+            let decoded = MatterFrame::decode(&encoded).unwrap();
+            assert_eq!(decoded.exchange_id, 1000);
+            assert_eq!(decoded.payload, vec![0xAA, 0xBB]);
+        }
+    }
+
+    #[test]
+    fn test_build_read_request_boundary_values() {
+        // Minimum boundary: endpoint=0, cluster=0, attribute=0
+        let payload_min = build_read_request_payload(0, 0, 0);
+        assert_eq!(payload_min.len(), 10);
+        assert_eq!(u16::from_le_bytes([payload_min[0], payload_min[1]]), 0);
+        assert_eq!(
+            u32::from_le_bytes([payload_min[2], payload_min[3], payload_min[4], payload_min[5]]),
+            0
+        );
+        assert_eq!(
+            u32::from_le_bytes([payload_min[6], payload_min[7], payload_min[8], payload_min[9]]),
+            0
+        );
+
+        // Maximum boundary: endpoint=0xFFFF, cluster=0xFFFFFFFF, attribute=0xFFFFFFFF
+        let payload_max = build_read_request_payload(0xFFFF, 0xFFFF_FFFF, 0xFFFF_FFFF);
+        assert_eq!(payload_max.len(), 10);
+        assert_eq!(
+            u16::from_le_bytes([payload_max[0], payload_max[1]]),
+            0xFFFF
+        );
+        assert_eq!(
+            u32::from_le_bytes([payload_max[2], payload_max[3], payload_max[4], payload_max[5]]),
+            0xFFFF_FFFF
+        );
+        assert_eq!(
+            u32::from_le_bytes([payload_max[6], payload_max[7], payload_max[8], payload_max[9]]),
+            0xFFFF_FFFF
+        );
+    }
+
+    #[test]
+    fn test_build_write_request_negative_value() {
+        let payload = build_write_request_payload(1, 0x0201, 0x0012, -10.5);
+        assert_eq!(payload.len(), 18);
+
+        let value = f64::from_le_bytes([
+            payload[10], payload[11], payload[12], payload[13], payload[14], payload[15],
+            payload[16], payload[17],
+        ]);
+        assert!((value - (-10.5)).abs() < f64::EPSILON);
+
+        // Also verify endpoint/cluster/attribute are correctly encoded
+        let endpoint = u16::from_le_bytes([payload[0], payload[1]]);
+        let cluster = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
+        let attr = u32::from_le_bytes([payload[6], payload[7], payload[8], payload[9]]);
+        assert_eq!(endpoint, 1);
+        assert_eq!(cluster, 0x0201);
+        assert_eq!(attr, 0x0012);
+    }
+
+    #[test]
+    fn test_resolve_address_invalid_ip() {
+        let config = MatterConfig {
+            ip_address: Some("not-a-valid-ip".to_string()),
+            ..test_config()
+        };
+        let channel = MatterChannel::new(config, 1, "test".to_string());
+        let result = channel.resolve_address();
+        assert!(result.is_err());
+
+        // Verify error message mentions "Invalid Matter device address"
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Invalid Matter device address"),
+            "Error message was: {}",
+            err_msg
+        );
+    }
 }

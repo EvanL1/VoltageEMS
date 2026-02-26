@@ -180,4 +180,52 @@ mod tests {
         assert_eq!(config.reconnect_interval, Duration::from_millis(3000));
         assert_eq!(config.port, 5540);
     }
+
+    #[test]
+    fn test_matter_config_custom_timeouts() {
+        let json = r#"{
+            "device_id": 999,
+            "connect_timeout_ms": 30000,
+            "reconnect_interval_ms": 15000
+        }"#;
+
+        let params: MatterParamsConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(params.connect_timeout_ms, 30000);
+        assert_eq!(params.reconnect_interval_ms, 15000);
+
+        let config = params.to_config();
+        assert_eq!(config.connect_timeout, Duration::from_millis(30000));
+        assert_eq!(config.reconnect_interval, Duration::from_millis(15000));
+
+        // Verify other fields got defaults
+        assert_eq!(config.port, 5540);
+        assert_eq!(config.subscribe_min_interval, 1);
+        assert_eq!(config.subscribe_max_interval, 60);
+        assert!(config.ip_address.is_none());
+    }
+
+    #[test]
+    fn test_matter_config_with_pairing() {
+        let json = r#"{
+            "device_id": 12345,
+            "pin_code": 20202021,
+            "discriminator": 3840,
+            "ip_address": "192.168.1.200",
+            "port": 5541
+        }"#;
+
+        let params: MatterParamsConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(params.pin_code, Some(20202021));
+        assert_eq!(params.discriminator, Some(3840));
+
+        let config = params.to_config();
+        assert_eq!(config.device_id, 12345);
+        assert_eq!(config.pin_code, Some(20202021));
+        assert_eq!(config.discriminator, Some(3840));
+        assert_eq!(config.ip_address, Some("192.168.1.200".to_string()));
+        assert_eq!(config.port, 5541);
+
+        // Verify fabric_id is None by default
+        assert!(config.fabric_id.is_none());
+    }
 }

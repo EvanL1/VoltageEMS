@@ -703,4 +703,84 @@ mod tests {
         let channel = ZigbeeChannel::new(config, 1, "test".to_string(), vec![]);
         assert!(channel.subscribe().is_some());
     }
+
+    #[test]
+    fn test_build_point_lookup_empty() {
+        let points: Vec<PointConfig> = vec![];
+        let lookup = ZigbeeChannel::build_point_lookup(&points);
+        assert!(lookup.is_empty());
+    }
+
+    #[test]
+    fn test_build_point_lookup_duplicate_key() {
+        // Two points with the same (ieee, ep, cluster, attr) — later one overwrites.
+        let points = vec![
+            make_test_point(1, 0x00124B0018ED1234, 1, 0x0402, 0x0000),
+            make_test_point(2, 0x00124B0018ED1234, 1, 0x0402, 0x0000),
+        ];
+        let lookup = ZigbeeChannel::build_point_lookup(&points);
+        assert_eq!(lookup.len(), 1);
+        let key = (0x00124B0018ED1234, 1, 0x0402, 0x0000);
+        assert_eq!(lookup[&key].id, 2); // second insert wins
+    }
+
+    #[test]
+    fn test_process_attribute_report_all_zcl_types() {
+        use crate::protocols::adapters::zigbee_codec::{AttributeReport, ZclValue};
+
+        let zcl_values_and_expected: Vec<(ZclValue, f64)> = vec![
+            (ZclValue::Bool(true), 1.0),
+            (ZclValue::Bool(false), 0.0),
+            (ZclValue::UInt8(200), 200.0),
+            (ZclValue::Int8(-42), -42.0),
+            (ZclValue::UInt16(50000), 50000.0),
+            (ZclValue::Int16(-1000), -1000.0),
+            (ZclValue::UInt32(100_000), 100_000.0),
+            (ZclValue::Int32(-99999), -99999.0),
+            (ZclValue::Float(3.14), 3.14_f32 as f64),
+            (ZclValue::Double(2.718), 2.718),
+        ];
+
+        for (i, (zcl_val, expected)) in zcl_values_and_expected.into_iter().enumerate() {
+            let point_id = (100 + i) as u32;
+            let attr_id = i as u16;
+            let points = vec![make_test_point(point_id, 0xAA, 1, 0x0001, attr_id)];
+            let lookup = ZigbeeChannel::build_point_lookup(&points);
+
+            let report = AttributeReport {
+                ieee_addr: 0xAA,
+                endpoint: 1,
+                cluster_id: 0x0001,
+                attribute_id: attr_id,
+                value: zcl_val,
+            };
+
+            let dp = ZigbeeChannel::process_attribute_report(&report, &lookup);
+            assert!(dp.is_some(), "ZclValue variant #{i} should produce a DataPoint");
+            let dp = dp.unwrap();
+            assert_eq!(dp.id, point_id);
+            assert!(
+                (dp.value.as_f64().unwrap() - expected).abs() < 0.01,
+                "ZclValue variant #{i}: expected {expected}, got {:?}",
+                dp.value.as_f64()
+            );
+        }
+    }
+
+    #[test]
+    fn test_channel_initial_diagnostics() {
+        let config = ZigbeeParamsConfig::default().to_config();
+        let channel = ZigbeeChannel::new(config, 1, "test".to_string(), vec![]);
+        let diag = channel.diagnostics.snapshot();
+        assert_eq!(diag.read_count, 0);
+        assert_eq!(diag.write_count, 0);
+        assert_eq!(diag.error_count, 0);
+    }
+
+    #[test]
+    fn test_channel_is_event_driven() {
+        let config = ZigbeeParamsConfig::default().to_config();
+        let channel = ZigbeeChannel::new(config, 1, "test".to_string(), vec![]);
+        assert!(channel.is_event_driven());
+    }
 }
