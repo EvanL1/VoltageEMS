@@ -17,6 +17,9 @@ use crate::protocols::core::point::CanAddress;
 #[cfg(feature = "dl645")]
 use crate::protocols::core::point::Dl645Address;
 
+#[cfg(feature = "zigbee")]
+use crate::protocols::core::point::ZigbeeAddress;
+
 /// Parse a numeric field from a string, returning a config error on failure.
 fn parse_field<T: std::str::FromStr>(s: &str, field: &str) -> Result<T> {
     s.parse::<T>()
@@ -69,6 +72,10 @@ pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
         #[cfg(feature = "dl645")]
         if protocol.eq_ignore_ascii_case("dl645") {
             return parse_dl645_address(address);
+        }
+        #[cfg(feature = "zigbee")]
+        if protocol.eq_ignore_ascii_case("zigbee") {
+            return parse_zigbee_address(address);
         }
         Err(GatewayError::Config(format!(
             "Unknown protocol: {}",
@@ -234,6 +241,76 @@ fn parse_gpio_address(address: &str) -> Result<ProtocolAddress> {
 fn parse_dl645_address(address: &str) -> Result<ProtocolAddress> {
     let dl645_addr = Dl645Address::parse(address)?;
     Ok(ProtocolAddress::Dl645(dl645_addr))
+}
+
+/// Parse Zigbee address: "ieee_addr/endpoint/cluster_id/attr_id"
+///
+/// Supports hex (0x prefix) and decimal for all fields.
+///
+/// # Examples
+///
+/// - `"0x00124B0018ED1234/1/0x0402/0x0000"` -- temperature measurement
+/// - `"5124095622791732/1/1026/0"` -- same address in decimal
+#[cfg(feature = "zigbee")]
+fn parse_zigbee_address(address: &str) -> Result<ProtocolAddress> {
+    let parts: Vec<&str> = address.split('/').collect();
+    if parts.len() != 4 {
+        return Err(GatewayError::Config(format!(
+            "Invalid Zigbee address format: '{}'. Expected 'ieee_addr/endpoint/cluster_id/attr_id'",
+            address
+        )));
+    }
+
+    let ieee_address = parse_zigbee_u64(parts[0], "ieee_addr")?;
+    let endpoint = parse_zigbee_u8(parts[1], "endpoint")?;
+    let cluster_id = parse_zigbee_u16(parts[2], "cluster_id")?;
+    let attribute_id = parse_zigbee_u16(parts[3], "attr_id")?;
+
+    Ok(ProtocolAddress::Zigbee(ZigbeeAddress {
+        ieee_address,
+        endpoint,
+        cluster_id,
+        attribute_id,
+    }))
+}
+
+/// Parse a u64 field with optional 0x prefix.
+#[cfg(feature = "zigbee")]
+fn parse_zigbee_u64(s: &str, field: &str) -> Result<u64> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16)
+            .map_err(|_| GatewayError::Config(format!("Invalid hex {field}: {s}")))
+    } else {
+        s.parse::<u64>()
+            .map_err(|_| GatewayError::Config(format!("Invalid {field}: {s}")))
+    }
+}
+
+/// Parse a u16 field with optional 0x prefix.
+#[cfg(feature = "zigbee")]
+fn parse_zigbee_u16(s: &str, field: &str) -> Result<u16> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u16::from_str_radix(hex, 16)
+            .map_err(|_| GatewayError::Config(format!("Invalid hex {field}: {s}")))
+    } else {
+        s.parse::<u16>()
+            .map_err(|_| GatewayError::Config(format!("Invalid {field}: {s}")))
+    }
+}
+
+/// Parse a u8 field with optional 0x prefix.
+#[cfg(feature = "zigbee")]
+fn parse_zigbee_u8(s: &str, field: &str) -> Result<u8> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u8::from_str_radix(hex, 16)
+            .map_err(|_| GatewayError::Config(format!("Invalid hex {field}: {s}")))
+    } else {
+        s.parse::<u8>()
+            .map_err(|_| GatewayError::Config(format!("Invalid {field}: {s}")))
+    }
 }
 
 #[cfg(test)]
@@ -428,5 +505,66 @@ mod tests {
         };
         assert_eq!(o.namespace_index, 3);
         assert_eq!(o.node_id, "s=Temperature");
+    }
+
+    // ========== Zigbee Address Tests ==========
+
+    #[cfg(feature = "zigbee")]
+    #[test]
+    fn test_parse_zigbee_address_hex() {
+        let addr = parse_zigbee_address("0x00124B0018ED1234/1/0x0402/0x0000").unwrap();
+        let ProtocolAddress::Zigbee(z) = addr else {
+            unreachable!("parse_zigbee_address always returns Zigbee variant")
+        };
+        assert_eq!(z.ieee_address, 0x00124B0018ED1234);
+        assert_eq!(z.endpoint, 1);
+        assert_eq!(z.cluster_id, 0x0402);
+        assert_eq!(z.attribute_id, 0x0000);
+    }
+
+    #[cfg(feature = "zigbee")]
+    #[test]
+    fn test_parse_zigbee_address_decimal() {
+        let addr = parse_zigbee_address("5124095622791732/1/1026/0").unwrap();
+        let ProtocolAddress::Zigbee(z) = addr else {
+            unreachable!("parse_zigbee_address always returns Zigbee variant")
+        };
+        assert_eq!(z.ieee_address, 5124095622791732);
+        assert_eq!(z.endpoint, 1);
+        assert_eq!(z.cluster_id, 1026);
+        assert_eq!(z.attribute_id, 0);
+    }
+
+    #[cfg(feature = "zigbee")]
+    #[test]
+    fn test_parse_zigbee_address_mixed() {
+        let addr = parse_zigbee_address("0x00124B0018ED1234/2/0x0006/0").unwrap();
+        let ProtocolAddress::Zigbee(z) = addr else {
+            unreachable!("parse_zigbee_address always returns Zigbee variant")
+        };
+        assert_eq!(z.ieee_address, 0x00124B0018ED1234);
+        assert_eq!(z.endpoint, 2);
+        assert_eq!(z.cluster_id, 0x0006);
+        assert_eq!(z.attribute_id, 0);
+    }
+
+    #[cfg(feature = "zigbee")]
+    #[test]
+    fn test_parse_zigbee_address_invalid_format() {
+        // Too few parts
+        assert!(parse_zigbee_address("0x1234/1/0x0402").is_err());
+        // Too many parts
+        assert!(parse_zigbee_address("0x1234/1/0x0402/0/extra").is_err());
+        // Invalid ieee
+        assert!(parse_zigbee_address("not_a_number/1/0x0402/0").is_err());
+        // Invalid endpoint
+        assert!(parse_zigbee_address("0x1234/999/0x0402/0").is_err());
+    }
+
+    #[cfg(feature = "zigbee")]
+    #[test]
+    fn test_parse_zigbee_via_parse_address() {
+        let addr = parse_address("zigbee", "0x00124B0018ED1234/1/0x0402/0x0000").unwrap();
+        assert!(matches!(addr, ProtocolAddress::Zigbee(_)));
     }
 }

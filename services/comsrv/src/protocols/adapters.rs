@@ -51,3 +51,12 @@ pub mod mqtt;
 
 #[cfg(feature = "http")]
 pub mod http;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee_config;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee_codec;
