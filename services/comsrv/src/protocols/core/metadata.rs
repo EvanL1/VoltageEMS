@@ -263,6 +263,21 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
+    // Register Zigbee protocol
+    #[cfg(feature = "zigbee")]
+    {
+        use crate::protocols::adapters::zigbee::ZigbeeChannel;
+        let zigbee_meta = ZigbeeChannel::metadata();
+        registry.register(ProtocolMetadata {
+            name: "zigbee",
+            display_name: "Zigbee",
+            description: "Zigbee protocol via TCP-connected coordinator gateway",
+            protocol_type: "zigbee",
+            drivers: vec![zigbee_meta],
+            supports_points: true,
+        });
+    }
+
     // Register Virtual protocol
     {
         use crate::protocols::adapters::virtual_channel::VirtualChannel;

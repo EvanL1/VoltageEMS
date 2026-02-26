@@ -91,6 +91,8 @@ pub enum ProtocolAddress {
     Dl645(Dl645Address),
     #[cfg(feature = "ble")]
     Ble(BleAddress),
+    #[cfg(feature = "zigbee")]
+    Zigbee(ZigbeeAddress),
 }
 
 /// Virtual channel address (no physical device).
@@ -220,6 +222,34 @@ pub struct BleAddress {
     /// Whether to subscribe via Notify (otherwise poll-read)
     #[serde(default)]
     pub notify: bool,
+}
+
+/// Zigbee device address for ZCL attribute identification.
+///
+/// Uniquely identifies a data point on a Zigbee device by combining the device's
+/// IEEE address with the ZCL endpoint, cluster, and attribute IDs.
+///
+/// # Example
+///
+/// ```ignore
+/// let addr = ZigbeeAddress {
+///     ieee_address: 0x00124B0018ED1234,
+///     endpoint: 1,
+///     cluster_id: 0x0402,    // Temperature Measurement
+///     attribute_id: 0x0000,  // MeasuredValue
+/// };
+/// ```
+#[cfg(feature = "zigbee")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ZigbeeAddress {
+    /// Device IEEE address (64-bit).
+    pub ieee_address: u64,
+    /// Zigbee endpoint (1-254).
+    pub endpoint: u8,
+    /// ZCL Cluster ID.
+    pub cluster_id: u16,
+    /// ZCL Attribute ID.
+    pub attribute_id: u16,
 }
 
 /// GPIO pin direction.

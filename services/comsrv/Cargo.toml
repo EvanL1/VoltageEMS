@@ -110,6 +110,7 @@ json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protoco
 mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
 http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
 ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)
+zigbee = []  # Zigbee protocol via TCP gateway (Raw ZCL, ZNP, EZSP)
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []

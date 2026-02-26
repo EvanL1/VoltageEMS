@@ -57,3 +57,12 @@ pub mod ble;
 
 #[cfg(feature = "ble")]
 pub mod ble_config;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee_config;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee_codec;

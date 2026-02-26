@@ -59,6 +59,11 @@ pub fn create_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         return create_ble_channel(config);
     }
 
+    #[cfg(feature = "zigbee")]
+    if protocol.eq_ignore_ascii_case("zigbee") {
+        return create_zigbee_channel(config);
+    }
+
     if protocol.eq_ignore_ascii_case("virtual") {
         return create_virtual_channel(config);
     }
@@ -293,6 +298,30 @@ fn create_ble_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
 
     let channel = crate::protocols::adapters::ble::BleChannel::new(
         ble_config,
+        config.id,
+        config.name.clone(),
+        points,
+    );
+
+    Ok(Box::new(channel))
+}
+
+#[cfg(feature = "zigbee")]
+fn create_zigbee_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::zigbee_config::ZigbeeParamsConfig;
+
+    // Parse parameters
+    let params: ZigbeeParamsConfig = serde_json::from_value(config.parameters.clone())
+        .map_err(|e| GatewayError::Config(format!("Invalid Zigbee parameters: {}", e)))?;
+
+    // Build runtime config
+    let zigbee_config = params.to_config();
+
+    // Build point configs
+    let points = build_point_configs(config)?;
+
+    let channel = crate::protocols::adapters::zigbee::ZigbeeChannel::new(
+        zigbee_config,
         config.id,
         config.name.clone(),
         points,
