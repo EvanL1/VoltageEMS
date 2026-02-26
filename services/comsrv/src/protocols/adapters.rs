@@ -66,3 +66,9 @@ pub mod zigbee_config;
 
 #[cfg(feature = "zigbee")]
 pub mod zigbee_codec;
+
+#[cfg(feature = "matter")]
+pub mod matter;
+
+#[cfg(feature = "matter")]
+pub mod matter_config;

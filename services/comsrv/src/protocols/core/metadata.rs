@@ -278,6 +278,21 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
+    // Register Matter protocol
+    #[cfg(feature = "matter")]
+    {
+        use crate::protocols::adapters::matter::MatterChannel;
+        let matter_meta = MatterChannel::metadata();
+        registry.register(ProtocolMetadata {
+            name: "matter",
+            display_name: "Matter",
+            description: "Matter smart home protocol over UDP",
+            protocol_type: "matter",
+            drivers: vec![matter_meta],
+            supports_points: true,
+        });
+    }
+
     // Register Virtual protocol
     {
         use crate::protocols::adapters::virtual_channel::VirtualChannel;

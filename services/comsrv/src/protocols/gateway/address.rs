@@ -23,6 +23,9 @@ use crate::protocols::core::point::BleAddress;
 #[cfg(feature = "zigbee")]
 use crate::protocols::core::point::ZigbeeAddress;
 
+#[cfg(feature = "matter")]
+use crate::protocols::core::point::MatterAddress;
+
 /// Parse a numeric field from a string, returning a config error on failure.
 fn parse_field<T: std::str::FromStr>(s: &str, field: &str) -> Result<T> {
     s.parse::<T>()
@@ -83,6 +86,10 @@ pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
         #[cfg(feature = "zigbee")]
         if protocol.eq_ignore_ascii_case("zigbee") {
             return parse_zigbee_address(address);
+        }
+        #[cfg(feature = "matter")]
+        if protocol.eq_ignore_ascii_case("matter") {
+            return parse_matter_address(address);
         }
         Err(GatewayError::Config(format!(
             "Unknown protocol: {}",
@@ -362,6 +369,49 @@ fn parse_zigbee_u8(s: &str, field: &str) -> Result<u8> {
     } else {
         s.parse::<u8>()
             .map_err(|_| GatewayError::Config(format!("Invalid {field}: {s}")))
+    }
+}
+
+/// Parse Matter address: "endpoint/cluster_id/attribute_id"
+///
+/// Supports hex (0x prefix) and decimal for cluster and attribute IDs.
+///
+/// # Examples
+///
+/// - `"1/0x0402/0x0000"` - Temperature measurement on endpoint 1
+/// - `"1/6/0"` - On/Off cluster in decimal
+/// - `"2/0x0201/0x0012"` - Thermostat occupied heating setpoint
+#[cfg(feature = "matter")]
+fn parse_matter_address(address: &str) -> Result<ProtocolAddress> {
+    let parts: Vec<&str> = address.split('/').collect();
+    if parts.len() != 3 {
+        return Err(GatewayError::Config(format!(
+            "Invalid Matter address format: '{}'. Expected 'endpoint/cluster_id/attribute_id'",
+            address
+        )));
+    }
+
+    let endpoint = parse_field::<u16>(parts[0], "endpoint")?;
+    let cluster_id = parse_matter_id(parts[1], "cluster_id")?;
+    let attribute_id = parse_matter_id(parts[2], "attribute_id")?;
+
+    Ok(ProtocolAddress::Matter(MatterAddress::new(
+        endpoint,
+        cluster_id,
+        attribute_id,
+    )))
+}
+
+/// Parse a Matter ID field that supports both decimal and hex (0x prefix).
+#[cfg(feature = "matter")]
+fn parse_matter_id(s: &str, field: &str) -> Result<u32> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16)
+            .map_err(|_| GatewayError::Config(format!("Invalid hex {}: {}", field, s)))
+    } else {
+        s.parse::<u32>()
+            .map_err(|_| GatewayError::Config(format!("Invalid {}: {}", field, s)))
     }
 }
 
@@ -696,5 +746,93 @@ mod tests {
     fn test_parse_zigbee_via_parse_address() {
         let addr = parse_address("zigbee", "0x00124B0018ED1234/1/0x0402/0x0000").unwrap();
         assert!(matches!(addr, ProtocolAddress::Zigbee(_)));
+    }
+
+    // ========== Matter Address Tests ==========
+
+    #[cfg(feature = "matter")]
+    mod matter_tests {
+        use super::*;
+        use crate::protocols::core::point::MatterAddress;
+
+        #[test]
+        fn test_parse_matter_address_hex() {
+            let addr = parse_matter_address("1/0x0402/0x0000").unwrap();
+            let ProtocolAddress::Matter(m) = addr else {
+                unreachable!("parse_matter_address always returns Matter variant")
+            };
+            assert_eq!(m.endpoint, 1);
+            assert_eq!(m.cluster_id, 0x0402);
+            assert_eq!(m.attribute_id, 0x0000);
+        }
+
+        #[test]
+        fn test_parse_matter_address_decimal() {
+            let addr = parse_matter_address("1/6/0").unwrap();
+            let ProtocolAddress::Matter(m) = addr else {
+                unreachable!("parse_matter_address always returns Matter variant")
+            };
+            assert_eq!(m.endpoint, 1);
+            assert_eq!(m.cluster_id, 6);
+            assert_eq!(m.attribute_id, 0);
+        }
+
+        #[test]
+        fn test_parse_matter_address_mixed() {
+            let addr = parse_matter_address("2/0x0201/18").unwrap();
+            let ProtocolAddress::Matter(m) = addr else {
+                unreachable!("parse_matter_address always returns Matter variant")
+            };
+            assert_eq!(m.endpoint, 2);
+            assert_eq!(m.cluster_id, 0x0201);
+            assert_eq!(m.attribute_id, 18);
+        }
+
+        #[test]
+        fn test_parse_matter_address_via_parse_address() {
+            let addr = parse_address("matter", "1/0x0006/0x0000").unwrap();
+            let ProtocolAddress::Matter(m) = addr else {
+                unreachable!("matter protocol should return Matter variant")
+            };
+            assert_eq!(m.endpoint, 1);
+            assert_eq!(m.cluster_id, 0x0006);
+            assert_eq!(m.attribute_id, 0x0000);
+        }
+
+        #[test]
+        fn test_parse_matter_address_case_insensitive() {
+            assert!(parse_address("Matter", "1/6/0").is_ok());
+            assert!(parse_address("MATTER", "1/6/0").is_ok());
+        }
+
+        #[test]
+        fn test_parse_matter_address_invalid_format() {
+            // Too few parts
+            assert!(parse_matter_address("1/6").is_err());
+            // Too many parts
+            assert!(parse_matter_address("1/6/0/extra").is_err());
+            // Empty
+            assert!(parse_matter_address("").is_err());
+        }
+
+        #[test]
+        fn test_parse_matter_address_invalid_endpoint() {
+            assert!(parse_matter_address("abc/6/0").is_err());
+        }
+
+        #[test]
+        fn test_parse_matter_address_invalid_hex() {
+            assert!(parse_matter_address("1/0xGGGG/0").is_err());
+        }
+
+        #[test]
+        fn test_matter_address_equality() {
+            let a = MatterAddress::new(1, 0x0006, 0x0000);
+            let b = MatterAddress::new(1, 6, 0);
+            assert_eq!(a, b);
+
+            let c = MatterAddress::new(2, 0x0006, 0x0000);
+            assert_ne!(a, c);
+        }
     }
 }

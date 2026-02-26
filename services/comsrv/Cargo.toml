@@ -111,6 +111,7 @@ mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payl
 http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
 ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)
 zigbee = []  # Zigbee protocol via TCP gateway (Raw ZCL, ZNP, EZSP)
+matter = []  # Matter smart home protocol (UDP transport, self-implemented framing)
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []

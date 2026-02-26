@@ -93,6 +93,8 @@ pub enum ProtocolAddress {
     Ble(BleAddress),
     #[cfg(feature = "zigbee")]
     Zigbee(ZigbeeAddress),
+    #[cfg(feature = "matter")]
+    Matter(MatterAddress),
 }
 
 /// Virtual channel address (no physical device).
@@ -250,6 +252,44 @@ pub struct ZigbeeAddress {
     pub cluster_id: u16,
     /// ZCL Attribute ID.
     pub attribute_id: u16,
+}
+
+/// Matter attribute address (endpoint/cluster/attribute path).
+///
+/// Identifies a specific attribute on a Matter device using the
+/// Matter data model hierarchy: Endpoint -> Cluster -> Attribute.
+///
+/// # Format
+///
+/// Address string: `"endpoint/cluster_id/attribute_id"`
+/// Supports hex (0x prefix) and decimal for cluster and attribute IDs.
+///
+/// # Examples
+///
+/// - `"1/0x0006/0x0000"` - On/Off attribute on endpoint 1
+/// - `"1/0x0402/0x0000"` - Temperature measurement
+/// - `"1/6/0"` - On/Off in decimal
+#[cfg(feature = "matter")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MatterAddress {
+    /// Matter Endpoint (0-65535)
+    pub endpoint: u16,
+    /// Cluster ID (e.g., 0x0006 = On/Off, 0x0402 = Temperature)
+    pub cluster_id: u32,
+    /// Attribute ID within the cluster
+    pub attribute_id: u32,
+}
+
+#[cfg(feature = "matter")]
+impl MatterAddress {
+    /// Create a new Matter address.
+    pub fn new(endpoint: u16, cluster_id: u32, attribute_id: u32) -> Self {
+        Self {
+            endpoint,
+            cluster_id,
+            attribute_id,
+        }
+    }
 }
 
 /// GPIO pin direction.
