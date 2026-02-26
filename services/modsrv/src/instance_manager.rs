@@ -266,30 +266,28 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // We rely on the constraint rather than check-then-act to avoid race conditions.
         let product = self.product_loader.get_product(&req.product_name)?;
 
-        // 3. Hierarchy validation: enforce pName constraints
+        // 3. Hierarchy validation: soft check on pName (warn only, never block)
+        //    Product JSON defines pName for documentation, but we don't enforce it
+        //    since real-world topologies may differ from the product library defaults.
         let parent_name = self
             .product_loader
             .get_product_parent_name(&req.product_name);
         match (&parent_name, req.parent_id) {
-            // Root product (Station): must NOT have a parent
             (None, Some(_)) => {
-                return Err(anyhow!(
-                    "Root product '{}' cannot have a parent",
+                warn!(
+                    "Root product '{}' typically has no parent, but parent_id was provided",
                     req.product_name
-                ));
+                );
             },
-            // Root product, no parent: OK
             (None, None) => {},
-            // Non-root product: MUST have a parent
             (Some(expected_parent), None) => {
-                return Err(anyhow!(
-                    "Product '{}' requires a parent instance of type '{}'",
-                    req.product_name,
-                    expected_parent
-                ));
+                warn!(
+                    "Product '{}' has pName='{}' but no parent_id provided — creating as standalone",
+                    req.product_name, expected_parent
+                );
             },
-            // Non-root product with parent: validate parent's product_name matches
             (Some(expected_parent), Some(pid)) => {
+                // Validate parent exists (hard check — referential integrity)
                 let parent_product: Option<String> =
                     sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
                         .bind(pid as i64)
@@ -300,13 +298,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     parent_product.ok_or_else(|| anyhow!("Parent instance {} not found", pid))?;
 
                 if parent_product != *expected_parent {
-                    return Err(anyhow!(
-                        "Parent instance {} is '{}', but '{}' requires parent of type '{}'",
-                        pid,
-                        parent_product,
-                        req.product_name,
-                        expected_parent
-                    ));
+                    warn!(
+                        "Parent instance {} is '{}', but '{}' pName suggests '{}' — allowing anyway",
+                        pid, parent_product, req.product_name, expected_parent
+                    );
                 }
             },
         }
