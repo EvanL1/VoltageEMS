@@ -51,3 +51,9 @@ pub mod mqtt;
 
 #[cfg(feature = "http")]
 pub mod http;
+
+#[cfg(feature = "matter")]
+pub mod matter;
+
+#[cfg(feature = "matter")]
+pub mod matter_config;

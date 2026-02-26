@@ -106,6 +106,7 @@ dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP �
 json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protocols
 mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
 http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
+matter = []  # Matter smart home protocol (UDP transport, self-implemented framing)
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []
