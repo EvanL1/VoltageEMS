@@ -897,29 +897,53 @@ mod tests {
 
     #[test]
     fn test_seqlock_concurrent_read_write() {
+        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
         use std::thread;
 
         let slot = Arc::new(PointSlot::new());
-        let iterations = 100_000;
+        let running = Arc::new(AtomicBool::new(true));
+        let write_iterations = 100_000;
+
+        // Pre-seed a value so the slot is not empty before threads start
+        slot.set(0.0, 0.0, 42);
 
         // Writer thread: rapidly writes with same timestamp
         let writer_slot = Arc::clone(&slot);
+        let writer_running = Arc::clone(&running);
         let writer = thread::spawn(move || {
-            for i in 0..iterations {
+            for i in 0..write_iterations {
                 let v = i as f64;
-                writer_slot.set(v, v * 10.0, 42); // same timestamp every time
+                writer_slot.set(v, v * 10.0, 42);
+                // Yield occasionally so the reader can grab a consistent snapshot
+                if i % 1000 == 0 {
+                    thread::yield_now();
+                }
             }
+            writer_running.store(false, Ordering::Relaxed);
         });
 
         // Reader thread: try_load_consistent to verify seqlock correctness
         // (avoids fallback path which is not seqlock-protected)
         let reader_slot = Arc::clone(&slot);
+        let reader_running = Arc::clone(&running);
         let reader = thread::spawn(move || {
             let mut consistent_reads = 0u64;
-            for _ in 0..iterations {
+            // Keep reading while writer is active, then do a final batch
+            while reader_running.load(Ordering::Relaxed) {
                 if let Some((value, raw, _ts)) = reader_slot.try_load_consistent() {
-                    // value and raw must be from the same write: raw == value * 10.0
+                    assert!(
+                        (raw - value * 10.0).abs() < f64::EPSILON || value == 0.0,
+                        "Torn read detected: value={value}, raw={raw} (expected raw={})",
+                        value * 10.0
+                    );
+                    consistent_reads += 1;
+                }
+                thread::yield_now();
+            }
+            // Writer is done — reads should always succeed now
+            for _ in 0..100 {
+                if let Some((value, raw, _ts)) = reader_slot.try_load_consistent() {
                     assert!(
                         (raw - value * 10.0).abs() < f64::EPSILON || value == 0.0,
                         "Torn read detected: value={value}, raw={raw} (expected raw={})",
