@@ -265,9 +265,8 @@ impl RawFrameCodec {
                     )));
                 }
                 let data = buf.split_to(len).to_vec();
-                let s = String::from_utf8(data).unwrap_or_else(|e| {
-                    String::from_utf8_lossy(e.as_bytes()).into_owned()
-                });
+                let s = String::from_utf8(data)
+                    .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
                 Ok(ZclValue::String(s))
             },
             _ => Err(GatewayError::InvalidData(format!(
@@ -749,7 +748,7 @@ mod tests {
         match frame {
             ZigbeeFrame::AttributeReport(report) => {
                 assert_eq!(report.value, ZclValue::Int8(-25));
-            }
+            },
             _ => panic!("Expected AttributeReport"),
         }
     }
@@ -773,7 +772,7 @@ mod tests {
         match frame {
             ZigbeeFrame::AttributeReport(report) => {
                 assert_eq!(report.value, ZclValue::Float(25.5));
-            }
+            },
             _ => panic!("Expected AttributeReport"),
         }
     }
@@ -812,7 +811,7 @@ mod tests {
         match frame {
             ZigbeeFrame::AttributeReport(report) => {
                 assert_eq!(report.value, ZclValue::String(long_string));
-            }
+            },
             _ => panic!("Expected AttributeReport"),
         }
     }

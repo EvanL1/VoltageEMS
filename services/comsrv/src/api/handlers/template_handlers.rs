@@ -246,6 +246,29 @@ async fn snapshot_channel_mappings(
 /// List all templates (metadata only)
 ///
 /// @route GET /api/templates
+#[utoipa::path(
+    get,
+    path = "/api/templates",
+    params(
+        ("protocol" = Option<String>, Query, description = "Filter by protocol type (e.g. modbus_tcp)")
+    ),
+    responses(
+        (status = 200, description = "List of templates", body = Vec<TemplateListItem>,
+            example = json!({
+                "success": true,
+                "data": [{
+                    "template_id": 1,
+                    "name": "PCS Modbus Template",
+                    "description": "Standard PCS point definitions",
+                    "protocol": "modbus_tcp",
+                    "point_counts": {"telemetry": 30, "signal": 10, "control": 5, "adjustment": 5},
+                    "created_at": "2025-10-15T10:30:00Z"
+                }]
+            })
+        )
+    ),
+    tag = "templates"
+)]
 pub async fn list_templates<R: Rtdb>(
     State(state): State<AppState<R>>,
     Query(query): Query<TemplateListQuery>,
@@ -301,6 +324,18 @@ pub async fn list_templates<R: Rtdb>(
 /// Get template detail (includes full snapshots)
 ///
 /// @route GET /api/templates/{id}
+#[utoipa::path(
+    get,
+    path = "/api/templates/{id}",
+    params(
+        ("id" = i64, Path, description = "Template identifier")
+    ),
+    responses(
+        (status = 200, description = "Template detail with full snapshots", body = TemplateDetail),
+        (status = 404, description = "Template not found")
+    ),
+    tag = "templates"
+)]
 pub async fn get_template<R: Rtdb>(
     Path(template_id): Path<i64>,
     State(state): State<AppState<R>>,
@@ -375,6 +410,23 @@ pub async fn get_template<R: Rtdb>(
 /// Snapshots the channel's current point definitions and protocol mappings.
 ///
 /// @route POST /api/templates/from-channel/{channel_id}
+#[utoipa::path(
+    post,
+    path = "/api/templates/from-channel/{channel_id}",
+    params(
+        ("channel_id" = u32, Path, description = "Source channel identifier to snapshot")
+    ),
+    request_body(
+        content = CreateTemplateFromChannelReq,
+        description = "Template name and optional description"
+    ),
+    responses(
+        (status = 200, description = "Template created from channel snapshot", body = TemplateDetail),
+        (status = 404, description = "Channel not found"),
+        (status = 409, description = "Template name already exists")
+    ),
+    tag = "templates"
+)]
 pub async fn create_template_from_channel<R: Rtdb>(
     Path(channel_id): Path<u32>,
     State(state): State<AppState<R>>,
@@ -455,6 +507,19 @@ pub async fn create_template_from_channel<R: Rtdb>(
 /// Create template manually (direct JSON)
 ///
 /// @route POST /api/templates
+#[utoipa::path(
+    post,
+    path = "/api/templates",
+    request_body(
+        content = CreateTemplateReq,
+        description = "Template with name, protocol, and point/mapping snapshots"
+    ),
+    responses(
+        (status = 200, description = "Template created", body = TemplateDetail),
+        (status = 409, description = "Template name already exists")
+    ),
+    tag = "templates"
+)]
 pub async fn create_template<R: Rtdb>(
     State(state): State<AppState<R>>,
     Json(req): Json<CreateTemplateReq>,
@@ -507,6 +572,23 @@ pub async fn create_template<R: Rtdb>(
 /// Update template metadata (name/description only)
 ///
 /// @route PUT /api/templates/{id}
+#[utoipa::path(
+    put,
+    path = "/api/templates/{id}",
+    params(
+        ("id" = i64, Path, description = "Template identifier")
+    ),
+    request_body(
+        content = UpdateTemplateReq,
+        description = "Fields to update (name and/or description)"
+    ),
+    responses(
+        (status = 200, description = "Template updated", body = serde_json::Value),
+        (status = 404, description = "Template not found"),
+        (status = 409, description = "Template name already exists")
+    ),
+    tag = "templates"
+)]
 pub async fn update_template<R: Rtdb>(
     Path(template_id): Path<i64>,
     State(state): State<AppState<R>>,
@@ -569,6 +651,18 @@ pub async fn update_template<R: Rtdb>(
 /// Delete a template
 ///
 /// @route DELETE /api/templates/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/templates/{id}",
+    params(
+        ("id" = i64, Path, description = "Template identifier")
+    ),
+    responses(
+        (status = 200, description = "Template deleted", body = serde_json::Value),
+        (status = 404, description = "Template not found")
+    ),
+    tag = "templates"
+)]
 pub async fn delete_template<R: Rtdb>(
     Path(template_id): Path<i64>,
     State(state): State<AppState<R>>,
@@ -605,6 +699,36 @@ pub async fn delete_template<R: Rtdb>(
 /// `AFTER DELETE` cascade triggers that would remove routing table entries.
 ///
 /// @route POST /api/templates/{id}/apply/{channel_id}
+#[utoipa::path(
+    post,
+    path = "/api/templates/{id}/apply/{channel_id}",
+    params(
+        ("id" = i64, Path, description = "Template identifier"),
+        ("channel_id" = u32, Path, description = "Target channel to apply template to")
+    ),
+    request_body(
+        content = ApplyTemplateReq,
+        description = "Apply options: clear existing points, override slave_id"
+    ),
+    responses(
+        (status = 200, description = "Template applied to channel", body = serde_json::Value,
+            example = json!({
+                "success": true,
+                "data": {
+                    "template_id": 1,
+                    "channel_id": 1001,
+                    "points_inserted": 50,
+                    "cleared_existing": true,
+                    "slave_id_override": null,
+                    "message": "Template applied: 50 points inserted"
+                }
+            })
+        ),
+        (status = 404, description = "Template or channel not found"),
+        (status = 400, description = "Protocol mismatch between template and channel")
+    ),
+    tag = "templates"
+)]
 pub async fn apply_template<R: Rtdb + 'static>(
     Path((template_id, channel_id)): Path<(i64, u32)>,
     State(state): State<AppState<R>>,

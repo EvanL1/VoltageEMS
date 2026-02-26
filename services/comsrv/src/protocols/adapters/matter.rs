@@ -290,24 +290,22 @@ impl MatterChannel {
         timeout: std::time::Duration,
     ) -> Result<MatterFrame> {
         let data = frame.encode();
-        socket.send_to(&data, remote_addr).await.map_err(|e| {
-            GatewayError::Protocol(format!("Matter UDP send failed: {}", e))
-        })?;
+        socket
+            .send_to(&data, remote_addr)
+            .await
+            .map_err(|e| GatewayError::Protocol(format!("Matter UDP send failed: {}", e)))?;
 
         let mut buf = [0u8; 2048];
         let recv_result = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await;
 
         match recv_result {
-            Ok(Ok((len, _from))) => MatterFrame::decode(&buf[..len]).ok_or_else(|| {
-                GatewayError::Protocol("Invalid Matter frame received".into())
-            }),
+            Ok(Ok((len, _from))) => MatterFrame::decode(&buf[..len])
+                .ok_or_else(|| GatewayError::Protocol("Invalid Matter frame received".into())),
             Ok(Err(e)) => Err(GatewayError::Protocol(format!(
                 "Matter UDP recv failed: {}",
                 e
             ))),
-            Err(_) => Err(GatewayError::Protocol(
-                "Matter response timeout".into(),
-            )),
+            Err(_) => Err(GatewayError::Protocol("Matter response timeout".into())),
         }
     }
 
@@ -361,9 +359,8 @@ impl MatterChannel {
                 Err(e) => {
                     error!(channel_id, error = %e, "Matter UDP recv error");
                     state.store(ConnectionState::Reconnecting as u8, Ordering::SeqCst);
-                    let _ = event_tx.send(DataEvent::ConnectionChanged(
-                        ConnectionState::Reconnecting,
-                    ));
+                    let _ =
+                        event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Reconnecting));
                     let _ = event_tx.send(DataEvent::Error(e.to_string()));
                     diagnostics.record_error(e.to_string());
 
@@ -378,9 +375,10 @@ impl MatterChannel {
     ///
     /// Returns (endpoint, cluster_id, attribute_id) for the given point ID.
     fn resolve_point_address(&self, point_id: u32) -> Result<(u16, u32, u32)> {
-        let point = self.points.get(&point_id).ok_or_else(|| {
-            GatewayError::Config(format!("Unknown point ID: {}", point_id))
-        })?;
+        let point = self
+            .points
+            .get(&point_id)
+            .ok_or_else(|| GatewayError::Config(format!("Unknown point ID: {}", point_id)))?;
 
         match &point.address {
             crate::protocols::core::point::ProtocolAddress::Matter(addr) => {
@@ -500,27 +498,26 @@ impl ChannelRuntime for MatterChannel {
     }
 
     async fn write_control(&mut self, commands: &[(u32, f64)]) -> Result<usize> {
-        let socket = self.socket.clone().ok_or_else(|| {
-            GatewayError::Protocol("Matter channel not connected".into())
-        })?;
-        let remote_addr = self.remote_addr.ok_or_else(|| {
-            GatewayError::Protocol("Matter remote address not set".into())
-        })?;
+        let socket = self
+            .socket
+            .clone()
+            .ok_or_else(|| GatewayError::Protocol("Matter channel not connected".into()))?;
+        let remote_addr = self
+            .remote_addr
+            .ok_or_else(|| GatewayError::Protocol("Matter remote address not set".into()))?;
         let timeout = self.config.connect_timeout;
 
         let mut success_count = 0;
 
         for &(point_id, value) in commands {
-            let (endpoint, cluster_id, _attribute_id) =
-                self.resolve_point_address(point_id)?;
+            let (endpoint, cluster_id, _attribute_id) = self.resolve_point_address(point_id)?;
 
             // For control commands, use InvokeRequest
             // Map the value to a command ID. Convention:
             // - cluster 0x0006 (OnOff): command 0=Off, 1=On, 2=Toggle
             let command_id = if value != 0.0 { 1u32 } else { 0u32 };
 
-            let payload =
-                build_invoke_request_payload(endpoint, cluster_id, command_id, value);
+            let payload = build_invoke_request_payload(endpoint, cluster_id, command_id, value);
             let exchange_id = self.next_exchange_id();
 
             let frame = MatterFrame {
@@ -535,11 +532,7 @@ impl ChannelRuntime for MatterChannel {
                 Ok(_response) => {
                     debug!(
                         channel_id = self.channel_id,
-                        point_id,
-                        endpoint,
-                        cluster_id,
-                        command_id,
-                        "Matter InvokeRequest sent"
+                        point_id, endpoint, cluster_id, command_id, "Matter InvokeRequest sent"
                     );
                     self.diagnostics.inc_write();
                     success_count += 1;
@@ -560,22 +553,21 @@ impl ChannelRuntime for MatterChannel {
     }
 
     async fn write_adjustment(&mut self, adjustments: &[(u32, f64)]) -> Result<usize> {
-        let socket = self.socket.clone().ok_or_else(|| {
-            GatewayError::Protocol("Matter channel not connected".into())
-        })?;
-        let remote_addr = self.remote_addr.ok_or_else(|| {
-            GatewayError::Protocol("Matter remote address not set".into())
-        })?;
+        let socket = self
+            .socket
+            .clone()
+            .ok_or_else(|| GatewayError::Protocol("Matter channel not connected".into()))?;
+        let remote_addr = self
+            .remote_addr
+            .ok_or_else(|| GatewayError::Protocol("Matter remote address not set".into()))?;
         let timeout = self.config.connect_timeout;
 
         let mut success_count = 0;
 
         for &(point_id, value) in adjustments {
-            let (endpoint, cluster_id, attribute_id) =
-                self.resolve_point_address(point_id)?;
+            let (endpoint, cluster_id, attribute_id) = self.resolve_point_address(point_id)?;
 
-            let payload =
-                build_write_request_payload(endpoint, cluster_id, attribute_id, value);
+            let payload = build_write_request_payload(endpoint, cluster_id, attribute_id, value);
             let exchange_id = self.next_exchange_id();
 
             let frame = MatterFrame {
@@ -626,9 +618,10 @@ impl ChannelRuntime for MatterChannel {
 
         // Start background event loop if not already running
         if self.event_loop_handle.is_none() {
-            let socket = self.socket.clone().ok_or_else(|| {
-                GatewayError::Protocol("Matter socket not available".into())
-            })?;
+            let socket = self
+                .socket
+                .clone()
+                .ok_or_else(|| GatewayError::Protocol("Matter socket not available".into()))?;
             let channel_id = self.channel_id;
             let state = Arc::new(AtomicU8::new(ConnectionState::Connected as u8));
             let event_tx = self.event_tx.clone();
@@ -640,10 +633,7 @@ impl ChannelRuntime for MatterChannel {
 
             self.event_loop_handle = Some(handle);
 
-            info!(
-                channel_id = self.channel_id,
-                "Matter event loop started"
-            );
+            info!(channel_id = self.channel_id, "Matter event loop started");
         }
 
         Ok(())
@@ -792,10 +782,7 @@ mod tests {
         assert_eq!(channel.name(), "test_matter");
         assert_eq!(channel.protocol(), "matter");
         assert!(channel.is_event_driven());
-        assert_eq!(
-            channel.connection_state(),
-            ConnectionState::Disconnected
-        );
+        assert_eq!(channel.connection_state(), ConnectionState::Disconnected);
     }
 
     #[test]
@@ -869,8 +856,14 @@ mod tests {
         let cluster = u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]);
         let attr = u32::from_le_bytes([payload[6], payload[7], payload[8], payload[9]]);
         let value = f64::from_le_bytes([
-            payload[10], payload[11], payload[12], payload[13], payload[14], payload[15],
-            payload[16], payload[17],
+            payload[10],
+            payload[11],
+            payload[12],
+            payload[13],
+            payload[14],
+            payload[15],
+            payload[16],
+            payload[17],
         ]);
 
         assert_eq!(endpoint, 2);
@@ -1042,27 +1035,44 @@ mod tests {
         assert_eq!(payload_min.len(), 10);
         assert_eq!(u16::from_le_bytes([payload_min[0], payload_min[1]]), 0);
         assert_eq!(
-            u32::from_le_bytes([payload_min[2], payload_min[3], payload_min[4], payload_min[5]]),
+            u32::from_le_bytes([
+                payload_min[2],
+                payload_min[3],
+                payload_min[4],
+                payload_min[5]
+            ]),
             0
         );
         assert_eq!(
-            u32::from_le_bytes([payload_min[6], payload_min[7], payload_min[8], payload_min[9]]),
+            u32::from_le_bytes([
+                payload_min[6],
+                payload_min[7],
+                payload_min[8],
+                payload_min[9]
+            ]),
             0
         );
 
         // Maximum boundary: endpoint=0xFFFF, cluster=0xFFFFFFFF, attribute=0xFFFFFFFF
         let payload_max = build_read_request_payload(0xFFFF, 0xFFFF_FFFF, 0xFFFF_FFFF);
         assert_eq!(payload_max.len(), 10);
+        assert_eq!(u16::from_le_bytes([payload_max[0], payload_max[1]]), 0xFFFF);
         assert_eq!(
-            u16::from_le_bytes([payload_max[0], payload_max[1]]),
-            0xFFFF
-        );
-        assert_eq!(
-            u32::from_le_bytes([payload_max[2], payload_max[3], payload_max[4], payload_max[5]]),
+            u32::from_le_bytes([
+                payload_max[2],
+                payload_max[3],
+                payload_max[4],
+                payload_max[5]
+            ]),
             0xFFFF_FFFF
         );
         assert_eq!(
-            u32::from_le_bytes([payload_max[6], payload_max[7], payload_max[8], payload_max[9]]),
+            u32::from_le_bytes([
+                payload_max[6],
+                payload_max[7],
+                payload_max[8],
+                payload_max[9]
+            ]),
             0xFFFF_FFFF
         );
     }
@@ -1073,8 +1083,14 @@ mod tests {
         assert_eq!(payload.len(), 18);
 
         let value = f64::from_le_bytes([
-            payload[10], payload[11], payload[12], payload[13], payload[14], payload[15],
-            payload[16], payload[17],
+            payload[10],
+            payload[11],
+            payload[12],
+            payload[13],
+            payload[14],
+            payload[15],
+            payload[16],
+            payload[17],
         ]);
         assert!((value - (-10.5)).abs() < f64::EPSILON);
 

@@ -165,6 +165,15 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
         crate::api::handlers::mapping_handlers::get_channel_mappings_handler,
         crate::api::handlers::mapping_handlers::update_channel_mappings_handler,
 
+        // Template management
+        crate::api::handlers::template_handlers::list_templates,
+        crate::api::handlers::template_handlers::get_template,
+        crate::api::handlers::template_handlers::create_template,
+        crate::api::handlers::template_handlers::create_template_from_channel,
+        crate::api::handlers::template_handlers::update_template,
+        crate::api::handlers::template_handlers::delete_template,
+        crate::api::handlers::template_handlers::apply_template,
+
         // Admin endpoints
         common::admin_api::set_log_level,
         common::admin_api::get_log_level,
@@ -220,6 +229,14 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
             crate::api::handlers::point_handlers::OperationStats,
             crate::api::handlers::point_handlers::OperationStat,
             crate::api::handlers::point_handlers::PointBatchError,
+            // Template schemas
+            crate::dto::TemplateListItem,
+            crate::dto::TemplateDetail,
+            crate::dto::CreateTemplateReq,
+            crate::dto::CreateTemplateFromChannelReq,
+            crate::dto::UpdateTemplateReq,
+            crate::dto::ApplyTemplateReq,
+            crate::dto::TemplateListQuery,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
             common::admin_api::LogLevelResponse,
@@ -233,6 +250,7 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
     ),
     tags(
         (name = "comsrv", description = "Communication Service API"),
+        (name = "templates", description = "Channel template management (snapshot & apply)"),
         (name = "admin", description = "Administration and service management"),
         (name = "network", description = "Network interface configuration")
     )

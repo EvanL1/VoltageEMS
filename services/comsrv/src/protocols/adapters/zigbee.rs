@@ -88,7 +88,12 @@ pub struct ZigbeeChannel {
 
 impl ZigbeeChannel {
     /// Create a new Zigbee channel.
-    pub fn new(config: ZigbeeConfig, channel_id: u32, name: String, points: Vec<PointConfig>) -> Self {
+    pub fn new(
+        config: ZigbeeConfig,
+        channel_id: u32,
+        name: String,
+        points: Vec<PointConfig>,
+    ) -> Self {
         let (event_tx, _) = broadcast::channel(1024);
 
         Self {
@@ -272,19 +277,10 @@ impl ZigbeeChannel {
                 );
             },
             ZigbeeFrame::CommandResponse { seq, status } => {
-                debug!(
-                    channel_id,
-                    seq,
-                    status,
-                    "Zigbee command response"
-                );
+                debug!(channel_id, seq, status, "Zigbee command response");
             },
             ZigbeeFrame::Unknown(data) => {
-                debug!(
-                    channel_id,
-                    len = data.len(),
-                    "Unknown Zigbee frame type"
-                );
+                debug!(channel_id, len = data.len(), "Unknown Zigbee frame type");
             },
         }
     }
@@ -320,7 +316,9 @@ impl ChannelRuntime for ZigbeeChannel {
         // Connect to TCP gateway with timeout
         let stream = tokio::time::timeout(self.config.connect_timeout, TcpStream::connect(&addr))
             .await
-            .map_err(|_| GatewayError::ConnectionTimeout(self.config.connect_timeout.as_millis() as u64))?
+            .map_err(|_| {
+                GatewayError::ConnectionTimeout(self.config.connect_timeout.as_millis() as u64)
+            })?
             .map_err(|e| GatewayError::Connection(format!("TCP connect to {addr} failed: {e}")))?;
 
         // Disable Nagle's algorithm for lower latency
@@ -425,8 +423,7 @@ impl ChannelRuntime for ZigbeeChannel {
                 None => {
                     warn!(
                         channel_id = self.channel_id,
-                        point_id,
-                        "No Zigbee address for control point"
+                        point_id, "No Zigbee address for control point"
                     );
                     continue;
                 },
@@ -453,9 +450,7 @@ impl ChannelRuntime for ZigbeeChannel {
 
             debug!(
                 channel_id = self.channel_id,
-                point_id,
-                command_id,
-                "Sent Zigbee control command"
+                point_id, command_id, "Sent Zigbee control command"
             );
         }
 
@@ -756,7 +751,10 @@ mod tests {
             };
 
             let dp = ZigbeeChannel::process_attribute_report(&report, &lookup);
-            assert!(dp.is_some(), "ZclValue variant #{i} should produce a DataPoint");
+            assert!(
+                dp.is_some(),
+                "ZclValue variant #{i} should produce a DataPoint"
+            );
             let dp = dp.unwrap();
             assert_eq!(dp.id, point_id);
             assert!(

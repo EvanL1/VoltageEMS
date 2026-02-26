@@ -219,8 +219,7 @@ impl BleChannel {
         let target_addr = self.config.device_address.to_uppercase();
 
         // Poll discovered peripherals until timeout
-        let deadline =
-            tokio::time::Instant::now() + self.config.scan_timeout;
+        let deadline = tokio::time::Instant::now() + self.config.scan_timeout;
 
         loop {
             let peripherals = adapter.peripherals().await.map_err(|e| {
@@ -255,17 +254,16 @@ impl BleChannel {
         service_uuid: Uuid,
         char_uuid: Uuid,
     ) -> Option<Characteristic> {
-        peripheral.characteristics().into_iter().find(|c| {
-            c.uuid == char_uuid && c.service_uuid == service_uuid
-        })
+        peripheral
+            .characteristics()
+            .into_iter()
+            .find(|c| c.uuid == char_uuid && c.service_uuid == service_uuid)
     }
 
     /// Parse raw bytes from a BLE characteristic into a data value.
     fn parse_value(data: &[u8], format: DataFormat) -> Option<f64> {
         match format {
-            DataFormat::Bool => {
-                data.first().map(|b| if *b != 0 { 1.0 } else { 0.0 })
-            },
+            DataFormat::Bool => data.first().map(|b| if *b != 0 { 1.0 } else { 0.0 }),
             DataFormat::UInt16 => {
                 if data.len() >= 2 {
                     Some(u16::from_le_bytes([data[0], data[1]]) as f64)
@@ -304,8 +302,7 @@ impl BleChannel {
             DataFormat::Float64 => {
                 if data.len() >= 8 {
                     Some(f64::from_le_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]))
                 } else {
                     None
@@ -314,8 +311,7 @@ impl BleChannel {
             DataFormat::UInt64 => {
                 if data.len() >= 8 {
                     Some(u64::from_le_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]) as f64)
                 } else {
                     None
@@ -324,8 +320,7 @@ impl BleChannel {
             DataFormat::Int64 => {
                 if data.len() >= 8 {
                     Some(i64::from_le_bytes([
-                        data[0], data[1], data[2], data[3],
-                        data[4], data[5], data[6], data[7],
+                        data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]) as f64)
                 } else {
                     None
@@ -432,14 +427,13 @@ impl BleChannel {
         let service_uuid = expand_uuid(&ble_addr.service_uuid)?;
         let char_uuid = expand_uuid(&ble_addr.characteristic_uuid)?;
 
-        let char = Self::find_characteristic(peripheral, service_uuid, char_uuid).ok_or_else(
-            || {
+        let char =
+            Self::find_characteristic(peripheral, service_uuid, char_uuid).ok_or_else(|| {
                 GatewayError::Protocol(format!(
                     "Characteristic {}/{} not found on device",
                     ble_addr.service_uuid, ble_addr.characteristic_uuid
                 ))
-            },
-        )?;
+            })?;
 
         let reversed = point.transform.reverse_apply(value)?;
         let bytes = Self::encode_value(reversed, ble_addr.data_format);
@@ -455,9 +449,7 @@ impl BleChannel {
 
         debug!(
             channel_id = self.channel_id,
-            point_id,
-            value,
-            "BLE write successful"
+            point_id, value, "BLE write successful"
         );
 
         Ok(())
@@ -499,38 +491,29 @@ impl ChannelRuntime for BleChannel {
         let adapter = self.find_adapter().await?;
 
         // Scan and find peripheral
-        let peripheral = match tokio::time::timeout(
-            self.config.scan_timeout,
-            self.find_peripheral(&adapter),
-        )
-        .await
-        {
-            Ok(Ok(p)) => p,
-            Ok(Err(e)) => {
-                self.set_state(ConnectionState::Error);
-                return Err(e);
-            },
-            Err(_) => {
-                self.set_state(ConnectionState::Error);
-                return Err(GatewayError::ConnectionTimeout(
-                    self.config.scan_timeout.as_millis() as u64,
-                ));
-            },
-        };
+        let peripheral =
+            match tokio::time::timeout(self.config.scan_timeout, self.find_peripheral(&adapter))
+                .await
+            {
+                Ok(Ok(p)) => p,
+                Ok(Err(e)) => {
+                    self.set_state(ConnectionState::Error);
+                    return Err(e);
+                },
+                Err(_) => {
+                    self.set_state(ConnectionState::Error);
+                    return Err(GatewayError::ConnectionTimeout(
+                        self.config.scan_timeout.as_millis() as u64,
+                    ));
+                },
+            };
 
         // Connect to peripheral
-        match tokio::time::timeout(
-            self.config.connect_timeout,
-            peripheral.connect(),
-        )
-        .await
-        {
+        match tokio::time::timeout(self.config.connect_timeout, peripheral.connect()).await {
             Ok(Ok(())) => {},
             Ok(Err(e)) => {
                 self.set_state(ConnectionState::Error);
-                return Err(GatewayError::Connection(format!(
-                    "BLE connect failed: {e}"
-                )));
+                return Err(GatewayError::Connection(format!("BLE connect failed: {e}")));
             },
             Err(_) => {
                 self.set_state(ConnectionState::Error);
@@ -541,9 +524,10 @@ impl ChannelRuntime for BleChannel {
         }
 
         // Discover services and characteristics
-        peripheral.discover_services().await.map_err(|e| {
-            GatewayError::Connection(format!("BLE service discovery failed: {e}"))
-        })?;
+        peripheral
+            .discover_services()
+            .await
+            .map_err(|e| GatewayError::Connection(format!("BLE service discovery failed: {e}")))?;
 
         info!(
             channel_id = self.channel_id,
@@ -640,8 +624,7 @@ impl ChannelRuntime for BleChannel {
             },
         };
 
-        let read_points: Vec<&ResolvedBlePoint> =
-            resolved.iter().filter(|rp| !rp.notify).collect();
+        let read_points: Vec<&ResolvedBlePoint> = resolved.iter().filter(|rp| !rp.notify).collect();
 
         if read_points.is_empty() {
             return PollResult::success(DataBatch::new());
@@ -651,20 +634,19 @@ impl ChannelRuntime for BleChannel {
         let mut failures = Vec::new();
 
         for rp in &read_points {
-            let char =
-                match Self::find_characteristic(peripheral, rp.service_uuid, rp.char_uuid) {
-                    Some(c) => c,
-                    None => {
-                        failures.push(crate::protocols::core::traits::PointFailure::with_error(
-                            rp.point.id,
-                            format!(
-                                "Characteristic {}/{} not found",
-                                rp.service_uuid, rp.char_uuid
-                            ),
-                        ));
-                        continue;
-                    },
-                };
+            let char = match Self::find_characteristic(peripheral, rp.service_uuid, rp.char_uuid) {
+                Some(c) => c,
+                None => {
+                    failures.push(crate::protocols::core::traits::PointFailure::with_error(
+                        rp.point.id,
+                        format!(
+                            "Characteristic {}/{} not found",
+                            rp.service_uuid, rp.char_uuid
+                        ),
+                    ));
+                    continue;
+                },
+            };
 
             match peripheral.read(&char).await {
                 Ok(data) => {
@@ -678,7 +660,11 @@ impl ChannelRuntime for BleChannel {
                     } else {
                         failures.push(crate::protocols::core::traits::PointFailure::with_error(
                             rp.point.id,
-                            format!("Failed to parse {} bytes as {:?}", data.len(), rp.data_format),
+                            format!(
+                                "Failed to parse {} bytes as {:?}",
+                                data.len(),
+                                rp.data_format
+                            ),
                         ));
                     }
                 },
@@ -696,8 +682,7 @@ impl ChannelRuntime for BleChannel {
             self.diagnostics.add_read(read_count);
         }
         if !failures.is_empty() {
-            self.diagnostics
-                .add_error(failures.len() as u64);
+            self.diagnostics.add_error(failures.len() as u64);
         }
 
         if failures.is_empty() {
@@ -861,46 +846,31 @@ mod tests {
     #[test]
     fn test_expand_uuid_short() {
         let uuid = expand_uuid("180f").unwrap();
-        assert_eq!(
-            uuid.to_string(),
-            "0000180f-0000-1000-8000-00805f9b34fb"
-        );
+        assert_eq!(uuid.to_string(), "0000180f-0000-1000-8000-00805f9b34fb");
     }
 
     #[test]
     fn test_expand_uuid_short_uppercase() {
         let uuid = expand_uuid("180F").unwrap();
-        assert_eq!(
-            uuid.to_string(),
-            "0000180f-0000-1000-8000-00805f9b34fb"
-        );
+        assert_eq!(uuid.to_string(), "0000180f-0000-1000-8000-00805f9b34fb");
     }
 
     #[test]
     fn test_expand_uuid_short_with_prefix() {
         let uuid = expand_uuid("0x180f").unwrap();
-        assert_eq!(
-            uuid.to_string(),
-            "0000180f-0000-1000-8000-00805f9b34fb"
-        );
+        assert_eq!(uuid.to_string(), "0000180f-0000-1000-8000-00805f9b34fb");
     }
 
     #[test]
     fn test_expand_uuid_32bit() {
         let uuid = expand_uuid("0000180f").unwrap();
-        assert_eq!(
-            uuid.to_string(),
-            "0000180f-0000-1000-8000-00805f9b34fb"
-        );
+        assert_eq!(uuid.to_string(), "0000180f-0000-1000-8000-00805f9b34fb");
     }
 
     #[test]
     fn test_expand_uuid_full() {
         let uuid = expand_uuid("12345678-1234-1234-1234-123456789abc").unwrap();
-        assert_eq!(
-            uuid.to_string(),
-            "12345678-1234-1234-1234-123456789abc"
-        );
+        assert_eq!(uuid.to_string(), "12345678-1234-1234-1234-123456789abc");
     }
 
     #[test]
@@ -1156,9 +1126,15 @@ mod tests {
     #[test]
     fn test_parse_value_insufficient_bytes_extended() {
         // 3 bytes is insufficient for UInt32/Int32/Float32 (need 4)
-        assert_eq!(BleChannel::parse_value(&[0, 0, 0], DataFormat::UInt32), None);
+        assert_eq!(
+            BleChannel::parse_value(&[0, 0, 0], DataFormat::UInt32),
+            None
+        );
         assert_eq!(BleChannel::parse_value(&[0, 0, 0], DataFormat::Int32), None);
-        assert_eq!(BleChannel::parse_value(&[0, 0, 0], DataFormat::Float32), None);
+        assert_eq!(
+            BleChannel::parse_value(&[0, 0, 0], DataFormat::Float32),
+            None
+        );
         // 7 bytes is insufficient for 64-bit types (need 8)
         assert_eq!(
             BleChannel::parse_value(&[0, 0, 0, 0, 0, 0, 0], DataFormat::Float64),
