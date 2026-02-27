@@ -25,6 +25,7 @@ from app.services.auth_service import get_auth_service
 from app.routers.auth import router as auth_router
 from app.routers.broadcast import router as broadcast_router, set_websocket_manager
 from app.routers.config import router as config_router
+from app.routers.calculated_points import router as points_router
 
 # 加载环境变量
 load_dotenv()
@@ -78,6 +79,7 @@ app.include_router(api_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(broadcast_router, prefix="/api/v1")
 app.include_router(config_router, prefix="/api/v1")
+app.include_router(points_router, prefix="/api/v1")
 
 # 全局变量
 websocket_manager = None
@@ -154,6 +156,9 @@ async def startup_event():
         
         # 将数据调度器引用传递给WebSocket管理器
         websocket_manager.data_scheduler = data_scheduler
+        
+        # 将WebSocket管理器保存到app.state，供路由使用
+        app.state.websocket_manager = websocket_manager
         
         # 设置WebSocket管理器到广播路由
         set_websocket_manager(websocket_manager)

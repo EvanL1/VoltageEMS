@@ -46,6 +46,9 @@ pub mod gpio;
 #[cfg(feature = "dl645")]
 pub mod dl645;
 
+#[cfg(feature = "voltage_485")]
+pub mod voltage_485;
+
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 

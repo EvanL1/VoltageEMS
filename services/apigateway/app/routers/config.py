@@ -384,6 +384,15 @@ async def import_config(file: UploadFile = File(...)):
         
         logger.info(f"配置导入成功，共 {len(imported_files)} 个文件（新增: {len(new_files)}, 覆盖: {len(overwritten_files)}）")
         
+        # 导入完成后自动重启 comsrv / modsrv 使配置生效
+        restart_results = {}
+        if _check_docker_socket():
+            logger.info("导入完成，自动重启服务...")
+            restart_results = _restart_services()
+        else:
+            logger.warning("Docker Socket 不可用，跳过自动重启")
+            restart_results = {"skipped": "Docker Socket unavailable"}
+        
         return {
             "success": True,
             "message": "配置导入成功",
@@ -395,7 +404,8 @@ async def import_config(file: UploadFile = File(...)):
                 "files": {
                     "new": new_files,
                     "overwritten": overwritten_files
-                }
+                },
+                "restart": restart_results
             }
         }
         
@@ -427,9 +437,79 @@ async def import_config(file: UploadFile = File(...)):
                 logger.warning(f"删除临时解压目录失败: {e}")
 
 
+RESTART_CONTAINERS = ["voltageems-comsrv", "voltageems-modsrv"]
+
+
+@router.post("/restart-services", response_model=Dict[str, Any])
+async def restart_services():
+    """
+    重启采集和建模服务
+
+    重启 comsrv 和 modsrv 容器，使新导入的配置生效。
+    需要 Docker Socket 挂载。
+    """
+    try:
+        if not _check_docker_socket():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "success": False,
+                    "message": "Docker Socket 不可用，请确认 /var/run/docker.sock 已挂载",
+                },
+            )
+
+        results = _restart_services()
+        all_ok = all(v == "ok" for v in results.values())
+
+        return {
+            "success": all_ok,
+            "message": "服务重启完成" if all_ok else "部分服务重启失败",
+            "data": {"containers": results},
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"重启服务异常: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"success": False, "message": f"重启服务失败: {str(e)}"},
+        )
+
+
 def _check_docker_socket() -> bool:
     """检查 Docker Socket 是否可用"""
     return DOCKER_SOCKET.exists() and os.access(DOCKER_SOCKET, os.R_OK | os.W_OK)
+
+
+def _restart_services() -> Dict[str, Any]:
+    """
+    重启 comsrv 和 modsrv 容器。
+
+    返回每个容器的重启结果。
+    """
+    results = {}
+    for name in RESTART_CONTAINERS:
+        try:
+            r = subprocess.run(
+                ["docker", "restart", name],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if r.returncode == 0:
+                results[name] = "ok"
+                logger.info(f"容器 {name} 重启成功")
+            else:
+                results[name] = f"failed: {r.stderr.strip()}"
+                logger.error(f"容器 {name} 重启失败: {r.stderr.strip()}")
+        except subprocess.TimeoutExpired:
+            results[name] = "timeout"
+            logger.error(f"容器 {name} 重启超时")
+        except Exception as e:
+            results[name] = f"error: {str(e)}"
+            logger.error(f"容器 {name} 重启异常: {e}")
+    return results
 
 
 def _read_upgrade_status() -> Dict[str, Any]:

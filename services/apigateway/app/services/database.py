@@ -125,6 +125,23 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_role_id ON users(role_id)")
             
+            # 创建计算点位表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS calculated_points (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name VARCHAR(100) NOT NULL,
+                    formula TEXT,
+                    unit VARCHAR(50),
+                    imgurl VARCHAR(500),
+                    description TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # 创建计算点位索引
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_calculated_points_name ON calculated_points(name)")
+            
             self.connection.commit()
             cursor.close()
             logger.info("数据库表创建完成")
@@ -292,6 +309,224 @@ class DatabaseManager:
             ORDER BY u.id
         """)
     
+    # ==================== 计算点位相关方法 ====================
+    
+    async def create_calculated_point(
+        self, 
+        name: str, 
+        formula: Optional[str] = None, 
+        unit: Optional[str] = None, 
+        imgurl: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> int:
+        """创建计算点位"""
+        return await self.execute_insert("""
+            INSERT INTO calculated_points (name, formula, unit, imgurl, description)
+            VALUES (?, ?, ?, ?, ?)
+        """, (name, formula, unit, imgurl, description))
+    
+    async def get_calculated_point_by_id(self, point_id: int) -> Optional[sqlite3.Row]:
+        """根据ID获取计算点位"""
+        result = await self.execute_query(
+            "SELECT * FROM calculated_points WHERE id = ?", 
+            (point_id,)
+        )
+        return result[0] if result else None
+    
+    async def get_calculated_point_by_name(self, name: str) -> Optional[sqlite3.Row]:
+        """根据名称获取计算点位"""
+        result = await self.execute_query(
+            "SELECT * FROM calculated_points WHERE name = ?", 
+            (name,)
+        )
+        return result[0] if result else None
+    
+    async def get_all_calculated_points(
+        self, 
+        offset: int = 0, 
+        limit: int = 100,
+        name_filter: Optional[str] = None
+    ) -> tuple[List[sqlite3.Row], int]:
+        """
+        获取计算点位列表（支持分页和筛选）
+        返回: (点位列表, 总数)
+        """
+        # 构建查询条件
+        where_clause = ""
+        params = []
+        
+        if name_filter:
+            where_clause = "WHERE name LIKE ?"
+            params.append(f"%{name_filter}%")
+        
+        # 获取总数
+        count_query = f"SELECT COUNT(*) FROM calculated_points {where_clause}"
+        count_result = await self.execute_query(count_query, tuple(params))
+        total = count_result[0][0] if count_result else 0
+        
+        # 获取数据列表
+        params.extend([limit, offset])
+        data_query = f"""
+            SELECT * FROM calculated_points 
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """
+        items = await self.execute_query(data_query, tuple(params))
+        
+        return items, total
+    
+    async def update_calculated_point(
+        self, 
+        point_id: int,
+        name: Optional[str] = None,
+        formula: Optional[str] = None,
+        unit: Optional[str] = None,
+        imgurl: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> int:
+        """更新计算点位"""
+        # 构建动态更新语句
+        update_fields = []
+        params = []
+        
+        if name is not None:
+            update_fields.append("name = ?")
+            params.append(name)
+        
+        if formula is not None:
+            update_fields.append("formula = ?")
+            params.append(formula)
+        
+        if unit is not None:
+            update_fields.append("unit = ?")
+            params.append(unit)
+        
+        if imgurl is not None:
+            update_fields.append("imgurl = ?")
+            params.append(imgurl)
+        
+        if description is not None:
+            update_fields.append("description = ?")
+            params.append(description)
+        
+        if not update_fields:
+            return 0
+        
+        update_fields.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(point_id)
+        
+        query = f"""
+            UPDATE calculated_points 
+            SET {', '.join(update_fields)}
+            WHERE id = ?
+        """
+        
+        return await self.execute_update(query, tuple(params))
+    
+    async def delete_calculated_point(self, point_id: int) -> bool:
+        """删除计算点位"""
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("DELETE FROM calculated_points WHERE id = ?", (point_id,))
+            affected_rows = cursor.rowcount
+            self.connection.commit()
+            cursor.close()
+            return affected_rows > 0
+        except Exception as e:
+            logger.error(f"删除计算点位失败: {e}")
+            raise
+    
+    async def reset_calculated_points_to_default(self) -> int:
+        """
+        恢复计算点位到默认设置
+        1. 清空表数据
+        2. 从 SQL 文件导入初始数据
+        
+        Returns:
+            导入的记录数
+        """
+        try:
+            import os
+            
+            # SQL 文件路径
+            sql_file_path = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                'core',
+                'calculated_points.sql'
+            )
+            
+            if not os.path.exists(sql_file_path):
+                logger.error(f"初始化 SQL 文件不存在: {sql_file_path}")
+                raise FileNotFoundError(f"初始化 SQL 文件不存在: {sql_file_path}")
+            
+            # 读取 SQL 文件
+            with open(sql_file_path, 'r', encoding='utf-8') as f:
+                sql_content = f.read()
+            
+            cursor = self.connection.cursor()
+            
+            # 清空表数据
+            cursor.execute("DELETE FROM calculated_points")
+            logger.info("已清空 calculated_points 表")
+            
+            # 执行初始化 SQL
+            cursor.executescript(sql_content)
+            self.connection.commit()
+            
+            # 查询导入的记录数
+            cursor.execute("SELECT COUNT(*) FROM calculated_points")
+            count = cursor.fetchone()[0]
+            
+            cursor.close()
+            
+            logger.info(f"已恢复默认设置，导入 {count} 条记录")
+            return count
+            
+        except Exception as e:
+            logger.error(f"恢复默认设置失败: {e}")
+            self.connection.rollback()
+            raise
+    
+    async def check_and_init_calculated_points(self) -> bool:
+        """
+        检查 calculated_points 表是否为空，如果为空则初始化
+        
+        Returns:
+            是否执行了初始化
+        """
+        try:
+            cursor = self.connection.cursor()
+            
+            # 检查表是否存在
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='calculated_points'
+            """)
+            table_exists = cursor.fetchone() is not None
+            
+            if not table_exists:
+                logger.info("calculated_points 表不存在，将在初始化后创建")
+                cursor.close()
+                return False
+            
+            # 检查表是否为空
+            cursor.execute("SELECT COUNT(*) FROM calculated_points")
+            count = cursor.fetchone()[0]
+            cursor.close()
+            
+            if count == 0:
+                logger.info("calculated_points 表为空，开始初始化默认数据")
+                await self.reset_calculated_points_to_default()
+                return True
+            else:
+                logger.info(f"calculated_points 表已有 {count} 条数据，跳过初始化")
+                return False
+                
+        except Exception as e:
+            logger.error(f"检查和初始化 calculated_points 表失败: {e}")
+            return False
+    
     def close(self):
         """关闭数据库连接"""
         if self.connection:
@@ -317,6 +552,9 @@ async def initialize_database():
     global db_manager
     db_manager = DatabaseManager()
     await db_manager.initialize()
+    
+    # 检查并初始化 calculated_points 表
+    await db_manager.check_and_init_calculated_points()
 
 
 async def close_database():

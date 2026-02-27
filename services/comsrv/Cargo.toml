@@ -98,7 +98,7 @@ http-body-util = "0.1"
 redis = { workspace = true }
 
 [features]
-default = ["modbus", "gpio", "openapi"]
+default = ["modbus", "gpio", "voltage_485", "openapi"]
 modbus = ["dep:voltage_modbus"]
 iec104 = ["dep:voltage_iec104"]
 opcua = ["dep:async-opcua"]
@@ -106,6 +106,7 @@ can = ["dep:socketcan"]
 j1939 = ["can", "dep:voltage_j1939"]
 gpio = ["dep:tokio-gpiod"]
 dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP 和串口 RTU）
+voltage_485 = ["dep:tokio-serial"]  # Voltage-485 私有 RS-485 通信协议
 json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protocols
 mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
 http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
