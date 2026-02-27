@@ -294,9 +294,7 @@ pub fn create_voltage_485_channel(
                 }),
                 Err(e) => tracing::warn!(
                     "Ch{} point {} invalid voltage_485 mapping: {}",
-                    channel_id,
-                    pt.base.point_id,
-                    e
+                    channel_id, pt.base.point_id, e
                 ),
             }
         }
@@ -313,9 +311,7 @@ pub fn create_voltage_485_channel(
                 }),
                 Err(e) => tracing::warn!(
                     "Ch{} point {} invalid voltage_485 mapping: {}",
-                    channel_id,
-                    pt.base.point_id,
-                    e
+                    channel_id, pt.base.point_id, e
                 ),
             }
         }
@@ -324,7 +320,7 @@ pub fn create_voltage_485_channel(
     let name = if channel_name.is_empty() {
         format!("v485_{}", channel_id)
     } else {
-        format!("v485_{}", channel_id)
+        channel_name.to_string()
     };
 
     Box::new(Voltage485Channel::new(config, channel_id, name, targets))
