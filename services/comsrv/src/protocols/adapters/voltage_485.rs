@@ -24,8 +24,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 use tokio_serial::{DataBits, Parity, SerialPortBuilderExt, SerialStream, StopBits};
@@ -364,10 +364,7 @@ impl Voltage485Channel {
             .stop_bits(StopBits::One)
             .open_native_async()
             .map_err(|e| {
-                GatewayError::Connection(format!(
-                    "Failed to open {}: {}",
-                    self.config.device, e
-                ))
+                GatewayError::Connection(format!("Failed to open {}: {}", self.config.device, e))
             })
     }
 
@@ -382,9 +379,9 @@ impl Voltage485Channel {
         let timeout_dur = self.config.io_timeout;
 
         // 1. Drain stale bytes left over from previous transactions / echo
+        let drain_timeout = Duration::from_millis(5);
         let mut drain_buf = [0u8; 256];
-        while let Ok(Ok(n)) = timeout(Duration::from_millis(5), serial.read(&mut drain_buf)).await
-        {
+        while let Ok(Ok(n)) = timeout(drain_timeout, serial.read(&mut drain_buf)).await {
             if n == 0 {
                 break;
             }

@@ -294,7 +294,9 @@ pub fn create_voltage_485_channel(
                 }),
                 Err(e) => tracing::warn!(
                     "Ch{} point {} invalid voltage_485 mapping: {}",
-                    channel_id, pt.base.point_id, e
+                    channel_id,
+                    pt.base.point_id,
+                    e
                 ),
             }
         }
@@ -311,7 +313,9 @@ pub fn create_voltage_485_channel(
                 }),
                 Err(e) => tracing::warn!(
                     "Ch{} point {} invalid voltage_485 mapping: {}",
-                    channel_id, pt.base.point_id, e
+                    channel_id,
+                    pt.base.point_id,
+                    e
                 ),
             }
         }

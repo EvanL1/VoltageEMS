@@ -57,7 +57,6 @@ static BUILTIN_PRODUCTS: LazyLock<Vec<BuiltinProduct>> = LazyLock::new(|| {
         include_str!("products/PVInverter.json"),
         include_str!("products/Env.json"),
         include_str!("products/Load.json"),
-        include_str!("products/Voltage485.json"),
     ];
 
     jsons
