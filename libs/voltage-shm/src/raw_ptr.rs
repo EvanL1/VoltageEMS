@@ -58,6 +58,10 @@ impl RawPtrShm {
     ///
     /// Must have exclusive access during initialization.
     pub fn init(&mut self) {
+        // SAFETY: Caller guarantees exclusive access during initialization (documented in
+        // fn-level # Safety). base pointer is valid and sized for shm_size(max_slots).
+        // header_mut() returns a properly aligned pointer, and slot_mut() bounds-checks
+        // each index against max_slots before computing the offset.
         unsafe {
             // Initialize header
             let header = self.header_mut();
@@ -89,6 +93,8 @@ impl RawPtrShm {
         if index >= self.max_slots {
             return core::ptr::null();
         }
+        // SAFETY: index < max_slots (checked above), so HEADER_SIZE + index * SLOT_SIZE
+        // is within the memory region sized to shm_size(max_slots). base is valid per from_raw().
         unsafe { self.base.add(HEADER_SIZE + (index as usize) * SLOT_SIZE) as *const PointSlot }
     }
 
@@ -98,11 +104,15 @@ impl RawPtrShm {
         if index >= self.max_slots {
             return core::ptr::null_mut();
         }
+        // SAFETY: index < max_slots (checked above), so offset is within the memory region.
+        // base is valid and writable per from_raw() contract.
         unsafe { self.base.add(HEADER_SIZE + (index as usize) * SLOT_SIZE) as *mut PointSlot }
     }
 
     /// Check if the shared memory is valid (initialized).
     pub fn is_valid(&self) -> bool {
+        // SAFETY: base pointer is valid per from_raw() contract. header() returns
+        // base cast to *const ShmHeader, which is properly aligned for the memory region.
         unsafe {
             let header = &*self.header();
             header.magic == SHM_MAGIC && header.version == SHM_VERSION
@@ -125,6 +135,7 @@ unsafe impl Sync for RawPtrShm {}
 
 impl ShmOps for RawPtrShm {
     fn slot_count(&self) -> u32 {
+        // SAFETY: header() returns base cast to *const ShmHeader; base is valid per from_raw().
         unsafe { (*self.header()).slot_count() }
     }
 
@@ -133,6 +144,7 @@ impl ShmOps for RawPtrShm {
         if slot.is_null() {
             return false;
         }
+        // SAFETY: slot is non-null and was bounds-checked by self.slot(index).
         unsafe { (*slot).is_valid() }
     }
 
@@ -141,6 +153,7 @@ impl ShmOps for RawPtrShm {
         if slot.is_null() {
             return None;
         }
+        // SAFETY: slot is non-null and within the valid memory region (bounds-checked).
         unsafe { (*slot).try_read() }
     }
 
@@ -149,6 +162,7 @@ impl ShmOps for RawPtrShm {
         if slot.is_null() {
             return (0.0, 0, 0);
         }
+        // SAFETY: slot is non-null and within the valid memory region (bounds-checked).
         unsafe { (*slot).read_spin() }
     }
 
@@ -157,17 +171,20 @@ impl ShmOps for RawPtrShm {
         if slot.is_null() {
             return;
         }
+        // SAFETY: slot is non-null and within the valid writable memory region.
         unsafe {
             (*slot).write(value, timestamp, quality);
         }
 
         // Update header last_update
+        // SAFETY: header_mut() points to the base of the valid writable memory region.
         unsafe {
             (*self.header_mut()).set_last_update(timestamp);
         }
     }
 
     fn last_update(&self) -> u64 {
+        // SAFETY: header() returns base cast to *const ShmHeader; base is valid per from_raw().
         unsafe { (*self.header()).last_update() }
     }
 }
@@ -178,6 +195,7 @@ impl ShmOpsExt for RawPtrShm {
         if slot.is_null() {
             return None;
         }
+        // SAFETY: slot is non-null and within the valid memory region (bounds-checked).
         unsafe { Some((*slot).point_id) }
     }
 
@@ -186,6 +204,7 @@ impl ShmOpsExt for RawPtrShm {
         if slot.is_null() {
             return None;
         }
+        // SAFETY: slot is non-null and within the valid memory region (bounds-checked).
         unsafe { Some((*slot).instance_id) }
     }
 
@@ -194,6 +213,7 @@ impl ShmOpsExt for RawPtrShm {
         if slot.is_null() {
             return None;
         }
+        // SAFETY: slot is non-null and within the valid memory region (bounds-checked).
         unsafe { Some((*slot).point_type) }
     }
 
@@ -202,6 +222,8 @@ impl ShmOpsExt for RawPtrShm {
         if slot.is_null() {
             return;
         }
+        // SAFETY: slot is non-null and within the valid writable memory region.
+        // Writing individual fields is safe as no concurrent access occurs (single writer).
         unsafe {
             (*slot).point_id = point_id;
             (*slot).instance_id = instance_id;

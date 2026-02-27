@@ -1,12 +1,12 @@
-//! Gateway module - 通道运行时抽象层
+//! Gateway module - Channel runtime abstraction layer
 //!
-//! 本模块提供：
-//! - `ChannelRuntime` trait：统一的协议通道接口
-//! - `factory`：根据配置创建通道的工厂函数
-//! - 配置类型和地址解析
+//! This module provides:
+//! - `ChannelRuntime` trait: Unified protocol channel interface
+//! - `factory`: Factory functions for creating channels from configuration
+//! - Configuration types and address parsing
 //!
-//! 各协议适配器（如 ModbusChannel, Iec104Channel 等）直接实现
-//! `ChannelRuntime` trait，无需额外包装层。
+//! Protocol adapters (e.g., ModbusChannel, Iec104Channel) implement
+//! the `ChannelRuntime` trait directly, without extra wrapper layers.
 
 mod address;
 mod config;

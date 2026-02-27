@@ -47,6 +47,13 @@ use tokio::sync::broadcast;
 
 use async_trait::async_trait;
 
+// ============================================================================
+// Default timeout constants for OPC UA
+// ============================================================================
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_SESSION_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -79,19 +86,6 @@ pub enum OpcUaSecurityPolicy {
 }
 
 impl OpcUaSecurityPolicy {
-    /// Convert to opcua SecurityPolicy.
-    #[allow(dead_code)]
-    fn to_security_policy(self) -> SecurityPolicy {
-        match self {
-            Self::None => SecurityPolicy::None,
-            Self::Basic128Rsa15 => SecurityPolicy::Basic128Rsa15,
-            Self::Basic256 => SecurityPolicy::Basic256,
-            Self::Basic256Sha256 => SecurityPolicy::Basic256Sha256,
-            Self::Aes128Sha256RsaOaep => SecurityPolicy::Aes128Sha256RsaOaep,
-            Self::Aes256Sha256RsaPss => SecurityPolicy::Aes256Sha256RsaPss,
-        }
-    }
-
     /// Get the security policy URI string.
     fn to_uri(self) -> &'static str {
         match self {
@@ -273,6 +267,8 @@ pub struct OpcUaChannelConfig {
     string_mapping: HashMap<(u16, String), u32>,
     /// Fallback for guid/bytestring identifiers (rarely used)
     other_mapping: HashMap<String, u32>,
+    /// Point ID -> index lookup for O(1) access (mirrors iec104 pattern)
+    point_index: HashMap<u32, usize>,
 }
 
 impl OpcUaChannelConfig {
@@ -285,9 +281,9 @@ impl OpcUaChannelConfig {
             security_policy: OpcUaSecurityPolicy::None,
             message_security_mode: OpcUaMessageSecurityMode::None,
             identity: OpcUaIdentity::Anonymous,
-            connect_timeout: Duration::from_secs(10),
-            session_timeout: Duration::from_secs(60),
-            request_timeout: Duration::from_secs(30),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            session_timeout: DEFAULT_SESSION_TIMEOUT,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
             subscription: SubscriptionConfig::default(),
             monitored_item: MonitoredItemConfig::default(),
             trust_server_certs: true,
@@ -297,6 +293,7 @@ impl OpcUaChannelConfig {
             numeric_mapping: HashMap::new(),
             string_mapping: HashMap::new(),
             other_mapping: HashMap::new(),
+            point_index: HashMap::new(),
         }
     }
 
@@ -386,8 +383,9 @@ impl OpcUaChannelConfig {
 
     /// Add point configurations.
     pub fn with_points(mut self, points: Vec<PointConfig>) -> Self {
-        // Build NodeID mapping from point configs - split by identifier type
-        for point in &points {
+        // Build NodeID mapping and point_index from point configs
+        for (i, point) in points.iter().enumerate() {
+            self.point_index.insert(point.id, i);
             if let ProtocolAddress::OpcUa(addr) = &point.address {
                 let ns = addr.namespace_index;
                 let node_id = &addr.node_id;
@@ -428,6 +426,13 @@ impl OpcUaChannelConfig {
         // Fallback to other_mapping for guid/bytestring
         let key = make_node_id_key(namespace_index, identifier);
         self.other_mapping.get(&key).copied()
+    }
+
+    /// Find point config by ID (O(1) lookup).
+    pub fn find_point_config(&self, point_id: u32) -> Option<&PointConfig> {
+        self.point_index
+            .get(&point_id)
+            .map(|&idx| &self.points[idx])
     }
 
     /// Find point_id by NodeId directly (O(1) lookup without allocation for numeric IDs).
@@ -519,11 +524,11 @@ fn default_app_name() -> String {
 }
 
 fn default_opcua_connect_timeout() -> u64 {
-    10000
+    DEFAULT_CONNECT_TIMEOUT.as_millis() as u64
 }
 
 fn default_session_timeout() -> u64 {
-    60000
+    DEFAULT_SESSION_TIMEOUT.as_millis() as u64
 }
 
 fn default_trust_certs() -> bool {
@@ -642,15 +647,26 @@ impl OpcUaChannel {
             .unwrap_or(ConnectionState::Error)
     }
 
-    /// Record an error (lock-free).
-    #[allow(dead_code)]
-    fn record_error(&self, error: &str) {
-        self.diagnostics.record_error(error.to_string());
+    /// Find point config by ID (O(1) via config's point_index).
+    fn find_point(&self, id: u32) -> Option<&PointConfig> {
+        self.config.find_point_config(id)
     }
 
-    /// Find point config by ID.
-    fn find_point(&self, id: u32) -> Option<&PointConfig> {
-        self.config.points.iter().find(|p| p.id == id)
+    /// Resolve point ID to OPC UA address. Returns error tuple for failures vec.
+    fn resolve_opcua_addr(
+        &self,
+        id: u32,
+    ) -> std::result::Result<
+        (&PointConfig, &crate::protocols::core::point::OpcUaAddress),
+        (u32, String),
+    > {
+        let point = self
+            .find_point(id)
+            .ok_or_else(|| (id, "Point not found".to_string()))?;
+        match &point.address {
+            ProtocolAddress::OpcUa(addr) => Ok((point, addr)),
+            _ => Err((id, "Invalid address type".to_string())),
+        }
     }
 
     /// Create subscription and add monitored items.
@@ -760,6 +776,31 @@ impl OpcUaChannel {
             .write(write_values)
             .await
             .map_err(|e| GatewayError::Protocol(format!("Write failed: {}", e)))
+    }
+
+    /// Write a single OPC UA value. Returns Ok(()) on success or error message.
+    async fn write_single_value(
+        &self,
+        node_id_str: &str,
+        namespace_index: u16,
+        variant: Variant,
+    ) -> std::result::Result<(), String> {
+        let node_id = parse_node_id(node_id_str, namespace_index);
+        let write_value = WriteValue {
+            node_id,
+            attribute_id: AttributeId::Value as u32,
+            index_range: UAString::null(),
+            value: DataValue::new_now(variant),
+        };
+        let results = self
+            .write_nodes(std::slice::from_ref(&write_value))
+            .await
+            .map_err(|e| e.to_string())?;
+        if results.first().map(|s| s.is_good()).unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(format!("Write failed: {:?}", results.first()))
+        }
     }
 }
 
@@ -926,54 +967,25 @@ impl ProtocolClient for OpcUaChannel {
         let mut failures = Vec::with_capacity(commands.len());
 
         for cmd in commands {
-            // Find point config
-            let point = match self.find_point(cmd.id) {
-                Some(p) => p,
-                None => {
-                    failures.push((cmd.id, "Point not found".into()));
-                    continue;
-                },
-            };
-
-            // Get OPC UA address
-            let opc_addr = match &point.address {
-                ProtocolAddress::OpcUa(addr) => addr,
-                _ => {
-                    failures.push((cmd.id, "Invalid address type".into()));
-                    continue;
-                },
-            };
-
-            // Apply reverse transform (for boolean values)
-            let value = point.transform.apply_bool(cmd.value);
-
-            // Build write request
-            let node_id = parse_node_id(&opc_addr.node_id, opc_addr.namespace_index);
-            let write_value = WriteValue {
-                node_id,
-                attribute_id: AttributeId::Value as u32,
-                index_range: UAString::null(),
-                value: DataValue::new_now(Variant::Boolean(value)),
-            };
-
-            // Execute write - use slice::from_ref to avoid vec! heap allocation
-            match self.write_nodes(std::slice::from_ref(&write_value)).await {
-                Ok(results) => {
-                    if results.first().map(|s| s.is_good()).unwrap_or(false) {
-                        success_count += 1;
-                    } else {
-                        failures.push((cmd.id, format!("Write failed: {:?}", results.first())));
-                    }
-                },
+            let (point, opc_addr) = match self.resolve_opcua_addr(cmd.id) {
+                Ok(v) => v,
                 Err(e) => {
-                    failures.push((cmd.id, e.to_string()));
+                    failures.push(e);
+                    continue;
                 },
+            };
+            let value = point.transform.apply_bool(cmd.value);
+            let (nid, ns) = (opc_addr.node_id.clone(), opc_addr.namespace_index);
+            match self
+                .write_single_value(&nid, ns, Variant::Boolean(value))
+                .await
+            {
+                Ok(()) => success_count += 1,
+                Err(e) => failures.push((cmd.id, e)),
             }
         }
 
-        // Update diagnostics (lock-free)
         self.diagnostics.add_write(success_count as u64);
-
         Ok(WriteResult {
             success_count,
             failures,
@@ -985,25 +997,13 @@ impl ProtocolClient for OpcUaChannel {
         let mut failures = Vec::with_capacity(adjustments.len());
 
         for adj in adjustments {
-            // Find point config
-            let point = match self.find_point(adj.id) {
-                Some(p) => p,
-                None => {
-                    failures.push((adj.id, "Point not found".into()));
+            let (point, opc_addr) = match self.resolve_opcua_addr(adj.id) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push(e);
                     continue;
                 },
             };
-
-            // Get OPC UA address
-            let opc_addr = match &point.address {
-                ProtocolAddress::OpcUa(addr) => addr,
-                _ => {
-                    failures.push((adj.id, "Invalid address type".into()));
-                    continue;
-                },
-            };
-
-            // Apply reverse transform
             let raw_value = match point.transform.reverse_apply(adj.value) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1011,34 +1011,17 @@ impl ProtocolClient for OpcUaChannel {
                     continue;
                 },
             };
-
-            // Build write request
-            let node_id = parse_node_id(&opc_addr.node_id, opc_addr.namespace_index);
-            let write_value = WriteValue {
-                node_id,
-                attribute_id: AttributeId::Value as u32,
-                index_range: UAString::null(),
-                value: DataValue::new_now(Variant::Double(raw_value)),
-            };
-
-            // Execute write - use slice::from_ref to avoid vec! heap allocation
-            match self.write_nodes(std::slice::from_ref(&write_value)).await {
-                Ok(results) => {
-                    if results.first().map(|s| s.is_good()).unwrap_or(false) {
-                        success_count += 1;
-                    } else {
-                        failures.push((adj.id, format!("Write failed: {:?}", results.first())));
-                    }
-                },
-                Err(e) => {
-                    failures.push((adj.id, e.to_string()));
-                },
+            let (nid, ns) = (opc_addr.node_id.clone(), opc_addr.namespace_index);
+            match self
+                .write_single_value(&nid, ns, Variant::Double(raw_value))
+                .await
+            {
+                Ok(()) => success_count += 1,
+                Err(e) => failures.push((adj.id, e)),
             }
         }
 
-        // Update diagnostics (lock-free)
         self.diagnostics.add_write(success_count as u64);
-
         Ok(WriteResult {
             success_count,
             failures,
@@ -1135,14 +1118,14 @@ async fn handle_data_change(
     let mut batch = DataBatch::new();
 
     for (node_id, data_value) in items {
-        // Find mapped point_id directly from NodeId (single format! call)
+        // Find mapped point_id directly from NodeId (O(1), no allocation for numeric IDs)
         let point_id = match config.find_point_id_by_node_id(node_id) {
             Some(id) => id,
             None => continue, // Skip unconfigured nodes
         };
 
-        // Find point config
-        let point_config = config.points.iter().find(|p| p.id == point_id);
+        // Find point config (O(1) via point_index)
+        let point_config = config.find_point_config(point_id);
 
         if let Some(dp) = convert_data_value_with_id(point_id, point_config, data_value) {
             batch.add(dp);

@@ -10,7 +10,9 @@ bytes = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 sqlx = { workspace = true }
+itoa = { workspace = true }
 rustc-hash = { workspace = true } # Fast FxHashMap for small integer keys
+arc-swap = "1.7"  # Lock-free atomic pointer swap for RoutingCache
 voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 

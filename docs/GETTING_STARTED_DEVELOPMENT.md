@@ -162,7 +162,7 @@ pnpm dev
 
 ```
 VoltageEMS/
-├── apps/                    # 前端应用（Vue 3）
+├── apps/                    # 前端应用（Vue 3 + Element Plus + ECharts）
 │   ├── src/
 │   │   ├── views/          # 页面组件
 │   │   ├── components/     # 通用组件
@@ -170,28 +170,45 @@ VoltageEMS/
 │   └── package.json
 │
 ├── services/                # 后端服务
-│   ├── comsrv/             # 通信服务（协议、通道）
+│   ├── comsrv/             # 通信服务 - 工业协议驱动、通道管理 (Rust)
 │   │   ├── src/
 │   │   │   ├── api/        # REST API 处理器
 │   │   │   ├── core/       # 核心逻辑
-│   │   │   └── protocols/  # 协议实现
+│   │   │   └── protocols/  # 协议实现（10 种）
 │   │   └── Cargo.toml
 │   │
-│   └── modsrv/             # 模型服务（实例、路由、规则）
-│       ├── src/
-│       │   ├── api/        # REST API 处理器
-│       │   └── rule_routes.rs  # 规则 API
-│       └── Cargo.toml
+│   ├── modsrv/             # 模型服务 - 产品定义、设备实例、规则引擎 (Rust)
+│   │   ├── src/
+│   │   │   ├── api/        # REST API 处理器
+│   │   │   └── rule_routes.rs  # 规则 API
+│   │   └── Cargo.toml
+│   │
+│   └── python-services/    # Python 辅助服务 (FastAPI)
+│       ├── hissrv/         # 历史数据服务 (InfluxDB 3.x)
+│       ├── apigateway/     # API 网关 (WebSocket, JWT)
+│       ├── netsrv/         # 网络服务 (MQTT)
+│       └── alarmsrv/       # 告警管理
 │
-├── libs/                    # 共享库
-│   ├── common/             # 通用工具（Redis、日志、错误）
+├── libs/                    # 13 个共享 Rust 库
+│   ├── voltage-core/       # 核心类型与编解码器（no_std）
 │   ├── voltage-model/      # 数据模型、产品定义
-│   ├── voltage-rtdb/       # 实时数据库（Redis + 共享内存）
+│   ├── voltage-routing/    # 数据流路由
+│   ├── voltage-rtdb/       # 实时数据库（Redis 抽象）
+│   ├── voltage-rtdb-shm/   # 共享内存 RTDB（零拷贝）
+│   ├── voltage-shm/        # 共享内存读写器
+│   ├── voltage-infra/      # 基础设施（Redis、SQLite）
+│   ├── voltage-calc/       # 表达式求值引擎
 │   ├── voltage-rules/      # 规则引擎
-│   └── voltage-routing/    # 路由逻辑
+│   ├── voltage-sim/        # 波形生成器
+│   ├── voltage-schema-macro/ # SQL DDL 过程宏
+│   ├── common/             # 服务引导与共享工具
+│   └── errors/             # 统一错误类型
 │
 ├── tools/
-│   └── monarch/            # CLI 管理工具
+│   ├── monarch/            # CLI 配置与服务管理工具
+│   └── simulator/          # Modbus TCP/RTU 从站模拟器
+│
+├── firmware/                # 嵌入式固件原型（ARM/STM32）
 │
 ├── config/                  # 配置文件
 │   ├── global.yaml         # 全局配置

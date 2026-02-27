@@ -100,12 +100,12 @@ impl CanClient {
 
     /// Add CAN points to the client.
     /// This should be called after `new()` and before `connect()`.
-    pub fn add_points(&mut self, points: Vec<super::config::CanPoint>) {
+    pub fn add_points(&mut self, points: Vec<super::config::CanPoint>) -> Result<()> {
         #[cfg(feature = "tracing-support")]
         tracing::info!("Adding {} CAN points to client", points.len());
 
         let point_manager = Arc::get_mut(&mut self.point_manager)
-            .expect("PointManager should be uniquely owned before connect()");
+            .ok_or_else(|| GatewayError::Config("PointManager has multiple owners".into()))?;
 
         for point in points {
             #[cfg(feature = "tracing-support")]
@@ -123,6 +123,8 @@ impl CanClient {
 
         #[cfg(feature = "tracing-support")]
         tracing::info!("CAN points added successfully");
+
+        Ok(())
     }
 
     /// Start the CAN frame receive task.
@@ -303,18 +305,29 @@ impl CanClient {
                     break;
                 }
 
-                // Apply mappings to decode cached frames
-                let cache = frame_cache.read().await;
+                // Apply mappings to decode cached frames.
+                // Scope the read lock so it's dropped before any .await calls below,
+                // preventing potential deadlocks if the handler tries to acquire a write lock.
+                let mapping_result = {
+                    let cache = frame_cache.read().await;
 
-                #[cfg(feature = "tracing-support")]
-                {
-                    tracing::info!("Frame cache has {} CAN IDs", cache.len());
-                    for (can_id, frame_data) in cache.iter() {
-                        tracing::debug!("  CAN ID 0x{:03X}: {} bytes", can_id, frame_data.len());
+                    #[cfg(feature = "tracing-support")]
+                    {
+                        tracing::info!("Frame cache has {} CAN IDs", cache.len());
+                        for (can_id, frame_data) in cache.iter() {
+                            tracing::debug!(
+                                "  CAN ID 0x{:03X}: {} bytes",
+                                can_id,
+                                frame_data.len()
+                            );
+                        }
                     }
-                }
 
-                match point_manager.apply_mappings(&cache) {
+                    point_manager.apply_mappings(&cache)
+                    // cache (RwLockReadGuard) is dropped here
+                };
+
+                match mapping_result {
                     Ok(decoded_points) => {
                         #[cfg(feature = "tracing-support")]
                         tracing::info!("Decoded {} points from frame cache", decoded_points.len());
@@ -356,7 +369,7 @@ impl CanClient {
                             let batch_arc = Arc::new(batch);
                             let _ = event_tx.send(DataEvent::DataUpdate(Arc::clone(&batch_arc)));
 
-                            // Call handler
+                            // Call handler (no lock held — safe to .await)
                             if let Some(ref handler) = event_handler {
                                 #[cfg(feature = "tracing-support")]
                                 tracing::debug!("Calling on_data_update handler");

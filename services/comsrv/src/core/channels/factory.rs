@@ -211,7 +211,7 @@ pub fn create_can_channel(
     channel_id: u32,
     can_interface: &str,
     points: Vec<CanPoint>,
-) -> Box<dyn ChannelRuntime> {
+) -> crate::protocols::core::error::Result<Box<dyn ChannelRuntime>> {
     let config = CanConfig {
         can_interface: can_interface.to_string(),
         bitrate: 250000,
@@ -222,7 +222,7 @@ pub fn create_can_channel(
     let channel_name = format!("can_{}", channel_id);
     // CanClient directly implements ChannelRuntime - no wrapper needed
     let mut client = CanClient::new(config, channel_id, channel_name);
-    client.add_points(points);
+    client.add_points(points)?;
 
-    Box::new(client)
+    Ok(Box::new(client))
 }

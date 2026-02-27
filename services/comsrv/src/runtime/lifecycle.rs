@@ -3,6 +3,8 @@
 //! Provides orchestration functions for service startup, shutdown, and maintenance tasks
 //! as part of the runtime orchestration layer
 
+use std::time::Duration;
+
 use crate::core::channels::ChannelManager;
 use crate::core::config::ConfigManager;
 use crate::error::Result;
@@ -11,84 +13,26 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use voltage_rtdb::{RedisRtdb, Rtdb};
 
-/// Start the communication service with optimized performance and monitoring
+// ============================================================================
+// Lifecycle timing constants
+// ============================================================================
+
+/// Brief wait after channel initialization to ensure all channels are ready
+const INIT_WAIT: Duration = Duration::from_millis(500);
+
+/// Per-channel timeout during graceful shutdown
+const CHANNEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval between periodic cleanup/statistics cycles
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Overall timeout for the service shutdown sequence
+const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Start the communication service: create and connect all configured channels concurrently.
 ///
-/// Initializes and starts all configured communication channels using the provided
-/// configuration manager and protocol factory. This function handles channel creation,
-/// startup, and error reporting with comprehensive metrics collection.
-///
-/// # Arguments
-///
-/// * `config_manager` - Shared configuration manager containing channel definitions
-/// * `channel_manager` - Thread-safe channel manager for creating and managing channels
-///
-/// # Returns
-///
-/// * `Ok(())` - If the service starts successfully
-/// * `Err(error)` - If critical errors occur during startup
-///
-/// # Features
-///
-/// - **Parallel Channel Creation**: Creates multiple channels concurrently
-/// - **Error Isolation**: Continues operation even if some channels fail
-/// - **Metrics Integration**: Records channel status and performance metrics
-/// - **Graceful Degradation**: Provides service even with partial channel failures
-///
-/// # Service Architecture
-///
-/// ```text
-/// ┌─────────────────────┐    ┌─────────────────────┐
-/// │   Configuration     │───►│  Channel Factory    │
-/// │   Manager           │    │                     │
-/// └─────────────────────┘    └─────────────────────┘
-///           │                           │
-///           ▼                           ▼
-/// ┌─────────────────────┐    ┌─────────────────────┐
-/// │   Channel Config    │───►│  Protocol Channels  │
-/// │   Validation        │    │  (Modbus/IEC/...)   │
-/// └─────────────────────┘    └─────────────────────┘
-///                                       │
-///                                       ▼
-///                           ┌─────────────────────┐
-///                           │   Metrics & Status  │
-///                           │   Monitoring        │
-///                           └─────────────────────┘
-/// ```
-///
-/// # Error Handling
-///
-/// The function implements robust error handling:
-/// - Individual channel failures don't stop service startup
-/// - Detailed error logging with context
-/// - Metrics recording for failed operations
-/// - Graceful degradation with partial functionality
-///
-/// # Examples
-///
-/// ```ignore
-/// use std::sync::Arc;
-///
-/// use comsrv::core::channel_manager;
-///
-/// #[tokio::main]
-/// async fn main() -> errors::VoltageResult<()> {
-///     use common::DEFAULT_REDIS_URL;
-///
-///     let config_manager = Arc::new(ConfigManager::load().await?);
-///     let channel_manager = Arc::new(ChannelManager::new(
-///         protocol_factory,
-///         DEFAULT_REDIS_URL.into(),
-///     ));
-///
-///     let configured_count = channel_manager::start_communication_channels(config_manager, channel_manager).await?;
-///     println!("Started with {} configured channels", configured_count);
-///     Ok(())
-/// }
-/// ```
-///
-/// This function provides a convenient public interface for starting the communication service.
-///
-/// # Lock-free channel_manager
+/// Individual channel failures don't stop service startup (graceful degradation).
+/// Returns the total number of configured channels.
 pub async fn start_communication_service(
     config_manager: Arc<ConfigManager>,
     channel_manager: Arc<ChannelManager<RedisRtdb>>,
@@ -208,7 +152,7 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
     );
 
     // Wait briefly to ensure all channels are initialized
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(INIT_WAIT).await;
 
     // Phase 2: Establish connections for all channels in batch
     info!("Starting connection phase for all initialized channels...");
@@ -231,76 +175,7 @@ pub(crate) async fn start_communication_service_generic<R: Rtdb + 'static>(
     Ok(total_configured)
 }
 
-/// Handle graceful shutdown of the communication service
-///
-/// Performs an orderly shutdown of all communication channels, ensuring that
-/// ongoing operations complete properly and resources are released cleanly.
-/// Updates metrics to reflect the service shutdown state.
-///
-/// # Arguments
-///
-/// * `factory` - Thread-safe protocol factory managing all active channels
-///
-/// # Features
-///
-/// - **Graceful Channel Shutdown**: Stops all channels in an orderly manner
-/// - **Resource Cleanup**: Ensures proper release of network and system resources
-/// - **Metrics Update**: Records service shutdown in monitoring systems
-/// - **Error Handling**: Logs but doesn't fail on individual channel shutdown errors
-///
-/// # Shutdown Process
-///
-/// ```text
-/// ┌─────────────────────┐
-/// │  Shutdown Signal    │
-/// │  Received           │
-/// └─────────────────────┘
-///           │
-///           ▼
-/// ┌─────────────────────┐
-/// │  Stop All Channels  │
-/// │  (Async)            │
-/// └─────────────────────┘
-///           │
-///           ▼
-/// ┌─────────────────────┐
-/// │  Update Metrics     │
-/// │  (Service Stopped)  │
-/// └─────────────────────┘
-///           │
-///           ▼
-/// ┌─────────────────────┐
-/// │  Cleanup Resources  │
-/// │  Complete           │
-/// └─────────────────────┘
-/// ```
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use std::sync::Arc;
-///
-/// use comsrv::runtime::shutdown_handler;
-///
-/// async fn main() {
-///     // Assume channel_manager is initialized
-///     let channel_manager = todo!();
-///
-///     // Setup signal handlers
-///     let factory_clone = channel_manager.clone();
-///     tokio::spawn(async move {
-///         if let Ok(_) = tokio::signal::ctrl_c().await {
-///             shutdown_handler(factory_clone).await;
-///         }
-///     });
-///
-///     // Main service loop...
-/// }
-/// ```
-///
-/// This function provides a convenient public interface for graceful service shutdown.
-///
-/// # Lock-free channel_manager
+/// Gracefully shutdown all communication channels concurrently with per-channel timeout.
 pub async fn shutdown_handler(channel_manager: Arc<ChannelManager<RedisRtdb>>) {
     shutdown_handler_generic(channel_manager).await
 }
@@ -327,7 +202,6 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
 
     // Stop all channels concurrently with per-channel timeout
     use futures::future::join_all;
-    const CHANNEL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     let shutdown_futures: Vec<_> = channel_ids
         .into_iter()
@@ -383,93 +257,9 @@ pub(crate) async fn shutdown_handler_generic<R: Rtdb + 'static>(
     );
 }
 
-/// Start the periodic cleanup task for resource management
+/// Start a periodic background task that logs channel statistics every 5 minutes.
 ///
-/// Launches a background task that periodically cleans up idle channels and
-/// logs system statistics. This helps prevent resource leaks and provides
-/// operational visibility into the service state.
-///
-/// # Arguments
-///
-/// * `factory` - Thread-safe protocol factory to monitor and clean up
-///
-/// # Returns
-///
-/// A `JoinHandle` for the cleanup task that can be used to cancel or wait for completion
-///
-/// # Features
-///
-/// - **Idle Channel Cleanup**: Removes channels that have been idle for extended periods
-/// - **Statistics Logging**: Regular logging of channel and system statistics
-/// - **Resource Monitoring**: Tracks memory and connection usage
-/// - **Configurable Intervals**: Adjustable cleanup and reporting intervals
-///
-/// # Configuration
-///
-/// - **Cleanup Interval**: 5 minutes (300 seconds)
-/// - **Idle Timeout**: 1 hour (3600 seconds)
-/// - **Statistics Interval**: Every cleanup cycle
-///
-/// # Task Lifecycle
-///
-/// ```text
-/// ┌─────────────────────┐
-/// │  Task Started       │
-/// └─────────────────────┘
-///           │
-///           ▼
-/// ┌─────────────────────┐    ┌─────────────────────┐
-/// │  Wait 5 Minutes     │◄───│  Cleanup Cycle      │
-/// └─────────────────────┘    │  Complete           │
-///           │                └─────────────────────┘
-///           ▼                           ▲
-/// ┌─────────────────────┐               │
-/// │  Cleanup Idle       │               │
-/// │  Channels           │               │
-/// └─────────────────────┘               │
-///           │                           │
-///           ▼                           │
-/// ┌─────────────────────┐               │
-/// │  Log Statistics     │───────────────┘
-/// └─────────────────────┘
-/// ```
-///
-/// # Returns
-///
-/// Returns a tuple of:
-/// - `JoinHandle<()>` - The task handle to await completion
-/// - `CancellationToken` - Token to gracefully stop the task
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use std::sync::Arc;
-///
-/// use comsrv::runtime::start_cleanup_task;
-///
-/// async fn main() {
-///     // Assume channel_manager and configured_count are initialized
-///     let channel_manager = todo!();
-///     let configured_count = 10;
-///
-///     let (cleanup_handle, cancel_token) = start_cleanup_task(channel_manager, configured_count);
-///
-///     // Keep the handle to cancel if needed
-///     tokio::select! {
-///         _ = cleanup_handle => {
-///             println!("Cleanup task completed");
-///         }
-///         _ = tokio::signal::ctrl_c() => {
-///             println!("Shutting down cleanup task");
-///             cancel_token.cancel();
-///         }
-///     }
-/// }
-/// ```
-///
-/// This function provides a convenient public interface for resource cleanup management.
-///
-/// # Lock-free channel_manager
+/// Returns `(JoinHandle, CancellationToken)` for task lifecycle management.
 pub fn start_cleanup_task(
     channel_manager: Arc<ChannelManager<RedisRtdb>>,
     configured_count: usize,
@@ -489,7 +279,8 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
     let task_token = token.clone();
 
     let handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // 5 minutes
+        let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
@@ -590,7 +381,7 @@ pub(crate) async fn shutdown_services_generic<R: Rtdb + 'static>(
     cleanup_handle.abort();
 
     // Wait for tasks with timeout
-    let shutdown_timeout = tokio::time::Duration::from_secs(30);
+    let shutdown_timeout = SERVICE_SHUTDOWN_TIMEOUT;
 
     // Wait for server task
     match tokio::time::timeout(shutdown_timeout, server_handle).await {

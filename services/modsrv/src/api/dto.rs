@@ -63,10 +63,12 @@ pub enum RoutingType {
     Action,
 }
 
-/// Point type for routing requests (M=Measurement, A=Action)
+/// API-layer subset of `voltage_model::PointType` (M/A only).
 ///
 /// Used in RoutingRequest to explicitly specify whether the point_id
 /// refers to a measurement point or an action point.
+/// Unlike the full `voltage_model::PointType` which includes T/S/C/A,
+/// modsrv only routes Measurement and Action points.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum PointType {
     /// Measurement point routing
@@ -143,6 +145,10 @@ pub struct CreateInstanceDto {
     pub instance_name: String, // Instance name for Redis keys
     #[schema(example = "pv_inverter")]
     pub product_name: String,
+    /// Parent instance ID for topology hierarchy (required for non-root products)
+    #[schema(example = 1)]
+    #[serde(default)]
+    pub parent_id: Option<u32>,
     #[schema(value_type = Object, example = json!({"rated_power": 5000.0, "manufacturer": "Huawei"}))]
     pub properties: Option<HashMap<String, serde_json::Value>>,
 }

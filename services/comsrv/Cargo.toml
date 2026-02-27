@@ -19,6 +19,7 @@ errors = { path = "../../libs/errors", features = ["axum-support"] }
 voltage-model = { path = "../../libs/voltage-model" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+voltage-rtdb-shm = { path = "../../libs/voltage-rtdb-shm" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 
 # Protocol libraries
@@ -27,9 +28,6 @@ voltage_iec104 = { version = "0.1", optional = true }
 voltage_j1939 = { version = "0.1", optional = true }
 async-opcua = { version = "0.14", default-features = false, features = ["client"], optional = true }
 tokio-serial = { version = "5.4", optional = true }
-
-# Lazy initialization
-once_cell = { workspace = true }
 
 # Core async runtime
 tokio = { workspace = true }
@@ -44,7 +42,7 @@ tracing-appender = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
-serde_yaml = { workspace = true }
+serde_yml = { workspace = true }
 serde_json = { workspace = true }
 csv = { workspace = true }
 
@@ -56,6 +54,9 @@ rumqttc = { version = "0.24", optional = true }
 
 # HTTP client for polling/webhook data collection
 reqwest = { workspace = true, optional = true }
+
+# BLE GATT client for Bluetooth Low Energy devices
+btleplug = { version = "0.11", optional = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -70,7 +71,9 @@ tower-http = { workspace = true }
 
 # Data structures
 dashmap = { workspace = true }
+itoa = { workspace = true }  # Stack-allocated integer formatting
 arc-swap = "1.7"
+parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
 bytes = { workspace = true }
 
 # Utils
@@ -106,6 +109,9 @@ dl645 = ["dep:tokio-serial"]  # DL/T 645-2007 智能电表协议（支持 TCP �
 json-mapping = ["dep:serde_json_path"]  # JSONPath mapping for MQTT/HTTP protocols
 mqtt = ["json-mapping", "dep:rumqttc"]  # MQTT protocol (event-driven, JSON payload)
 http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON payload)
+ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)
+zigbee = []  # Zigbee protocol via TCP gateway (Raw ZCL, ZNP, EZSP)
+matter = []  # Matter smart home protocol (UDP transport, self-implemented framing)
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []

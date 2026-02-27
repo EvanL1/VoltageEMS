@@ -21,7 +21,7 @@ use modsrv::{
     Result, RuleScheduler, DEFAULT_TICK_MS,
 };
 use voltage_calc::RtdbStateStore;
-use voltage_rtdb::{is_shm_available, SharedConfig, UnifiedReader};
+use voltage_rtdb_shm::{is_shm_available, SharedConfig, UnifiedReader};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -78,10 +78,10 @@ async fn main() -> Result<()> {
 
         // Helper to load usize value from service_config
         async fn load_usize(pool: &sqlx::SqlitePool, key: &str) -> Option<usize> {
-            sqlx::query_scalar::<_, String>(&format!(
-                "SELECT value FROM service_config WHERE service_name = 'global' AND key = '{}'",
-                key
-            ))
+            sqlx::query_scalar::<_, String>(
+                "SELECT value FROM service_config WHERE service_name = 'global' AND key = ?",
+            )
+            .bind(key)
             .fetch_optional(pool)
             .await
             .ok()
@@ -101,8 +101,9 @@ async fn main() -> Result<()> {
     // Simplified: Header + PointSlots only, indexes built from RoutingCache
     // Added retry mechanism for cold start race condition
     let shared_reader = {
-        const MAX_RETRIES: u32 = 3;
-        const RETRY_DELAY: Duration = Duration::from_secs(2);
+        const MAX_RETRIES: u32 = 10;
+        const BASE_DELAY_MS: u64 = 1000;
+        const MAX_DELAY_MS: u64 = 15000;
         let mut retry_count = 0;
 
         loop {
@@ -119,13 +120,15 @@ async fn main() -> Result<()> {
                         break Some(Arc::new(reader));
                     },
                     Err(e) if retry_count < MAX_RETRIES => {
+                        let delay_ms = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
                         info!(
-                            "SharedMemory not ready (retry {}/{}): {}",
+                            "SharedMemory not ready (retry {}/{}, next in {}ms): {}",
                             retry_count + 1,
                             MAX_RETRIES,
+                            delay_ms,
                             e
                         );
-                        tokio::time::sleep(RETRY_DELAY).await;
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                         retry_count += 1;
                     },
                     Err(e) => {
@@ -137,15 +140,17 @@ async fn main() -> Result<()> {
                     },
                 }
             } else if retry_count < MAX_RETRIES {
+                let delay_ms = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
                 info!(
-                    "SharedMemory path not found (retry {}/{}), waiting for comsrv...",
+                    "SharedMemory path not found (retry {}/{}, next in {}ms), waiting for comsrv...",
                     retry_count + 1,
-                    MAX_RETRIES
+                    MAX_RETRIES,
+                    delay_ms
                 );
-                tokio::time::sleep(RETRY_DELAY).await;
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 retry_count += 1;
             } else {
-                info!(
+                warn!(
                     "SharedMemory path not found after {} retries, using Redis fallback",
                     MAX_RETRIES
                 );
@@ -157,7 +162,7 @@ async fn main() -> Result<()> {
     // Initialize UnifiedWriter for M2C actions (Control/Adjustment via SHM)
     // Only open if reader succeeded (SHM file exists)
     let shm_action_writer = if shared_reader.is_some() {
-        match voltage_rtdb::UnifiedWriter::open_for_actions(&shm_config, &routing_cache) {
+        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(&shm_config, &routing_cache) {
             Ok(writer) => {
                 info!("UnifiedWriter (actions) opened for M2C via SHM");
                 Some(Arc::new(writer))
@@ -174,7 +179,7 @@ async fn main() -> Result<()> {
     // Configure InstanceManager with SHM components for M2C via shared memory
     // These use OnceLock for delayed initialization after Arc<InstanceManager> is created
     // ShmNotifier is shared between InstanceManager and RuleScheduler for unified M2C dispatch
-    let shm_notifier: Option<Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>> =
+    let shm_notifier: Option<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>> =
         if let Some(ref writer) = shm_action_writer {
             // Set SHM action writer for direct M2C writes
             if state
@@ -185,7 +190,7 @@ async fn main() -> Result<()> {
             }
 
             // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency)
-            match voltage_rtdb::ShmNotifier::connect_default().await {
+            match voltage_rtdb_shm::ShmNotifier::connect_default().await {
                 Ok(notifier) => {
                     let notifier = Arc::new(tokio::sync::Mutex::new(notifier));
                     if state
@@ -207,13 +212,24 @@ async fn main() -> Result<()> {
             None
         };
 
+    // Load max_concurrency from global config (SQLite key-value table)
+    let max_concurrency: usize = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.max_concurrency'",
+    )
+    .fetch_optional(&sqlite_pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|s| s.parse().ok())
+    .unwrap_or(4);
+
     // Create rule scheduler with two-tier priority (SharedMemory > Redis)
     // SHM writer enables M2C actions via shared memory (primary path)
     // ShmNotifier enables UDS event notification for immediate dispatch
     // RtdbStateStore ensures stateful functions (period_delta, integrate, etc.) persist across restarts
     let rule_log_root = PathBuf::from("logs/modsrv");
     let state_store = Arc::new(RtdbStateStore::new(Arc::clone(&rtdb)));
-    let scheduler = Arc::new(RuleScheduler::with_state_store(
+    let mut scheduler = RuleScheduler::with_state_store(
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
@@ -223,7 +239,14 @@ async fn main() -> Result<()> {
         shared_reader,
         shm_action_writer,
         shm_notifier,
-    ));
+    );
+    scheduler.set_max_concurrency(max_concurrency);
+    let scheduler = Arc::new(scheduler);
+
+    info!(
+        "Rule scheduler: tick_ms={}, max_concurrency={}",
+        tick_ms, max_concurrency
+    );
 
     // Load rules into scheduler
     match scheduler.load_rules().await {

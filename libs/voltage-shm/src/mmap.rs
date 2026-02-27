@@ -109,21 +109,28 @@ impl MmapWriter {
         // Set file size
         file.set_len(size as u64)?;
 
-        // Create mmap
+        // SAFETY: File was just created with truncate(true) and set to the exact size
+        // shm_size(max_slots). We have exclusive write access.
         let mut mmap = unsafe { MmapOptions::new().len(size).map_mut(&file)? };
 
         // Initialize header
         let header = mmap.as_mut_ptr() as *mut ShmHeader;
+        // SAFETY: mmap region is at least shm_size(max_slots) which includes HEADER_SIZE.
+        // Page-aligned mmap base satisfies ShmHeader alignment requirements.
         unsafe {
             (*header).init(config.max_slots);
         }
 
         // Zero all slots
         for i in 0..config.max_slots {
+            // SAFETY: i < max_slots, so HEADER_SIZE + i * SLOT_SIZE is within the mmap
+            // region sized to shm_size(max_slots). SLOT_SIZE alignment is correct for PointSlot.
             let slot_ptr = unsafe {
                 mmap.as_mut_ptr()
                     .add(HEADER_SIZE + (i as usize) * SLOT_SIZE) as *mut PointSlot
             };
+            // SAFETY: slot_ptr is valid and properly aligned (computed above).
+            // PointSlot::zeroed() produces a valid bit pattern for the type.
             unsafe {
                 std::ptr::write(slot_ptr, PointSlot::zeroed());
             }
@@ -152,16 +159,21 @@ impl MmapWriter {
             return Err(ShmError::FileTooSmall);
         }
 
+        // SAFETY: File exists, is opened with read+write, and metadata.len() >= shm_size(1).
+        // The file was originally created by MmapWriter::create() with a valid layout.
         let mmap = unsafe { MmapMut::map_mut(&file)? };
 
         // Validate header
         let header = mmap.as_ptr() as *const ShmHeader;
+        // SAFETY: mmap region is at least shm_size(1) which includes HEADER_SIZE.
+        // Page-aligned mmap base satisfies ShmHeader alignment.
         unsafe {
             if !(*header).is_valid() {
                 return Err(ShmError::InvalidMagic);
             }
         }
 
+        // SAFETY: Header validity was confirmed by is_valid() above; slot_count is a plain u32 read.
         let max_slots = unsafe { (*header).slot_count() };
 
         Ok(Self { mmap, max_slots })
@@ -176,12 +188,16 @@ impl MmapWriter {
     /// Get a mutable pointer to the header.
     #[inline]
     fn header_mut(&mut self) -> &mut ShmHeader {
+        // SAFETY: mmap region starts with a valid ShmHeader (initialized in create() or
+        // validated in open()). Page-aligned base satisfies ShmHeader alignment.
         unsafe { &mut *(self.mmap.as_mut_ptr() as *mut ShmHeader) }
     }
 
     /// Get a pointer to the header.
     #[inline]
     fn header(&self) -> &ShmHeader {
+        // SAFETY: mmap region starts with a valid ShmHeader. Page-aligned base
+        // satisfies ShmHeader alignment. Single-writer design prevents data races.
         unsafe { &*(self.mmap.as_ptr() as *const ShmHeader) }
     }
 
@@ -192,6 +208,8 @@ impl MmapWriter {
             return None;
         }
         let offset = HEADER_SIZE + (index as usize) * SLOT_SIZE;
+        // SAFETY: index < max_slots is checked above, so offset is within the mmap region.
+        // PointSlot alignment is satisfied by SLOT_SIZE being a multiple of its alignment.
         unsafe { Some(&mut *(self.mmap.as_mut_ptr().add(offset) as *mut PointSlot)) }
     }
 
@@ -202,6 +220,8 @@ impl MmapWriter {
             return None;
         }
         let offset = HEADER_SIZE + (index as usize) * SLOT_SIZE;
+        // SAFETY: index < max_slots is checked above, so offset is within the mmap region.
+        // PointSlot alignment is satisfied by SLOT_SIZE.
         unsafe { Some(&*(self.mmap.as_ptr().add(offset) as *const PointSlot)) }
     }
 }
@@ -280,16 +300,21 @@ impl MmapReader {
             return Err(ShmError::FileTooSmall);
         }
 
+        // SAFETY: File exists and metadata.len() >= shm_size(1), providing sufficient
+        // space. File was created by MmapWriter::create() with a valid layout.
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // Validate header
         let header = mmap.as_ptr() as *const ShmHeader;
+        // SAFETY: mmap region is at least shm_size(1) which includes HEADER_SIZE.
+        // Page-aligned mmap base satisfies ShmHeader alignment.
         unsafe {
             if !(*header).is_valid() {
                 return Err(ShmError::InvalidMagic);
             }
         }
 
+        // SAFETY: Header was validated by is_valid() above; slot_count is a plain u32 read.
         let max_slots = unsafe { (*header).slot_count() };
 
         Ok(Self { mmap, max_slots })
@@ -298,6 +323,8 @@ impl MmapReader {
     /// Get a pointer to the header.
     #[inline]
     fn header(&self) -> &ShmHeader {
+        // SAFETY: mmap was validated in open() — magic and version checked.
+        // Page-aligned mmap base satisfies ShmHeader alignment.
         unsafe { &*(self.mmap.as_ptr() as *const ShmHeader) }
     }
 
@@ -308,6 +335,8 @@ impl MmapReader {
             return None;
         }
         let offset = HEADER_SIZE + (index as usize) * SLOT_SIZE;
+        // SAFETY: index < max_slots is bounds-checked above. offset is within the
+        // mmap region. PointSlot alignment is satisfied by SLOT_SIZE.
         unsafe { Some(&*(self.mmap.as_ptr().add(offset) as *const PointSlot)) }
     }
 }

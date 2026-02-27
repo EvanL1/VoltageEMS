@@ -58,6 +58,57 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
+/// Convert Redis hash data to a JSON Map, filtering out internal fields (prefixed with '_').
+fn hash_to_json_map(data: HashMap<String, bytes::Bytes>) -> Map<String, Value> {
+    data.into_iter()
+        .filter(|(field, _)| !field.starts_with('_'))
+        .map(|(field, value)| {
+            (
+                field,
+                Value::String(String::from_utf8_lossy(&value).into_owned()),
+            )
+        })
+        .collect()
+}
+
+/// Scan a routing hash, find entries matching a key prefix, and batch-delete
+/// matching entries from both routing tables.
+async fn delete_routing_by_prefix<R>(
+    redis: &R,
+    scan_table: &str,
+    other_table: &str,
+    prefix: &str,
+) -> Result<usize>
+where
+    R: Rtdb,
+{
+    let entries = redis.hash_get_all(scan_table).await?;
+
+    let mut keys_to_del: Vec<String> = Vec::new();
+    let mut other_keys_to_del: Vec<String> = Vec::new();
+
+    for (key, value_bytes) in entries {
+        if key.starts_with(prefix) {
+            keys_to_del.push(key);
+            let value = String::from_utf8_lossy(&value_bytes).to_string();
+            if !value.is_empty() {
+                other_keys_to_del.push(value);
+            }
+        }
+    }
+
+    let removed = keys_to_del.len();
+
+    if !keys_to_del.is_empty() {
+        redis.hash_del_many(scan_table, &keys_to_del).await?;
+    }
+    if !other_keys_to_del.is_empty() {
+        redis.hash_del_many(other_table, &other_keys_to_del).await?;
+    }
+
+    Ok(removed)
+}
+
 /// Store routing entries into Redis hashes.
 pub async fn store_routing<R>(redis: &R, entries: &[RoutingEntry]) -> Result<usize>
 where
@@ -193,40 +244,14 @@ pub async fn clear_routing_for_channel<R>(redis: &R, channel_id: &str) -> Result
 where
     R: Rtdb,
 {
-    // New format: route keys start with channel_id directly (no "comsrv:" prefix)
     let prefix = format!("{}:", channel_id);
-
-    let mappings_bytes = redis
-        .hash_get_all(RedisRoutingKeys::CHANNEL_TO_MODEL)
-        .await?;
-
-    // Collect fields to delete in batch
-    let mut c2m_fields_to_del: Vec<String> = Vec::new();
-    let mut m2c_fields_to_del: Vec<String> = Vec::new();
-
-    for (com_key, value_bytes) in mappings_bytes {
-        if com_key.starts_with(&prefix) {
-            c2m_fields_to_del.push(com_key);
-            m2c_fields_to_del.push(String::from_utf8_lossy(&value_bytes).to_string());
-        }
-    }
-
-    let removed = c2m_fields_to_del.len();
-
-    // Batch delete using hash_del_many (reduces 2N Redis calls to 2 calls)
-    if !c2m_fields_to_del.is_empty() {
-        redis
-            .hash_del_many(RedisRoutingKeys::CHANNEL_TO_MODEL, &c2m_fields_to_del)
-            .await?;
-    }
-
-    if !m2c_fields_to_del.is_empty() {
-        redis
-            .hash_del_many(RedisRoutingKeys::MODEL_TO_CHANNEL, &m2c_fields_to_del)
-            .await?;
-    }
-
-    Ok(removed)
+    delete_routing_by_prefix(
+        redis,
+        RedisRoutingKeys::CHANNEL_TO_MODEL,
+        RedisRoutingKeys::MODEL_TO_CHANNEL,
+        &prefix,
+    )
+    .await
 }
 
 /// Retrieve routing table entries.
@@ -270,105 +295,72 @@ where
     ];
     redis.hash_mset(&product_key, fields).await?;
 
-    redis
-        .sadd(keyspace.product_index_key(), &product.product_name)
-        .await?;
+    let product_index = keyspace.product_index_key();
+    redis.sadd(&product_index, &product.product_name).await?;
 
     if let Some(parent) = &product.parent_name {
         let parent_key = keyspace.product_children_key(parent);
         redis.sadd(&parent_key, &product.product_name).await?;
     }
 
-    write_point_definitions(
+    write_definitions(
         redis,
         &keyspace.product_measurements_key(&product.product_name),
         &product.measurements,
+        |p| {
+            (
+                p.measurement_id.to_string(),
+                format!("measurement point {}", p.measurement_id),
+            )
+        },
     )
     .await?;
 
-    write_action_definitions(
+    write_definitions(
         redis,
         &keyspace.product_actions_key(&product.product_name),
         &product.actions,
+        |a| {
+            (
+                a.action_id.to_string(),
+                format!("action point {}", a.action_id),
+            )
+        },
     )
     .await?;
 
-    write_property_definitions(
+    write_definitions(
         redis,
         &keyspace.product_properties_key(&product.product_name),
         &product.properties,
+        |p| (p.name.clone(), format!("property template {}", p.name)),
     )
     .await?;
 
     Ok(())
 }
 
-async fn write_point_definitions<R>(redis: &R, key: &str, points: &[MeasurementPoint]) -> Result<()>
+/// Write serializable items to a Redis hash, replacing existing entries.
+///
+/// Unified helper for writing measurement/action/property definitions.
+async fn write_definitions<R, T, F>(redis: &R, key: &str, items: &[T], entry_fn: F) -> Result<()>
 where
     R: Rtdb,
+    T: serde::Serialize,
+    F: Fn(&T) -> (String, String), // (hash_field, error_context)
 {
-    if points.is_empty() {
+    if items.is_empty() {
         redis.del(key).await?;
         return Ok(());
     }
 
-    let fields: Vec<(String, Bytes)> = points
+    let fields: Vec<(String, Bytes)> = items
         .iter()
-        .map(|point| {
-            let payload = serde_json::to_string(point).with_context(|| {
-                format!(
-                    "Failed to serialise measurement point {}",
-                    point.measurement_id
-                )
-            })?;
-            Ok((point.measurement_id.to_string(), Bytes::from(payload)))
-        })
-        .collect::<Result<_>>()?;
-
-    redis.hash_mset(key, fields).await
-}
-
-async fn write_action_definitions<R>(redis: &R, key: &str, actions: &[ActionPoint]) -> Result<()>
-where
-    R: Rtdb,
-{
-    if actions.is_empty() {
-        redis.del(key).await?;
-        return Ok(());
-    }
-
-    let fields: Vec<(String, Bytes)> = actions
-        .iter()
-        .map(|action| {
-            let payload = serde_json::to_string(action).with_context(|| {
-                format!("Failed to serialise action point {}", action.action_id)
-            })?;
-            Ok((action.action_id.to_string(), Bytes::from(payload)))
-        })
-        .collect::<Result<_>>()?;
-
-    redis.hash_mset(key, fields).await
-}
-
-async fn write_property_definitions<R>(
-    redis: &R,
-    key: &str,
-    properties: &[crate::product_loader::PropertyTemplate],
-) -> Result<()>
-where
-    R: Rtdb,
-{
-    if properties.is_empty() {
-        redis.del(key).await?;
-        return Ok(());
-    }
-
-    let fields: Vec<(String, Bytes)> = properties
-        .iter()
-        .map(|prop| {
-            let payload = serde_json::to_string(prop)
-                .with_context(|| format!("Failed to serialise property template {}", prop.name))?;
-            Ok((prop.name.clone(), Bytes::from(payload)))
+        .map(|item| {
+            let (field, label) = entry_fn(item);
+            let payload = serde_json::to_string(item)
+                .with_context(|| format!("Failed to serialise {}", label))?;
+            Ok((field, Bytes::from(payload)))
         })
         .collect::<Result<_>>()?;
 
@@ -413,7 +405,7 @@ where
     }
 
     // 2. Initialize inst:{id}:A Hash with all action points set to 0
-    // 与 M 点保持一致：启动时预初始化，便于查询和验证 M2C 路由
+    // Consistent with M points: pre-initialize at startup for queries and M2C routing validation
     let a_key = keyspace.instance_action_key(instance_id);
     for action in actions {
         redis
@@ -537,39 +529,14 @@ async fn cleanup_routing<R>(redis: &R, instance_id: u32, _instance_name: &str) -
 where
     R: Rtdb,
 {
-    // New format: route keys start with instance_id directly (no "inst:" prefix)
     let prefix = format!("{}:", instance_id);
-    let m2c_bytes = redis
-        .hash_get_all(RedisRoutingKeys::MODEL_TO_CHANNEL)
-        .await?;
-
-    // Collect fields to delete in batch
-    let mut m2c_fields_to_del: Vec<String> = Vec::new();
-    let mut c2m_fields_to_del: Vec<String> = Vec::new();
-
-    for (field, value_bytes) in m2c_bytes {
-        if field.starts_with(&prefix) {
-            m2c_fields_to_del.push(field);
-            let value = String::from_utf8_lossy(&value_bytes).to_string();
-            if !value.is_empty() {
-                c2m_fields_to_del.push(value);
-            }
-        }
-    }
-
-    // Batch delete using hash_del_many (reduces 2N Redis calls to 2 calls)
-    if !m2c_fields_to_del.is_empty() {
-        redis
-            .hash_del_many(RedisRoutingKeys::MODEL_TO_CHANNEL, &m2c_fields_to_del)
-            .await?;
-    }
-
-    if !c2m_fields_to_del.is_empty() {
-        redis
-            .hash_del_many(RedisRoutingKeys::CHANNEL_TO_MODEL, &c2m_fields_to_del)
-            .await?;
-    }
-
+    delete_routing_by_prefix(
+        redis,
+        RedisRoutingKeys::MODEL_TO_CHANNEL,
+        RedisRoutingKeys::CHANNEL_TO_MODEL,
+        &prefix,
+    )
+    .await?;
     Ok(())
 }
 
@@ -611,70 +578,33 @@ where
 
     match data_type {
         Some("measurement") => {
-            // Return measurement data only
-            let key = keyspace.instance_measurement_key(instance_id);
-            let data_bytes = redis.hash_get_all(&key).await?;
-            // Build Map directly, skipping intermediate HashMap
-            let mut map = Map::new();
-            for (field, value) in data_bytes {
-                if !field.starts_with('_') {
-                    map.insert(
-                        field,
-                        Value::String(String::from_utf8_lossy(&value).into_owned()),
-                    );
-                }
-            }
-            Ok(Value::Object(map))
+            let data = redis
+                .hash_get_all(&keyspace.instance_measurement_key(instance_id))
+                .await?;
+            Ok(Value::Object(hash_to_json_map(data)))
         },
         Some("action") => {
-            // Return control data only
-            let key = keyspace.instance_action_key(instance_id);
-            let data_bytes = redis.hash_get_all(&key).await?;
-            // Build Map directly, skipping intermediate HashMap
-            let mut map = Map::new();
-            for (field, value) in data_bytes {
-                if !field.starts_with('_') {
-                    map.insert(
-                        field,
-                        Value::String(String::from_utf8_lossy(&value).into_owned()),
-                    );
-                }
-            }
-            Ok(Value::Object(map))
+            let data = redis
+                .hash_get_all(&keyspace.instance_action_key(instance_id))
+                .await?;
+            Ok(Value::Object(hash_to_json_map(data)))
         },
         None => {
-            // Return both as structured data
-            let m_key = keyspace.instance_measurement_key(instance_id);
-            let a_key = keyspace.instance_action_key(instance_id);
-
-            let m_data_bytes = redis.hash_get_all(&m_key).await?;
-            let a_data_bytes = redis.hash_get_all(&a_key).await?;
-
-            // Build Maps directly, skipping intermediate HashMaps
-            let mut measurements = Map::new();
-            for (field, value) in m_data_bytes {
-                if !field.starts_with('_') {
-                    measurements.insert(
-                        field,
-                        Value::String(String::from_utf8_lossy(&value).into_owned()),
-                    );
-                }
-            }
-
-            let mut actions = Map::new();
-            for (field, value) in a_data_bytes {
-                if !field.starts_with('_') {
-                    actions.insert(
-                        field,
-                        Value::String(String::from_utf8_lossy(&value).into_owned()),
-                    );
-                }
-            }
-
+            let m_data = redis
+                .hash_get_all(&keyspace.instance_measurement_key(instance_id))
+                .await?;
+            let a_data = redis
+                .hash_get_all(&keyspace.instance_action_key(instance_id))
+                .await?;
             let mut result = Map::new();
-            result.insert("measurements".to_string(), Value::Object(measurements));
-            result.insert("actions".to_string(), Value::Object(actions));
-
+            result.insert(
+                "measurements".to_string(),
+                Value::Object(hash_to_json_map(m_data)),
+            );
+            result.insert(
+                "actions".to_string(),
+                Value::Object(hash_to_json_map(a_data)),
+            );
             Ok(Value::Object(result))
         },
         Some(other) => Err(anyhow!(

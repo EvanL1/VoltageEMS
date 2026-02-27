@@ -182,35 +182,12 @@ impl DataSlot {
         })
     }
 
-    /// Read only the value (clones the value).
-    pub fn read_value(&self) -> Option<Value> {
-        self.value
-            .read()
-            .unwrap_or_else(|e| {
-                warn!("DataSlot RwLock poisoned on read_value, recovering");
-                e.into_inner()
-            })
-            .clone()
-    }
-
     /// Get the current version counter.
     ///
     /// Useful for change detection without reading the full value.
     #[inline]
     pub fn version(&self) -> u64 {
         self.version.load(Ordering::Acquire)
-    }
-
-    /// Check if the slot has been written to.
-    #[inline]
-    pub fn has_value(&self) -> bool {
-        self.value
-            .read()
-            .unwrap_or_else(|e| {
-                warn!("DataSlot RwLock poisoned on has_value, recovering");
-                e.into_inner()
-            })
-            .is_some()
     }
 }
 
@@ -285,11 +262,6 @@ impl SlotStore {
         Self::from_points(point_ids, PointType::Telemetry)
     }
 
-    /// Create a new store for Signal points (convenience).
-    pub fn signal(point_ids: &[u32]) -> Self {
-        Self::from_points(point_ids, PointType::Signal)
-    }
-
     /// Get a reference to a data slot by point ID.
     #[inline]
     pub fn get(&self, point_id: u32) -> Option<&DataSlot> {
@@ -303,42 +275,17 @@ impl SlotStore {
         }
     }
 
-    /// Update multiple points at once.
-    ///
-    /// More efficient than multiple `update()` calls as it avoids
-    /// repeated index lookups for batch operations.
-    pub fn update_batch(&self, updates: &[(u32, Value, Quality)]) {
-        for (point_id, value, quality) in updates {
-            if let Some(&idx) = self.index.get(point_id) {
-                self.slots[idx].update(value.clone(), *quality);
-            }
-        }
-    }
-
     /// Export all data as a DataBatch.
     ///
     /// Only includes points that have been written to.
     pub fn export_all(&self) -> DataBatch {
         let mut batch = DataBatch::with_capacity(self.slots.len());
         let now = Utc::now();
-
         for (idx, slot) in self.slots.iter().enumerate() {
-            if let Some((value, quality, ts_ms, _version)) = slot.read() {
-                let point_id = self.point_ids[idx];
-                let timestamp: DateTime<Utc> =
-                    DateTime::from_timestamp_millis(ts_ms).unwrap_or(now);
-                let point = DataPoint {
-                    id: point_id,
-                    point_type: self.point_type,
-                    value,
-                    quality,
-                    timestamp,
-                    source_timestamp: None,
-                };
+            if let Some(point) = slot_to_point(slot, self.point_ids[idx], self.point_type, now) {
                 batch.add(point);
             }
         }
-
         batch
     }
 
@@ -440,16 +387,12 @@ impl ShardedSlotStore {
         }
     }
 
-    /// Create a new sharded store for Telemetry points (convenience).
-    pub fn telemetry(point_ids: &[u32], shard_count: usize) -> Self {
-        Self::new(point_ids, shard_count, PointType::Telemetry)
-    }
-
     /// Update a single point's value.
     ///
     /// Only locks the shard containing this point.
     pub fn update(&self, point_id: u32, value: Value, quality: Quality) {
         if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
+            // SAFETY: With panic=abort, RwLock cannot be poisoned; expect is unreachable
             let shard = self.shards[shard_idx].read().expect("RwLock poisoned");
             shard[slot_idx].update(value, quality);
         }
@@ -458,6 +401,7 @@ impl ShardedSlotStore {
     /// Read a single point's value.
     pub fn read(&self, point_id: u32) -> Option<(Value, Quality, i64, u64)> {
         if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
+            // SAFETY: With panic=abort, RwLock cannot be poisoned; expect is unreachable
             let shard = self.shards[shard_idx].read().expect("RwLock poisoned");
             shard[slot_idx].read()
         } else {
@@ -470,27 +414,15 @@ impl ShardedSlotStore {
         let total_capacity: usize = self.shard_point_ids.iter().map(|v| v.len()).sum();
         let mut batch = DataBatch::with_capacity(total_capacity);
         let now = Utc::now();
-
         for (shard_idx, shard) in self.shards.iter().enumerate() {
             let slots = shard.read().expect("RwLock poisoned");
             for (slot_idx, slot) in slots.iter().enumerate() {
-                if let Some((value, quality, ts_ms, _version)) = slot.read() {
-                    let point_id = self.shard_point_ids[shard_idx][slot_idx];
-                    let timestamp: DateTime<Utc> =
-                        DateTime::from_timestamp_millis(ts_ms).unwrap_or(now);
-                    let point = DataPoint {
-                        id: point_id,
-                        point_type: self.point_type,
-                        value,
-                        quality,
-                        timestamp,
-                        source_timestamp: None,
-                    };
+                let pid = self.shard_point_ids[shard_idx][slot_idx];
+                if let Some(point) = slot_to_point(slot, pid, self.point_type, now) {
                     batch.add(point);
                 }
             }
         }
-
         batch
     }
 
@@ -521,6 +453,25 @@ impl ShardedSlotStore {
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+/// Export a slot's data as a DataPoint, if it has a value.
+#[inline]
+fn slot_to_point(
+    slot: &DataSlot,
+    point_id: u32,
+    point_type: PointType,
+    fallback_now: DateTime<Utc>,
+) -> Option<DataPoint> {
+    let (value, quality, ts_ms, _) = slot.read()?;
+    Some(DataPoint {
+        id: point_id,
+        point_type,
+        value,
+        quality,
+        timestamp: DateTime::from_timestamp_millis(ts_ms).unwrap_or(fallback_now),
+        source_timestamp: None,
+    })
+}
 
 /// Convert u8 back to Quality enum.
 #[inline]
@@ -584,12 +535,10 @@ mod tests {
     fn test_data_slot() {
         let slot = DataSlot::new();
 
-        assert!(!slot.has_value());
         assert_eq!(slot.version(), 0);
         assert!(slot.read().is_none());
 
         slot.update(Value::Float(42.5), Quality::Good);
-        assert!(slot.has_value());
         assert_eq!(slot.version(), 1);
 
         let (value, quality, _ts, version) = slot.read().unwrap();
@@ -618,20 +567,11 @@ mod tests {
         // Update single
         store.update(10, Value::Float(1.0), Quality::Good);
         store.update(20, Value::Float(2.0), Quality::Good);
+        store.update(30, Value::Float(30.0), Quality::Good);
 
         let slot = store.get(10).unwrap();
         let (value, _, _, _) = slot.read().unwrap();
         assert_eq!(value, Value::Float(1.0));
-
-        // Update batch
-        store.update_batch(&[
-            (10, Value::Float(10.0), Quality::Good),
-            (30, Value::Float(30.0), Quality::Good),
-        ]);
-
-        let slot = store.get(10).unwrap();
-        let (value, _, _, _) = slot.read().unwrap();
-        assert_eq!(value, Value::Float(10.0));
 
         // Export
         let batch = store.export_all();

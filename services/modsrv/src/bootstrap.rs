@@ -173,23 +173,80 @@ async fn setup_sqlite() -> Result<SqlitePool> {
 }
 
 /// Load and sync products to Redis
+///
+/// If `config.products_path` is set and the directory exists, external product
+/// JSON files override built-in products. Otherwise, built-in products are used.
 pub async fn load_products<R>(
-    _config: &ModsrvConfig,
+    config: &ModsrvConfig,
     sqlite_pool: &SqlitePool,
     _rtdb: &Arc<R>,
 ) -> Result<Arc<ProductLoader>>
 where
     R: voltage_rtdb::Rtdb,
 {
-    // Products are now loaded from code definitions (no config directory needed)
-    let product_loader = ProductLoader::new(sqlite_pool.clone());
+    use std::sync::Arc as StdArc;
+    use voltage_model::product_lib::ProductLibrary;
 
-    // Initialize instance schema (products are compile-time constants)
+    // Load product library with optional external overrides
+    let products_dir = config
+        .products_path
+        .as_ref()
+        .map(std::path::Path::new)
+        .filter(|p| p.is_dir());
+
+    let library = ProductLibrary::load(products_dir).map_err(|e| {
+        super::error::ModSrvError::ConfigError(format!("Failed to load product library: {}", e))
+    })?;
+    let product_count = library.len();
+
+    let product_loader = ProductLoader::with_library(sqlite_pool.clone(), StdArc::new(library));
+
+    // Initialize instance schema
     product_loader.init_schema().await?;
 
-    // Products are now built-in (compile-time), no database check needed
-    let product_count = product_loader.product_count();
-    info!("{} built-in products available", product_count);
+    // Ensure rules tables exist (normally created by `monarch init`,
+    // but needed for standalone startup)
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS rules (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            enabled BOOLEAN DEFAULT TRUE,
+            priority INTEGER DEFAULT 0,
+            cooldown_ms INTEGER DEFAULT 0,
+            trigger_config TEXT,
+            nodes_json TEXT NOT NULL,
+            flow_json TEXT,
+            format TEXT DEFAULT 'vue-flow',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+    )
+    .execute(sqlite_pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS rule_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id INTEGER NOT NULL,
+            triggered_at TIMESTAMP NOT NULL,
+            execution_result TEXT,
+            error TEXT,
+            FOREIGN KEY (rule_id) REFERENCES rules(id)
+        )",
+    )
+    .execute(sqlite_pool)
+    .await?;
+
+    if products_dir.is_some() {
+        info!(
+            "{} products loaded (with external overrides)",
+            product_count
+        );
+    } else {
+        info!("{} built-in products available", product_count);
+    }
+
     Ok(Arc::new(product_loader))
 }
 
@@ -199,7 +256,7 @@ where
 pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     _rtdb: Arc<voltage_rtdb::RedisRtdb>,
-    routing_cache: Arc<voltage_rtdb::RoutingCache>,
+    routing_cache: Arc<voltage_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::MemoryRtdb>>> {
     // Create MemoryRtdb for testing (ignore the injected RedisRtdb)
@@ -220,7 +277,7 @@ pub async fn setup_instance_manager(
 pub async fn setup_instance_manager(
     sqlite_pool: &SqlitePool,
     rtdb: Arc<voltage_rtdb::RedisRtdb>,
-    routing_cache: Arc<voltage_rtdb::RoutingCache>,
+    routing_cache: Arc<voltage_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::RedisRtdb>>> {
     // RTDB is a pure storage abstraction
@@ -234,28 +291,17 @@ pub async fn setup_instance_manager(
         product_loader,
     ));
 
-    // Instances must be in database (loaded by monarch)
+    // Instances loaded by monarch (may be empty on first startup)
     let instance_count: i64 = sqlx::query_scalar(ModsrvQueries::COUNT_INSTANCES)
         .fetch_one(sqlite_pool)
         .await
         .unwrap_or(0);
 
     if instance_count == 0 {
-        let allow_empty = std::env::var("MODSRV_ALLOW_EMPTY")
-            .unwrap_or_else(|_| "false".to_string())
-            .to_lowercase()
-            == "true";
-        if allow_empty {
-            warn!("No instances (ALLOW_EMPTY)");
-        } else {
-            error!("No instances in DB");
-            return Err(ModSrvError::DatabaseError(
-                "No products/instances found in voltage.db".to_string(),
-            ));
-        }
+        warn!("No instances in DB — run `monarch sync` to load instance config");
+    } else {
+        info!("{} instances loaded", instance_count);
     }
-
-    info!("{} instances loaded", instance_count);
 
     // Initialize real-time data structures in Redis (M/A Hash + name mappings)
     // Note: This does NOT sync metadata - only creates empty Hash structures for real-time data
@@ -382,7 +428,7 @@ pub async fn validate_routing_integrity(sqlite_pool: &SqlitePool) -> Result<()> 
 /// * `Err(anyhow::Error)` - Database or parsing errors
 pub async fn refresh_routing_cache(
     sqlite_pool: &SqlitePool,
-    routing_cache: &Arc<voltage_rtdb::RoutingCache>,
+    routing_cache: &Arc<voltage_routing::RoutingCache>,
 ) -> anyhow::Result<usize> {
     debug!("Refreshing routes");
 
@@ -438,7 +484,7 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
         let c2m_len = maps.c2m.len();
         let m2c_len = maps.m2c.len();
 
-        let cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
+        let cache = Arc::new(voltage_routing::RoutingCache::from_maps(
             maps.c2m, maps.m2c, maps.c2c,
         ));
 

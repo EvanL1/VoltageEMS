@@ -3,6 +3,7 @@
 //! Central route definition for all Model Service API endpoints
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -23,8 +24,8 @@ use crate::api::instance_management_handlers::{
     sync_all_instances, sync_instance_measurement, update_instance,
 };
 use crate::api::instance_query_handlers::{
-    get_instance, get_instance_data, get_instance_points, list_instances, list_instances_slim,
-    search_instances, set_instance_measurement,
+    get_instance, get_instance_children, get_instance_data, get_instance_points, get_topology_tree,
+    list_instances, list_instances_slim, search_instances, set_instance_measurement,
 };
 
 // New global routing handlers (work with unified database)
@@ -150,6 +151,9 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         )
         .route("/api/instances/{id}/action", post(execute_instance_action))
         .route("/api/instances/{id}/measurement", post(set_instance_measurement))
+        .route("/api/instances/{id}/children", get(get_instance_children))
+        // Topology tree endpoint
+        .route("/api/topology", get(get_topology_tree))
         .route("/api/instances/sync/all", post(sync_all_instances))
         .route("/api/instances/reload", post(reload_instances_from_db))
 
@@ -210,5 +214,6 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         )
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
+        .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit
         .with_state(state)
 }

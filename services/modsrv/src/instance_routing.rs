@@ -13,7 +13,8 @@ use crate::routing_loader::{
 };
 
 use super::instance_manager::InstanceManager;
-use voltage_rtdb::{Rtdb, SharedSlotRef};
+use voltage_rtdb::Rtdb;
+use voltage_rtdb_shm::SharedSlotRef;
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Create or update routing for a single measurement point (UPSERT)
@@ -37,7 +38,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let instance_name = sqlx::query_scalar::<_, String>(
             "SELECT instance_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -58,7 +59,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 updated_at = CURRENT_TIMESTAMP
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(instance_name)
         .bind(request.channel_id)
         .bind(request.four_remote.map(|fr| fr.as_str()))
@@ -130,7 +131,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let instance_name = sqlx::query_scalar::<_, String>(
             "SELECT instance_name FROM instances WHERE instance_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -151,7 +152,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 updated_at = CURRENT_TIMESTAMP
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(instance_name)
         .bind(point_id)
         .bind(request.channel_id)
@@ -169,7 +170,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let result = sqlx::query(
             "DELETE FROM measurement_routing WHERE instance_id = ? AND measurement_id = ?",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(point_id)
         .execute(&self.pool)
         .await?;
@@ -219,7 +220,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub async fn delete_action_routing(&self, instance_id: u32, point_id: u32) -> Result<u64> {
         let result =
             sqlx::query("DELETE FROM action_routing WHERE instance_id = ? AND action_id = ?")
-                .bind(instance_id as i32)
+                .bind(instance_id as i64)
                 .bind(point_id)
                 .execute(&self.pool)
                 .await?;
@@ -242,7 +243,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             "#,
         )
         .bind(enabled)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(point_id)
         .execute(&self.pool)
         .await?;
@@ -265,7 +266,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             "#,
         )
         .bind(enabled)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(point_id)
         .execute(&self.pool)
         .await?;
@@ -287,7 +288,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ORDER BY channel_id, channel_type, channel_point_id
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
@@ -305,7 +306,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ORDER BY action_id
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
@@ -313,83 +314,65 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Validate a measurement routing entry
-    ///
-    /// Checks if a measurement routing configuration is valid by verifying:
-    /// - Instance exists
-    /// - Channel type is input (T or S)
-    /// - Measurement point exists for the instance's product
     pub async fn validate_measurement_routing(
         &self,
         routing: &MeasurementRoutingRow,
         instance_name: &str,
     ) -> Result<ValidationResult> {
-        let mut errors = Vec::new();
-
-        // Validate instance exists
-        let instance_exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_name = ?)",
+        self.validate_routing_impl(
+            instance_name,
+            routing.measurement_id,
+            "measurement",
+            &routing.channel_type,
+            |ct| ct.is_input(),
+            "T or S",
+            |product| {
+                product
+                    .measurements
+                    .iter()
+                    .any(|m| m.measurement_id == routing.measurement_id)
+            },
         )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await?;
-
-        if !instance_exists {
-            errors.push(format!("Instance {} does not exist", instance_name));
-        }
-
-        // Validate channel_type (skip if None - unbound routing is valid)
-        if let Some(ref ct) = routing.channel_type {
-            if !ct.is_input() {
-                errors.push(format!(
-                    "Invalid channel_type for measurement: {}. Must be T or S",
-                    ct
-                ));
-            }
-        }
-
-        // Validate measurement point exists
-        let point_exists = sqlx::query_scalar::<_, bool>(
-            r#"
-            SELECT EXISTS(
-                SELECT 1 FROM measurement_points mp
-                JOIN instances i ON i.product_name = mp.product_name
-                WHERE i.instance_name = ? AND mp.measurement_id = ?
-            )
-            "#,
-        )
-        .bind(instance_name)
-        .bind(routing.measurement_id)
-        .fetch_one(&self.pool)
-        .await?;
-
-        if !point_exists {
-            errors.push(format!(
-                "Measurement point {} not found for instance {}",
-                routing.measurement_id, instance_name
-            ));
-        }
-
-        let mut result = ValidationResult::new(ValidationLevel::Business);
-        for error in errors {
-            result.add_error(error);
-        }
-        Ok(result)
+        .await
     }
 
     /// Validate an action routing entry
-    ///
-    /// Checks if an action routing configuration is valid by verifying:
-    /// - Instance exists
-    /// - Channel type is output (C or A)
-    /// - Action point exists for the instance's product
     pub async fn validate_action_routing(
         &self,
         routing: &ActionRoutingRow,
         instance_name: &str,
     ) -> Result<ValidationResult> {
+        self.validate_routing_impl(
+            instance_name,
+            routing.action_id,
+            "action",
+            &routing.channel_type,
+            |ct| ct.is_output(),
+            "C or A",
+            |product| {
+                product
+                    .actions
+                    .iter()
+                    .any(|a| a.action_id == routing.action_id)
+            },
+        )
+        .await
+    }
+
+    /// Common validation logic for routing entries (measurement or action)
+    #[allow(clippy::too_many_arguments)]
+    async fn validate_routing_impl(
+        &self,
+        instance_name: &str,
+        point_id: u32,
+        point_label: &str,
+        channel_type: &Option<common::FourRemote>,
+        is_valid_direction: impl Fn(&common::FourRemote) -> bool,
+        direction_label: &str,
+        check_point_in_product: impl FnOnce(&crate::config::Product) -> bool,
+    ) -> Result<ValidationResult> {
         let mut errors = Vec::new();
 
-        // Validate instance exists
         let instance_exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_name = ?)",
         )
@@ -401,35 +384,36 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             errors.push(format!("Instance {} does not exist", instance_name));
         }
 
-        // Validate channel_type (skip if None - unbound routing is valid)
-        if let Some(ref ct) = routing.channel_type {
-            if !ct.is_output() {
+        if let Some(ref ct) = channel_type {
+            if !is_valid_direction(ct) {
                 errors.push(format!(
-                    "Invalid channel_type for action: {}. Must be C or A",
-                    ct
+                    "Invalid channel_type for {}: {}. Must be {}",
+                    point_label, ct, direction_label
                 ));
             }
         }
 
-        // Validate action point exists
-        let point_exists = sqlx::query_scalar::<_, bool>(
-            r#"
-            SELECT EXISTS(
-                SELECT 1 FROM action_points ap
-                JOIN instances i ON i.product_name = ap.product_name
-                WHERE i.instance_name = ? AND ap.action_id = ?
+        let point_exists = if instance_exists {
+            let product_name = sqlx::query_scalar::<_, String>(
+                "SELECT product_name FROM instances WHERE instance_name = ?",
             )
-            "#,
-        )
-        .bind(instance_name)
-        .bind(routing.action_id)
-        .fetch_one(&self.pool)
-        .await?;
+            .bind(instance_name)
+            .fetch_one(&self.pool)
+            .await?;
+
+            self.product_loader
+                .get_product(&product_name)
+                .as_ref()
+                .map(check_point_in_product)
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         if !point_exists {
             errors.push(format!(
-                "Action point {} not found for instance {}",
-                routing.action_id, instance_name
+                "{} point {} not found for instance {}",
+                point_label, point_id, instance_name
             ));
         }
 
@@ -447,12 +431,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub async fn delete_all_routing(&self, instance_id: u32) -> Result<(u64, u64)> {
         let measurement_result =
             sqlx::query("DELETE FROM measurement_routing WHERE instance_id = ?")
-                .bind(instance_id as i32)
+                .bind(instance_id as i64)
                 .execute(&self.pool)
                 .await?;
 
         let action_result = sqlx::query("DELETE FROM action_routing WHERE instance_id = ?")
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&self.pool)
             .await?;
 
@@ -497,7 +481,8 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use voltage_rtdb::{helpers::create_test_rtdb, RoutingCache};
+    use voltage_routing::RoutingCache;
+    use voltage_rtdb::helpers::create_test_rtdb;
 
     // Helper: Create test database with full modsrv schema
     async fn create_test_database() -> (TempDir, SqlitePool) {
@@ -512,87 +497,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Create measurement_points table for validation tests (without FK constraint)
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS measurement_points (
-                product_name TEXT NOT NULL,
-                measurement_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                unit TEXT,
-                description TEXT,
-                PRIMARY KEY (product_name, measurement_id)
-            )"#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Create action_points table for validation tests
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS action_points (
-                product_name TEXT NOT NULL,
-                action_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                unit TEXT,
-                description TEXT,
-                PRIMARY KEY (product_name, action_id)
-            )"#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Insert Battery measurement points (matches Battery.json)
-        for id in 1..=19 {
-            sqlx::query(
-                "INSERT INTO measurement_points (product_name, measurement_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("Battery")
-            .bind(id)
-            .bind(format!("Battery M{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        // Insert Battery action points
-        for id in 1..=3 {
-            sqlx::query(
-                "INSERT INTO action_points (product_name, action_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("Battery")
-            .bind(id)
-            .bind(format!("Battery A{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        // Insert PCS measurement points (for PCS tests)
-        for id in 1..=10 {
-            sqlx::query(
-                "INSERT INTO measurement_points (product_name, measurement_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("PCS")
-            .bind(id)
-            .bind(format!("PCS M{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        // Insert PCS action points
-        for id in 1..=5 {
-            sqlx::query(
-                "INSERT INTO action_points (product_name, action_id, name) VALUES (?, ?, ?)",
-            )
-            .bind("PCS")
-            .bind(id)
-            .bind(format!("PCS A{}", id))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
+        // Note: measurement_points and action_points tables are no longer needed.
+        // Validation tests now use built-in product definitions from voltage-model crate
+        // (Battery has 19 measurements + 3 actions, PCS has its own set, etc.)
 
         (temp_dir, pool)
     }
@@ -612,17 +519,48 @@ mod tests {
         instance_id: u32,
         instance_name: &str,
         product_name: &str,
+        parent_id: Option<u32>,
     ) {
         let req = crate::product_loader::CreateInstanceRequest {
             instance_id,
             instance_name: instance_name.to_string(),
             product_name: product_name.to_string(),
+            parent_id,
             properties: HashMap::new(),
         };
         manager
             .create_instance(req)
             .await
             .expect("Failed to create instance");
+    }
+
+    /// Setup standard hierarchy: Station(1) -> ESS(2), returns ESS instance_id
+    async fn setup_hierarchy(manager: &InstanceManager<voltage_rtdb::MemoryRtdb>) -> u32 {
+        let station_req = crate::product_loader::CreateInstanceRequest {
+            instance_id: 1,
+            instance_name: "station_root".to_string(),
+            product_name: "Station".to_string(),
+            parent_id: None,
+            properties: HashMap::new(),
+        };
+        manager
+            .create_instance(station_req)
+            .await
+            .expect("Failed to create Station");
+
+        let ess_req = crate::product_loader::CreateInstanceRequest {
+            instance_id: 2,
+            instance_name: "ess_parent".to_string(),
+            product_name: "ESS".to_string(),
+            parent_id: Some(1),
+            properties: HashMap::new(),
+        };
+        manager
+            .create_instance(ess_req)
+            .await
+            .expect("Failed to create ESS");
+
+        2
     }
 
     // Helper: Create a test channel in the database
@@ -645,8 +583,9 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        // Create instance (using built-in Battery product)
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        // Setup hierarchy: Station -> ESS, then create Battery under ESS
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Create channel (required for routing FK)
         create_test_channel(&pool, 3001, "test_channel").await;
@@ -675,7 +614,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Try to create measurement routing with Control type (invalid)
         let request = crate::dto::SinglePointRoutingRequest {
@@ -699,7 +639,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Create unbound routing (all channel fields are None, enabled=true so we can verify)
         let request = crate::dto::SinglePointRoutingRequest {
@@ -728,8 +669,9 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        // Use PCS product which has action points
-        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+        // Setup hierarchy and use PCS product which has action points
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 2001, "pcs_test", "PCS", Some(ess_id)).await;
 
         // Create channel
         create_test_channel(&pool, 3002, "test_channel_2").await;
@@ -757,7 +699,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 2001, "pcs_test", "PCS", Some(ess_id)).await;
 
         // Try to create action routing with Telemetry type (invalid)
         let request = crate::dto::SinglePointRoutingRequest {
@@ -783,7 +726,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create routing first
@@ -813,7 +757,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
 
         // Try to delete non-existent routing
         let rows_affected = manager.delete_measurement_routing(1001, 999).await.unwrap();
@@ -828,7 +773,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create routing (enabled)
@@ -890,7 +836,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create valid routing row
@@ -915,7 +862,8 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        create_test_instance(&manager, 1001, "battery_test", "Battery").await;
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 1001, "battery_test", "Battery", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create routing row with non-existent measurement point
@@ -942,8 +890,9 @@ mod tests {
         let (_temp_dir, pool) = create_test_database().await;
         let manager = create_test_instance_manager(pool.clone());
 
-        // Use PCS which has both measurement and action points
-        create_test_instance(&manager, 2001, "pcs_test", "PCS").await;
+        // Setup hierarchy and use PCS which has both measurement and action points
+        let ess_id = setup_hierarchy(&manager).await;
+        create_test_instance(&manager, 2001, "pcs_test", "PCS", Some(ess_id)).await;
         create_test_channel(&pool, 3001, "test_channel").await;
 
         // Create measurement routing

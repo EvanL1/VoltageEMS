@@ -619,3 +619,83 @@ pub async fn set_instance_measurement(
         "status": "set"
     }))))
 }
+
+// ============================================================================
+// Topology Query Handlers
+// ============================================================================
+
+/// Get direct child instances of a given parent
+///
+/// @route GET /api/instances/{id}/children
+/// @input Path(id): u32 - Parent instance ID
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> - Child instances
+/// @status 200 - Success with list of children
+/// @status 500 - Database error
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    get,
+    path = "/api/instances/{id}/children",
+    params(("id" = u32, Path, description = "Parent instance ID")),
+    responses(
+        (status = 200, description = "Child instances", body = serde_json::Value,
+            example = json!({
+                "list": [
+                    {"instance_id": 2, "instance_name": "ess_01", "product_name": "ESS", "parent_id": 1}
+                ]
+            })
+        )
+    ),
+    tag = "modsrv"
+))]
+pub async fn get_instance_children(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<u32>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    match state.instance_manager.get_children(id).await {
+        Ok(children) => Ok(Json(SuccessResponse::new(json!({
+            "list": children
+        })))),
+        Err(e) => Err(ModSrvError::InternalError(format!(
+            "Failed to get children: {}",
+            e
+        ))),
+    }
+}
+
+/// Get full topology tree (all instances with parent relationships)
+///
+/// Returns a flat list of topology nodes ordered for tree reconstruction:
+/// root nodes first, then children in parent_id order.
+///
+/// @route GET /api/topology
+/// @output Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> - Topology tree
+/// @status 200 - Success with topology nodes
+/// @status 500 - Database error
+#[cfg_attr(feature = "swagger-ui", utoipa::path(
+    get,
+    path = "/api/topology",
+    responses(
+        (status = 200, description = "Full topology tree", body = serde_json::Value,
+            example = json!({
+                "tree": [
+                    {"instance_id": 1, "instance_name": "station_01", "product_name": "Station"},
+                    {"instance_id": 2, "instance_name": "ess_01", "product_name": "ESS", "parent_id": 1},
+                    {"instance_id": 3, "instance_name": "pcs_01", "product_name": "PCS", "parent_id": 2}
+                ]
+            })
+        )
+    ),
+    tag = "modsrv"
+))]
+pub async fn get_topology_tree(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
+    match state.instance_manager.get_topology_tree().await {
+        Ok(tree) => Ok(Json(SuccessResponse::new(json!({
+            "tree": tree
+        })))),
+        Err(e) => Err(ModSrvError::InternalError(format!(
+            "Failed to get topology tree: {}",
+            e
+        ))),
+    }
+}

@@ -13,6 +13,18 @@ pub mod can_types;
 pub mod modbus;
 
 #[cfg(feature = "modbus")]
+pub mod modbus_config;
+
+#[cfg(feature = "modbus")]
+pub mod modbus_client;
+
+#[cfg(feature = "modbus")]
+pub mod modbus_logging;
+
+#[cfg(feature = "modbus")]
+pub mod modbus_poll;
+
+#[cfg(feature = "modbus")]
 pub mod command_batcher;
 
 // Mock Modbus server for testing (available in both test and non-test builds for integration tests)
@@ -39,3 +51,24 @@ pub mod mqtt;
 
 #[cfg(feature = "http")]
 pub mod http;
+
+#[cfg(feature = "ble")]
+pub mod ble;
+
+#[cfg(feature = "ble")]
+pub mod ble_config;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee_config;
+
+#[cfg(feature = "zigbee")]
+pub mod zigbee_codec;
+
+#[cfg(feature = "matter")]
+pub mod matter;
+
+#[cfg(feature = "matter")]
+pub mod matter_config;

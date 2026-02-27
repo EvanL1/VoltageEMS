@@ -20,8 +20,9 @@ use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use voltage_calc::StateStore;
+use voltage_routing::RoutingCache;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{RoutingCache, ShmNotifier, UnifiedReader, UnifiedWriter};
+use voltage_rtdb_shm::{ShmNotifier, UnifiedReader, UnifiedWriter};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
@@ -77,6 +78,8 @@ pub struct RuleScheduler<R: Rtdb, S: StateStore = voltage_calc::MemoryStateStore
     tick_ms: u64,
     /// Rule logger manager for independent rule log files
     logger_manager: RuleLoggerManager,
+    /// Maximum concurrent rule executions (default: 4)
+    max_concurrency: usize,
 }
 
 impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
@@ -103,97 +106,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
             shutdown: CancellationToken::new(),
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
-        }
-    }
-
-    /// Create with UnifiedReader for two-tier priority reads (uses MemoryStateStore)
-    ///
-    /// Enables SharedMemory layer in the executor:
-    /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
-    /// 2. Redis (~1ms) - remote fallback
-    ///
-    /// SharedMemory is populated by comsrv and works on any filesystem.
-    /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture
-    pub fn with_shared_reader(
-        rtdb: Arc<R>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-        shared_reader: Option<Arc<UnifiedReader>>,
-    ) -> Self {
-        Self::with_shm(
-            rtdb,
-            routing_cache,
-            pool,
-            tick_ms,
-            log_root,
-            shared_reader,
-            None,
-        )
-    }
-
-    /// Create with both UnifiedReader (for reads) and UnifiedWriter (for M2C actions)
-    /// (uses MemoryStateStore - state lost on restart)
-    ///
-    /// Enables full SHM two-tier architecture:
-    /// - Reads: SharedMemory (~5μs) > Redis (~1ms)
-    /// - Writes: SHM (primary) + Redis TODO (fallback)
-    pub fn with_shm(
-        rtdb: Arc<R>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-        shared_reader: Option<Arc<UnifiedReader>>,
-        shm_action_writer: Option<Arc<UnifiedWriter>>,
-    ) -> Self {
-        Self::with_shm_full(
-            rtdb,
-            routing_cache,
-            pool,
-            tick_ms,
-            log_root,
-            shared_reader,
-            shm_action_writer,
-            None,
-        )
-    }
-
-    /// Create with full SHM support including UDS notifier (uses MemoryStateStore)
-    ///
-    /// Enables complete M2C path:
-    /// - SHM write (UnifiedWriter) for data
-    /// - UDS notification (ShmNotifier) for immediate dispatch (~1-2ms)
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_shm_full(
-        rtdb: Arc<R>,
-        routing_cache: Arc<RoutingCache>,
-        pool: SqlitePool,
-        tick_ms: u64,
-        log_root: PathBuf,
-        shared_reader: Option<Arc<UnifiedReader>>,
-        shm_action_writer: Option<Arc<UnifiedWriter>>,
-        shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
-    ) -> Self {
-        let mut executor = RuleExecutor::new(Arc::clone(&rtdb), routing_cache);
-        if let Some(reader) = shared_reader {
-            executor = executor.with_shared_reader(reader);
-        }
-        if let Some(writer) = shm_action_writer {
-            executor = executor.with_shm_action_writer(writer);
-        }
-        if let Some(notifier) = shm_notifier {
-            executor = executor.with_shm_notifier(notifier);
-        }
-        Self {
-            rtdb,
-            executor: Arc::new(executor),
-            pool,
-            rules: Arc::new(RwLock::new(Vec::new())),
-            shutdown: CancellationToken::new(),
-            tick_ms,
-            logger_manager: RuleLoggerManager::new(log_root),
+            max_concurrency: 4,
         }
     }
 }
@@ -244,7 +157,13 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             shutdown: CancellationToken::new(),
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
+            max_concurrency: 4,
         }
+    }
+
+    /// Set maximum concurrent rule executions (must be called before wrapping in Arc)
+    pub fn set_max_concurrency(&mut self, n: usize) {
+        self.max_concurrency = n.max(1);
     }
 
     /// Load rules from database and initialize scheduler state
@@ -407,7 +326,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             result: Result<RuleExecutionResult>,
         }
 
-        // Execute rules concurrently (max 4 parallel)
+        // Execute rules concurrently (max self.max_concurrency parallel)
         let executor = Arc::clone(&self.executor);
         let execution_futures = rules_to_execute.into_iter().map(|(idx, rule)| {
             let executor = Arc::clone(&executor);
@@ -426,7 +345,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         });
 
         let execution_results: Vec<ExecutionOutcome> = stream::iter(execution_futures)
-            .buffer_unordered(4)
+            .buffer_unordered(self.max_concurrency)
             .collect()
             .await;
 
@@ -448,7 +367,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                     logger.log_execution(&result, &result.variable_values);
 
                     // Write rule execution result to Redis for WebSocket monitoring
-                    self.write_rule_exec_to_redis(outcome.rule_id, &result)
+                    self.write_rule_exec_to_redis(outcome.rule_id, &outcome.rule_name, &result)
                         .await;
 
                     let start_cooldown = result.success && !result.actions_executed.is_empty();
@@ -514,7 +433,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             running: self.is_running(),
             total_rules: rules.len(),
             enabled_rules: enabled_count,
-            tick_interval_ms: DEFAULT_TICK_MS,
+            tick_interval_ms: self.tick_ms,
         }
     }
 
@@ -527,76 +446,53 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         self.executor.execute(&rule).await
     }
 
-    /// Get execution results for a rule (if cached)
-    ///
-    /// Note: Results are persisted to Redis via `write_rule_exec_to_redis()`.
-    /// In-memory caching is not implemented - read from Redis if needed.
-    pub async fn get_last_results(&self, _rule_id: i64) -> Option<RuleExecutionResult> {
-        None
-    }
-
     /// Write rule execution result to Redis
     ///
     /// Stores result in `rule:{rule_id}:exec` Hash with fields:
+    /// - `rule_name` → rule name for diagnostics
     /// - `timestamp` → execution timestamp
     /// - `success` → "true" or "false"
     /// - `execution_path` → JSON array of node IDs
     /// - `variable_values` → JSON object of variable values
     /// - `node_details` → JSON object of node execution details
     /// - `error` → error message if any
-    async fn write_rule_exec_to_redis(&self, rule_id: i64, result: &RuleExecutionResult) {
-        let exec_key = format!("rule:{}:exec", rule_id);
+    async fn write_rule_exec_to_redis(
+        &self,
+        rule_id: i64,
+        rule_name: &str,
+        result: &RuleExecutionResult,
+    ) {
+        let exec_key = voltage_rtdb::KeySpaceConfig::production_cached().rule_exec_key(rule_id);
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("System time should be after UNIX epoch")
-            .as_secs();
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
 
-        // Write timestamp
-        let _ = self
-            .rtdb
-            .hash_set(&exec_key, "timestamp", Bytes::from(ts.to_string()))
-            .await;
+        // Build all fields in a single Vec for one hash_mset round-trip
+        let mut fields: Vec<(String, Bytes)> = Vec::with_capacity(7);
+        fields.push(("rule_name".into(), Bytes::from(rule_name.to_string())));
+        fields.push(("timestamp".into(), Bytes::from(ts.to_string())));
+        fields.push(("success".into(), Bytes::from(result.success.to_string())));
 
-        // Write success flag
-        let _ = self
-            .rtdb
-            .hash_set(
-                &exec_key,
-                "success",
-                Bytes::from(result.success.to_string()),
-            )
-            .await;
-
-        // Write execution path as JSON
+        // JSON fields: skip if serialization fails
         if let Ok(path_json) = serde_json::to_string(&result.execution_path) {
-            let _ = self
-                .rtdb
-                .hash_set(&exec_key, "execution_path", Bytes::from(path_json))
-                .await;
+            fields.push(("execution_path".into(), Bytes::from(path_json)));
         }
-
-        // Write variable values as JSON
         if let Ok(vars_json) = serde_json::to_string(&result.variable_values) {
-            let _ = self
-                .rtdb
-                .hash_set(&exec_key, "variable_values", Bytes::from(vars_json))
-                .await;
+            fields.push(("variable_values".into(), Bytes::from(vars_json)));
         }
-
-        // Write node details as JSON
         if let Ok(details_json) = serde_json::to_string(&result.node_details) {
-            let _ = self
-                .rtdb
-                .hash_set(&exec_key, "node_details", Bytes::from(details_json))
-                .await;
+            fields.push(("node_details".into(), Bytes::from(details_json)));
         }
 
-        // Write error if present
-        let error_str = result.error.clone().unwrap_or_default();
-        let _ = self
-            .rtdb
-            .hash_set(&exec_key, "error", Bytes::from(error_str))
-            .await;
+        fields.push((
+            "error".into(),
+            Bytes::from(result.error.clone().unwrap_or_default()),
+        ));
+
+        // Single hash_mset call + TTL = 2 RTT instead of 8
+        let _ = self.rtdb.hash_mset(&exec_key, fields).await;
+        let _ = self.rtdb.expire(&exec_key, 86400).await;
 
         debug!("Written rule execution result to Redis: {}", rule_id);
     }
@@ -650,53 +546,6 @@ mod tests {
                 nodes,
             },
         }
-    }
-
-    #[test]
-    fn test_scheduled_rule_uses_arc() {
-        // Create a rule and wrap it in Arc
-        let rule = create_test_rule(1, "Test Rule", 1000);
-        let arc_rule = Arc::new(rule);
-
-        // Create ScheduledRule with Arc<Rule>
-        let scheduled = ScheduledRule {
-            rule: Arc::clone(&arc_rule),
-            trigger: TriggerConfig::default(),
-            last_execution: None,
-            last_cooldown_start: None,
-        };
-
-        // Verify Arc works correctly
-        assert_eq!(scheduled.rule.id, 1);
-        assert_eq!(scheduled.rule.name, "Test Rule");
-        assert_eq!(scheduled.rule.cooldown_ms, 1000);
-
-        // Verify Arc::clone is cheap (same underlying data)
-        let cloned_arc = Arc::clone(&scheduled.rule);
-        assert!(Arc::ptr_eq(&scheduled.rule, &cloned_arc));
-    }
-
-    #[test]
-    fn test_arc_clone_is_pointer_copy() {
-        let rule = create_test_rule(42, "Arc Test", 5000);
-        let arc1 = Arc::new(rule);
-
-        // Clone multiple times
-        let arc2 = Arc::clone(&arc1);
-        let arc3 = Arc::clone(&arc1);
-        let arc4 = Arc::clone(&arc2);
-
-        // All point to the same data
-        assert!(Arc::ptr_eq(&arc1, &arc2));
-        assert!(Arc::ptr_eq(&arc2, &arc3));
-        assert!(Arc::ptr_eq(&arc3, &arc4));
-
-        // Strong count should be 4
-        assert_eq!(Arc::strong_count(&arc1), 4);
-
-        // Data is shared, not copied
-        assert_eq!(arc1.id, arc4.id);
-        assert_eq!(arc1.name, arc4.name);
     }
 
     #[test]

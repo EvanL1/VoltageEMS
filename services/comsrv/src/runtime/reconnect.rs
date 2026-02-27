@@ -8,6 +8,12 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
+/// Default initial delay between reconnection attempts (seconds)
+const DEFAULT_INITIAL_DELAY_SECS: u64 = 1;
+
+/// Default maximum delay between reconnection attempts (seconds)
+const DEFAULT_MAX_DELAY_SECS: u64 = 60;
+
 /// Reconnection error types
 #[derive(Error, Debug)]
 pub enum ReconnectError {
@@ -56,8 +62,8 @@ impl Default for ReconnectPolicy {
     fn default() -> Self {
         Self {
             max_attempts: 3,
-            initial_delay: Duration::from_secs(1),
-            max_delay: Duration::from_secs(60),
+            initial_delay: Duration::from_secs(DEFAULT_INITIAL_DELAY_SECS),
+            max_delay: Duration::from_secs(DEFAULT_MAX_DELAY_SECS),
             backoff_multiplier: 2.0,
             jitter: true,
         }

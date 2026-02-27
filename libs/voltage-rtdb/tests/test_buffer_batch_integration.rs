@@ -145,6 +145,7 @@ async fn test_write_buffer_forced_flush() {
     let config = WriteBufferConfig {
         flush_interval_ms: 1000, // Long interval
         max_fields_per_key: 5,   // Low threshold
+        ..Default::default()
     };
     let buffer = WriteBuffer::new(config);
     let rtdb = create_test_rtdb();
@@ -272,6 +273,7 @@ async fn test_write_buffer_flush_loop_timing() {
     let config = WriteBufferConfig {
         flush_interval_ms: 50, // 50ms interval
         max_fields_per_key: 1000,
+        ..Default::default()
     };
     let buffer = Arc::new(WriteBuffer::new(config));
     let rtdb = create_test_rtdb();
@@ -310,6 +312,7 @@ async fn test_write_buffer_graceful_shutdown() {
     let config = WriteBufferConfig {
         flush_interval_ms: 1000, // Long interval
         max_fields_per_key: 1000,
+        ..Default::default()
     };
     let buffer = Arc::new(WriteBuffer::new(config));
     let rtdb = create_test_rtdb();

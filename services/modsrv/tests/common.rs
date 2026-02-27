@@ -3,6 +3,7 @@
 //! Provides reusable test fixtures, helper functions, and sample data builders
 
 #![allow(clippy::disallowed_methods)] // Integration test - unwrap is acceptable
+#![allow(dead_code)] // Test scaffolding - not all helpers used in every test file
 
 use anyhow::Result;
 use common::redis::RedisClient;
@@ -16,15 +17,11 @@ use tempfile::TempDir;
 /// Test environment context containing all required resources
 pub struct TestEnv {
     pub pool: SqlitePool,
-    #[allow(dead_code)]
     pub redis_client: Arc<RedisClient>,
-    #[allow(dead_code)]
     pub temp_dir: TempDir,
-    #[allow(dead_code)]
     pub config: ModsrvConfig,
 }
 
-#[allow(dead_code)]
 impl TestEnv {
     /// Create a fully provisioned test environment
     ///
@@ -76,26 +73,22 @@ impl TestEnv {
     }
 
     /// Borrow the database connection pool
-    #[allow(dead_code)]
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
     /// Borrow the Redis client
-    #[allow(dead_code)]
     pub fn redis(&self) -> &Arc<RedisClient> {
         &self.redis_client
     }
 
     /// Return the temporary directory path
-    #[allow(dead_code)]
     pub fn temp_dir(&self) -> PathBuf {
         self.temp_dir.path().to_path_buf()
     }
 }
 
 /// Initialize the test database schema
-#[allow(dead_code)]
 async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
     common::test_utils::schema::init_modsrv_schema(pool).await?;
 
@@ -140,7 +133,6 @@ async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
 }
 
 /// Create a test configuration
-#[allow(dead_code)]
 fn create_test_config() -> Result<ModsrvConfig> {
     use common::{ApiConfig, BaseServiceConfig, RedisConfig};
 
@@ -170,7 +162,6 @@ pub mod fixtures {
     use serde_json::json;
 
     /// Create a test product record
-    #[allow(dead_code)]
     pub async fn create_test_product(pool: &SqlitePool, product_name: &str) -> Result<()> {
         sqlx::query(
             r#"
@@ -185,46 +176,9 @@ pub mod fixtures {
         Ok(())
     }
 
-    /// Create test product points
-    #[allow(dead_code)]
-    pub async fn create_test_product_points(pool: &SqlitePool, product_name: &str) -> Result<()> {
-        // Measurement points (M)
-        for i in 1..=3 {
-            sqlx::query(
-                r#"
-                INSERT INTO measurement_points (product_name, measurement_id, name, unit)
-                VALUES (?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i)
-            .bind(format!("M{}", i))
-            .bind("kW")
-            .execute(pool)
-            .await?;
-        }
-
-        // Action points (A)
-        for i in 1..=2 {
-            sqlx::query(
-                r#"
-                INSERT INTO action_points (product_name, action_id, name, unit)
-                VALUES (?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i)
-            .bind(format!("A{}", i))
-            .bind("kW")
-            .execute(pool)
-            .await?;
-        }
-
-        Ok(())
-    }
+    // Note: create_test_product_points() removed - product points are now compile-time constants
 
     /// Create test instance properties
-    #[allow(dead_code)]
     pub fn create_test_instance_properties() -> HashMap<String, serde_json::Value> {
         let mut props = HashMap::new();
         props.insert("capacity".to_string(), json!(100));
@@ -232,81 +186,9 @@ pub mod fixtures {
         props
     }
 
-    /// Create a complete test product with measurements, actions, and properties
-    #[allow(dead_code)]
-    pub async fn create_complete_test_product(
-        pool: &SqlitePool,
-        product_name: &str,
-        parent_name: Option<&str>,
-        num_measurements: u32,
-        num_actions: u32,
-        num_properties: i32,
-    ) -> Result<()> {
-        // Insert product
-        sqlx::query(
-            r#"
-            INSERT INTO products (product_name, parent_name)
-            VALUES (?, ?)
-            "#,
-        )
-        .bind(product_name)
-        .bind(parent_name)
-        .execute(pool)
-        .await?;
-
-        // Insert measurements
-        for i in 1..=num_measurements {
-            sqlx::query(
-                r#"
-                INSERT INTO measurement_points (product_name, measurement_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i as i32)
-            .bind(format!("Measurement_{}", i))
-            .bind("kW")
-            .bind(format!("Test measurement {}", i))
-            .execute(pool)
-            .await?;
-        }
-
-        // Insert actions
-        for i in 1..=num_actions {
-            sqlx::query(
-                r#"
-                INSERT INTO action_points (product_name, action_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i as i32)
-            .bind(format!("Action_{}", i))
-            .bind(None::<String>)
-            .bind(format!("Test action {}", i))
-            .execute(pool)
-            .await?;
-        }
-
-        // Insert properties
-        for i in 1..=num_properties {
-            sqlx::query(
-                r#"
-                INSERT INTO property_templates (product_name, property_id, name, unit, description)
-                VALUES (?, ?, ?, ?, ?)
-                "#,
-            )
-            .bind(product_name)
-            .bind(i)
-            .bind(format!("Property_{}", i))
-            .bind("unit")
-            .bind(format!("Test property {}", i))
-            .execute(pool)
-            .await?;
-        }
-
-        Ok(())
-    }
+    // Note: create_complete_test_product() removed - product definitions are now
+    // compile-time constants from voltage-model crate. Tests should use built-in
+    // products (Battery, PCS, etc.) instead of inserting into ghost tables.
 }
 
 /// Test helper functions
@@ -314,12 +196,11 @@ pub mod helpers {
     use super::*;
 
     /// Verify that an instance exists
-    #[allow(dead_code)]
     pub async fn assert_instance_exists(pool: &SqlitePool, instance_id: u16) -> Result<bool> {
         let exists = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_id = ?)",
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(pool)
         .await?;
 
@@ -327,7 +208,6 @@ pub mod helpers {
     }
 
     /// Verify the existence of a Redis key
-    #[allow(dead_code)]
     pub async fn assert_redis_key_exists(redis: &RedisClient, key: &str) -> Result<bool> {
         // Attempt to fetch the key to confirm presence
         match redis.get::<String>(key).await {
@@ -337,28 +217,19 @@ pub mod helpers {
     }
 
     /// Clean up test data
-    #[allow(dead_code)]
     pub async fn cleanup_test_data(pool: &SqlitePool) -> Result<()> {
         sqlx::query("DELETE FROM instance_point_routings")
             .execute(pool)
             .await?;
-        sqlx::query("DELETE FROM instances").execute(pool).await?;
-        sqlx::query("DELETE FROM measurement_points")
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM action_points")
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM property_templates")
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM products").execute(pool).await?;
         sqlx::query("DELETE FROM measurement_routing")
             .execute(pool)
             .await?;
         sqlx::query("DELETE FROM action_routing")
             .execute(pool)
             .await?;
+        sqlx::query("DELETE FROM instances").execute(pool).await?;
+        // Note: measurement_points, action_points, property_templates, products
+        // tables no longer exist - product definitions are compile-time constants
         Ok(())
     }
 }
@@ -369,8 +240,8 @@ pub mod helpers {
 pub mod routing {
     use super::*;
     use bytes::Bytes;
+    use voltage_routing::RoutingCache;
     use voltage_rtdb::MemoryRtdb;
-    use voltage_rtdb::RoutingCache;
     use voltage_rtdb::Rtdb;
 
     /// Create test environment with M2C routing configuration
@@ -395,7 +266,6 @@ pub mod routing {
     ///     // Use rtdb and routing_cache in tests
     /// }
     /// ```
-    #[allow(dead_code)]
     pub async fn setup_m2c_routing(
         m2c_routes: Vec<(&str, &str)>,
         instance_mappings: Vec<(&str, u32)>,
@@ -445,7 +315,6 @@ pub mod routing {
     ///     assert_instance_action(&rtdb, 23, 1, 12.3).await;
     /// }
     /// ```
-    #[allow(dead_code)]
     pub async fn assert_instance_action<R: Rtdb>(
         rtdb: &Arc<R>,
         instance_id: u32,
@@ -473,110 +342,5 @@ pub mod routing {
             "Instance {} action point {} value mismatch",
             instance_id, point_id
         );
-    }
-
-    /// Verify TODO queue has trigger messages
-    ///
-    /// # Arguments
-    /// * `rtdb` - RTDB instance
-    /// * `queue_key` - TODO queue key (e.g., "comsrv:1001:A:TODO")
-    ///
-    /// # Example
-    /// ```no_run
-    /// use common::routing::*;
-    ///
-    /// #[tokio::test]
-    /// async fn test_todo_queue() {
-    ///     let rtdb = create_test_rtdb();
-    ///     // ... trigger action ...
-    ///     assert_todo_queue_triggered(&rtdb, "comsrv:1001:A:TODO").await;
-    /// }
-    /// ```
-    #[allow(dead_code)]
-    pub async fn assert_todo_queue_triggered<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
-        let messages = rtdb
-            .list_range(queue_key, 0, -1)
-            .await
-            .expect("Failed to read TODO queue");
-
-        assert!(
-            !messages.is_empty(),
-            "TODO queue '{}' should have messages",
-            queue_key
-        );
-    }
-
-    /// Verify TODO queue is empty
-    ///
-    /// # Arguments
-    /// * `rtdb` - RTDB instance
-    /// * `queue_key` - TODO queue key (e.g., "comsrv:1001:A:TODO")
-    ///
-    /// # Example
-    /// ```no_run
-    /// use common::routing::*;
-    ///
-    /// #[tokio::test]
-    /// async fn test_no_routing() {
-    ///     let rtdb = create_test_rtdb();
-    ///     // ... operation that should NOT trigger ...
-    ///     assert_todo_queue_empty(&rtdb, "comsrv:1001:A:TODO").await;
-    /// }
-    /// ```
-    #[allow(dead_code)]
-    pub async fn assert_todo_queue_empty<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) {
-        let messages = rtdb
-            .list_range(queue_key, 0, -1)
-            .await
-            .expect("Failed to read TODO queue");
-
-        assert!(
-            messages.is_empty(),
-            "TODO queue '{}' should be empty, but has {} messages",
-            queue_key,
-            messages.len()
-        );
-    }
-
-    /// Parse TODO queue trigger message
-    ///
-    /// # Arguments
-    /// * `rtdb` - RTDB instance
-    /// * `queue_key` - TODO queue key (e.g., "comsrv:1001:A:TODO")
-    ///
-    /// # Returns
-    /// * Parsed JSON value from the first message in the queue
-    ///
-    /// # Example
-    /// ```no_run
-    /// use common::routing::*;
-    ///
-    /// #[tokio::test]
-    /// async fn test_message_format() {
-    ///     let rtdb = create_test_rtdb();
-    ///     // ... trigger action ...
-    ///     let msg = parse_todo_message(&rtdb, "comsrv:1001:A:TODO").await;
-    ///     assert_eq!(msg["point_id"], 1);
-    ///     assert_eq!(msg["value"], 12.3);
-    /// }
-    /// ```
-    #[allow(dead_code)]
-    pub async fn parse_todo_message<R: Rtdb>(rtdb: &Arc<R>, queue_key: &str) -> serde_json::Value {
-        let messages = rtdb
-            .list_range(queue_key, 0, -1)
-            .await
-            .expect("Failed to read TODO queue");
-
-        assert!(
-            !messages.is_empty(),
-            "TODO queue '{}' should have messages",
-            queue_key
-        );
-
-        let message_bytes = &messages[0];
-        let message_str =
-            String::from_utf8(message_bytes.to_vec()).expect("Message should be valid UTF-8");
-
-        serde_json::from_str(&message_str).expect("Message should be valid JSON")
     }
 }

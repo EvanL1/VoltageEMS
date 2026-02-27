@@ -8,6 +8,7 @@
 //! - Protocol name normalization
 //! - Protocol type parsing
 
+use std::borrow::Cow;
 use std::fmt;
 
 // ============================================================================
@@ -104,8 +105,11 @@ impl fmt::Display for ProtocolType {
 // ============================================================================
 
 /// Normalize protocol name to standard format (lowercase underscore)
-/// This ensures consistency across configuration files, plugins, and database
-pub fn normalize_protocol_name(name: &str) -> String {
+/// This ensures consistency across configuration files, plugins, and database.
+///
+/// Returns `Cow::Borrowed` for known protocol names (zero allocation),
+/// `Cow::Owned` only for unknown custom protocols.
+pub fn normalize_protocol_name(name: &str) -> Cow<'static, str> {
     // Clean input: trim whitespace and convert to lowercase
     let cleaned = name.trim().to_lowercase();
 
@@ -115,29 +119,29 @@ pub fn normalize_protocol_name(name: &str) -> String {
     // Map various protocol name variations to standard names
     match normalized.as_str() {
         // Modbus variations
-        "modbus_tcp" | "modbustcp" | "modbus tcp" => "modbus_tcp".to_string(),
-        "modbus_rtu" | "modbusrtu" | "modbus rtu" => "modbus_rtu".to_string(),
-        "modbus_ascii" | "modbusascii" | "modbus ascii" => "modbus_ascii".to_string(),
+        "modbus_tcp" | "modbustcp" | "modbus tcp" => Cow::Borrowed("modbus_tcp"),
+        "modbus_rtu" | "modbusrtu" | "modbus rtu" => Cow::Borrowed("modbus_rtu"),
+        "modbus_ascii" | "modbusascii" | "modbus ascii" => Cow::Borrowed("modbus_ascii"),
 
         // Virtual protocol variations
-        "virtual" | "virt" | "virtual_protocol" => "virtual".to_string(),
+        "virtual" | "virt" | "virtual_protocol" => Cow::Borrowed("virtual"),
 
         // IEC variations
         "iec104" | "iec_104" | "iec60870" | "iec_60870" | "iec60870_5_104" | "iec_60870_5_104" => {
-            "iec104".to_string()
+            Cow::Borrowed("iec104")
         },
 
         // gRPC variations
-        "grpc" | "g_rpc" => "grpc".to_string(),
+        "grpc" | "g_rpc" => Cow::Borrowed("grpc"),
 
         // MQTT variations
-        "mqtt" | "mqtt_protocol" => "mqtt".to_string(),
+        "mqtt" | "mqtt_protocol" => Cow::Borrowed("mqtt"),
 
         // OPC UA variations
-        "opcua" | "opc_ua" | "opc ua" => "opcua".to_string(),
+        "opcua" | "opc_ua" | "opc ua" => Cow::Borrowed("opcua"),
 
         // Default: return cleaned name with underscores
-        _ => normalized,
+        _ => Cow::Owned(normalized),
     }
 }
 

@@ -14,7 +14,7 @@ use common::{fixtures, TestEnv};
 use modsrv::instance_manager::InstanceManager;
 use modsrv::product_loader::{CreateInstanceRequest, ProductLoader};
 use std::sync::Arc;
-use voltage_rtdb::RoutingCache;
+use voltage_routing::RoutingCache;
 
 #[tokio::test]
 async fn test_measurement_routing_load_from_db() -> Result<()> {
@@ -37,16 +37,36 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
         product_loader,
     );
 
-    // 4. Create instance
+    // 4. Setup hierarchy: Station -> ESS (required for Battery)
+    let station_req = CreateInstanceRequest {
+        instance_id: 9901,
+        instance_name: "test_station_root".to_string(),
+        product_name: "Station".to_string(),
+        parent_id: None,
+        properties: std::collections::HashMap::new(),
+    };
+    instance_manager.create_instance(station_req).await?;
+
+    let ess_req = CreateInstanceRequest {
+        instance_id: 9902,
+        instance_name: "test_ess_parent".to_string(),
+        product_name: "ESS".to_string(),
+        parent_id: Some(9901),
+        properties: std::collections::HashMap::new(),
+    };
+    instance_manager.create_instance(ess_req).await?;
+
+    // 5. Create Battery instance (child of ESS)
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
+        parent_id: Some(9902),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req).await?;
 
-    // 5. Create test channel (required by FK constraint in unified database architecture)
+    // 6. Create test channel (required by FK constraint in unified database architecture)
     sqlx::query(
         r#"
         INSERT INTO channels (channel_id, name, protocol, enabled)
@@ -109,10 +129,30 @@ async fn test_action_routing_load_from_db() -> Result<()> {
         product_loader,
     );
 
+    // Setup hierarchy: Station -> ESS (required for Battery)
+    let station_req = CreateInstanceRequest {
+        instance_id: 9901,
+        instance_name: "test_station_root".to_string(),
+        product_name: "Station".to_string(),
+        parent_id: None,
+        properties: std::collections::HashMap::new(),
+    };
+    instance_manager.create_instance(station_req).await?;
+
+    let ess_req = CreateInstanceRequest {
+        instance_id: 9902,
+        instance_name: "test_ess_parent".to_string(),
+        product_name: "ESS".to_string(),
+        parent_id: Some(9901),
+        properties: std::collections::HashMap::new(),
+    };
+    instance_manager.create_instance(ess_req).await?;
+
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
+        parent_id: Some(9902),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req).await?;
@@ -180,10 +220,30 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
         product_loader,
     );
 
+    // Setup hierarchy: Station -> ESS (required for Battery)
+    let station_req = CreateInstanceRequest {
+        instance_id: 9901,
+        instance_name: "test_station_root".to_string(),
+        product_name: "Station".to_string(),
+        parent_id: None,
+        properties: std::collections::HashMap::new(),
+    };
+    instance_manager.create_instance(station_req).await?;
+
+    let ess_req = CreateInstanceRequest {
+        instance_id: 9902,
+        instance_name: "test_ess_parent".to_string(),
+        product_name: "ESS".to_string(),
+        parent_id: Some(9901),
+        properties: std::collections::HashMap::new(),
+    };
+    instance_manager.create_instance(ess_req).await?;
+
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
+        parent_id: Some(9902),
         properties: fixtures::create_test_instance_properties(),
     };
     instance_manager.create_instance(req).await?;

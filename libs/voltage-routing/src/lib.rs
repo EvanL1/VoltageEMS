@@ -7,23 +7,27 @@
 //! - Batch routing execution with 3-layer data architecture
 //! - SQLite routing loader for service initialization
 //! - Write-Triggers-Routing pattern implementation
+//! - RoutingCache: In-memory routing table cache
 
 #![allow(clippy::disallowed_methods)] // Used in specific contexts
 
 pub mod batch;
 pub mod loader;
+pub mod routing_cache;
 
 pub use batch::{
-    write_channel_batch, write_channel_batch_buffered, write_channel_batch_direct,
-    BatchRoutingResult, ChannelPointUpdate,
+    write_channel_batch, write_channel_batch_buffered, BatchRoutingResult, ChannelPointUpdate,
 };
 pub use loader::{load_routing_maps, RoutingMaps};
 
-// Re-export RoutingCache for convenience
-pub use voltage_rtdb::RoutingCache;
+// Re-export RoutingCache types (canonical location: voltage-routing)
+pub use routing_cache::{
+    C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats, StructuredM2CKey,
+    StructuredRouteKey,
+};
 
 use anyhow::{Context, Result};
-use voltage_model::{validate_value, ValidationConfig};
+use voltage_model::{validate_value, PointType, ValidationConfig};
 use voltage_rtdb::Rtdb;
 
 /// Status string for successful operations
@@ -56,12 +60,22 @@ impl ActionRouteOutcome {
 }
 
 /// Additional routing metadata when routing succeeds.
+///
+/// Contains both string and numeric representations of routing targets.
+/// Numeric fields (`target_*`) are provided for efficient SHM writes by callers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteContext {
     pub channel_id: String,
     pub point_type: String,
     pub comsrv_point_id: String,
-    pub queue_key: String,
+    /// Numeric channel ID for SHM writes
+    pub target_channel_id: u32,
+    /// Numeric point type (T=0, S=1, C=2, A=3) for SHM writes
+    pub target_point_type: u8,
+    /// Numeric comsrv point ID for SHM writes
+    pub target_point_id: u32,
+    /// Timestamp (ms) used for the Redis write
+    pub timestamp_ms: i64,
 }
 
 /// Execute action routing with application-layer cache
@@ -69,9 +83,10 @@ pub struct RouteContext {
 /// This function implements the unified M2C routing logic:
 /// 1. Looks up M2C routing in cache
 /// 2. Writes to instance Action Hash (state storage)
-/// 3. Writes to channel Hash + triggers TODO queue (Write-Triggers-Routing pattern)
-/// 4. Optionally writes to SHM (shared memory) for zero-copy M2C notification
-/// 5. Optionally sends UDS notification for event-driven M2C command dispatch
+/// 3. Writes to channel Hash (value/ts/raw)
+///
+/// SHM writes (shared memory) and UDS notifications should be handled by the caller
+/// using [`RouteContext`] fields for the target channel/point/timestamp.
 ///
 /// # Arguments
 /// * `redis` - RTDB trait object
@@ -79,21 +94,16 @@ pub struct RouteContext {
 /// * `instance_id` - Instance ID (numeric)
 /// * `point_id` - Action point ID
 /// * `value` - Point value
-/// * `shm_writer` - Optional SHM writer for M2C via shared memory
-/// * `notifier` - Optional UDS notifier for event-driven command notification
 ///
 /// # Returns
 /// * `Ok(ActionRouteOutcome)` - Routing outcome with metadata
 /// * `Err(anyhow::Error)` - Routing error
-#[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn set_action_point<R>(
     redis: &R,
-    routing_cache: &voltage_rtdb::RoutingCache,
+    routing_cache: &RoutingCache,
     instance_id: u32,
     point_id: &str,
     value: f64,
-    shm_writer: Option<&voltage_rtdb::UnifiedWriter>,
-    notifier: Option<&mut voltage_rtdb::ShmNotifier>,
 ) -> Result<ActionRouteOutcome>
 where
     R: Rtdb,
@@ -114,11 +124,7 @@ where
     // Lookup M2C routing target (zero-allocation path when point_id is numeric)
     let target_opt = if let Ok(point_id_u32) = point_id.parse::<u32>() {
         // Fast path: use structured key lookup (no string allocation)
-        routing_cache.lookup_m2c_by_parts(
-            instance_id,
-            voltage_model::PointType::Adjustment,
-            point_id_u32,
-        )
+        routing_cache.lookup_m2c_by_parts(instance_id, PointType::Adjustment, point_id_u32)
     } else {
         // Fallback: build string key for non-numeric point_id (rare)
         let route_key = format!("{}:A:{}", instance_id, point_id);
@@ -131,20 +137,18 @@ where
         let point_type_enum = target.point_type;
         let comsrv_point_id = target.point_id;
 
-        // Step 3: Write to instance Action Hash (state storage)
+        // Step 1: Write to instance Action Hash (state storage)
         let instance_action_key = config.instance_action_key(instance_id);
         redis
             .hash_set_f64(&instance_action_key, point_id, value)
             .await
             .context("Failed to write instance action point")?;
 
-        // Step 4: Write to channel Hash + auto-trigger TODO queue (Write-Triggers-Routing pattern)
-        // Get current timestamp (milliseconds) - use local system time for efficiency
+        // Step 2: Write to channel Hash
         use voltage_rtdb::{SystemTimeProvider, TimeProvider};
         let timestamp_ms = SystemTimeProvider.now_millis();
 
-        // Use unified helper: writes channel Hash (value/ts/raw) + triggers TODO queue
-        voltage_rtdb::helpers::set_channel_point_with_trigger(
+        voltage_rtdb::helpers::write_channel_hash_only(
             redis,
             config,
             channel_id,
@@ -154,57 +158,17 @@ where
             timestamp_ms,
         )
         .await
-        .context("Failed to set channel point with trigger")?;
+        .context("Failed to write channel hash")?;
 
-        // Step 5: Write to SHM if available (primary path for M2C notification)
-        // This enables comsrv's ShmCommandPoller to detect the command via timestamp change
-        let shm_written = if let Some(writer) = shm_writer {
-            let written = writer.set_action(
-                channel_id,
-                point_type_enum.to_u8(),
-                comsrv_point_id,
-                value,
-                timestamp_ms as u64,
-            );
-            if !written {
-                tracing::warn!(
-                    "SHM write failed for ch{}:{:?}:{}",
-                    channel_id,
-                    point_type_enum,
-                    comsrv_point_id
-                );
-            }
-            written
-        } else {
-            false
-        };
-
-        // Step 6: Send UDS notification (event-driven M2C dispatch)
-        // Only notify if SHM write succeeded (avoid duplicate notifications via TODO queue)
-        if shm_written {
-            if let Some(notifier) = notifier {
-                let notify_result = notifier
-                    .notify(channel_id, point_type_enum, comsrv_point_id)
-                    .await;
-                if notify_result.fallback_used {
-                    tracing::debug!(
-                        "UDS notify used fallback for ch{}:{:?}:{}",
-                        channel_id,
-                        point_type_enum,
-                        comsrv_point_id
-                    );
-                }
-            }
-        }
-
-        let todo_key = config.todo_queue_key(channel_id, point_type_enum);
-
-        // Build route context
+        // Build route context with numeric fields for SHM callers
         let route_context = RouteContext {
             channel_id: channel_id.to_string(),
             point_type: point_type_enum.as_str().to_string(),
             comsrv_point_id: comsrv_point_id.to_string(),
-            queue_key: todo_key.to_string(),
+            target_channel_id: channel_id,
+            target_point_type: point_type_enum.to_u8(),
+            target_point_id: comsrv_point_id,
+            timestamp_ms,
         };
 
         Ok(ActionRouteOutcome {
@@ -217,7 +181,7 @@ where
             route_context: Some(route_context),
         })
     } else {
-        // No routing found - write to instance Hash only (no TODO queue)
+        // No routing found - write to instance Hash only
         let instance_action_key = config.instance_action_key(instance_id);
         redis
             .hash_set_f64(&instance_action_key, point_id, value)
@@ -251,8 +215,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use voltage_model::PointType;
-    use voltage_rtdb::{helpers::create_test_rtdb, RoutingCache};
+    use voltage_rtdb::helpers::create_test_rtdb;
 
     // ========================================================================
     // Helper functions
@@ -304,11 +267,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_action_point_no_route() {
-        // Without M2C routing configured, should write to instance hash only
         let rtdb = create_test_rtdb();
         let routing_cache = create_test_routing_cache();
 
-        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 42.5, None, None).await;
+        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 42.5).await;
 
         assert!(result.is_ok(), "set_action_point should succeed");
         let outcome = result.unwrap();
@@ -323,12 +285,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_action_point_with_route() {
-        // Configure M2C routing and verify full routing path
         let rtdb = create_test_rtdb();
         let routing_cache = create_routing_cache_with_m2c();
 
-        // M2C route: instance 1001:A:1 -> channel 2001:C:10
-        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 100.0, None, None).await;
+        let result = set_action_point(&*rtdb, &routing_cache, 1001, "1", 100.0).await;
 
         assert!(result.is_ok(), "set_action_point should succeed");
         let outcome = result.unwrap();
@@ -341,6 +301,9 @@ mod tests {
         assert_eq!(ctx.channel_id, "2001");
         assert_eq!(ctx.point_type, "C");
         assert_eq!(ctx.comsrv_point_id, "10");
+        // Verify numeric fields
+        assert_eq!(ctx.target_channel_id, 2001);
+        assert_eq!(ctx.target_point_id, 10);
     }
 
     #[tokio::test]
@@ -348,12 +311,10 @@ mod tests {
         let rtdb = create_test_rtdb();
         let routing_cache = create_test_routing_cache();
 
-        // Write action point
-        set_action_point(&*rtdb, &routing_cache, 5001, "42", 123.456, None, None)
+        set_action_point(&*rtdb, &routing_cache, 5001, "42", 123.456)
             .await
             .unwrap();
 
-        // Verify instance action hash was written
         let config = voltage_rtdb::KeySpaceConfig::production_cached();
         let instance_key = config.instance_action_key(5001);
         let stored_value = rtdb.hash_get(&instance_key, "42").await.unwrap();
@@ -421,7 +382,6 @@ mod tests {
     #[tokio::test]
     async fn test_write_channel_batch_with_c2m_routing() {
         let rtdb = create_test_rtdb();
-        // C2M route: channel 1001:T:1 -> instance 5001:M:100
         let routing_cache = create_routing_cache_with_c2m();
 
         let updates = vec![ChannelPointUpdate::new(1001, PointType::Telemetry, 1, 42.0)];
@@ -441,17 +401,15 @@ mod tests {
     #[tokio::test]
     async fn test_c2c_cascade_depth_limit() {
         let rtdb = create_test_rtdb();
-        // C2C route: channel 1001:T:1 -> channel 2001:T:1
         let routing_cache = create_routing_cache_with_c2c();
 
-        // Create update at max cascade depth - should NOT forward
         let updates = vec![ChannelPointUpdate {
             channel_id: 1001,
             point_type: PointType::Telemetry,
             point_id: 1,
             value: 100.0,
             raw_value: None,
-            cascade_depth: MAX_C2C_CASCADE_DEPTH, // At limit
+            cascade_depth: MAX_C2C_CASCADE_DEPTH,
         }];
 
         let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
@@ -464,17 +422,15 @@ mod tests {
     #[tokio::test]
     async fn test_c2c_cascade_depth_allows_forward() {
         let rtdb = create_test_rtdb();
-        // C2C route: channel 1001:T:1 -> channel 2001:T:1
         let routing_cache = create_routing_cache_with_c2c();
 
-        // Create update below max cascade depth - should forward
         let updates = vec![ChannelPointUpdate {
             channel_id: 1001,
             point_type: PointType::Telemetry,
             point_id: 1,
             value: 100.0,
             raw_value: None,
-            cascade_depth: 0, // Below limit
+            cascade_depth: 0,
         }];
 
         let result = write_channel_batch(&*rtdb, &routing_cache, updates).await;
@@ -488,12 +444,9 @@ mod tests {
     // C2C Cycle Detection Tests
     // ========================================================================
 
-    /// Create a routing cache with A→B→A cycle
     fn create_routing_cache_with_c2c_cycle() -> Arc<RoutingCache> {
         let mut c2c_data = HashMap::new();
-        // A→B: channel 1001:T:1 -> channel 2001:T:1
         c2c_data.insert("1001:T:1".to_string(), "2001:T:1".to_string());
-        // B→A: channel 2001:T:1 -> channel 1001:T:1 (creates cycle)
         c2c_data.insert("2001:T:1".to_string(), "1001:T:1".to_string());
         Arc::new(RoutingCache::from_maps(
             HashMap::new(),
@@ -505,10 +458,8 @@ mod tests {
     #[tokio::test]
     async fn test_c2c_cycle_detection() {
         let rtdb = create_test_rtdb();
-        // A→B→A cycle configured
         let routing_cache = create_routing_cache_with_c2c_cycle();
 
-        // Start from channel A
         let updates = vec![ChannelPointUpdate::new(
             1001,
             PointType::Telemetry,
@@ -520,7 +471,6 @@ mod tests {
 
         assert!(result.is_ok());
         let stats = result.unwrap();
-        // Should forward A→B but detect cycle when B tries to forward back to A
         assert!(stats.c2c_forwards > 0, "Should have some forwards");
         assert!(
             stats.cycles_detected > 0,
@@ -531,7 +481,6 @@ mod tests {
     #[tokio::test]
     async fn test_c2c_no_cycle_without_loop() {
         let rtdb = create_test_rtdb();
-        // Simple A→B route (no cycle)
         let routing_cache = create_routing_cache_with_c2c();
 
         let updates = vec![ChannelPointUpdate::new(
@@ -601,15 +550,13 @@ mod tests {
     }
 
     // ========================================================================
-    // Configuration Tests (existing)
+    // Configuration Tests
     // ========================================================================
 
     #[test]
     fn test_m2c_config_has_required_fields() {
-        // M2C routing requires specific configuration fields
         let config = voltage_rtdb::KeySpaceConfig::production().for_m2c();
 
-        // inst_name_pattern is REQUIRED for resolving instance names to IDs
         assert!(
             config.inst_name_pattern.is_some(),
             "M2C config must have inst_name_pattern for name resolution"
@@ -620,7 +567,6 @@ mod tests {
             "inst_name_pattern should match 'inst:*:name' pattern"
         );
 
-        // target_prefix is REQUIRED for routing to channels
         assert!(
             config.target_prefix.is_some(),
             "M2C config must have target_prefix for channel routing"
@@ -631,7 +577,6 @@ mod tests {
             "target_prefix should point to comsrv keys"
         );
 
-        // routing_table should be m2c (not c2m)
         assert_eq!(
             config.routing_table, "route:m2c",
             "M2C config should use route:m2c table"
@@ -640,10 +585,8 @@ mod tests {
 
     #[test]
     fn test_production_config_is_incomplete_for_m2c() {
-        // Verify that raw production() config is NOT suitable for M2C
         let config = voltage_rtdb::KeySpaceConfig::production_cached();
 
-        // Without for_m2c(), these fields are None
         assert!(
             config.inst_name_pattern.is_none(),
             "production() config lacks inst_name_pattern - must use .for_m2c()"
@@ -653,7 +596,6 @@ mod tests {
             "production() config lacks target_prefix - must use .for_m2c()"
         );
 
-        // production() uses C2M routing table by default
         assert_eq!(
             config.routing_table, "route:c2m",
             "production() uses C2M routing table, not M2C"
@@ -662,7 +604,6 @@ mod tests {
 
     #[test]
     fn test_config_serialization() {
-        // Verify that config can be serialized for Module calls
         let config = voltage_rtdb::KeySpaceConfig::production().for_m2c();
         let config_json = serde_json::to_string(&config);
 

@@ -14,9 +14,16 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
 ### Core Services (Rust)
 
 #### comsrv (Communication Service) - Port 6001
-- **Protocol Support**
-  - Modbus TCP client with configurable polling intervals
-  - Modbus RTU over serial port (RS-485/RS-232)
+- **Protocol Support** (10 protocols)
+  - Modbus TCP/RTU over Ethernet and serial port (RS-485/RS-232)
+  - IEC 60870-5-104
+  - OPC UA
+  - MQTT (publish/subscribe with JSON mapping)
+  - HTTP (polling and webhook with JSON mapping)
+  - DL/T 645-2007 (smart meter protocol)
+  - CAN bus
+  - J1939 (vehicle network over CAN)
+  - GPIO (digital I/O)
   - Virtual protocol for testing and simulation
 - **Point Types (Four-Remote)**
   - Telemetry (T): Real-time analog measurements
@@ -126,13 +133,19 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
 
 | Library | Version | Description |
 |---------|---------|-------------|
-
-| voltage-rtdb | 0.1.0 | Redis abstraction layer |
-| voltage-routing | 0.1.0 | M2C routing shared library |
-| voltage-model | 0.1.0 | Model calculation library |
-| voltage-rules | 0.1.0 | Rule engine library |
-| voltage-schema-macro | 0.1.0 | Schema derivation macros |
-| common | 0.1.0 | Shared utilities |
+| voltage-core | 0.1.0 | Core types and codecs — no_std compatible for embedded firmware |
+| voltage-model | 0.1.0 | Model layer — calculations, product definitions, instance management |
+| voltage-routing | 0.1.0 | Data flow routing — comsrv ↔ modsrv message routing |
+| voltage-rtdb | 0.1.0 | Real-time database abstraction — Redis and in-memory backends |
+| voltage-rtdb-shm | 0.1.0 | Shared memory RTDB — zero-copy data sharing via /dev/shm |
+| voltage-shm | 0.1.0 | Platform-agnostic shared memory readers/writers |
+| voltage-infra | 0.1.0 | Infrastructure layer — Redis and SQLite integration |
+| voltage-calc | 0.1.0 | Expression evaluation engine with built-in functions |
+| voltage-rules | 0.1.0 | Rule engine — Vue Flow rule parsing, execution, and scheduling |
+| voltage-sim | 0.1.0 | Waveform generator for device simulation |
+| voltage-schema-macro | 0.1.0 | Proc macro — auto-generates SQL DDL from Rust structs |
+| common | 0.1.0 | Service bootstrap, config management, and shared utilities |
+| errors | 0.1.0 | Unified error types across all services |
 
 ### Documentation
 
@@ -154,7 +167,6 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
 ## Future Releases
 
 Features planned for future versions:
-- CAN bus protocol support
 - Lua scripting for custom calculations
 - Enhanced rule engine with state machines
 - Multi-tenant support

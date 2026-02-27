@@ -3,9 +3,9 @@
 //! This module provides self-describing metadata for protocols and drivers,
 //! enabling dynamic discovery and configuration generation.
 
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::LazyLock;
 
 /// Parameter type for configuration options.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,6 +248,51 @@ fn build_registry() -> ProtocolRegistry {
         });
     }
 
+    // Register BLE protocol
+    #[cfg(feature = "ble")]
+    {
+        use crate::protocols::adapters::ble::BleChannel;
+        let ble_meta = BleChannel::metadata();
+        registry.register(ProtocolMetadata {
+            name: "ble",
+            display_name: "BLE GATT",
+            description: "Bluetooth Low Energy GATT client",
+            protocol_type: "ble",
+            drivers: vec![ble_meta],
+            supports_points: true,
+        });
+    }
+
+    // Register Zigbee protocol
+    #[cfg(feature = "zigbee")]
+    {
+        use crate::protocols::adapters::zigbee::ZigbeeChannel;
+        let zigbee_meta = ZigbeeChannel::metadata();
+        registry.register(ProtocolMetadata {
+            name: "zigbee",
+            display_name: "Zigbee",
+            description: "Zigbee protocol via TCP-connected coordinator gateway",
+            protocol_type: "zigbee",
+            drivers: vec![zigbee_meta],
+            supports_points: true,
+        });
+    }
+
+    // Register Matter protocol
+    #[cfg(feature = "matter")]
+    {
+        use crate::protocols::adapters::matter::MatterChannel;
+        let matter_meta = MatterChannel::metadata();
+        registry.register(ProtocolMetadata {
+            name: "matter",
+            display_name: "Matter",
+            description: "Matter smart home protocol over UDP",
+            protocol_type: "matter",
+            drivers: vec![matter_meta],
+            supports_points: true,
+        });
+    }
+
     // Register Virtual protocol
     {
         use crate::protocols::adapters::virtual_channel::VirtualChannel;
@@ -266,7 +311,7 @@ fn build_registry() -> ProtocolRegistry {
 }
 
 /// Global protocol registry instance.
-static PROTOCOL_REGISTRY: Lazy<ProtocolRegistry> = Lazy::new(build_registry);
+static PROTOCOL_REGISTRY: LazyLock<ProtocolRegistry> = LazyLock::new(build_registry);
 
 /// Get the global protocol registry.
 pub fn get_protocol_registry() -> &'static ProtocolRegistry {

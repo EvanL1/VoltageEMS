@@ -1,7 +1,4 @@
-//! Point configuration model.
-//!
-//! This module defines point configuration with both protocol-specific
-//! address types and SCADA-level categorization (point type).
+//! Point configuration with protocol-specific addresses and SCADA categorization.
 
 use serde::{Deserialize, Serialize};
 use voltage_model::PointType;
@@ -9,36 +6,17 @@ use voltage_model::PointType;
 use crate::protocols::core::error::GatewayError;
 
 /// Point configuration with protocol address and SCADA type.
-///
-/// Each point carries:
-/// - A unique numeric ID
-/// - A SCADA point type (Telemetry/Signal/Control/Adjustment)
-/// - Protocol-specific address information
-/// - Optional transformation and grouping configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PointConfig {
-    /// Unique point identifier (numeric).
     pub id: u32,
-
-    /// SCADA point type (T/S/C/A).
     pub point_type: PointType,
-
-    /// Human-readable name (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-
-    /// Protocol-specific address.
     pub address: ProtocolAddress,
-
-    /// Data transformation configuration.
     #[serde(default)]
     pub transform: TransformConfig,
-
-    /// Polling group (for batch optimization).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll_group: Option<String>,
-
-    /// Whether this point is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -48,7 +26,6 @@ fn default_true() -> bool {
 }
 
 impl PointConfig {
-    /// Create a new point configuration with explicit point type.
     pub fn new(id: u32, point_type: PointType, address: ProtocolAddress) -> Self {
         Self {
             id,
@@ -61,41 +38,34 @@ impl PointConfig {
         }
     }
 
-    /// Create a Telemetry point (convenience constructor).
     pub fn telemetry(id: u32, address: ProtocolAddress) -> Self {
         Self::new(id, PointType::Telemetry, address)
     }
 
-    /// Create a Signal point (convenience constructor).
     pub fn signal(id: u32, address: ProtocolAddress) -> Self {
         Self::new(id, PointType::Signal, address)
     }
 
-    /// Create a Control point (convenience constructor).
     pub fn control(id: u32, address: ProtocolAddress) -> Self {
         Self::new(id, PointType::Control, address)
     }
 
-    /// Create an Adjustment point (convenience constructor).
     pub fn adjustment(id: u32, address: ProtocolAddress) -> Self {
         Self::new(id, PointType::Adjustment, address)
     }
 
-    /// Set the point name.
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Set the transform configuration.
     #[must_use]
     pub fn with_transform(mut self, transform: TransformConfig) -> Self {
         self.transform = transform;
         self
     }
 
-    /// Set the poll group.
     #[must_use]
     pub fn with_poll_group(mut self, group: impl Into<String>) -> Self {
         self.poll_group = Some(group.into());
@@ -107,53 +77,35 @@ impl PointConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "protocol", content = "params")]
 pub enum ProtocolAddress {
-    /// Modbus address.
     Modbus(ModbusAddress),
-
-    /// IEC 60870-5-104 address.
     Iec104(Iec104Address),
-
-    /// OPC UA address.
     OpcUa(OpcUaAddress),
-
-    /// DNP3 address.
     Dnp3(Dnp3Address),
-
-    /// Virtual channel address (no physical device).
     Virtual(VirtualAddress),
-
-    /// GPIO address (for DI/DO hardware control).
     #[cfg(feature = "gpio")]
     Gpio(GpioAddress),
-
-    /// CAN bus address (for raw CAN and J1939 protocols).
     #[cfg(feature = "can")]
     Can(CanAddress),
-
-    /// Generic string address (for custom protocols).
     Generic(String),
-
-    /// DL/T 645-2007 address (for smart meters).
     #[cfg(feature = "dl645")]
     Dl645(Dl645Address),
+    #[cfg(feature = "ble")]
+    Ble(BleAddress),
+    #[cfg(feature = "zigbee")]
+    Zigbee(ZigbeeAddress),
+    #[cfg(feature = "matter")]
+    Matter(MatterAddress),
 }
 
-/// Virtual channel address.
-///
-/// Used for points that don't connect to a physical device.
-/// Virtual points serve as data aggregation/relay points.
+/// Virtual channel address (no physical device).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtualAddress {
-    /// Logical group name (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
-
-    /// Tag/identifier within the group.
     pub tag: String,
 }
 
 impl VirtualAddress {
-    /// Create a simple virtual address.
     pub fn new(tag: impl Into<String>) -> Self {
         Self {
             group: None,
@@ -161,7 +113,6 @@ impl VirtualAddress {
         }
     }
 
-    /// Create a grouped virtual address.
     pub fn grouped(group: impl Into<String>, tag: impl Into<String>) -> Self {
         Self {
             group: Some(group.into()),
@@ -178,7 +129,7 @@ impl VirtualAddress {
 /// # Format
 ///
 /// Supports hexadecimal format with optional "0x" prefix:
-/// - `"0x02010100"` - A相电压
+/// - `"0x02010100"` - Phase A voltage
 /// - `"02010100"` - same as above, without prefix
 ///
 /// # Example
@@ -212,7 +163,7 @@ impl Dl645Address {
     ///
     /// - `"0x02010100"` → di_code = 0x02010100
     /// - `"02010100"` → di_code = 0x02010100
-    /// - `"00010000"` → di_code = 0x00010000 (正向有功总电能)
+    /// - `"00010000"` → di_code = 0x00010000 (total positive active energy)
     pub fn parse(s: &str) -> Result<Self, GatewayError> {
         let s = s.trim();
 
@@ -247,6 +198,97 @@ impl Dl645Address {
     #[must_use]
     pub fn to_hex_string(&self) -> String {
         format!("{:08X}", self.di_code)
+    }
+}
+
+/// BLE GATT address: service UUID + characteristic UUID.
+///
+/// Identifies a specific GATT characteristic on a BLE peripheral.
+/// The peripheral device address is configured at the channel level.
+///
+/// # Address Format
+///
+/// UUIDs support both short (16-bit) and full (128-bit) formats:
+/// - Short: `"180f"` expands to `"0000180f-0000-1000-8000-00805f9b34fb"`
+/// - Full: `"12345678-1234-1234-1234-123456789abc"`
+#[cfg(feature = "ble")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BleAddress {
+    /// GATT Service UUID (short or full format)
+    pub service_uuid: String,
+    /// GATT Characteristic UUID (short or full format)
+    pub characteristic_uuid: String,
+    /// Value data format for parsing raw bytes
+    #[serde(default)]
+    pub data_format: DataFormat,
+    /// Whether to subscribe via Notify (otherwise poll-read)
+    #[serde(default)]
+    pub notify: bool,
+}
+
+/// Zigbee device address for ZCL attribute identification.
+///
+/// Uniquely identifies a data point on a Zigbee device by combining the device's
+/// IEEE address with the ZCL endpoint, cluster, and attribute IDs.
+///
+/// # Example
+///
+/// ```ignore
+/// let addr = ZigbeeAddress {
+///     ieee_address: 0x00124B0018ED1234,
+///     endpoint: 1,
+///     cluster_id: 0x0402,    // Temperature Measurement
+///     attribute_id: 0x0000,  // MeasuredValue
+/// };
+/// ```
+#[cfg(feature = "zigbee")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ZigbeeAddress {
+    /// Device IEEE address (64-bit).
+    pub ieee_address: u64,
+    /// Zigbee endpoint (1-254).
+    pub endpoint: u8,
+    /// ZCL Cluster ID.
+    pub cluster_id: u16,
+    /// ZCL Attribute ID.
+    pub attribute_id: u16,
+}
+
+/// Matter attribute address (endpoint/cluster/attribute path).
+///
+/// Identifies a specific attribute on a Matter device using the
+/// Matter data model hierarchy: Endpoint -> Cluster -> Attribute.
+///
+/// # Format
+///
+/// Address string: `"endpoint/cluster_id/attribute_id"`
+/// Supports hex (0x prefix) and decimal for cluster and attribute IDs.
+///
+/// # Examples
+///
+/// - `"1/0x0006/0x0000"` - On/Off attribute on endpoint 1
+/// - `"1/0x0402/0x0000"` - Temperature measurement
+/// - `"1/6/0"` - On/Off in decimal
+#[cfg(feature = "matter")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct MatterAddress {
+    /// Matter Endpoint (0-65535)
+    pub endpoint: u16,
+    /// Cluster ID (e.g., 0x0006 = On/Off, 0x0402 = Temperature)
+    pub cluster_id: u32,
+    /// Attribute ID within the cluster
+    pub attribute_id: u32,
+}
+
+#[cfg(feature = "matter")]
+impl MatterAddress {
+    /// Create a new Matter address.
+    pub fn new(endpoint: u16, cluster_id: u32, attribute_id: u32) -> Self {
+        Self {
+            endpoint,
+            cluster_id,
+            attribute_id,
+        }
     }
 }
 
@@ -412,30 +454,18 @@ fn parse_can_id(s: &str) -> Result<u32, GatewayError> {
 /// Modbus point address.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusAddress {
-    /// Slave/unit ID.
     pub slave_id: u8,
-
-    /// Function code (1-4 for read, 5-16 for write).
     pub function_code: u8,
-
-    /// Register address (0-based).
     pub register: u16,
-
-    /// Data format.
     #[serde(default)]
     pub format: DataFormat,
-
-    /// Byte order for multi-byte values.
     #[serde(default)]
     pub byte_order: ByteOrder,
-
-    /// Bit position for boolean values (0-15).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bit_position: Option<u8>,
 }
 
 impl ModbusAddress {
-    /// Create a holding register address (FC03).
     pub fn holding_register(slave_id: u8, register: u16, format: DataFormat) -> Self {
         Self {
             slave_id,
@@ -447,7 +477,6 @@ impl ModbusAddress {
         }
     }
 
-    /// Create an input register address (FC04).
     pub fn input_register(slave_id: u8, register: u16, format: DataFormat) -> Self {
         Self {
             slave_id,
@@ -459,7 +488,6 @@ impl ModbusAddress {
         }
     }
 
-    /// Create a coil address (FC01).
     pub fn coil(slave_id: u8, register: u16) -> Self {
         Self {
             slave_id,
@@ -471,7 +499,6 @@ impl ModbusAddress {
         }
     }
 
-    /// Create a discrete input address (FC02).
     pub fn discrete_input(slave_id: u8, register: u16) -> Self {
         Self {
             slave_id,
@@ -483,7 +510,6 @@ impl ModbusAddress {
         }
     }
 
-    /// Get the number of registers to read based on format.
     pub fn register_count(&self) -> u16 {
         self.format.register_count()
     }
@@ -492,18 +518,12 @@ impl ModbusAddress {
 /// IEC 60870-5-104 address.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Iec104Address {
-    /// Information Object Address (IOA).
     pub ioa: u32,
-
-    /// Type Identifier.
     pub type_id: u8,
-
-    /// Common Address of ASDU.
     pub common_address: u16,
 }
 
 impl Iec104Address {
-    /// Create a new IEC 104 address.
     pub fn new(ioa: u32, type_id: u8, common_address: u16) -> Self {
         Self {
             ioa,
@@ -516,16 +536,12 @@ impl Iec104Address {
 /// OPC UA address.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpcUaAddress {
-    /// Node ID (string format).
     pub node_id: String,
-
-    /// Namespace index.
     #[serde(default)]
     pub namespace_index: u16,
 }
 
 impl OpcUaAddress {
-    /// Create a new OPC UA address.
     pub fn new(node_id: impl Into<String>, namespace_index: u16) -> Self {
         Self {
             node_id: node_id.into(),
@@ -537,61 +553,37 @@ impl OpcUaAddress {
 /// DNP3 address.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dnp3Address {
-    /// Point type.
     pub point_type: Dnp3PointType,
-
-    /// Point index.
     pub index: u16,
 }
 
-/// DNP3 point types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Dnp3PointType {
-    /// Binary Input.
     BinaryInput,
-    /// Binary Output.
     BinaryOutput,
-    /// Analog Input.
     AnalogInput,
-    /// Analog Output.
     AnalogOutput,
-    /// Counter.
     Counter,
 }
 
-/// Data format for protocol values.
-///
-/// Supports case-insensitive deserialization with multiple aliases:
-/// - `uint16` / `u16`, `int16` / `i16`, etc.
-/// - `float32` / `f32` / `float`, `float64` / `f64` / `double`
+/// Data format for protocol values (case-insensitive deserialization).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum DataFormat {
-    /// Boolean.
     Bool,
-    /// Unsigned 16-bit integer.
     #[default]
     UInt16,
-    /// Signed 16-bit integer.
     Int16,
-    /// Unsigned 32-bit integer.
     UInt32,
-    /// Signed 32-bit integer.
     Int32,
-    /// Unsigned 64-bit integer.
     UInt64,
-    /// Signed 64-bit integer.
     Int64,
-    /// 32-bit floating point.
     Float32,
-    /// 64-bit floating point.
     Float64,
-    /// String (fixed length).
     String,
 }
 
 impl DataFormat {
-    /// Get the number of 16-bit registers needed for this format.
     pub fn register_count(&self) -> u16 {
         match self {
             Self::Bool | Self::UInt16 | Self::Int16 => 1,
@@ -601,7 +593,6 @@ impl DataFormat {
         }
     }
 
-    /// Get the byte size of this format.
     pub fn byte_size(&self) -> usize {
         match self {
             Self::Bool => 1,
@@ -657,35 +648,22 @@ impl<'de> Deserialize<'de> for DataFormat {
     }
 }
 
-/// Byte order for multi-byte values.
-///
-/// Supports multiple serde aliases for flexibility in JSON configs:
-/// - `ABCD` / `BIG_ENDIAN` / `BE` / `big_endian`
-/// - `DCBA` / `LITTLE_ENDIAN` / `LE` / `little_endian`
-/// - `BADC` / `WORD_SWAP`, `CDAB` / `BYTE_SWAP`
+/// Byte order for multi-byte values (supports serde aliases: BE/LE/WORD_SWAP/BYTE_SWAP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ByteOrder {
-    /// Big-endian (ABCD) - network byte order.
     #[default]
     #[serde(alias = "big_endian", alias = "BIG_ENDIAN", alias = "BE")]
     Abcd,
-
-    /// Little-endian (DCBA).
     #[serde(alias = "little_endian", alias = "LITTLE_ENDIAN", alias = "LE")]
     Dcba,
-
-    /// Mid-big-endian (BADC) - word swap.
     #[serde(alias = "WORD_SWAP", alias = "word_swap")]
     Badc,
-
-    /// Mid-little-endian (CDAB) - byte swap.
     #[serde(alias = "BYTE_SWAP", alias = "byte_swap")]
     Cdab,
 }
 
 impl ByteOrder {
-    /// Get the byte order string for debugging.
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Abcd => "ABCD",
@@ -696,30 +674,19 @@ impl ByteOrder {
     }
 }
 
-/// Data transformation configuration.
+/// Data transformation: result = raw * scale + offset.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TransformConfig {
-    /// Scale factor: result = raw * scale + offset.
     #[serde(default = "default_scale")]
     pub scale: f64,
-
-    /// Offset: result = raw * scale + offset.
     #[serde(default)]
     pub offset: f64,
-
-    /// Reverse boolean value (for signals/controls).
     #[serde(default)]
     pub reverse: bool,
-
-    /// Deadband for change detection.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deadband: Option<f64>,
-
-    /// Minimum valid value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_value: Option<f64>,
-
-    /// Maximum valid value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_value: Option<f64>,
 }
@@ -729,7 +696,6 @@ fn default_scale() -> f64 {
 }
 
 impl TransformConfig {
-    /// Create a simple linear transform.
     pub fn linear(scale: f64, offset: f64) -> Self {
         Self {
             scale,
@@ -738,14 +704,10 @@ impl TransformConfig {
         }
     }
 
-    /// Apply the transform to a raw value.
     pub fn apply(&self, raw: f64) -> f64 {
         raw * self.scale + self.offset
     }
 
-    /// Apply reverse transform to get raw value.
-    ///
-    /// Returns an error if `scale` is zero (division by zero).
     pub fn reverse_apply(&self, value: f64) -> Result<f64, GatewayError> {
         if self.scale == 0.0 {
             return Err(GatewayError::DataConversion(
@@ -755,7 +717,6 @@ impl TransformConfig {
         Ok((value - self.offset) / self.scale)
     }
 
-    /// Apply boolean reverse if configured.
     pub fn apply_bool(&self, raw: bool) -> bool {
         if self.reverse {
             !raw

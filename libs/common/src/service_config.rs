@@ -65,53 +65,6 @@ pub const ENV_MODSRV_URL: &str = "MODSRV_URL";
 pub const ENV_RULES_URL: &str = "RULES_URL";
 
 // ============================================================================
-// Timeout configuration constants
-// ============================================================================
-
-/// Timeout configuration constants for network operations and retry strategies
-pub mod timeouts {
-    use std::time::Duration;
-
-    // ============ Connection Timeout ============
-    /// Default connection timeout in milliseconds
-    pub const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5000;
-    /// Default connection timeout as Duration
-    pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_millis(DEFAULT_CONNECT_TIMEOUT_MS);
-
-    // ============ Request/Read Timeout ============
-    /// Default read/request timeout in milliseconds
-    pub const DEFAULT_READ_TIMEOUT_MS: u64 = 3000;
-    /// Default read/request timeout as Duration
-    pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_millis(DEFAULT_READ_TIMEOUT_MS);
-
-    // ============ Reconnection Strategy ============
-    /// Minimum reconnection delay in milliseconds (exponential backoff start)
-    pub const MIN_RECONNECT_DELAY_MS: u64 = 1000;
-    /// Maximum reconnection delay in milliseconds (exponential backoff cap)
-    pub const MAX_RECONNECT_DELAY_MS: u64 = 30000;
-    /// Cooldown period after max consecutive failures in milliseconds
-    pub const RECONNECT_COOLDOWN_MS: u64 = 60000;
-
-    /// Minimum reconnection delay as Duration
-    pub const MIN_RECONNECT_DELAY: Duration = Duration::from_millis(MIN_RECONNECT_DELAY_MS);
-    /// Maximum reconnection delay as Duration
-    pub const MAX_RECONNECT_DELAY: Duration = Duration::from_millis(MAX_RECONNECT_DELAY_MS);
-    /// Reconnection cooldown as Duration
-    pub const RECONNECT_COOLDOWN: Duration = Duration::from_millis(RECONNECT_COOLDOWN_MS);
-
-    // ============ Task/System Timeouts ============
-    /// Default shutdown timeout in milliseconds (graceful shutdown)
-    pub const SHUTDOWN_TIMEOUT_MS: u64 = 5000;
-    /// Default shutdown timeout as Duration
-    pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(SHUTDOWN_TIMEOUT_MS);
-
-    /// Default test timeout in milliseconds (unit tests)
-    pub const TEST_TIMEOUT_MS: u64 = 1000;
-    /// Default test timeout as Duration
-    pub const TEST_TIMEOUT: Duration = Duration::from_millis(TEST_TIMEOUT_MS);
-}
-
-// ============================================================================
 // Redis routing keys (for cross-service data routing)
 // ============================================================================
 
@@ -482,13 +435,13 @@ pub trait ConfigValidator: Send + Sync {
 /// ```
 pub struct GenericValidator<T> {
     config: Option<T>,
-    raw_yaml: Option<serde_yaml::Value>,
+    raw_yaml: Option<serde_yml::Value>,
 }
 
 impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
     /// Create validator from YAML value
-    pub fn from_yaml(yaml: serde_yaml::Value) -> Self {
-        let config = serde_yaml::from_value(yaml.clone()).ok();
+    pub fn from_yaml(yaml: serde_yml::Value) -> Self {
+        let config = serde_yml::from_value(yaml.clone()).ok();
         Self {
             config,
             raw_yaml: Some(yaml),
@@ -510,7 +463,7 @@ impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         // Deserialize directly from string to capture line/column information
-        let config = serde_yaml::from_str::<T>(&content).map_err(|e| {
+        let config = serde_yml::from_str::<T>(&content).map_err(|e| {
             if let Some(location) = e.location() {
                 anyhow::anyhow!(
                     "Configuration error in {}:{}:{}\n  {}",
@@ -525,7 +478,7 @@ impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
         })?;
 
         // Also parse as YAML Value for raw_yaml field
-        let yaml: serde_yaml::Value = serde_yaml::from_str(&content)?;
+        let yaml: serde_yml::Value = serde_yml::from_str(&content)?;
 
         Ok(Self {
             config: Some(config),
@@ -544,13 +497,31 @@ impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
     }
 }
 
+impl<T: DeserializeOwned + ConfigValidator> GenericValidator<T> {
+    /// Delegate validation to inner config, or return error if config is unavailable
+    fn delegate_or_error(
+        &self,
+        level: ValidationLevel,
+        f: impl FnOnce(&T) -> Result<ValidationResult>,
+    ) -> Result<ValidationResult> {
+        match &self.config {
+            Some(config) => f(config),
+            None => {
+                let mut result = ValidationResult::new(level);
+                result.add_error("Configuration not available".to_string());
+                Ok(result)
+            },
+        }
+    }
+}
+
 impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator<T> {
     fn validate_syntax(&self) -> Result<ValidationResult> {
         let mut result = ValidationResult::new(ValidationLevel::Syntax);
 
         if self.config.is_none() {
             if let Some(yaml) = &self.raw_yaml {
-                match serde_yaml::from_value::<T>(yaml.clone()) {
+                match serde_yml::from_value::<T>(yaml.clone()) {
                     Ok(_) => {
                         result.add_warning("Configuration parsed but not stored".to_string());
                     },
@@ -567,36 +538,15 @@ impl<T: DeserializeOwned + ConfigValidator> ConfigValidator for GenericValidator
     }
 
     fn validate_schema(&self) -> Result<ValidationResult> {
-        match &self.config {
-            Some(config) => config.validate_schema(),
-            None => {
-                let mut result = ValidationResult::new(ValidationLevel::Schema);
-                result.add_error("Configuration parsing failed".to_string());
-                Ok(result)
-            },
-        }
+        self.delegate_or_error(ValidationLevel::Schema, |c| c.validate_schema())
     }
 
     fn validate_business(&self) -> Result<ValidationResult> {
-        match &self.config {
-            Some(config) => config.validate_business(),
-            None => {
-                let mut result = ValidationResult::new(ValidationLevel::Business);
-                result.add_error("Configuration not available".to_string());
-                Ok(result)
-            },
-        }
+        self.delegate_or_error(ValidationLevel::Business, |c| c.validate_business())
     }
 
     fn validate_runtime(&self) -> Result<ValidationResult> {
-        match &self.config {
-            Some(config) => config.validate_runtime(),
-            None => {
-                let mut result = ValidationResult::new(ValidationLevel::Runtime);
-                result.add_error("Configuration not available".to_string());
-                Ok(result)
-            },
-        }
+        self.delegate_or_error(ValidationLevel::Runtime, |c| c.validate_runtime())
     }
 }
 

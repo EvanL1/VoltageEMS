@@ -97,6 +97,32 @@ impl ExtractedField {
     }
 }
 
+/// Extract a multi-byte aligned field (16/32/64-bit).
+///
+/// Validates bit_position == 0 and sufficient data length, then returns the slice.
+#[inline]
+fn extract_multibyte(
+    data: &[u8],
+    byte_offset: usize,
+    bit_position: u8,
+    bit_length: u8,
+) -> Result<ExtractedField> {
+    if bit_position != 0 {
+        return Err(GatewayError::Protocol(format!(
+            "{bit_length}-bit field must start at bit position 0, got {bit_position}"
+        )));
+    }
+    let byte_count = (bit_length / 8) as usize;
+    if byte_offset + byte_count > data.len() {
+        return Err(GatewayError::Protocol(format!(
+            "Not enough bytes for {bit_length}-bit field at offset {byte_offset}"
+        )));
+    }
+    Ok(ExtractedField::new(
+        &data[byte_offset..byte_offset + byte_count],
+    ))
+}
+
 /// Extract a field from CAN data (stack-allocated, no heap allocation)
 fn extract_field(
     data: &[u8],
@@ -106,167 +132,77 @@ fn extract_field(
 ) -> Result<ExtractedField> {
     let byte_offset = byte_offset as usize;
 
-    // Validate parameters
     if byte_offset >= data.len() {
         return Err(GatewayError::Protocol(format!(
-            "Byte offset {} out of range (data length: {})",
-            byte_offset,
+            "Byte offset {byte_offset} out of range (data length: {})",
             data.len()
         )));
     }
 
-    // Handle different bit lengths
     match bit_length {
         2 => {
-            // 2-bit field (for alarm status)
             if bit_position > 6 {
                 return Err(GatewayError::Protocol(format!(
-                    "Invalid bit position {} for 2-bit field",
-                    bit_position
+                    "Invalid bit position {bit_position} for 2-bit field"
                 )));
             }
-            let byte = data[byte_offset];
-            let value = (byte >> bit_position) & 0x03;
-            Ok(ExtractedField::single(value))
+            Ok(ExtractedField::single(
+                (data[byte_offset] >> bit_position) & 0x03,
+            ))
         },
         8 => {
-            // Single byte
             if bit_position != 0 {
                 return Err(GatewayError::Protocol(format!(
-                    "8-bit field must start at bit position 0, got {}",
-                    bit_position
+                    "8-bit field must start at bit position 0, got {bit_position}"
                 )));
             }
             Ok(ExtractedField::single(data[byte_offset]))
         },
-        16 => {
-            // 2 bytes (Little-Endian)
-            if bit_position != 0 {
-                return Err(GatewayError::Protocol(format!(
-                    "16-bit field must start at bit position 0, got {}",
-                    bit_position
-                )));
-            }
-            if byte_offset + 2 > data.len() {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for 16-bit field at offset {}",
-                    byte_offset
-                )));
-            }
-            Ok(ExtractedField::new(&data[byte_offset..byte_offset + 2]))
-        },
-        32 => {
-            // 4 bytes (Little-Endian)
-            if bit_position != 0 {
-                return Err(GatewayError::Protocol(format!(
-                    "32-bit field must start at bit position 0, got {}",
-                    bit_position
-                )));
-            }
-            if byte_offset + 4 > data.len() {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for 32-bit field at offset {}",
-                    byte_offset
-                )));
-            }
-            Ok(ExtractedField::new(&data[byte_offset..byte_offset + 4]))
-        },
-        64 => {
-            // 8 bytes (for ASCII strings)
-            if bit_position != 0 {
-                return Err(GatewayError::Protocol(format!(
-                    "64-bit field must start at bit position 0, got {}",
-                    bit_position
-                )));
-            }
-            if byte_offset + 8 > data.len() {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for 64-bit field at offset {}",
-                    byte_offset
-                )));
-            }
-            Ok(ExtractedField::new(&data[byte_offset..byte_offset + 8]))
-        },
+        16 | 32 | 64 => extract_multibyte(data, byte_offset, bit_position, bit_length),
         _ => Err(GatewayError::Protocol(format!(
-            "Unsupported bit length: {}",
-            bit_length
+            "Unsupported bit length: {bit_length}"
         ))),
     }
 }
 
+/// Read N little-endian bytes from a slice, returning a fixed-size array.
+#[inline]
+fn read_le<const N: usize>(bytes: &[u8], type_name: &str) -> Result<[u8; N]> {
+    bytes
+        .get(..N)
+        .and_then(|s| s.try_into().ok())
+        .ok_or_else(|| {
+            GatewayError::Protocol(format!(
+                "Not enough bytes for {type_name}, got {}",
+                bytes.len()
+            ))
+        })
+}
+
 /// Decode a CAN point from frame data
 pub fn decode_point(point: &CanPoint, frame_data: &[u8]) -> Result<Value> {
-    // Extract raw bytes (stack-allocated)
     let field = extract_field(
         frame_data,
         point.byte_offset,
         point.bit_position,
         point.bit_length,
     )?;
-    let raw_bytes = field.as_slice();
+    let raw = field.as_slice();
 
-    // Decode based on data type (enum matching - faster than string comparison)
     let raw_value = match point.data_type {
         CanDataType::UInt8 => {
-            if raw_bytes.is_empty() {
-                return Err(GatewayError::Protocol("Empty data for uint8".to_string()));
+            if raw.is_empty() {
+                return Err(GatewayError::Protocol("Empty data for uint8".into()));
             }
-            Value::Integer(raw_bytes[0] as i64)
+            Value::Integer(raw[0] as i64)
         },
-        CanDataType::UInt16 => {
-            if raw_bytes.len() < 2 {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for uint16, got {}",
-                    raw_bytes.len()
-                )));
-            }
-            let raw = u16::from_le_bytes([raw_bytes[0], raw_bytes[1]]);
-            Value::Integer(raw as i64)
-        },
-        CanDataType::Int16 => {
-            if raw_bytes.len() < 2 {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for int16, got {}",
-                    raw_bytes.len()
-                )));
-            }
-            let raw = i16::from_le_bytes([raw_bytes[0], raw_bytes[1]]);
-            Value::Integer(raw as i64)
-        },
-        CanDataType::UInt32 => {
-            if raw_bytes.len() < 4 {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for uint32, got {}",
-                    raw_bytes.len()
-                )));
-            }
-            let raw = u32::from_le_bytes([raw_bytes[0], raw_bytes[1], raw_bytes[2], raw_bytes[3]]);
-            Value::Integer(raw as i64)
-        },
-        CanDataType::Int32 => {
-            if raw_bytes.len() < 4 {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for int32, got {}",
-                    raw_bytes.len()
-                )));
-            }
-            let raw = i32::from_le_bytes([raw_bytes[0], raw_bytes[1], raw_bytes[2], raw_bytes[3]]);
-            Value::Integer(raw as i64)
-        },
-        CanDataType::Float32 => {
-            if raw_bytes.len() < 4 {
-                return Err(GatewayError::Protocol(format!(
-                    "Not enough bytes for float32, got {}",
-                    raw_bytes.len()
-                )));
-            }
-            let raw = f32::from_le_bytes([raw_bytes[0], raw_bytes[1], raw_bytes[2], raw_bytes[3]]);
-            Value::Float(raw as f64)
-        },
+        CanDataType::UInt16 => Value::Integer(u16::from_le_bytes(read_le(raw, "uint16")?) as i64),
+        CanDataType::Int16 => Value::Integer(i16::from_le_bytes(read_le(raw, "int16")?) as i64),
+        CanDataType::UInt32 => Value::Integer(u32::from_le_bytes(read_le(raw, "uint32")?) as i64),
+        CanDataType::Int32 => Value::Integer(i32::from_le_bytes(read_le(raw, "int32")?) as i64),
+        CanDataType::Float32 => Value::Float(f32::from_le_bytes(read_le(raw, "float32")?) as f64),
         CanDataType::Ascii => {
-            // Decode ASCII string, stopping at first null byte
-            // Use into_owned() + in-place truncation to avoid double allocation
-            let mut s = String::from_utf8_lossy(raw_bytes).into_owned();
+            let mut s = String::from_utf8_lossy(raw).into_owned();
             while s.ends_with('\0') {
                 s.pop();
             }
@@ -275,15 +211,12 @@ pub fn decode_point(point: &CanPoint, frame_data: &[u8]) -> Result<Value> {
     };
 
     // Apply scale and offset for numeric values
-    let final_value = match raw_value {
+    Ok(match raw_value {
         Value::Integer(i) if point.scale != 1.0 || point.offset != 0.0 => {
-            let scaled = (i as f64) * point.scale + point.offset;
-            Value::Float(scaled)
+            Value::Float((i as f64) * point.scale + point.offset)
         },
         other => other,
-    };
-
-    Ok(final_value)
+    })
 }
 
 // ============================================================================

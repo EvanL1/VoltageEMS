@@ -373,26 +373,22 @@ impl ChannelFileLogHandler {
         format!("[STATE] {} -> {}", old_state, new_state)
     }
 
-    /// Format a control write event as log line (debug mode only).
-    fn format_control_write(
-        &self,
+    /// Format a write result (control or adjustment) as log line.
+    fn format_write_result(
+        tag: &str,
         commands_count: usize,
         result: &Result<crate::protocols::core::WriteResult, String>,
         duration_ms: u64,
     ) -> String {
         match result {
-            Ok(write_result) => {
-                format!(
-                    "[CONTROL] cmds={} ok ({}) ({}ms)",
-                    commands_count, write_result.success_count, duration_ms
-                )
-            },
-            Err(e) => {
-                format!(
-                    "[CONTROL] cmds={} FAILED: {} ({}ms)",
-                    commands_count, e, duration_ms
-                )
-            },
+            Ok(wr) => format!(
+                "[{}] cmds={} ok ({}) ({}ms)",
+                tag, commands_count, wr.success_count, duration_ms
+            ),
+            Err(e) => format!(
+                "[{}] cmds={} FAILED: {} ({}ms)",
+                tag, commands_count, e, duration_ms
+            ),
         }
     }
 
@@ -572,31 +568,14 @@ impl ChannelLogHandler for ChannelFileLogHandler {
                 result,
                 duration_ms,
                 ..
-            } => self.format_control_write(commands.len(), result, *duration_ms),
+            } => Self::format_write_result("CONTROL", commands.len(), result, *duration_ms),
 
             ChannelLogEvent::AdjustmentWrite {
                 commands,
                 result,
                 duration_ms,
                 ..
-            } => match result {
-                Ok(write_result) => {
-                    format!(
-                        "[ADJUST] cmds={} ok ({}) ({}ms)",
-                        commands.len(),
-                        write_result.success_count,
-                        duration_ms
-                    )
-                },
-                Err(e) => {
-                    format!(
-                        "[ADJUST] cmds={} FAILED: {} ({}ms)",
-                        commands.len(),
-                        e,
-                        duration_ms
-                    )
-                },
-            },
+            } => Self::format_write_result("ADJUST", commands.len(), result, *duration_ms),
 
             ChannelLogEvent::ReconnectAttempt {
                 attempt,
@@ -633,15 +612,22 @@ impl ChannelLogHandler for ChannelFileLogHandler {
                 values, group_id, ..
             } => {
                 // Point values: output multiple lines, one per type
-                for line in self.format_point_values_by_type(values) {
-                    let formatted = self.format_with_group_id(*group_id, &line);
-                    self.write_log(channel_id, &formatted);
-                }
+                let lines = self.format_point_values_by_type(values);
+                // File I/O: avoid blocking tokio worker thread
+                tokio::task::block_in_place(|| {
+                    for line in lines {
+                        let formatted = self.format_with_group_id(*group_id, &line);
+                        self.write_log(channel_id, &formatted);
+                    }
+                });
                 return; // Already handled, skip the generic write_log below
             },
         };
 
-        self.write_log(channel_id, &line);
+        // File I/O: avoid blocking tokio worker thread
+        tokio::task::block_in_place(|| {
+            self.write_log(channel_id, &line);
+        });
     }
 
     fn set_log_level(&self, level: &str) {
@@ -698,7 +684,7 @@ mod tests {
         assert_eq!(FileLogLevel::parse(Some("DEBUG")), FileLogLevel::Debug);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_file_log_handler() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let handler = ChannelFileLogHandler::new(temp_dir.path())

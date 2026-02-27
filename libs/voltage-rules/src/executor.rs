@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::logger::format_conditions;
 use crate::types::{
     CalculationRule, FlowCondition, Rule, RuleNode, RuleSwitchBranch, RuleValueAssignment,
-    RuleVariable,
+    RuleVariable, RuleWires,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -17,9 +17,11 @@ use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
 use voltage_model::{sanitize_value, ValidationConfig};
 use voltage_routing::set_action_point;
+use voltage_routing::RoutingCache;
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::{KeySpaceConfig, RoutingCache, ShmNotifier, UnifiedReader};
+use voltage_rtdb::KeySpaceConfig;
+use voltage_rtdb_shm::{ShmNotifier, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
 #[inline]
@@ -38,6 +40,85 @@ fn point_type_to_static(pt: Option<&str>, default: &'static str) -> &'static str
 #[inline]
 fn is_rpn_operator(s: &str) -> bool {
     matches!(s, "+" | "-" | "*" | "/")
+}
+
+/// Validate variable fields and sanitize value for write operations.
+///
+/// Common validation shared by `execute_rule_change`, `write_calculation_result`,
+/// and `write_period_delta_result`. Returns `(instance_id, point_id, sanitized_value, point_type)`
+/// or a failed `ActionResult` if validation fails.
+fn validate_write_target(
+    variable: &RuleVariable,
+    raw_value: f64,
+    default_point_type: &'static str,
+    context: &str,
+) -> std::result::Result<(u32, u32, f64, &'static str), ActionResult> {
+    let config = ValidationConfig::default();
+    let value = sanitize_value(raw_value, 0.0, &config);
+    if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
+        tracing::warn!(
+            "{} sanitized: {} → {} (variable '{}')",
+            context,
+            raw_value,
+            value,
+            variable.name
+        );
+    }
+
+    let pt = point_type_to_static(variable.point_type.as_deref(), default_point_type);
+
+    let instance_id = variable.instance.ok_or_else(|| {
+        tracing::error!(
+            "{} skipped: variable '{}' missing instance_id",
+            context,
+            variable.name
+        );
+        ActionResult {
+            target_type: "instance",
+            target_id: 0,
+            point_type: pt,
+            point_id: 0,
+            value,
+            success: false,
+        }
+    })?;
+
+    let point = variable.point.ok_or_else(|| {
+        tracing::error!(
+            "{} skipped: variable '{}' missing point_id (instance_id={})",
+            context,
+            variable.name,
+            instance_id
+        );
+        ActionResult {
+            target_type: "instance",
+            target_id: instance_id,
+            point_type: pt,
+            point_id: 0,
+            value,
+            success: false,
+        }
+    })?;
+
+    Ok((instance_id, point, value, pt))
+}
+
+/// Create or reuse a cached snapshot of variable values.
+///
+/// Returns the cached `Arc` if `values_changed` is false, otherwise creates a new one.
+fn snapshot_or_reuse(
+    cache: &mut Option<Arc<HashMap<String, f64>>>,
+    values: &HashMap<String, f64>,
+    values_changed: bool,
+) -> Arc<HashMap<String, f64>> {
+    if !values_changed {
+        if let Some(snapshot) = cache.as_ref() {
+            return Arc::clone(snapshot);
+        }
+    }
+    let snapshot = Arc::new(values.clone());
+    *cache = Some(Arc::clone(&snapshot));
+    snapshot
 }
 
 /// Evaluate a formula in Reverse Polish Notation (RPN)
@@ -202,7 +283,7 @@ pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     /// Optional UnifiedReader for cross-process zero-copy reads
     shared_reader: Option<Arc<UnifiedReader>>,
     /// Optional UnifiedWriter for M2C via shared memory
-    shm_action_writer: Option<Arc<voltage_rtdb::UnifiedWriter>>,
+    shm_action_writer: Option<Arc<voltage_rtdb_shm::UnifiedWriter>>,
     /// Optional ShmNotifier for UDS event notification (M2C low-latency path)
     shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
 }
@@ -255,7 +336,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     ///
     /// When enabled, action outputs are written to SHM in addition to Redis.
     /// SHM serves as the primary path for comsrv's ShmCommandPoller.
-    pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> Self {
+    pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> Self {
         self.shm_action_writer = Some(writer);
         self
     }
@@ -288,24 +369,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         let max_iterations = 100; // Prevent infinite loops
         let mut iterations = 0;
 
-        // Cached snapshot for avoiding repeated clones
         let mut values_snapshot: Option<Arc<HashMap<String, f64>>> = None;
-
-        fn snapshot_or_reuse(
-            cache: &mut Option<Arc<HashMap<String, f64>>>,
-            values: &HashMap<String, f64>,
-            values_changed: bool,
-        ) -> Arc<HashMap<String, f64>> {
-            if !values_changed {
-                if let Some(snapshot) = cache.as_ref() {
-                    return Arc::clone(snapshot);
-                }
-            }
-
-            let snapshot = Arc::new(values.clone());
-            *cache = Some(Arc::clone(&snapshot));
-            snapshot
-        }
 
         loop {
             iterations += 1;
@@ -444,154 +508,189 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     variables,
                     rule: calculations,
                     wires,
-                } => {
-                    // Read input variables
-                    let values_changed =
-                        match self.read_rule_variables(variables, &mut values).await {
-                            Ok(changed) => changed,
-                            Err(e) => {
-                                result.error = Some(format!("Failed to read variables: {}", e));
-                                return Ok(result);
-                            },
-                        };
-
-                    // Snapshot values when entering this node (before calculation writes to values)
-                    let input_snapshot =
-                        snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
-                    result.variable_values = Arc::clone(&input_snapshot);
-
-                    // Create CalcEngine with rule_id as context (for stateful functions)
-                    let calc_engine =
-                        CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule.id));
-                    let mut node_actions = Vec::new();
-
-                    for calc in calculations {
-                        // Evaluate formula (supports stateful functions like integrate)
-                        let calc_result = match calc_engine.evaluate(&calc.formula, &values).await {
-                            Ok(v) => v,
-                            Err(e) => {
-                                result.error =
-                                    Some(format!("Calc '{}' error: {}", calc.formula, e));
-                                return Ok(result);
-                            },
-                        };
-
-                        // Find output variable and write result
-                        if let Some(var) = variables.iter().find(|v| v.name == calc.output) {
-                            let action =
-                                self.write_calculation_result(var, calc_result, calc).await;
-                            node_actions.push(action);
-                            result.actions_executed.push(action);
-                        }
-
-                        // Update local values for chained calculations
-                        values.insert(calc.output.clone(), calc_result);
-                    }
-
-                    // Values were modified by calculations; invalidate snapshot cache.
-                    values_snapshot = None;
-                    result.node_details.insert(
-                        current_id.to_string(),
-                        NodeExecutionDetail {
-                            node_type: "calculation",
-                            input_values: input_snapshot,
-                            condition_results: None,
-                            matched_port: None,
-                            actions: Some(node_actions),
-                        },
-                    );
-
-                    current_id = match wires.default.first() {
-                        Some(next) => next.as_str(),
-                        None => {
-                            result.error = Some("Calculation node has no output wire".to_string());
-                            return Ok(result);
-                        },
-                    };
+                } => match self
+                    .handle_calculation_node(
+                        current_id,
+                        variables,
+                        calculations,
+                        wires,
+                        &mut values,
+                        &mut values_snapshot,
+                        &mut result,
+                        rule.id,
+                    )
+                    .await
+                {
+                    Some(next) => current_id = next,
+                    None => return Ok(result),
                 },
                 RuleNode::PeriodDelta {
                     input,
                     output,
                     period,
                     wires,
-                } => {
-                    // Read input variable (cumulative value like total energy)
-                    let input_vars = vec![input.clone()];
-                    let values_changed =
-                        match self.read_rule_variables(&input_vars, &mut values).await {
-                            Ok(changed) => changed,
-                            Err(e) => {
-                                result.error =
-                                    Some(format!("Failed to read input variable: {}", e));
-                                return Ok(result);
-                            },
-                        };
-
-                    // Snapshot values when entering this node
-                    let input_snapshot =
-                        snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
-                    result.variable_values = Arc::clone(&input_snapshot);
-
-                    // Get the input value
-                    let input_value = values.get(&input.name).copied().unwrap_or(0.0);
-
-                    // Create CalcEngine with rule_id as context (for stateful period_delta)
-                    let calc_engine =
-                        CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule.id));
-
-                    // Calculate period delta using builtin function
-                    // State key format: calc:state:rule_{id}:period_delta:{var_name}_{period}
-                    let state_key = format!(
-                        "{}:{}:{}",
+                } => match self
+                    .handle_period_delta_node(
+                        current_id,
+                        input,
+                        output,
+                        period,
+                        wires,
+                        &mut values,
+                        &mut values_snapshot,
+                        &mut result,
                         rule.id,
-                        input.instance.unwrap_or(0),
-                        input.point.unwrap_or(0)
-                    );
-                    let delta = match calc_engine
-                        .builtin()
-                        .period_delta(&state_key, input_value, period)
-                        .await
-                    {
-                        Ok(v) => v,
-                        Err(e) => {
-                            result.error = Some(format!("period_delta error: {}", e));
-                            return Ok(result);
-                        },
-                    };
-
-                    // Write delta to output variable
-                    let action = self.write_period_delta_result(output, delta, period).await;
-                    let node_actions = vec![action];
-                    result.actions_executed.push(action);
-
-                    // Update local values
-                    values.insert(output.name.clone(), delta);
-                    values_snapshot = None; // Invalidate cache
-
-                    // Record node execution detail
-                    result.node_details.insert(
-                        current_id.to_string(),
-                        NodeExecutionDetail {
-                            node_type: "periodDelta",
-                            input_values: input_snapshot,
-                            condition_results: None,
-                            matched_port: None,
-                            actions: Some(node_actions),
-                        },
-                    );
-
-                    current_id = match wires.default.first() {
-                        Some(next) => next.as_str(),
-                        None => {
-                            result.error = Some("PeriodDelta node has no output wire".to_string());
-                            return Ok(result);
-                        },
-                    };
+                    )
+                    .await
+                {
+                    Some(next) => current_id = next,
+                    None => return Ok(result),
                 },
             }
         }
 
         Ok(result)
+    }
+
+    /// Handle Calculation node: evaluate formulas and write results
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_calculation_node<'a>(
+        &self,
+        node_id: &str,
+        variables: &[RuleVariable],
+        calculations: &[CalculationRule],
+        wires: &'a RuleWires,
+        values: &mut HashMap<String, f64>,
+        snapshot_cache: &mut Option<Arc<HashMap<String, f64>>>,
+        result: &mut RuleExecutionResult,
+        rule_id: i64,
+    ) -> Option<&'a str> {
+        let values_changed = match self.read_rule_variables(variables, values).await {
+            Ok(changed) => changed,
+            Err(e) => {
+                result.error = Some(format!("Failed to read variables: {}", e));
+                return None;
+            },
+        };
+
+        let input_snapshot = snapshot_or_reuse(snapshot_cache, values, values_changed);
+        result.variable_values = Arc::clone(&input_snapshot);
+
+        let calc_engine =
+            CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule_id));
+        let mut node_actions = Vec::new();
+
+        for calc in calculations {
+            let calc_result = match calc_engine.evaluate(&calc.formula, values).await {
+                Ok(v) => v,
+                Err(e) => {
+                    result.error = Some(format!("Calc '{}' error: {}", calc.formula, e));
+                    return None;
+                },
+            };
+
+            if let Some(var) = variables.iter().find(|v| v.name == calc.output) {
+                let action = self.write_calculation_result(var, calc_result, calc).await;
+                node_actions.push(action);
+                result.actions_executed.push(action);
+            }
+
+            values.insert(calc.output.clone(), calc_result);
+        }
+
+        *snapshot_cache = None; // Values modified; invalidate cache
+        result.node_details.insert(
+            node_id.to_string(),
+            NodeExecutionDetail {
+                node_type: "calculation",
+                input_values: input_snapshot,
+                condition_results: None,
+                matched_port: None,
+                actions: Some(node_actions),
+            },
+        );
+
+        match wires.default.first() {
+            Some(next) => Some(next.as_str()),
+            None => {
+                result.error = Some("Calculation node has no output wire".to_string());
+                None
+            },
+        }
+    }
+
+    /// Handle PeriodDelta node: calculate period delta and write result
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_period_delta_node<'a>(
+        &self,
+        node_id: &str,
+        input: &RuleVariable,
+        output: &RuleVariable,
+        period: &str,
+        wires: &'a RuleWires,
+        values: &mut HashMap<String, f64>,
+        snapshot_cache: &mut Option<Arc<HashMap<String, f64>>>,
+        result: &mut RuleExecutionResult,
+        rule_id: i64,
+    ) -> Option<&'a str> {
+        let input_vars = vec![input.clone()];
+        let values_changed = match self.read_rule_variables(&input_vars, values).await {
+            Ok(changed) => changed,
+            Err(e) => {
+                result.error = Some(format!("Failed to read input variable: {}", e));
+                return None;
+            },
+        };
+
+        let input_snapshot = snapshot_or_reuse(snapshot_cache, values, values_changed);
+        result.variable_values = Arc::clone(&input_snapshot);
+
+        let input_value = values.get(&input.name).copied().unwrap_or(0.0);
+        let calc_engine =
+            CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule_id));
+
+        let state_key = format!(
+            "{}:{}:{}",
+            rule_id,
+            input.instance.unwrap_or(0),
+            input.point.unwrap_or(0)
+        );
+        let delta = match calc_engine
+            .builtin()
+            .period_delta(&state_key, input_value, period)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                result.error = Some(format!("period_delta error: {}", e));
+                return None;
+            },
+        };
+
+        let action = self.write_period_delta_result(output, delta, period).await;
+        result.actions_executed.push(action);
+
+        values.insert(output.name.clone(), delta);
+        *snapshot_cache = None; // Invalidate cache
+
+        result.node_details.insert(
+            node_id.to_string(),
+            NodeExecutionDetail {
+                node_type: "periodDelta",
+                input_values: input_snapshot,
+                condition_results: None,
+                matched_port: None,
+                actions: Some(vec![action]),
+            },
+        );
+
+        match wires.default.first() {
+            Some(next) => Some(next.as_str()),
+            None => {
+                result.error = Some("PeriodDelta node has no output wire".to_string());
+                None
+            },
+        }
     }
 
     /// Read variables from RTDB with two-tier priority
@@ -888,72 +987,24 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         } else if let Some(n) = assignment.value.as_i64() {
             n as f64
         } else if let Some(s) = assignment.value.as_str() {
-            // Could be a variable reference
             values.get(s).copied().unwrap_or(s.parse().unwrap_or(0.0))
         } else {
             0.0
         };
 
-        // Sanitize value to prevent NaN/Infinity from reaching devices
-        let config = ValidationConfig::default();
-        let resolved_value = sanitize_value(raw_value, 0.0, &config);
-        if (raw_value - resolved_value).abs() > f64::EPSILON || raw_value.is_nan() {
-            tracing::warn!(
-                "Rule action value sanitized: {} → {} (variable '{}')",
-                raw_value,
-                resolved_value,
-                variable.name
-            );
-        }
-
-        let Some(instance_id) = variable.instance else {
-            tracing::error!(
-                "Rule action skipped: variable '{}' missing instance_id",
-                variable.name
-            );
-            return ActionResult {
-                target_type: "instance",
-                target_id: 0,
-                point_type: point_type_to_static(variable.point_type.as_deref(), "A"),
-                point_id: 0,
-                value: resolved_value,
-                success: false,
+        let (instance_id, point, value, pt) =
+            match validate_write_target(variable, raw_value, "A", "Rule action") {
+                Ok(v) => v,
+                Err(action) => return action,
             };
-        };
 
-        let Some(point) = variable.point else {
-            tracing::error!(
-                "Rule action skipped: variable '{}' missing point_id (instance_id={})",
-                variable.name,
-                instance_id
-            );
-            return ActionResult {
-                target_type: "instance",
-                target_id: instance_id,
-                point_type: point_type_to_static(variable.point_type.as_deref(), "A"),
-                point_id: 0,
-                value: resolved_value,
-                success: false,
-            };
-        };
-
-        // Use voltage_routing to set the action point
-        // Use precomputed pool for common point IDs (0-255)
         let point_str = precomputed::get_point_id_str_or_alloc(point);
-        // SHM writer enables direct M2C via shared memory (primary path)
-        // Lock notifier for mutable access during async call
-        let mut notifier_guard = match &self.shm_notifier {
-            Some(n) => Some(n.lock().await),
-            None => None,
-        };
-        let routed = match set_action_point(
+        let success = match set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,
             instance_id,
             &point_str,
-            resolved_value,
-            self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-            notifier_guard.as_deref_mut(),
+            value,
         )
         .await
         {
@@ -972,10 +1023,10 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         ActionResult {
             target_type: "instance",
             target_id: instance_id,
-            point_type: point_type_to_static(variable.point_type.as_deref(), "A"),
+            point_type: pt,
             point_id: point,
-            value: resolved_value,
-            success: routed,
+            value,
+            success,
         }
     }
 
@@ -990,77 +1041,29 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         raw_value: f64,
         calc: &CalculationRule,
     ) -> ActionResult {
-        // Sanitize calculation result to prevent NaN/Infinity propagation
-        let config = ValidationConfig::default();
-        let value = sanitize_value(raw_value, 0.0, &config);
-        if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
-            tracing::warn!(
-                "Calc output '{}' sanitized: {} → {} (formula='{}')",
-                calc.output,
-                raw_value,
-                value,
-                calc.formula
-            );
-        }
-        let Some(instance_id) = variable.instance else {
-            tracing::error!(
-                "Calc output skipped: variable '{}' missing instance_id (output='{}')",
-                variable.name,
-                calc.output
-            );
-            return ActionResult {
-                target_type: "instance",
-                target_id: 0,
-                point_type: point_type_to_static(variable.point_type.as_deref(), "M"),
-                point_id: 0,
-                value,
-                success: false,
-            };
+        let (instance_id, point, value, pt) = match validate_write_target(
+            variable,
+            raw_value,
+            "M",
+            &format!("Calc '{}'", calc.output),
+        ) {
+            Ok(v) => v,
+            Err(action) => return action,
         };
 
-        let Some(point) = variable.point else {
-            tracing::error!(
-                "Calc output skipped: variable '{}' missing point_id (instance_id={}, output='{}')",
-                variable.name,
-                instance_id,
-                calc.output
-            );
-            return ActionResult {
-                target_type: "instance",
-                target_id: instance_id,
-                point_type: point_type_to_static(variable.point_type.as_deref(), "M"),
-                point_id: 0,
-                value,
-                success: false,
-            };
-        };
-        let point_type = variable.point_type.as_deref().unwrap_or("M");
-
-        let success = match point_type {
-            "M" | "measurement" => {
-                // Direct write to measurement hash (no routing)
-                self.write_measurement_point(instance_id, point, value)
-                    .await
-                    .is_ok()
-            },
-            "A" | "action" => {
-                // Use M2C routing for action points
-                // Use precomputed pool for common point IDs (0-255)
+        let success = match pt {
+            "M" => self
+                .write_measurement_point(instance_id, point, value)
+                .await
+                .is_ok(),
+            "A" => {
                 let point_str = precomputed::get_point_id_str_or_alloc(point);
-                // SHM writer enables direct M2C via shared memory
-                // Lock notifier for mutable access during async call
-                let mut notifier_guard = match &self.shm_notifier {
-                    Some(n) => Some(n.lock().await),
-                    None => None,
-                };
                 match set_action_point(
                     self.rtdb.as_ref(),
                     &self.routing_cache,
                     instance_id,
                     &point_str,
                     value,
-                    self.shm_action_writer.as_ref().map(|w| w.as_ref()),
-                    notifier_guard.as_deref_mut(),
                 )
                 .await
                 {
@@ -1079,7 +1082,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             _ => {
                 tracing::warn!(
                     "Unknown point type '{}' for calc output '{}'",
-                    point_type,
+                    pt,
                     calc.output
                 );
                 false
@@ -1089,74 +1092,34 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         ActionResult {
             target_type: "instance",
             target_id: instance_id,
-            point_type: point_type_to_static(Some(point_type), "M"),
+            point_type: pt,
             point_id: point,
             value,
             success,
         }
     }
 
-    /// Write period delta result to instance point
-    ///
-    /// Similar to write_calculation_result but specifically for PeriodDelta nodes.
-    /// Always writes to measurement points (period deltas are derived values).
+    /// Write period delta result to instance point (always measurement type)
     async fn write_period_delta_result(
         &self,
         variable: &RuleVariable,
         raw_value: f64,
         period: &str,
     ) -> ActionResult {
-        // Sanitize period delta result to prevent NaN/Infinity propagation
-        let config = ValidationConfig::default();
-        let value = sanitize_value(raw_value, 0.0, &config);
-        if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
-            tracing::warn!(
-                "PeriodDelta output '{}' sanitized: {} → {} (period='{}')",
-                variable.name,
-                raw_value,
-                value,
-                period
-            );
-        }
-        let Some(instance_id) = variable.instance else {
-            tracing::error!(
-                "PeriodDelta output skipped: variable '{}' missing instance_id (period='{}')",
-                variable.name,
-                period
-            );
-            return ActionResult {
-                target_type: "instance",
-                target_id: 0,
-                point_type: "M",
-                point_id: 0,
-                value,
-                success: false,
-            };
+        let (instance_id, point, value, _pt) = match validate_write_target(
+            variable,
+            raw_value,
+            "M",
+            &format!("PeriodDelta({})", period),
+        ) {
+            Ok(v) => v,
+            Err(action) => return action,
         };
 
-        let Some(point) = variable.point else {
-            tracing::error!(
-                "PeriodDelta output skipped: variable '{}' missing point_id (instance_id={}, period='{}')",
-                variable.name,
-                instance_id,
-                period
-            );
-            return ActionResult {
-                target_type: "instance",
-                target_id: instance_id,
-                point_type: "M",
-                point_id: 0,
-                value,
-                success: false,
-            };
-        };
-
-        // Period delta results are always measurement points (derived values)
         let success = self
             .write_measurement_point(instance_id, point, value)
             .await
             .is_ok();
-
         tracing::debug!(
             "PeriodDelta write: inst:{}:M:{} = {} (period={})",
             instance_id,

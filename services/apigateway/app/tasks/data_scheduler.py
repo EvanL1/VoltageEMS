@@ -135,12 +135,25 @@ class DataScheduler:
                         data = await self.edge_data_client.get_data(channel_id, data_type_str, source)
                         
                         if data:
-                            updates.append({
+                            # data 现在包含 values 和可选的 ts 字段
+                            update_item = {
                                 "source": source,  # 添加source字段
                                 "channel_id": channel_id,
-                                "data_type": data_type_str,
-                                "values": data
-                            })
+                                "data_type": data_type_str
+                            }
+                            
+                            # 提取 values 字段
+                            if "values" in data:
+                                update_item["values"] = data["values"]
+                            else:
+                                # 兼容旧格式（直接是values）
+                                update_item["values"] = data
+                            
+                            # 如果有时间戳数据，添加 ts 字段
+                            if "ts" in data and data["ts"]:
+                                update_item["ts"] = data["ts"]
+                            
+                            updates.append(update_item)
                     except Exception as e:
                         logger.warning(f"获取数据类型 {data_type_str} 失败: {e}")
                         continue
@@ -203,6 +216,7 @@ class DataScheduler:
                 return
 
             # 解析各字段
+            rule_name = exec_data.get("rule_name", "")
             exec_timestamp = int(exec_data.get("timestamp", 0))
             success = exec_data.get("success", "false").lower() == "true"
             error = exec_data.get("error") or None
@@ -236,6 +250,7 @@ class DataScheduler:
                 "timestamp": int(time.time()),
                 "data": {
                     "rule_id": int(rule_id) if isinstance(rule_id, str) else rule_id,
+                    "rule_name": rule_name,
                     "variables": {},
                     "last_execution": {
                         "success": success,

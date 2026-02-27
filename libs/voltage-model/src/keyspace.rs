@@ -197,12 +197,6 @@ impl KeySpaceConfig {
         )
     }
 
-    /// Build TODO queue key: comsrv:{channel_id}:{type}:TODO
-    pub fn todo_queue_key(&self, channel_id: u32, point_type: PointType) -> String {
-        let target = self.target_prefix.as_ref().unwrap_or(&self.data_prefix);
-        format!("{}:{}:{}:TODO", target, channel_id, point_type.as_str())
-    }
-
     /// Build instance measurement key: inst:{instance_id}:M
     ///
     /// # Examples
@@ -229,10 +223,10 @@ impl KeySpaceConfig {
     /// Build channels hash key: comsrv:channels
     ///
     /// Stores all channel ID→name mappings in a single hash for efficient lookup.
-    /// - HSET: 设置单个 channel 名称
-    /// - HDEL: 删除单个 channel
-    /// - HGETALL: 获取所有 ID→名称映射
-    /// - HKEYS: 获取所有 channel ID
+    /// - HSET: Set a single channel name
+    /// - HDEL: Delete a single channel
+    /// - HGETALL: Get all ID→name mappings
+    /// - HKEYS: Get all channel IDs
     ///
     /// # Examples
     /// ```
@@ -246,6 +240,23 @@ impl KeySpaceConfig {
     /// ```
     pub fn channels_hash_key(&self) -> String {
         format!("{}:channels", self.data_prefix)
+    }
+
+    /// Build channel online status hash key: comsrv:online
+    ///
+    /// Stores channel online status in a single hash.
+    /// - Field: channel_id (string)
+    /// - Value: "1" (online) or "0" (offline)
+    ///
+    /// # Examples
+    /// ```
+    /// use voltage_model::KeySpaceConfig;
+    ///
+    /// let config = KeySpaceConfig::production();
+    /// assert_eq!(config.channel_online_key(), "comsrv:online");
+    /// ```
+    pub fn channel_online_key(&self) -> String {
+        format!("{}:online", self.data_prefix)
     }
 
     /// Build instance status key: inst:{instance_id}:status
@@ -374,39 +385,71 @@ impl KeySpaceConfig {
     // Product-related keys (modsrv)
     // ============================================================
 
+    /// Returns the environment prefix ("" for production, "test:" for test)
+    ///
+    /// Derived from `inst_prefix` — production uses "inst", test uses "test:inst".
+    fn env_prefix(&self) -> &str {
+        self.inst_prefix.strip_suffix("inst").unwrap_or("")
+    }
+
     /// Build product info key: modsrv:product:{product_name}
     pub fn product_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}", product_name)
+        format!("{}modsrv:product:{}", self.env_prefix(), product_name)
     }
 
     /// Build product children set key: modsrv:product:{product_name}:children
     pub fn product_children_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:children", product_name)
+        format!(
+            "{}modsrv:product:{}:children",
+            self.env_prefix(),
+            product_name
+        )
     }
 
     /// Build product measurements key: modsrv:product:{product_name}:measurements
     pub fn product_measurements_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:measurements", product_name)
+        format!(
+            "{}modsrv:product:{}:measurements",
+            self.env_prefix(),
+            product_name
+        )
     }
 
     /// Build product actions key: modsrv:product:{product_name}:actions
     pub fn product_actions_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:actions", product_name)
+        format!(
+            "{}modsrv:product:{}:actions",
+            self.env_prefix(),
+            product_name
+        )
     }
 
     /// Build product properties key: modsrv:product:{product_name}:properties
     pub fn product_properties_key(&self, product_name: &str) -> String {
-        format!("modsrv:product:{}:properties", product_name)
+        format!(
+            "{}modsrv:product:{}:properties",
+            self.env_prefix(),
+            product_name
+        )
     }
 
-    /// Product index set key: modsrv:products
-    pub fn product_index_key(&self) -> &'static str {
-        "modsrv:products"
+    /// Product index set key: modsrv:products (or test:modsrv:products)
+    pub fn product_index_key(&self) -> String {
+        format!("{}modsrv:products", self.env_prefix())
     }
 
-    /// Instance index set key: instance:index
-    pub fn instance_index_key(&self) -> &'static str {
-        "instance:index"
+    /// Instance index set key: instance:index (or test:instance:index)
+    pub fn instance_index_key(&self) -> String {
+        format!("{}instance:index", self.env_prefix())
+    }
+
+    // ============================================================
+    // Rule execution keys
+    // ============================================================
+
+    /// Build rule execution state key: rule:{rule_id}:exec
+    pub fn rule_exec_key(&self, rule_id: i64) -> String {
+        format!("{}rule:{}:exec", self.env_prefix(), rule_id)
     }
 }
 
@@ -509,22 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn test_todo_queue_key() {
-        let config = KeySpaceConfig::production();
-        assert_eq!(
-            config.todo_queue_key(1001, PointType::Control),
-            "comsrv:1001:C:TODO"
-        );
-
-        // M2C mode should use target_prefix
-        let m2c_config = config.for_m2c();
-        assert_eq!(
-            m2c_config.todo_queue_key(1001, PointType::Control),
-            "comsrv:1001:C:TODO"
-        );
-    }
-
-    #[test]
     fn test_instance_keys() {
         let config = KeySpaceConfig::production();
 
@@ -557,6 +584,16 @@ mod tests {
         // Test environment
         let test_config = KeySpaceConfig::test();
         assert_eq!(test_config.channels_hash_key(), "test:comsrv:channels");
+    }
+
+    #[test]
+    fn test_channel_online_key() {
+        let config = KeySpaceConfig::production();
+        assert_eq!(config.channel_online_key(), "comsrv:online");
+
+        // Test environment
+        let test_config = KeySpaceConfig::test();
+        assert_eq!(test_config.channel_online_key(), "test:comsrv:online");
     }
 
     #[test]
@@ -628,10 +665,6 @@ mod tests {
             "test:comsrv:1001:T"
         );
         assert_eq!(config.instance_measurement_key(1), "test:inst:1:M");
-        assert_eq!(
-            config.todo_queue_key(1001, PointType::Control),
-            "test:comsrv:1001:C:TODO"
-        );
     }
 
     #[test]
@@ -641,5 +674,20 @@ mod tests {
 
         // Verify direct String return (no Cow overhead)
         assert_eq!(key, "comsrv:1001:T");
+    }
+
+    #[test]
+    fn test_product_and_index_keys_respect_env_prefix() {
+        let prod = KeySpaceConfig::production();
+        assert_eq!(prod.product_index_key(), "modsrv:products");
+        assert_eq!(prod.instance_index_key(), "instance:index");
+        assert_eq!(prod.product_key("sensor"), "modsrv:product:sensor");
+        assert_eq!(prod.rule_exec_key(42), "rule:42:exec");
+
+        let test = KeySpaceConfig::test();
+        assert_eq!(test.product_index_key(), "test:modsrv:products");
+        assert_eq!(test.instance_index_key(), "test:instance:index");
+        assert_eq!(test.product_key("sensor"), "test:modsrv:product:sensor");
+        assert_eq!(test.rule_exec_key(42), "test:rule:42:exec");
     }
 }

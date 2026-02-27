@@ -54,6 +54,7 @@ impl RedisPoolConfig {
 }
 
 /// Redis asynchronous client with connection pooling
+#[derive(Clone)]
 pub struct RedisClient {
     pool: Arc<Pool<RedisConnectionManager>>,
     url: String,
@@ -69,18 +70,11 @@ impl std::fmt::Debug for RedisClient {
 }
 
 impl RedisClient {
-    /// Create a new client with default configuration
-    pub async fn new(url: &str) -> Result<Self> {
-        Self::with_config(RedisPoolConfig::from_url(url)).await
-    }
-
-    /// Create a new client with custom configuration
-    pub async fn with_config(config: RedisPoolConfig) -> Result<Self> {
-        // Create Redis connection manager
+    /// Build a connection pool from config (shared by with_config and with_config_no_ping)
+    async fn build_pool(config: &RedisPoolConfig) -> Result<Arc<Pool<RedisConnectionManager>>> {
         let manager = RedisConnectionManager::new(config.url.as_str())
             .context("Failed to create Redis connection manager")?;
 
-        // Build connection pool with configuration
         let mut pool_builder = Pool::builder()
             .max_size(config.max_connections)
             .connection_timeout(Duration::from_secs(config.connection_timeout));
@@ -102,7 +96,17 @@ impl RedisClient {
             .await
             .context("Failed to build Redis connection pool")?;
 
-        let pool = Arc::new(pool);
+        Ok(Arc::new(pool))
+    }
+
+    /// Create a new client with default configuration
+    pub async fn new(url: &str) -> Result<Self> {
+        Self::with_config(RedisPoolConfig::from_url(url)).await
+    }
+
+    /// Create a new client with custom configuration
+    pub async fn with_config(config: RedisPoolConfig) -> Result<Self> {
+        let pool = Self::build_pool(&config).await?;
 
         // Test the connection
         {
@@ -125,34 +129,9 @@ impl RedisClient {
     /// Create a client without performing a PING test (for tests or special cases)
     /// This avoids requiring a live Redis server when the client won't be used.
     pub async fn with_config_no_ping(config: RedisPoolConfig) -> Result<Self> {
-        // Create Redis connection manager
-        let manager = RedisConnectionManager::new(config.url.as_str())
-            .context("Failed to create Redis connection manager")?;
-
-        // Build connection pool with configuration
-        let mut pool_builder = Pool::builder()
-            .max_size(config.max_connections)
-            .connection_timeout(Duration::from_secs(config.connection_timeout));
-
-        if let Some(min_idle) = config.min_idle {
-            pool_builder = pool_builder.min_idle(Some(min_idle));
-        }
-
-        if let Some(max_lifetime) = config.max_lifetime {
-            pool_builder = pool_builder.max_lifetime(Some(Duration::from_secs(max_lifetime)));
-        }
-
-        if let Some(idle_timeout) = config.idle_timeout {
-            pool_builder = pool_builder.idle_timeout(Some(Duration::from_secs(idle_timeout)));
-        }
-
-        let pool = pool_builder
-            .build(manager)
-            .await
-            .context("Failed to build Redis connection pool")?;
-
+        let pool = Self::build_pool(&config).await?;
         Ok(Self {
-            pool: Arc::new(pool),
+            pool,
             url: config.url,
         })
     }
@@ -533,6 +512,19 @@ impl RedisClient {
             .with_context(|| format!("Failed to FCALL function: {}", function))
     }
 
+    /// Set a timeout on key (Redis EXPIRE)
+    ///
+    /// Returns true if the timeout was set, false if key does not exist.
+    pub async fn expire(&self, key: &str, seconds: i64) -> Result<bool> {
+        let mut conn = self.get_connection().await?;
+        redis::cmd("EXPIRE")
+            .arg(key)
+            .arg(seconds)
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to EXPIRE key: {}", key))
+    }
+
     /// Check if key exists
     pub async fn exists(&self, key: &str) -> Result<bool> {
         let mut conn = self.get_connection().await?;
@@ -615,11 +607,11 @@ impl RedisClient {
         for field in fields {
             cmd.arg(field);
         }
-        let result: i32 = cmd
+        let result: i64 = cmd
             .query_async(&mut *conn)
             .await
             .with_context(|| format!("Failed to HDEL multiple fields from key: {}", key))?;
-        Ok(result as usize)
+        Ok(result.max(0) as usize)
     }
 
     /// Execute multiple HMSET operations in a single pipeline (pure Redis, no Lua)
@@ -667,14 +659,6 @@ impl RedisClient {
         self.pool.state()
     }
 
-    /// Clone the client (shares the same connection pool)
-    pub fn clone_client(&self) -> Self {
-        Self {
-            pool: Arc::clone(&self.pool),
-            url: self.url.clone(),
-        }
-    }
-
     /// Flush the current database (delete all keys)
     ///
     /// **WARNING**: This will delete ALL keys in the current database!
@@ -685,13 +669,6 @@ impl RedisClient {
             .query_async(&mut *conn)
             .await
             .with_context(|| "Failed to FLUSHDB")
-    }
-}
-
-// Clone implementation for sharing across threads
-impl Clone for RedisClient {
-    fn clone(&self) -> Self {
-        self.clone_client()
     }
 }
 

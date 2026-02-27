@@ -206,10 +206,7 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                 .parse::<u32>()
                 .map_err(|_| AppError::bad_request(format!("Invalid point ID: {}", id)))?;
 
-            let timestamp_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64;
+            let timestamp_ms = crate::core::channels::channel_manager::unix_timestamp_ms();
 
             // Optimization: O(1) CommandTxCache lookup for Control/Adjustment
             // Bypasses ChannelManager RwLock entirely for ~97% latency reduction
@@ -233,7 +230,15 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                                 value: *value,
                                 timestamp: timestamp_ms / 1000,
                             },
-                            _ => unreachable!(),
+                            _ => {
+                                tracing::warn!(
+                                    "Unexpected point_type {:?} in write_channel_point",
+                                    point_type
+                                );
+                                return Err(AppError::bad_request(
+                                    "Only Control and Adjustment point types are supported",
+                                ));
+                            },
                         };
 
                         match tx.send(cmd).await {
@@ -250,7 +255,7 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                             },
                             Err(_) => {
                                 tracing::warn!(
-                                    "Direct trigger failed Ch{}, fallback to TODO",
+                                    "Direct trigger failed Ch{}, write Hash only",
                                     channel_id
                                 );
                                 false
@@ -264,42 +269,20 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                 };
 
             // Always write to Redis Hash (for modsrv sync and state persistence)
-            // If direct_triggered, use write_channel_hash_only (skip TODO queue)
-            // Otherwise, use full write_point_auto_trigger (includes TODO queue as fallback)
-            if direct_triggered {
-                // Direct trigger succeeded - write Hash only (no TODO queue)
-                voltage_rtdb::helpers::write_channel_hash_only(
-                    rtdb.as_ref(),
-                    config,
-                    channel_id,
-                    point_type,
-                    point_id,
-                    *value,
-                    timestamp_ms,
-                )
-                .await
-                .map_err(|e| {
-                    tracing::error!("Hash write Ch{}:{:?}:{}: {}", channel_id, point_type, id, e);
-                    AppError::internal_error(format!("Failed to write point value: {}", e))
-                })?;
-            } else {
-                // Fallback: use full write path (includes TODO queue)
-                // Pass the pre-computed timestamp for consistency with Direct Path
-                voltage_rtdb::helpers::write_point_auto_trigger(
-                    rtdb.as_ref(),
-                    config,
-                    channel_id,
-                    point_type,
-                    point_id,
-                    *value,
-                    Some(timestamp_ms), // Use same timestamp as Direct Path would use
-                )
-                .await
-                .map_err(|e| {
-                    tracing::error!("Write Ch{}:{:?}:{}: {}", channel_id, point_type, id, e);
-                    AppError::internal_error(format!("Failed to write point value: {}", e))
-                })?;
-            }
+            voltage_rtdb::helpers::write_channel_hash_only(
+                rtdb.as_ref(),
+                config,
+                channel_id,
+                point_type,
+                point_id,
+                *value,
+                timestamp_ms,
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("Hash write Ch{}:{:?}:{}: {}", channel_id, point_type, id, e);
+                AppError::internal_error(format!("Failed to write point value: {}", e))
+            })?;
 
             tracing::debug!(
                 "Write Ch{}:{:?}:{} = {} @{} (direct={})",
@@ -326,6 +309,8 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
             let mut errors = Vec::new();
             let total = points.len();
             let mut succeeded = 0;
+            let batch_ts = crate::core::channels::channel_manager::unix_timestamp_ms();
+            let mut direct_points: Vec<(u32, f64)> = Vec::new();
 
             for point in points {
                 // Parse point ID
@@ -341,21 +326,23 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                     },
                 };
 
-                // Write point using voltage-rtdb helper
-                // Batch writes: let the function compute timestamp for each point
-                match voltage_rtdb::helpers::write_point_auto_trigger(
+                // Write point to Redis Hash
+                match voltage_rtdb::helpers::write_channel_hash_only(
                     rtdb.as_ref(),
                     config,
                     channel_id,
                     point_type,
                     point_id,
                     point.value,
-                    None, // Each batch point gets its own timestamp
+                    batch_ts,
                 )
                 .await
                 {
                     Ok(_) => {
                         succeeded += 1;
+                        if matches!(point_type, PointType::Control | PointType::Adjustment) {
+                            direct_points.push((point_id, point.value));
+                        }
                     },
                     Err(e) => {
                         tracing::warn!(
@@ -370,6 +357,36 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
                             error: format!("Failed to write: {}", e),
                         });
                     },
+                }
+            }
+
+            // Batch direct trigger for C/A types (only if any points succeeded)
+            if !direct_points.is_empty() {
+                if let Some(tx) = state.command_tx_cache.get_tx(channel_id) {
+                    let cmd = match point_type {
+                        PointType::Control => ChannelCommand::BatchControl {
+                            command_id: format!("batch_{}_{}", channel_id, batch_ts),
+                            points: direct_points,
+                            timestamp: batch_ts / 1000,
+                        },
+                        PointType::Adjustment => ChannelCommand::BatchAdjustment {
+                            command_id: format!("batch_{}_{}", channel_id, batch_ts),
+                            points: direct_points,
+                            timestamp: batch_ts / 1000,
+                        },
+                        _ => {
+                            tracing::warn!(
+                                "Unexpected point_type {:?} in batch write_channel_point",
+                                point_type
+                            );
+                            return Err(AppError::bad_request(
+                                "Only Control and Adjustment point types are supported",
+                            ));
+                        },
+                    };
+                    if tx.send(cmd).await.is_err() {
+                        tracing::warn!("Batch direct trigger failed Ch{}, Redis-only", channel_id);
+                    }
                 }
             }
 

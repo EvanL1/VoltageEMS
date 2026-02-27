@@ -11,6 +11,10 @@ NC='\033[0m'
 
 echo -e "${GREEN}=== VoltageEMS Quick Check ===${NC}"
 
+# Sync git submodules (e.g. product-lib)
+echo -e "${YELLOW}Syncing git submodules...${NC}"
+git submodule update --init --recursive
+
 # Check for forbidden mod.rs files (project convention)
 echo -e "${YELLOW}Checking for mod.rs files...${NC}"
 MOD_RS_FILES=$(find . -name "mod.rs" -not -path "./target/*" 2>/dev/null || true)

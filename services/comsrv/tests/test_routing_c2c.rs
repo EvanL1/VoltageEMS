@@ -13,10 +13,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_model::PointType;
+use voltage_routing::RoutingCache;
 use voltage_routing::{write_channel_batch, ChannelPointUpdate};
+use voltage_rtdb::KeySpaceConfig;
 use voltage_rtdb::MemoryRtdb;
 use voltage_rtdb::Rtdb;
-use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 /// Maximum C2C cascade depth constant (consistent with storage.rs)
 const MAX_C2C_DEPTH: u8 = 2;

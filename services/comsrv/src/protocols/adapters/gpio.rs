@@ -14,18 +14,8 @@
 //!
 //! # Driver Architecture
 //!
-//! The GPIO module uses a trait-based driver system for extensibility:
-//!
-//! ```text
-//!              ┌─────────────────────────┐
-//!              │     GpioDriver trait    │
-//!              └───────────┬─────────────┘
-//!                          │
-//!      ┌───────────┬───────┼───────┬───────────┐
-//!      ▼           ▼       ▼       ▼           ▼
-//!   GpiodDriver  SysfsDriver  (future)  MockDriver  ...
-//!   (chardev)    (/sys/)               (testing)
-//! ```
+//! The GPIO module uses a trait-based driver system: `GpioDriver` trait with
+//! `GpiodDriver` (chardev) and `SysfsDriver` (legacy) implementations.
 //!
 //! # Example
 //!
@@ -112,70 +102,6 @@ impl Default for GpioDriverType {
 // ============================================================================
 // Strongly-typed mapping configs for JSON deserialization
 // ============================================================================
-
-/// GPIO point mapping configuration (deserialized from protocol_mappings JSON).
-///
-/// # Required Fields
-/// - `gpio_number`: The GPIO pin number. This field is **required** and
-///   deserialization will fail if missing.
-///
-/// # Optional Fields
-/// - `gpio_chip`: GPIO chip name (default: "gpiochip0")
-/// - `active_low`: Invert the logic level (default: false)
-/// - `debounce_us`: Debounce time in microseconds (default: 0)
-///
-/// # Example JSON
-/// ```json
-/// {
-///     "gpio_number": 496,
-///     "gpio_chip": "gpiochip0",
-///     "active_low": false
-/// }
-/// ```
-#[derive(Debug, Clone, Deserialize)]
-pub struct GpioMappingConfig {
-    /// GPIO pin number (sysfs number or chip offset). **Required field**.
-    pub gpio_number: u32,
-
-    /// GPIO chip name (default: "gpiochip0").
-    #[serde(default = "default_gpio_chip")]
-    pub gpio_chip: String,
-
-    /// Active low - invert the logic level.
-    #[serde(default)]
-    pub active_low: bool,
-
-    /// Debounce time in microseconds.
-    #[serde(default)]
-    pub debounce_us: u64,
-}
-
-fn default_gpio_chip() -> String {
-    "gpiochip0".to_string()
-}
-
-impl GpioMappingConfig {
-    /// Convert to GpioPinConfig for input (DI).
-    ///
-    /// If `gpio_chip` is "gpiochip0" (default) and `gpio_number` >= 32,
-    /// the driver will auto-resolve the global GPIO number to the correct chip.
-    pub fn to_input_pin_config(&self, point_id: u32) -> GpioPinConfig {
-        GpioPinConfig::digital_input(&self.gpio_chip, self.gpio_number, point_id)
-            .with_gpio_number(self.gpio_number) // Enable auto-resolution
-            .with_active_low(self.active_low)
-            .with_debounce(self.debounce_us)
-    }
-
-    /// Convert to GpioPinConfig for output (DO).
-    ///
-    /// If `gpio_chip` is "gpiochip0" (default) and `gpio_number` >= 32,
-    /// the driver will auto-resolve the global GPIO number to the correct chip.
-    pub fn to_output_pin_config(&self, point_id: u32) -> GpioPinConfig {
-        GpioPinConfig::digital_output(&self.gpio_chip, self.gpio_number, point_id)
-            .with_gpio_number(self.gpio_number) // Enable auto-resolution
-            .with_active_low(self.active_low)
-    }
-}
 
 /// GPIO channel parameters configuration (deserialized from parameters_json).
 ///
@@ -562,6 +488,16 @@ impl SysfsDriver {
         }
     }
 
+    /// Extract gpio_number from pin config, required for sysfs driver.
+    fn require_gpio_number(pin: &GpioPinConfig) -> Result<u32> {
+        pin.gpio_number.ok_or_else(|| {
+            GatewayError::Protocol(format!(
+                "GPIO number not set for pin {} (required for sysfs driver)",
+                pin.point_id
+            ))
+        })
+    }
+
     /// Get the path for a GPIO's value file.
     fn value_path(&self, gpio_num: u32) -> std::path::PathBuf {
         std::path::PathBuf::from(&self.base_path)
@@ -677,12 +613,7 @@ impl GpioDriver for SysfsDriver {
     }
 
     async fn read_pin(&self, pin: &GpioPinConfig) -> Result<bool> {
-        let gpio_num = pin.gpio_number.ok_or_else(|| {
-            GatewayError::Protocol(format!(
-                "GPIO number not set for pin {} (required for sysfs driver)",
-                pin.point_id
-            ))
-        })?;
+        let gpio_num = Self::require_gpio_number(pin)?;
 
         // Read value (GPIO should already be exported and configured by OS/device tree)
         let value_str = tokio::fs::read_to_string(self.value_path(gpio_num))
@@ -696,12 +627,7 @@ impl GpioDriver for SysfsDriver {
     }
 
     async fn write_pin(&self, pin: &GpioPinConfig, value: bool) -> Result<()> {
-        let gpio_num = pin.gpio_number.ok_or_else(|| {
-            GatewayError::Protocol(format!(
-                "GPIO number not set for pin {} (required for sysfs driver)",
-                pin.point_id
-            ))
-        })?;
+        let gpio_num = Self::require_gpio_number(pin)?;
 
         // Ensure GPIO is exported and set as output (only if not already)
         self.ensure_output(gpio_num).await?;
@@ -718,12 +644,7 @@ impl GpioDriver for SysfsDriver {
     }
 
     async fn init_output_pin(&self, pin: &GpioPinConfig) -> Result<()> {
-        let gpio_num = pin.gpio_number.ok_or_else(|| {
-            GatewayError::Protocol(format!(
-                "GPIO number not set for pin {} (required for sysfs driver)",
-                pin.point_id
-            ))
-        })?;
+        let gpio_num = Self::require_gpio_number(pin)?;
 
         // Export and set direction to out at startup
         self.ensure_output(gpio_num).await?;
@@ -977,26 +898,11 @@ impl GpioChannel {
     /// GPIO channels are always "connected" since they operate on local hardware
     /// without requiring external network connections (unlike Modbus TCP).
     pub fn new(config: GpioChannelConfig, channel_id: u32, name: String) -> Self {
-        // Collect output pin IDs for lock-free AtomicBoolStore
-        let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
-
-        // Create driver based on configuration
         let driver: Box<dyn GpioDriver> = match &config.driver {
             GpioDriverType::Gpiod => Box::new(GpiodDriver::new()),
             GpioDriverType::Sysfs { base_path } => Box::new(SysfsDriver::new(base_path.clone())),
         };
-        Self {
-            channel_id,
-            name,
-            config,
-            driver,
-            // GPIO is always "connected" - it's local hardware, no external connection needed
-            state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
-            diagnostics: Arc::new(AtomicDiagnostics::new()),
-            poll_task: None,
-            output_states: AtomicBoolStore::from_pins(&output_pin_ids),
-            log_ctx: LogContext::new(channel_id),
-        }
+        Self::with_driver(config, driver, channel_id, name)
     }
 
     /// Create a GPIO channel with a custom driver.
@@ -1009,7 +915,6 @@ impl GpioChannel {
         channel_id: u32,
         name: String,
     ) -> Self {
-        // Collect output pin IDs for lock-free AtomicBoolStore
         let output_pin_ids: Vec<u32> = config.output_pins().map(|p| p.point_id).collect();
 
         Self {
@@ -1017,7 +922,6 @@ impl GpioChannel {
             name,
             config,
             driver,
-            // GPIO is always "connected" - it's local hardware, no external connection needed
             state: Arc::new(std::sync::RwLock::new(ConnectionState::Connected)),
             diagnostics: Arc::new(AtomicDiagnostics::new()),
             poll_task: None,
@@ -1389,53 +1293,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    /// Mock GPIO driver for testing without real hardware.
-    struct MockGpioDriver {
-        /// Simulated pin values: point_id -> value
-        values: Mutex<HashMap<u32, bool>>,
-    }
-
-    impl MockGpioDriver {
-        fn new() -> Self {
-            Self {
-                values: Mutex::new(HashMap::new()),
-            }
-        }
-
-        /// Set pin value (for simulating DI input)
-        #[allow(dead_code)]
-        fn set_pin_value(&self, point_id: u32, value: bool) {
-            let mut values = self.values.lock().unwrap();
-            values.insert(point_id, value);
-        }
-
-        /// Get raw written value (for verifying active_low handling)
-        #[allow(dead_code)]
-        fn get_raw_value(&self, point_id: u32) -> Option<bool> {
-            let values = self.values.lock().unwrap();
-            values.get(&point_id).copied()
-        }
-    }
-
-    #[async_trait]
-    impl GpioDriver for MockGpioDriver {
-        fn name(&self) -> &'static str {
-            "mock"
-        }
-
-        async fn read_pin(&self, pin: &GpioPinConfig) -> Result<bool> {
-            let values = self.values.lock().unwrap();
-            Ok(*values.get(&pin.point_id).unwrap_or(&false))
-        }
-
-        async fn write_pin(&self, pin: &GpioPinConfig, value: bool) -> Result<()> {
-            let mut values = self.values.lock().unwrap();
-            values.insert(pin.point_id, value);
-            Ok(())
-        }
-    }
-
-    /// Shared mock driver for testing (allows pre-setting values and verifying writes).
+    /// Mock driver for testing (allows pre-setting values and verifying writes).
     struct SharedMockDriver {
         inner: Arc<Mutex<HashMap<u32, bool>>>,
     }
@@ -1492,14 +1350,10 @@ mod tests {
         }
     }
 
-    /// Create a GpioChannel with MockGpioDriver for testing.
+    /// Create a GpioChannel with mock driver for testing.
     fn create_mock_gpio(config: GpioChannelConfig, channel_id: u32, name: &str) -> GpioChannel {
-        GpioChannel::with_driver(
-            config,
-            Box::new(MockGpioDriver::new()),
-            channel_id,
-            name.to_string(),
-        )
+        let shared = SharedMockDriver::new();
+        create_mock_gpio_with_shared_driver(config, channel_id, name, &shared)
     }
 
     /// Create a GpioChannel with shared mock driver for advanced testing.
@@ -1582,23 +1436,23 @@ mod tests {
     }
 
     // ========================================================================
-    // DI (Digital Input) 读取测试
+    // DI (Digital Input) Read Tests
     // ========================================================================
 
-    /// 测试单个 DI 引脚读取
+    /// Test single DI pin read
     #[tokio::test]
     async fn test_di_read_single_pin() {
         let shared = SharedMockDriver::new();
         let config =
             GpioChannelConfig::new().add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1));
 
-        // 预设输入值为 true
+        // Preset input value to true
         shared.set_pin_value(1, true);
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_di", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // poll_once() 读取所有引脚
+        // poll_once() reads all pins
         let result = ProtocolClient::poll_once(&mut gpio).await;
         assert!(result.is_success(), "poll should succeed");
 
@@ -1610,7 +1464,7 @@ mod tests {
         assert_eq!(point.value.as_bool(), Some(true), "DI should read true");
     }
 
-    /// 测试多个 DI 引脚读取
+    /// Test multiple DI pin read
     #[tokio::test]
     async fn test_di_read_multiple_pins() {
         let shared = SharedMockDriver::new();
@@ -1620,7 +1474,7 @@ mod tests {
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 19, 3))
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 20, 4));
 
-        // 预设不同的输入值: 1=true, 2=false, 3=true, 4=false
+        // Preset different input values: 1=true, 2=false, 3=true, 4=false
         shared.set_pin_value(1, true);
         shared.set_pin_value(2, false);
         shared.set_pin_value(3, true);
@@ -1635,7 +1489,7 @@ mod tests {
         let batch = result.data;
         assert_eq!(batch.len(), 4, "should have 4 data points");
 
-        // 验证各引脚值
+        // Verify each pin value
         let expected = [(1, true), (2, false), (3, true), (4, false)];
         for (point_id, expected_value) in expected {
             let point = batch.iter().find(|p| p.id == point_id);
@@ -1650,16 +1504,16 @@ mod tests {
         }
     }
 
-    /// 测试 DI active_low 反逻辑
+    /// Test DI active_low inverted logic
     #[tokio::test]
     async fn test_di_active_low() {
         let shared = SharedMockDriver::new();
 
-        // 创建 active_low 配置的 DI 引脚
+        // Create DI pin with active_low configuration
         let pin = GpioPinConfig::digital_input("gpiochip0", 17, 1).with_active_low(true);
         let config = GpioChannelConfig::new().add_pin(pin);
 
-        // 原始值为 true，active_low 应反转为 false
+        // Raw value is true, active_low should invert to false
         shared.set_pin_value(1, true);
 
         let mut gpio =
@@ -1676,7 +1530,7 @@ mod tests {
             "active_low: raw=true should become false"
         );
 
-        // 原始值为 false，active_low 应反转为 true
+        // Raw value is false, active_low should invert to true
         shared.set_pin_value(1, false);
         let result = ProtocolClient::poll_once(&mut gpio).await;
         let point = result.data.iter().next().expect("should have point");
@@ -1688,10 +1542,10 @@ mod tests {
     }
 
     // ========================================================================
-    // DO (Digital Output) 写入测试
+    // DO (Digital Output) Write Tests
     // ========================================================================
 
-    /// 测试多个 DO 引脚批量写入
+    /// Test batch writing to multiple DO pins
     #[tokio::test]
     async fn test_do_write_multiple_pins() {
         let shared = SharedMockDriver::new();
@@ -1703,7 +1557,7 @@ mod tests {
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_do_multi", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 批量写入: 101=true, 102=false, 103=true
+        // Batch write: 101=true, 102=false, 103=true
         let commands = vec![
             ControlCommand::latching(101, true),
             ControlCommand::latching(102, false),
@@ -1716,7 +1570,7 @@ mod tests {
         assert_eq!(result.success_count, 3, "all 3 writes should succeed");
         assert!(result.failures.is_empty(), "no failures expected");
 
-        // 验证写入的值
+        // Verify written values
         assert_eq!(
             shared.get_raw_value(101),
             Some(true),
@@ -1733,18 +1587,18 @@ mod tests {
             "DO 103 should be true"
         );
 
-        // 验证输出状态缓存
+        // Verify output state cache
         assert_eq!(gpio.read_output_state(101), Some(true));
         assert_eq!(gpio.read_output_state(102), Some(false));
         assert_eq!(gpio.read_output_state(103), Some(true));
     }
 
-    /// 测试 DO active_low 反逻辑
+    /// Test DO active_low inverted logic
     #[tokio::test]
     async fn test_do_active_low() {
         let shared = SharedMockDriver::new();
 
-        // 创建 active_low 配置的 DO 引脚
+        // Create DO pin with active_low configuration
         let pin = GpioPinConfig::digital_output("gpiochip0", 18, 101).with_active_low(true);
         let config = GpioChannelConfig::new().add_pin(pin);
 
@@ -1752,7 +1606,7 @@ mod tests {
             create_mock_gpio_with_shared_driver(config, 1, "test_do_active_low", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 写入 true，active_low 应反转为 false
+        // Write true, active_low should invert to false
         ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, true)])
             .await
             .unwrap();
@@ -1762,7 +1616,7 @@ mod tests {
             "active_low: write true should become raw false"
         );
 
-        // 写入 false，active_low 应反转为 true
+        // Write false, active_low should invert to true
         ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, false)])
             .await
             .unwrap();
@@ -1773,7 +1627,7 @@ mod tests {
         );
     }
 
-    /// 测试写入不存在的 DO 引脚
+    /// Test writing to nonexistent DO pin
     #[tokio::test]
     async fn test_do_write_nonexistent_pin() {
         let config =
@@ -1782,7 +1636,7 @@ mod tests {
         let mut gpio = create_mock_gpio(config, 1, "test_do_nonexistent");
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 写入不存在的引脚 999
+        // Write to nonexistent pin 999
         let result =
             ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(999, true)])
                 .await
@@ -1794,29 +1648,29 @@ mod tests {
     }
 
     // ========================================================================
-    // DI/DO 混合测试
+    // DI/DO Mixed Tests
     // ========================================================================
 
-    /// 测试 DI 和 DO 同时配置和操作
+    /// Test simultaneous DI and DO configuration and operation
     #[tokio::test]
     async fn test_di_do_mixed() {
         let shared = SharedMockDriver::new();
         let config = GpioChannelConfig::new()
-            // 2 个 DI
+            // 2 DI pins
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 17, 1))
             .add_pin(GpioPinConfig::digital_input("gpiochip0", 18, 2))
-            // 2 个 DO
+            // 2 DO pins
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 19, 101))
             .add_pin(GpioPinConfig::digital_output("gpiochip0", 20, 102));
 
-        // 预设 DI 值
+        // Preset DI values
         shared.set_pin_value(1, true);
         shared.set_pin_value(2, false);
 
         let mut gpio = create_mock_gpio_with_shared_driver(config, 1, "test_mixed", &shared);
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 写入 DO
+        // Write to DO pins
         ProtocolClient::write_control(
             &mut gpio,
             &[
@@ -1827,21 +1681,21 @@ mod tests {
         .await
         .unwrap();
 
-        // poll_once 应返回 DI + DO 反馈
+        // poll_once should return DI + DO feedback
         let result = ProtocolClient::poll_once(&mut gpio).await;
         let batch = result.data;
 
-        // 应该有 4 个点 (2 DI + 2 DO)
+        // Should have 4 points (2 DI + 2 DO)
         assert_eq!(batch.len(), 4, "should have 4 data points (2 DI + 2 DO)");
 
-        // 验证 DI 值
+        // Verify DI values
         let di1 = batch.iter().find(|p| p.id == 1).expect("DI 1");
         assert_eq!(di1.value.as_bool(), Some(true), "DI 1 should be true");
 
         let di2 = batch.iter().find(|p| p.id == 2).expect("DI 2");
         assert_eq!(di2.value.as_bool(), Some(false), "DI 2 should be false");
 
-        // 验证 DO 反馈
+        // Verify DO feedback
         let do101 = batch.iter().find(|p| p.id == 101).expect("DO 101");
         assert_eq!(
             do101.value.as_bool(),
@@ -1857,7 +1711,7 @@ mod tests {
         );
     }
 
-    /// 测试 DO 输出状态反馈
+    /// Test DO output state feedback
     #[tokio::test]
     async fn test_output_state_feedback() {
         let config = GpioChannelConfig::new()
@@ -1867,11 +1721,11 @@ mod tests {
         let mut gpio = create_mock_gpio(config, 1, "test_feedback");
         ProtocolClient::connect(&mut gpio).await.unwrap();
 
-        // 初始状态: poll_once 应该返回默认值 (false)
+        // Initial state: poll_once should return default values (false)
         let result = ProtocolClient::poll_once(&mut gpio).await;
         assert_eq!(result.data.len(), 2, "should have 2 DO feedback points");
 
-        // 写入后再 poll
+        // Poll after writing
         ProtocolClient::write_control(
             &mut gpio,
             &[
@@ -1892,7 +1746,7 @@ mod tests {
             );
         }
 
-        // 再次写入不同的值
+        // Write a different value again
         ProtocolClient::write_control(&mut gpio, &[ControlCommand::latching(101, false)])
             .await
             .unwrap();

@@ -5,12 +5,10 @@
 use std::fs::{self, File, OpenOptions};
 #[allow(unused_imports)] // Used in Write trait impl for DailyRollingWriter
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
@@ -161,16 +159,18 @@ fn is_test_environment() -> bool {
 /// Default max file size: 20MB (reduced from 100MB for faster rotation and compression)
 const DEFAULT_MAX_FILE_SIZE: u64 = 20 * 1024 * 1024;
 
-// Custom daily rolling file writer with naming format: {service}{YYYYMMDD}.log
+// Custom daily rolling file writer with naming format: {YYYYMMDD}_{service}{suffix}.log
 // Also supports size-based rotation within a day
 struct DailyRollingWriter {
     service_name: String,
     log_dir: PathBuf,
+    /// Filename suffix (e.g., "" for regular, "_api" for API logs)
+    suffix: String,
     current_date: Arc<Mutex<String>>,
     current_file: Arc<Mutex<Option<File>>>,
     /// Current file size in bytes (tracked for size-based rotation)
     current_size: Arc<AtomicU64>,
-    /// Max file size before rotation (default 100MB)
+    /// Max file size before rotation (0 = no size rotation)
     max_file_size: u64,
     /// Rotation counter within the same day (e.g., .1, .2, .3)
     rotation_count: Arc<AtomicU32>,
@@ -178,21 +178,25 @@ struct DailyRollingWriter {
 
 impl DailyRollingWriter {
     fn new(service_name: String, log_dir: PathBuf) -> std::io::Result<Self> {
-        Self::with_max_size(service_name, log_dir, DEFAULT_MAX_FILE_SIZE)
+        Self::with_options(service_name, log_dir, String::new(), DEFAULT_MAX_FILE_SIZE)
     }
 
-    fn with_max_size(
+    /// Create an API log writer with "_api" suffix and no size rotation
+    fn new_api(service_name: String, log_dir: PathBuf) -> std::io::Result<Self> {
+        Self::with_options(service_name, log_dir, "_api".to_string(), 0)
+    }
+
+    fn with_options(
         service_name: String,
         log_dir: PathBuf,
+        suffix: String,
         max_file_size: u64,
     ) -> std::io::Result<Self> {
         let current_date = chrono::Local::now().format("%Y%m%d").to_string();
-        let file_path = log_dir.join(format!("{}_{}.log", current_date, service_name));
+        let file_path = log_dir.join(format!("{}_{}{}.log", current_date, service_name, suffix));
 
-        // Create log directory if it doesn't exist
         fs::create_dir_all(&log_dir)?;
 
-        // Open or create the log file and get its current size
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -202,6 +206,7 @@ impl DailyRollingWriter {
         Ok(Self {
             service_name,
             log_dir,
+            suffix,
             current_date: Arc::new(Mutex::new(current_date)),
             current_file: Arc::new(Mutex::new(Some(file))),
             current_size: Arc::new(AtomicU64::new(initial_size)),
@@ -217,13 +222,11 @@ impl DailyRollingWriter {
             .lock()
             .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
 
-        // Increment rotation counter
         let count = self.rotation_count.fetch_add(1, Ordering::SeqCst) + 1;
 
-        // New file path: YYYYMMDD_service.N.log
         let new_file_path = self.log_dir.join(format!(
-            "{}_{}.{}.log",
-            *current_date, self.service_name, count
+            "{}_{}{}.{}.log",
+            *current_date, self.service_name, self.suffix, count
         ));
 
         let new_file = OpenOptions::new()
@@ -245,31 +248,29 @@ impl DailyRollingWriter {
     }
 
     fn get_writer(&self) -> std::io::Result<std::sync::MutexGuard<'_, Option<File>>> {
-        // Check if date has changed
         let today = chrono::Local::now().format("%Y%m%d").to_string();
         let mut current_date = self
             .current_date
             .lock()
             .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
 
-        // Build current file path
-        let current_file_path = self
-            .log_dir
-            .join(format!("{}_{}.log", *current_date, self.service_name));
+        let current_file_path = self.log_dir.join(format!(
+            "{}_{}{}.log",
+            *current_date, self.service_name, self.suffix
+        ));
 
-        // Check if date changed OR file was deleted
         let file_deleted = !current_file_path.exists();
 
         if *current_date != today || file_deleted {
-            // Date changed or file deleted, rotate to new file and reset rotation counter
             let new_date = if *current_date != today {
                 today.clone()
             } else {
                 current_date.clone()
             };
-            let new_file_path = self
-                .log_dir
-                .join(format!("{}_{}.log", new_date, self.service_name));
+            let new_file_path = self.log_dir.join(format!(
+                "{}_{}{}.log",
+                new_date, self.service_name, self.suffix
+            ));
 
             // Ensure directory exists (in case it was also deleted)
             fs::create_dir_all(&self.log_dir)?;
@@ -302,10 +303,12 @@ impl DailyRollingWriter {
 
 impl std::io::Write for DailyRollingWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        // Check if we need to rotate due to size limit
-        let current_size = self.current_size.load(Ordering::Relaxed);
-        if current_size + buf.len() as u64 > self.max_file_size {
-            self.rotate_by_size()?;
+        // Check if we need to rotate due to size limit (0 = disabled)
+        if self.max_file_size > 0 {
+            let current_size = self.current_size.load(Ordering::Relaxed);
+            if current_size + buf.len() as u64 > self.max_file_size {
+                self.rotate_by_size()?;
+            }
         }
 
         if let Some(ref mut file) = *self.get_writer()? {
@@ -333,103 +336,12 @@ impl Clone for DailyRollingWriter {
         Self {
             service_name: self.service_name.clone(),
             log_dir: self.log_dir.clone(),
+            suffix: self.suffix.clone(),
             current_date: Arc::clone(&self.current_date),
             current_file: Arc::clone(&self.current_file),
             current_size: Arc::clone(&self.current_size),
             max_file_size: self.max_file_size,
             rotation_count: Arc::clone(&self.rotation_count),
-        }
-    }
-}
-
-// Custom daily rolling file writer for API logs with naming format: {service}_api{YYYYMMDD}.log
-struct ApiDailyRollingWriter {
-    service_name: String,
-    log_dir: PathBuf,
-    current_date: Arc<Mutex<String>>,
-    current_file: Arc<Mutex<Option<File>>>,
-}
-
-impl ApiDailyRollingWriter {
-    fn new(service_name: String, log_dir: PathBuf) -> std::io::Result<Self> {
-        let current_date = chrono::Local::now().format("%Y%m%d").to_string();
-        let file_path = log_dir.join(format!("{}_{}_api.log", current_date, service_name));
-
-        // Create log directory if it doesn't exist
-        fs::create_dir_all(&log_dir)?;
-
-        // Open or create the log file
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&file_path)?;
-
-        Ok(Self {
-            service_name,
-            log_dir,
-            current_date: Arc::new(Mutex::new(current_date)),
-            current_file: Arc::new(Mutex::new(Some(file))),
-        })
-    }
-
-    fn get_writer(&self) -> std::io::Result<std::sync::MutexGuard<'_, Option<File>>> {
-        // Check if date has changed
-        let today = chrono::Local::now().format("%Y%m%d").to_string();
-        let mut current_date = self
-            .current_date
-            .lock()
-            .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
-
-        if *current_date != today {
-            // Date changed, rotate to new file
-            let new_file_path = self
-                .log_dir
-                .join(format!("{}_{}_api.log", today, self.service_name));
-            let new_file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&new_file_path)?;
-
-            // Update current date and file
-            *current_date = today;
-            let mut current_file = self
-                .current_file
-                .lock()
-                .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))?;
-            *current_file = Some(new_file);
-        }
-
-        self.current_file
-            .lock()
-            .map_err(|e| std::io::Error::other(format!("Mutex poisoned: {}", e)))
-    }
-}
-
-impl std::io::Write for ApiDailyRollingWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if let Some(ref mut file) = *self.get_writer()? {
-            file.write(buf)
-        } else {
-            Ok(0)
-        }
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        if let Some(ref mut file) = *self.get_writer()? {
-            file.flush()
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl Clone for ApiDailyRollingWriter {
-    fn clone(&self) -> Self {
-        Self {
-            service_name: self.service_name.clone(),
-            log_dir: self.log_dir.clone(),
-            current_date: Arc::clone(&self.current_date),
-            current_file: Arc::clone(&self.current_file),
         }
     }
 }
@@ -502,10 +414,6 @@ impl MakeWriter<'_> for ReloadableWriterHandle {
 struct LogRuntime {
     service_name: String,
     log_dir: PathBuf,
-    #[allow(dead_code)] // Kept for potential future use
-    file_level: Level,
-    #[allow(dead_code)] // Kept for potential future use
-    enable_json: bool,
 }
 
 static LOG_RUNTIME: OnceLock<Arc<Mutex<LogRuntime>>> = OnceLock::new();
@@ -555,6 +463,29 @@ impl Default for LogConfig {
     }
 }
 
+/// Build environment filter for tracing subscriber.
+///
+/// Priority: RUST_LOG env > default `info,{service}=debug,api_access={api_level}`.
+/// When RUST_LOG contains "debug"/"trace", auto-upgrades api_access to debug.
+fn build_env_filter(service_name: &str, api_level: &str) -> (EnvFilter, String) {
+    if let Ok(env_str) = std::env::var("RUST_LOG") {
+        if env_str.contains("api_access") {
+            (EnvFilter::new(env_str.clone()), env_str)
+        } else {
+            let effective = if env_str.contains("debug") || env_str.contains("trace") {
+                "debug"
+            } else {
+                api_level
+            };
+            let filter_str = format!("{},api_access={}", env_str, effective);
+            (EnvFilter::new(filter_str.clone()), filter_str)
+        }
+    } else {
+        let filter_str = format!("info,{}=debug,api_access={}", service_name, api_level);
+        (EnvFilter::new(filter_str.clone()), filter_str)
+    }
+}
+
 /// Initialize logging system with configuration
 pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Create log directory if it doesn't exist
@@ -571,44 +502,18 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     match guards.lock() {
         Ok(mut guards) => guards.push(guard),
         Err(poisoned) => {
-            // Lock was poisoned, but we can recover by using the data anyway
             eprintln!("Warning: GUARDS lock was poisoned, recovering...");
             poisoned.into_inner().push(guard);
         },
     }
 
-    // Build subscriber with layers
-    // IMPORTANT: Respect RUST_LOG environment variable, only add api_access if not specified
+    // Build env filter (respects RUST_LOG, auto-appends api_access level)
     let api_level = if config.enable_api_log {
         config.api_log_level.as_str()
     } else {
         "off"
     };
-
-    let (env_filter, initial_level_str) = if let Ok(env_str) = std::env::var("RUST_LOG") {
-        // RUST_LOG is set - only append api_access if not already specified
-        if env_str.contains("api_access") {
-            // User explicitly set api_access level in RUST_LOG, respect it
-            (EnvFilter::new(env_str.clone()), env_str)
-        } else {
-            // api_access not in RUST_LOG, use config default
-            // IMPORTANT: If RUST_LOG contains "debug" or "trace", upgrade api_access to debug for full visibility
-            let effective_api_level = if env_str.contains("debug") || env_str.contains("trace") {
-                "debug"
-            } else {
-                api_level
-            };
-            let filter_str = format!("{},api_access={}", env_str, effective_api_level);
-            (EnvFilter::new(filter_str.clone()), filter_str)
-        }
-    } else {
-        // RUST_LOG not set - use default with api_access
-        let filter_str = format!(
-            "info,{}=debug,api_access={}",
-            config.service_name, api_level
-        );
-        (EnvFilter::new(filter_str.clone()), filter_str)
-    };
+    let (env_filter, initial_level_str) = build_env_filter(&config.service_name, api_level);
 
     // Wrap EnvFilter with reload::Layer for dynamic level changes
     let (reload_filter, reload_handle) = reload::Layer::new(env_filter);
@@ -667,9 +572,9 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
 
     // API file layer (only api_access target) - created if enable_api_log is true
     let api_file_layer = if config.enable_api_log {
-        // Create API daily rolling file writer
+        // Create API daily rolling file writer (reuses DailyRollingWriter with "_api" suffix)
         let api_writer =
-            ApiDailyRollingWriter::new(config.service_name.clone(), config.log_dir.clone())?;
+            DailyRollingWriter::new_api(config.service_name.clone(), config.log_dir.clone())?;
         let (api_non_blocking, api_guard) = tracing_appender::non_blocking(api_writer);
 
         // Store API guard to prevent dropping
@@ -714,8 +619,6 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     let runtime = LogRuntime {
         service_name: config.service_name.clone(),
         log_dir: config.log_dir.clone(),
-        file_level: config.file_level,
-        enable_json: config.enable_json,
     };
     let rt_store = LOG_RUNTIME.get_or_init(|| Arc::new(Mutex::new(runtime.clone())));
     if let Ok(mut slot) = rt_store.lock() {
@@ -729,9 +632,13 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
         tracing::debug!("API log: {}_{}_api.log", current_date, config.service_name);
     }
 
-    // Start background compression task after logging the initialization
-    // Move the values since config is no longer needed
-    start_log_compression_task(config.log_dir, config.service_name);
+    // Start background compression task (extracted to log_rotation module)
+    let handle = crate::log_rotation::spawn_compression_task(
+        config.log_dir,
+        config.service_name,
+        config.max_log_files,
+    );
+    store_logging_task_handle(handle);
 
     Ok(())
 }
@@ -778,43 +685,44 @@ pub fn reopen_logs_now() -> Result<(), Box<dyn std::error::Error>> {
         let _ = fs::File::create(&log_file_path);
     }
 
-    // Also reopen API logger if initialized
-    if let Some(api_runtime_arc) = API_LOG_RUNTIME.get() {
-        if let Ok(api_runtime) = api_runtime_arc.lock() {
-            let api_runtime = api_runtime.clone();
-
-            // Create new API daily rolling file writer
-            let api_writer = ApiDailyRollingWriter::new(
-                api_runtime.service_name.clone(),
-                api_runtime.log_dir.clone(),
-            )?;
-            let (non_blocking, guard) = tracing_appender::non_blocking(api_writer);
-
-            // Swap API guard
-            if let Some(api_guard_storage) = API_GUARD.get() {
-                if let Ok(mut api_guard) = api_guard_storage.lock() {
-                    *api_guard = Some(guard);
-                }
-            }
-
-            // Reload the API writer
-            if let Some(api_writer) = API_RELOADABLE_WRITER.get() {
-                api_writer.reload(non_blocking);
-            }
-
-            // Touch today's API file to ensure it exists
-            let api_log_file_path = api_runtime.log_dir.join(format!(
-                "{}_{}_api.log",
-                chrono::Local::now().format("%Y%m%d"),
-                api_runtime.service_name
-            ));
-            if !api_log_file_path.exists() {
-                let _ = fs::File::create(&api_log_file_path);
-            }
-        }
-    }
+    reopen_api_logs()?;
 
     tracing::debug!("Log reopened");
+    Ok(())
+}
+
+/// Reopen API log writer (called from `reopen_logs_now`).
+fn reopen_api_logs() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(api_runtime_arc) = API_LOG_RUNTIME.get() else {
+        return Ok(());
+    };
+    let api_runtime = api_runtime_arc.lock().map_err(|_| "poisoned lock")?.clone();
+
+    let api_writer = DailyRollingWriter::new_api(
+        api_runtime.service_name.clone(),
+        api_runtime.log_dir.clone(),
+    )?;
+    let (non_blocking, guard) = tracing_appender::non_blocking(api_writer);
+
+    if let Some(storage) = API_GUARD.get() {
+        if let Ok(mut slot) = storage.lock() {
+            *slot = Some(guard);
+        }
+    }
+    if let Some(writer) = API_RELOADABLE_WRITER.get() {
+        writer.reload(non_blocking);
+    }
+
+    // Touch today's API file to ensure it exists
+    let api_log_path = api_runtime.log_dir.join(format!(
+        "{}_{}_api.log",
+        chrono::Local::now().format("%Y%m%d"),
+        api_runtime.service_name
+    ));
+    if !api_log_path.exists() {
+        let _ = fs::File::create(&api_log_path);
+    }
+
     Ok(())
 }
 
@@ -900,103 +808,6 @@ pub fn get_log_level() -> String {
         .and_then(|m| m.lock().ok())
         .map(|guard| guard.clone())
         .unwrap_or_else(|| "unknown".to_string())
-}
-
-// ==================== Log Compression Support ====================
-
-use tokio::time::{interval, Duration};
-
-/// Start background log compression task
-///
-/// The task handle is stored internally and can be stopped via `shutdown_logging_tasks()`.
-pub fn start_log_compression_task(log_dir: PathBuf, service_name: String) {
-    let handle = tokio::spawn(async move {
-        // Initial delay of 1 minute to let service fully start
-        tokio::time::sleep(Duration::from_secs(60)).await;
-
-        // Then run compression task every 6 hours (reduced from 24 hours for more timely cleanup)
-        let mut interval = interval(Duration::from_secs(6 * 3600)); // 6 hours
-
-        loop {
-            interval.tick().await;
-            if let Err(e) = compress_old_logs(&log_dir, &service_name).await {
-                tracing::error!("Log compression error for {}: {}", service_name, e);
-            }
-        }
-    });
-
-    // Store handle for cleanup
-    store_logging_task_handle(handle);
-}
-
-/// Compress log files older than 7 days, delete compressed logs older than 365 days
-async fn compress_old_logs(
-    log_dir: &Path,
-    service_name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use std::time::{Duration, SystemTime};
-
-    let mut entries = tokio::fs::read_dir(log_dir).await?;
-
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        let file_name = match path.file_name() {
-            Some(name) => name.to_string_lossy().to_string(),
-            None => continue,
-        };
-
-        // Skip non-log files (check both regular and API log patterns)
-        // New format: {YYYYMMDD}_{service}.log or {YYYYMMDD}_{service}_api.log
-        let is_regular_log =
-            file_name.contains(&format!("_{}.log", service_name)) && !file_name.contains("_api");
-        let is_api_log = file_name.contains(&format!("_{}_api.log", service_name));
-
-        if !is_regular_log && !is_api_log && !file_name.ends_with(".log.gz") {
-            continue;
-        }
-
-        let metadata = tokio::fs::metadata(&path).await?;
-        let modified = metadata.modified()?;
-        let age = SystemTime::now().duration_since(modified)?;
-
-        // Process uncompressed log files
-        if !file_name.ends_with(".gz") {
-            // Compress logs older than 1 day (reduced from 7 days for faster disk space reclaim)
-            if age > Duration::from_secs(86400) {
-                compress_file(&path).await?;
-                tokio::fs::remove_file(&path).await?; // Remove original file
-                tracing::debug!("Compressed: {}", file_name);
-            }
-        } else {
-            // Delete compressed logs older than 365 days
-            if age > Duration::from_secs(365 * 86400) {
-                tokio::fs::remove_file(&path).await?;
-                tracing::debug!("Deleted: {}", file_name);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Compress a single file
-async fn compress_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::Write;
-    use tokio::io::AsyncReadExt;
-
-    // Read original file
-    let mut input = tokio::fs::File::open(path).await?;
-    let mut buffer = Vec::new();
-    input.read_to_end(&mut buffer).await?;
-
-    // Compress to new file
-    let output_path = format!("{}.gz", path.display());
-    let output = std::fs::File::create(&output_path)?;
-    let mut encoder = GzEncoder::new(output, Compression::best());
-    encoder.write_all(&buffer)?;
-    encoder.finish()?;
-
-    Ok(())
 }
 
 // ============================================================================
@@ -1141,90 +952,44 @@ pub async fn http_request_logger(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    use axum::body::Body;
     use std::time::Instant;
     use tracing::{debug, info, level_enabled, Level};
 
     const MAX_BODY_LENGTH: usize = 500;
-    // Limit body read to prevent OOM on large requests (only need ~500 chars for logging)
     const MAX_BODY_READ: usize = 2048;
 
     let method = req.method().clone();
     let uri = req.uri().clone();
-    let content_type = req
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
     let start = Instant::now();
 
-    // Check Content-Length to avoid reading large bodies
-    let content_length = req
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0);
-
-    // Only read body at DEBUG level for modifying methods with small JSON payloads
-    // Skip reading if body is too large to avoid the body-consumption bug
+    // Decide whether to read body (DEBUG + modifying method + small JSON only)
     let should_read_body = level_enabled!(Level::DEBUG)
         && matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
-        && content_type.contains("application/json")
-        && content_length <= MAX_BODY_READ;
+        && req
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.contains("application/json"))
+        && req
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(0)
+            <= MAX_BODY_READ;
 
     let (req, body_str) = if should_read_body {
-        // Read body bytes (safe because we checked content_length)
-        let (parts, body) = req.into_parts();
-        let bytes = match axum::body::to_bytes(body, MAX_BODY_READ).await {
-            Ok(b) => b,
-            Err(e) => {
-                // Read failed (shouldn't happen since we checked length) - log and pass empty
-                // This is a fallback; the Content-Length check above should prevent this
-                tracing::warn!(
-                    "Unexpected body read failure (len={}, limit={}): {}",
-                    content_length,
-                    MAX_BODY_READ,
-                    e
-                );
-                let new_req = axum::extract::Request::from_parts(parts, Body::empty());
-                return next.run(new_req).await;
-            },
-        };
-
-        // Convert to string
-        let body_str = match std::str::from_utf8(&bytes) {
-            Ok(s) => {
-                // Apply redaction and truncation
-                let redacted = redact_sensitive_fields(s);
-                truncate_body(&redacted, MAX_BODY_LENGTH)
-            },
-            Err(_) => "<binary data>".to_string(),
-        };
-
-        // Reconstruct request with original bytes
-        let new_req = axum::extract::Request::from_parts(parts, Body::from(bytes));
-        (new_req, body_str)
+        extract_request_body(req, MAX_BODY_READ, MAX_BODY_LENGTH).await
     } else {
-        // Don't read body, use placeholder
         (req, "-".to_string())
     };
 
-    // Execute the request
     let response = next.run(req).await;
-
     let duration = start.elapsed();
     let status = response.status();
 
-    // Log based on level and method
-    // INFO level: Log only modifying methods (POST/PUT/PATCH/DELETE) without body
-    // DEBUG level: Log ALL requests with body content
-    //
-    // Note: We use separate info! and debug! calls because they have different fields.
-    // The tracing subscriber will filter based on the configured level for api_access target.
-
+    // INFO: modifying methods (no body); DEBUG: all requests with body
     if matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
-        // Always log modifying methods at INFO level (no body)
         info!(
             target: "api_access",
             method = %method,
@@ -1235,7 +1000,6 @@ pub async fn http_request_logger(
         );
     }
 
-    // Additionally, log all requests at DEBUG level with body (if body was read)
     if body_str != "-" {
         debug!(
             target: "api_access",
@@ -1247,7 +1011,6 @@ pub async fn http_request_logger(
             "HTTP request (detailed)"
         );
     } else if !matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
-        // For GET requests, only log at DEBUG level
         debug!(
             target: "api_access",
             method = %method,
@@ -1259,6 +1022,36 @@ pub async fn http_request_logger(
     }
 
     response
+}
+
+/// Extract and redact request body for logging.
+///
+/// Reads the body, applies sensitive field redaction, truncates to max length,
+/// and reconstructs the request with the original bytes.
+async fn extract_request_body(
+    req: axum::extract::Request,
+    max_read: usize,
+    max_display: usize,
+) -> (axum::extract::Request, String) {
+    use axum::body::Body;
+
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, max_read).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!("Body read failure: {}", e);
+            let new_req = axum::extract::Request::from_parts(parts, Body::empty());
+            return (new_req, "-".to_string());
+        },
+    };
+
+    let body_str = match std::str::from_utf8(&bytes) {
+        Ok(s) => truncate_body(&redact_sensitive_fields(s), max_display),
+        Err(_) => "<binary data>".to_string(),
+    };
+
+    let new_req = axum::extract::Request::from_parts(parts, Body::from(bytes));
+    (new_req, body_str)
 }
 
 // ============================================================================

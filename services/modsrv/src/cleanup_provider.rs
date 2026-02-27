@@ -60,15 +60,14 @@ impl CleanupProvider for ModsrvCleanupProvider {
         entity_id: &str,
         key: &str,
     ) -> Result<Option<HashSet<String>>> {
-        // Determine point type and field name from key suffix
-        let (table, field) = if key.ends_with(":M") {
-            ("measurement_points", "measurement_id")
-        } else if key.ends_with(":A") {
-            ("action_points", "action_id")
-        } else {
+        // Determine point role from key suffix
+        let is_measurement = key.ends_with(":M");
+        let is_action = key.ends_with(":A");
+
+        if !is_measurement && !is_action {
             // Not a point data key (e.g., :config, :status, :measurement_points metadata)
             return Ok(None);
-        };
+        }
 
         // Get product_name for this instance
         let instance_id: u32 = entity_id
@@ -90,17 +89,23 @@ impl CleanupProvider for ModsrvCleanupProvider {
             },
         };
 
-        // Query valid point indices for this product
-        let query = format!("SELECT {} FROM {} WHERE product_name = ?", field, table);
+        // Get valid point IDs from built-in product definitions (compile-time constants)
+        let product = match voltage_model::product_lib::get_builtin_product(&product_name) {
+            Some(p) => p,
+            None => return Ok(Some(HashSet::new())),
+        };
 
-        let points = sqlx::query_as::<_, (u32,)>(&query)
-            .bind(product_name)
-            .fetch_all(&self.db)
-            .await?;
+        let point_ids: HashSet<String> = if is_measurement {
+            product
+                .measurements
+                .iter()
+                .map(|m| m.id.to_string())
+                .collect()
+        } else {
+            product.actions.iter().map(|a| a.id.to_string()).collect()
+        };
 
-        Ok(Some(
-            points.into_iter().map(|(id,)| id.to_string()).collect(),
-        ))
+        Ok(Some(point_ids))
     }
 }
 

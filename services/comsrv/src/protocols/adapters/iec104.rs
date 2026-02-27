@@ -40,6 +40,14 @@ use voltage_iec104::{ClientConfig, Cp56Time2a, Iec104Client, Iec104Event};
 
 use async_trait::async_trait;
 
+// ============================================================================
+// Default timeout constants for IEC 104
+// ============================================================================
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_T1_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_T2_TIMEOUT: Duration = Duration::from_secs(10);
+const DEFAULT_T3_TIMEOUT: Duration = Duration::from_secs(20);
+
 use crate::protocols::core::data::{DataBatch, DataPoint, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -93,10 +101,10 @@ impl Iec104ChannelConfig {
         Self {
             address: address.into(),
             common_address: 1,
-            connect_timeout: Duration::from_secs(10),
-            t1_timeout: Duration::from_secs(15),
-            t2_timeout: Duration::from_secs(10),
-            t3_timeout: Duration::from_secs(20),
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            t1_timeout: DEFAULT_T1_TIMEOUT,
+            t2_timeout: DEFAULT_T2_TIMEOUT,
+            t3_timeout: DEFAULT_T3_TIMEOUT,
             k: 12,
             w: 8,
             points: Vec::new(),
@@ -205,19 +213,19 @@ fn default_common_address() -> u16 {
 }
 
 fn default_connect_timeout_ms() -> u64 {
-    10000
+    DEFAULT_CONNECT_TIMEOUT.as_millis() as u64
 }
 
 fn default_t1_timeout() -> u64 {
-    15
+    DEFAULT_T1_TIMEOUT.as_secs()
 }
 
 fn default_t2_timeout() -> u64 {
-    10
+    DEFAULT_T2_TIMEOUT.as_secs()
 }
 
 fn default_t3_timeout() -> u64 {
-    20
+    DEFAULT_T3_TIMEOUT.as_secs()
 }
 
 impl Iec104ParamsConfig {
@@ -475,6 +483,23 @@ impl Iec104Channel {
             .get(&id)
             .map(|&idx| &self.config.points[idx])
     }
+
+    /// Resolve point ID to IEC 104 address. Returns error tuple for failures vec.
+    fn resolve_iec104_addr(
+        &self,
+        id: u32,
+    ) -> std::result::Result<
+        (&PointConfig, &crate::protocols::core::point::Iec104Address),
+        (u32, String),
+    > {
+        let point = self
+            .find_point(id)
+            .ok_or_else(|| (id, "Point not found".to_string()))?;
+        match &point.address {
+            crate::protocols::core::point::ProtocolAddress::Iec104(addr) => Ok((point, addr)),
+            _ => Err((id, "Invalid address type".to_string())),
+        }
+    }
 }
 
 impl ProtocolCapabilities for Iec104Channel {
@@ -600,46 +625,25 @@ impl ProtocolClient for Iec104Channel {
         let mut failures = Vec::new();
 
         for cmd in commands {
-            // Find point config
-            let point = match self.find_point(cmd.id) {
-                Some(p) => p,
-                None => {
-                    failures.push((cmd.id, "Point not found".into()));
-                    continue;
-                },
-            };
-
-            // Get IEC 104 address
-            let iec_addr = match &point.address {
-                crate::protocols::core::point::ProtocolAddress::Iec104(addr) => addr,
-                _ => {
-                    failures.push((cmd.id, "Invalid address type".into()));
-                    continue;
-                },
-            };
-
-            // Send single command
-            let result = self
-                .client
-                .single_command(
-                    self.config.common_address,
-                    iec_addr.ioa,
-                    cmd.value,
-                    false, // not select
-                )
-                .await;
-
-            match result {
-                Ok(()) => success_count += 1,
+            let (_point, iec_addr) = match self.resolve_iec104_addr(cmd.id) {
+                Ok(v) => v,
                 Err(e) => {
-                    failures.push((cmd.id, e.to_string()));
+                    failures.push(e);
+                    continue;
                 },
+            };
+            let ioa = iec_addr.ioa;
+            match self
+                .client
+                .single_command(self.config.common_address, ioa, cmd.value, false)
+                .await
+            {
+                Ok(()) => success_count += 1,
+                Err(e) => failures.push((cmd.id, e.to_string())),
             }
         }
 
-        // Lock-free write count increment
         self.diagnostics.add_write(success_count as u64);
-
         Ok(WriteResult {
             success_count,
             failures,
@@ -651,25 +655,13 @@ impl ProtocolClient for Iec104Channel {
         let mut failures = Vec::new();
 
         for adj in adjustments {
-            // Find point config
-            let point = match self.find_point(adj.id) {
-                Some(p) => p,
-                None => {
-                    failures.push((adj.id, "Point not found".into()));
+            let (point, iec_addr) = match self.resolve_iec104_addr(adj.id) {
+                Ok(v) => v,
+                Err(e) => {
+                    failures.push(e);
                     continue;
                 },
             };
-
-            // Get IEC 104 address
-            let iec_addr = match &point.address {
-                crate::protocols::core::point::ProtocolAddress::Iec104(addr) => addr,
-                _ => {
-                    failures.push((adj.id, "Invalid address type".into()));
-                    continue;
-                },
-            };
-
-            // Apply reverse transform
             let raw_value = match point.transform.reverse_apply(adj.value) {
                 Ok(v) => v as f32,
                 Err(e) => {
@@ -677,29 +669,18 @@ impl ProtocolClient for Iec104Channel {
                     continue;
                 },
             };
-
-            // Send setpoint command
-            let result = self
+            let ioa = iec_addr.ioa;
+            match self
                 .client
-                .setpoint_float(
-                    self.config.common_address,
-                    iec_addr.ioa,
-                    raw_value,
-                    false, // not select
-                )
-                .await;
-
-            match result {
+                .setpoint_float(self.config.common_address, ioa, raw_value, false)
+                .await
+            {
                 Ok(()) => success_count += 1,
-                Err(e) => {
-                    failures.push((adj.id, e.to_string()));
-                },
+                Err(e) => failures.push((adj.id, e.to_string())),
             }
         }
 
-        // Lock-free write count increment
         self.diagnostics.add_write(success_count as u64);
-
         Ok(WriteResult {
             success_count,
             failures,
@@ -758,7 +739,7 @@ fn convert_iec104_value(value: &voltage_iec104::DataValue) -> Value {
     }
 }
 
-/// Convert Cp56Time2a to DateTime<Utc>.
+/// Convert Cp56Time2a to `DateTime<Utc>`.
 fn cp56time2a_to_datetime(time: &Cp56Time2a) -> Option<DateTime<Utc>> {
     if time.invalid {
         return None;

@@ -10,7 +10,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, trace, warn};
 use uuid::Uuid;
 use voltage_model::PointType;
-use voltage_rtdb::{RoutingCache, UnifiedReader};
+use voltage_routing::RoutingCache;
+use voltage_rtdb_shm::UnifiedReader;
 
 use crate::core::channels::types::ChannelCommand;
 

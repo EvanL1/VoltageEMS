@@ -9,6 +9,7 @@ description = "Rule engine library for VoltageEMS - Vue Flow based rule parsing,
 voltage-calc = { path = "../voltage-calc" }
 voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
+voltage-rtdb-shm = { path = "../voltage-rtdb-shm" }
 voltage-routing = { path = "../voltage-routing" }
 
 # Async runtime

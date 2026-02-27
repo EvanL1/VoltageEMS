@@ -1969,7 +1969,7 @@ async fn test_get_point_mapping_with_invalid_type_returns_400() {
     assert!(response["error"]["message"]
         .as_str()
         .unwrap()
-        .contains("Invalid four-remote type 'X'"));
+        .contains("Invalid point type 'X'"));
 }
 
 #[tokio::test]
@@ -2468,11 +2468,6 @@ async fn test_write_single_control_point() {
     let ts_key = format!("{}:ts", channel_key);
     let ts = rtdb.hash_get(&ts_key, "10").await.unwrap().unwrap();
     assert!(!ts.is_empty(), "Timestamp field should exist");
-
-    // Verify TODO queue
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1, "Should have 1 TODO item for C type");
 }
 
 #[tokio::test]
@@ -2498,11 +2493,6 @@ async fn test_write_single_adjustment_point() {
     let channel_key = "comsrv:1005:A";
     let value = rtdb.hash_get(channel_key, "200").await.unwrap().unwrap();
     assert_eq!(value, bytes::Bytes::from("4500.0")); // ryu preserves decimal point
-
-    // Verify TODO queue
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1);
 }
 
 #[tokio::test]
@@ -2536,11 +2526,6 @@ async fn test_write_batch_control_points() {
 
     let val2 = rtdb.hash_get(channel_key, "11").await.unwrap().unwrap();
     assert_eq!(val2, bytes::Bytes::from("0.0")); // ryu preserves decimal point
-
-    // Verify TODO queue has 2 items
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 2);
 }
 
 #[tokio::test]
@@ -2570,11 +2555,6 @@ async fn test_write_batch_adjustment_points() {
 
     let val2 = rtdb.hash_get(channel_key, "201").await.unwrap().unwrap();
     assert_eq!(val2, bytes::Bytes::from("380.0")); // ryu preserves decimal point
-
-    // Verify TODO queue has 2 items
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 2);
 }
 
 #[tokio::test]
@@ -2606,15 +2586,6 @@ async fn test_write_control_persists_to_rtdb() {
     let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
     let ts: u64 = ts_str.parse().unwrap();
     assert_eq!(ts, response_timestamp);
-
-    // Verify TODO queue structure
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1);
-
-    // TODO queue stores only point_id (minimal trigger signal)
-    let todo_json: serde_json::Value = serde_json::from_slice(&todo_items[0]).unwrap();
-    assert_eq!(todo_json["point_id"], 12);
 }
 
 #[tokio::test]
@@ -2646,15 +2617,6 @@ async fn test_write_adjustment_persists_to_rtdb() {
     let ts_str = String::from_utf8(ts_bytes.to_vec()).unwrap();
     let ts: u64 = ts_str.parse().unwrap();
     assert_eq!(ts, response_timestamp);
-
-    // Verify TODO queue
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 1);
-
-    // TODO queue stores only point_id (minimal trigger signal)
-    let todo_json: serde_json::Value = serde_json::from_slice(&todo_items[0]).unwrap();
-    assert_eq!(todo_json["point_id"], 202);
 }
 
 // ===== P1: New Feature Tests (5 tests) =====
@@ -2680,11 +2642,6 @@ async fn test_write_single_telemetry_point() {
     let channel_key = "comsrv:1005:T";
     let value = rtdb.hash_get(channel_key, "1").await.unwrap().unwrap();
     assert!(!value.is_empty());
-
-    // Verify NO TODO queue for T type
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 0, "T type should NOT write to TODO queue");
 }
 
 #[tokio::test]
@@ -2707,11 +2664,6 @@ async fn test_write_single_signal_point() {
     let channel_key = "comsrv:1005:S";
     let value = rtdb.hash_get(channel_key, "100").await.unwrap().unwrap();
     assert!(!value.is_empty());
-
-    // Verify NO TODO queue for S type
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 0, "S type should NOT write to TODO queue");
 }
 
 #[tokio::test]
@@ -2741,11 +2693,6 @@ async fn test_write_batch_telemetry_points() {
 
     let val2 = rtdb.hash_get(channel_key, "2").await.unwrap().unwrap();
     assert!(!val2.is_empty());
-
-    // Verify NO TODO queue for T type
-    let todo_key = format!("{}:TODO", channel_key);
-    let todo_items = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert_eq!(todo_items.len(), 0);
 }
 
 #[tokio::test]
@@ -2904,4 +2851,687 @@ async fn test_write_response_format_batch() {
     assert!(json["data"]["succeeded"].is_number());
     assert!(json["data"]["failed"].is_number());
     assert!(json["data"]["errors"].is_array());
+}
+
+// ========================================================================
+// Template API Tests
+// ========================================================================
+
+/// Helper: Create a test app with a shared SQLite pool for template tests
+async fn create_template_test_app() -> (Router, SqlitePool) {
+    let channel_manager = Arc::new(ChannelManager::new(
+        crate::test_utils::create_test_rtdb(),
+        crate::test_utils::create_test_routing_cache(),
+    ));
+    let pool = create_test_sqlite_pool_with_points().await;
+    let app = create_test_api_with_pool(channel_manager, pool.clone()).await;
+    (app, pool)
+}
+
+/// Helper: Rebuild the router from the same pool (since oneshot consumes the router)
+async fn rebuild_template_app(pool: SqlitePool) -> Router {
+    let channel_manager = Arc::new(ChannelManager::new(
+        crate::test_utils::create_test_rtdb(),
+        crate::test_utils::create_test_routing_cache(),
+    ));
+    create_test_api_with_pool(channel_manager, pool).await
+}
+
+/// Helper: Send a JSON POST request and return the response
+async fn send_json_request(
+    app: Router,
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+) -> Response<Body> {
+    let mut builder = Request::builder()
+        .uri(uri)
+        .header("content-type", "application/json");
+    builder = match method {
+        "POST" => builder.method("POST"),
+        "PUT" => builder.method("PUT"),
+        "DELETE" => builder.method("DELETE"),
+        _ => builder.method("GET"),
+    };
+
+    let body = match body {
+        Some(json) => Body::from(serde_json::to_string(&json).unwrap()),
+        None => Body::empty(),
+    };
+
+    app.oneshot(builder.body(body).unwrap()).await.unwrap()
+}
+
+#[tokio::test]
+async fn test_list_templates_empty() {
+    let (app, _pool) = create_template_test_app().await;
+
+    let resp = send_json_request(app, "GET", "/api/templates", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = extract_json(resp).await;
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_create_template_manually() {
+    let (app, pool) = create_template_test_app().await;
+
+    let body = json!({
+        "name": "Test Template",
+        "description": "Unit test template",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "voltage", "scale": 1.0, "offset": 0.0, "unit": "V", "data_type": "float32", "reverse": false, "description": ""}]
+        },
+        "mappings_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "voltage", "protocol_data": {"register": 0, "slave_id": 1}}]
+        }
+    });
+
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = extract_json(resp).await;
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["name"], "Test Template");
+    assert_eq!(json["data"]["protocol"], "modbus_tcp");
+    assert!(json["data"]["template_id"].as_i64().unwrap() > 0);
+
+    // Verify it shows up in list
+    let app2 = rebuild_template_app(pool).await;
+    let resp2 = send_json_request(app2, "GET", "/api/templates", None).await;
+    let json2 = extract_json(resp2).await;
+    assert_eq!(json2["data"].as_array().unwrap().len(), 1);
+    assert_eq!(json2["data"][0]["name"], "Test Template");
+}
+
+#[tokio::test]
+async fn test_create_template_duplicate_name_returns_409() {
+    let (app, pool) = create_template_test_app().await;
+
+    let body = json!({
+        "name": "Duplicate",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {},
+        "mappings_snapshot": {}
+    });
+
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body.clone())).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Second create with same name
+    let app2 = rebuild_template_app(pool).await;
+    let resp2 = send_json_request(app2, "POST", "/api/templates", Some(body)).await;
+    assert_eq!(resp2.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn test_get_template_not_found() {
+    let (app, _pool) = create_template_test_app().await;
+
+    let resp = send_json_request(app, "GET", "/api/templates/9999", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_get_template_detail() {
+    let (app, pool) = create_template_test_app().await;
+
+    let body = json!({
+        "name": "Detail Test",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {"telemetry": [{"point_id": 1, "signal_name": "v", "scale": 1.0, "offset": 0.0, "unit": "V", "data_type": "float32", "reverse": false, "description": ""}]},
+        "mappings_snapshot": {"telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {}}]}
+    });
+
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
+    let created = extract_json(resp).await;
+    let template_id = created["data"]["template_id"].as_i64().unwrap();
+
+    let app2 = rebuild_template_app(pool).await;
+    let resp2 = send_json_request(
+        app2,
+        "GET",
+        &format!("/api/templates/{}", template_id),
+        None,
+    )
+    .await;
+    assert_eq!(resp2.status(), StatusCode::OK);
+
+    let json = extract_json(resp2).await;
+    assert_eq!(json["data"]["name"], "Detail Test");
+    assert!(json["data"]["points_snapshot"]["telemetry"].is_array());
+    assert!(json["data"]["mappings_snapshot"]["telemetry"].is_array());
+}
+
+#[tokio::test]
+async fn test_update_template() {
+    let (app, pool) = create_template_test_app().await;
+
+    let body = json!({
+        "name": "Before Update",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {},
+        "mappings_snapshot": {}
+    });
+
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
+    let created = extract_json(resp).await;
+    let template_id = created["data"]["template_id"].as_i64().unwrap();
+
+    // Update name
+    let app2 = rebuild_template_app(pool.clone()).await;
+    let update_body = json!({ "name": "After Update" });
+    let resp2 = send_json_request(
+        app2,
+        "PUT",
+        &format!("/api/templates/{}", template_id),
+        Some(update_body),
+    )
+    .await;
+    assert_eq!(resp2.status(), StatusCode::OK);
+
+    // Verify updated
+    let app3 = rebuild_template_app(pool).await;
+    let resp3 = send_json_request(
+        app3,
+        "GET",
+        &format!("/api/templates/{}", template_id),
+        None,
+    )
+    .await;
+    let json = extract_json(resp3).await;
+    assert_eq!(json["data"]["name"], "After Update");
+}
+
+#[tokio::test]
+async fn test_update_template_not_found() {
+    let (app, _pool) = create_template_test_app().await;
+
+    let body = json!({ "name": "No Such Template" });
+    let resp = send_json_request(app, "PUT", "/api/templates/9999", Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_delete_template() {
+    let (app, pool) = create_template_test_app().await;
+
+    let body = json!({
+        "name": "To Delete",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {},
+        "mappings_snapshot": {}
+    });
+
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
+    let created = extract_json(resp).await;
+    let template_id = created["data"]["template_id"].as_i64().unwrap();
+
+    // Delete
+    let app2 = rebuild_template_app(pool.clone()).await;
+    let resp2 = send_json_request(
+        app2,
+        "DELETE",
+        &format!("/api/templates/{}", template_id),
+        None,
+    )
+    .await;
+    assert_eq!(resp2.status(), StatusCode::OK);
+
+    // Verify gone
+    let app3 = rebuild_template_app(pool).await;
+    let resp3 = send_json_request(
+        app3,
+        "GET",
+        &format!("/api/templates/{}", template_id),
+        None,
+    )
+    .await;
+    assert_eq!(resp3.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_delete_template_not_found() {
+    let (app, _pool) = create_template_test_app().await;
+
+    let resp = send_json_request(app, "DELETE", "/api/templates/9999", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_list_templates_filter_by_protocol() {
+    let (app, pool) = create_template_test_app().await;
+
+    // Create modbus template
+    let body1 = json!({
+        "name": "Modbus Template",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {},
+        "mappings_snapshot": {}
+    });
+    send_json_request(app, "POST", "/api/templates", Some(body1)).await;
+
+    // Create another protocol template
+    let app2 = rebuild_template_app(pool.clone()).await;
+    let body2 = json!({
+        "name": "GPIO Template",
+        "protocol": "gpio",
+        "points_snapshot": {},
+        "mappings_snapshot": {}
+    });
+    send_json_request(app2, "POST", "/api/templates", Some(body2)).await;
+
+    // Filter by modbus_tcp
+    let app3 = rebuild_template_app(pool.clone()).await;
+    let resp = send_json_request(app3, "GET", "/api/templates?protocol=modbus_tcp", None).await;
+    let json = extract_json(resp).await;
+    assert_eq!(json["data"].as_array().unwrap().len(), 1);
+    assert_eq!(json["data"][0]["protocol"], "modbus_tcp");
+
+    // Filter by gpio
+    let app4 = rebuild_template_app(pool).await;
+    let resp2 = send_json_request(app4, "GET", "/api/templates?protocol=gpio", None).await;
+    let json2 = extract_json(resp2).await;
+    assert_eq!(json2["data"].as_array().unwrap().len(), 1);
+    assert_eq!(json2["data"][0]["protocol"], "gpio");
+}
+
+#[tokio::test]
+async fn test_create_template_empty_name_returns_400() {
+    let (app, _pool) = create_template_test_app().await;
+
+    let body = json!({
+        "name": "   ",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {},
+        "mappings_snapshot": {}
+    });
+
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_create_template_from_channel() {
+    let (_app, pool) = create_template_test_app().await;
+
+    // Insert a test channel
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(1001_i64)
+    .bind("PCS#1")
+    .bind("modbus_tcp")
+    .bind(true)
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Insert a test telemetry point
+    sqlx::query("INSERT INTO telemetry_points (channel_id, point_id, signal_name, scale, offset, unit, data_type, reverse, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(1001_i64)
+        .bind(1_i64)
+        .bind("voltage")
+        .bind(1.0)
+        .bind(0.0)
+        .bind("V")
+        .bind("float32")
+        .bind(false)
+        .bind("Phase A voltage")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let app = rebuild_template_app(pool.clone()).await;
+    let body = json!({
+        "name": "From Channel Template",
+        "description": "Snapshot from PCS#1"
+    });
+
+    let resp = send_json_request(app, "POST", "/api/templates/from-channel/1001", Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let json = extract_json(resp).await;
+    assert_eq!(json["data"]["name"], "From Channel Template");
+    assert_eq!(json["data"]["protocol"], "modbus_tcp");
+    assert_eq!(json["data"]["source_channel_id"], 1001);
+
+    // Verify telemetry points were captured
+    let points = &json["data"]["points_snapshot"]["telemetry"];
+    assert_eq!(points.as_array().unwrap().len(), 1);
+    assert_eq!(points[0]["signal_name"], "voltage");
+}
+
+#[tokio::test]
+async fn test_create_template_from_nonexistent_channel() {
+    let (app, _pool) = create_template_test_app().await;
+
+    let body = json!({ "name": "From Nowhere" });
+    let resp = send_json_request(app, "POST", "/api/templates/from-channel/9999", Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_apply_template_to_channel() {
+    let (_app, pool) = create_template_test_app().await;
+
+    // Insert target channel
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(2001_i64)
+    .bind("Target#1")
+    .bind("modbus_tcp")
+    .bind(true)
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Create a template first
+    let app = rebuild_template_app(pool.clone()).await;
+    let create_body = json!({
+        "name": "Apply Test Template",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "scale": 1.0, "offset": 0.0, "unit": "V", "data_type": "float32", "reverse": false, "description": "voltage"}],
+            "signal": [{"point_id": 1, "signal_name": "alarm", "scale": 1.0, "offset": 0.0, "unit": "", "data_type": "bool", "reverse": false, "normal_state": 0, "description": "alarm"}]
+        },
+        "mappings_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register": 0, "slave_id": 1}}],
+            "signal": [{"point_id": 1, "signal_name": "alarm", "protocol_data": {}}]
+        }
+    });
+    let resp = send_json_request(app, "POST", "/api/templates", Some(create_body)).await;
+    let created = extract_json(resp).await;
+    let template_id = created["data"]["template_id"].as_i64().unwrap();
+
+    // Apply template to channel
+    let app2 = rebuild_template_app(pool.clone()).await;
+    let apply_body = json!({ "clear_existing": true });
+    let resp2 = send_json_request(
+        app2,
+        "POST",
+        &format!("/api/templates/{}/apply/2001", template_id),
+        Some(apply_body),
+    )
+    .await;
+    assert_eq!(resp2.status(), StatusCode::OK);
+
+    let json = extract_json(resp2).await;
+    assert_eq!(json["data"]["points_inserted"], 2);
+    assert_eq!(json["data"]["channel_id"], 2001);
+
+    // Verify points were inserted in the DB
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM telemetry_points WHERE channel_id = ?")
+            .bind(2001_i64)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count.0, 1);
+
+    let count_sig: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM signal_points WHERE channel_id = ?")
+            .bind(2001_i64)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count_sig.0, 1);
+}
+
+#[tokio::test]
+async fn test_apply_template_protocol_mismatch() {
+    let (_app, pool) = create_template_test_app().await;
+
+    // Insert channel with different protocol
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(3001_i64)
+    .bind("GPIO#1")
+    .bind("gpio")
+    .bind(true)
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Create modbus template
+    let app = rebuild_template_app(pool.clone()).await;
+    let body = json!({
+        "name": "Modbus Only",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {},
+        "mappings_snapshot": {}
+    });
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
+    let created = extract_json(resp).await;
+    let template_id = created["data"]["template_id"].as_i64().unwrap();
+
+    // Apply modbus template to gpio channel → should fail
+    let app2 = rebuild_template_app(pool).await;
+    let apply_body = json!({ "clear_existing": false });
+    let resp2 = send_json_request(
+        app2,
+        "POST",
+        &format!("/api/templates/{}/apply/3001", template_id),
+        Some(apply_body),
+    )
+    .await;
+    assert_eq!(resp2.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_apply_template_not_found() {
+    let (_app, pool) = create_template_test_app().await;
+
+    // Insert target channel
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(4001_i64)
+    .bind("Ch#4001")
+    .bind("modbus_tcp")
+    .bind(true)
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = rebuild_template_app(pool).await;
+    let apply_body = json!({ "clear_existing": false });
+    let resp = send_json_request(
+        app,
+        "POST",
+        "/api/templates/9999/apply/4001",
+        Some(apply_body),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_apply_template_with_slave_id_override() {
+    let (_app, pool) = create_template_test_app().await;
+
+    // Insert target channel
+    sqlx::query(
+        "INSERT INTO channels (channel_id, name, protocol, enabled, config) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(5001_i64)
+    .bind("Override#1")
+    .bind("modbus_tcp")
+    .bind(true)
+    .bind("{}")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Create template with slave_id in mapping
+    let app = rebuild_template_app(pool.clone()).await;
+    let body = json!({
+        "name": "Override Template",
+        "protocol": "modbus_tcp",
+        "points_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "scale": 1.0, "offset": 0.0, "unit": "V", "data_type": "float32", "reverse": false, "description": ""}]
+        },
+        "mappings_snapshot": {
+            "telemetry": [{"point_id": 1, "signal_name": "v", "protocol_data": {"register": 100, "slave_id": 1}}]
+        }
+    });
+    let resp = send_json_request(app, "POST", "/api/templates", Some(body)).await;
+    let created = extract_json(resp).await;
+    let template_id = created["data"]["template_id"].as_i64().unwrap();
+
+    // Apply with slave_id_override = 42
+    let app2 = rebuild_template_app(pool.clone()).await;
+    let apply_body = json!({ "clear_existing": true, "slave_id_override": 42 });
+    let resp2 = send_json_request(
+        app2,
+        "POST",
+        &format!("/api/templates/{}/apply/5001", template_id),
+        Some(apply_body),
+    )
+    .await;
+    assert_eq!(resp2.status(), StatusCode::OK);
+
+    // Verify slave_id was overridden in DB
+    let row: (Option<String>,) = sqlx::query_as(
+        "SELECT protocol_mappings FROM telemetry_points WHERE channel_id = ? AND point_id = ?",
+    )
+    .bind(5001_i64)
+    .bind(1_i64)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let mapping: serde_json::Value = serde_json::from_str(&row.0.unwrap()).unwrap();
+    assert_eq!(mapping["slave_id"], 42);
+    assert_eq!(mapping["register"], 100);
+}
+
+// ========================================================================
+// OpenAPI Spec Completeness Tests
+// ========================================================================
+
+#[cfg(feature = "openapi")]
+mod openapi_tests {
+    use crate::api::routes::ComsrvApiDoc;
+    use utoipa::OpenApi;
+
+    #[test]
+    fn test_openapi_spec_generates_without_panic() {
+        let doc = ComsrvApiDoc::openapi();
+        let json = doc.to_pretty_json().unwrap();
+        assert!(!json.is_empty());
+    }
+
+    #[test]
+    fn test_openapi_contains_template_paths() {
+        let doc = ComsrvApiDoc::openapi();
+        let json_str = doc.to_pretty_json().unwrap();
+        let spec: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        let paths = spec["paths"].as_object().unwrap();
+
+        // All 5 template path patterns should exist
+        assert!(
+            paths.contains_key("/api/templates"),
+            "Missing /api/templates"
+        );
+        assert!(
+            paths.contains_key("/api/templates/{id}"),
+            "Missing /api/templates/{{id}}"
+        );
+        assert!(
+            paths.contains_key("/api/templates/from-channel/{channel_id}"),
+            "Missing /api/templates/from-channel/{{channel_id}}"
+        );
+        assert!(
+            paths.contains_key("/api/templates/{id}/apply/{channel_id}"),
+            "Missing /api/templates/{{id}}/apply/{{channel_id}}"
+        );
+    }
+
+    #[test]
+    fn test_openapi_template_methods() {
+        let doc = ComsrvApiDoc::openapi();
+        let json_str = doc.to_pretty_json().unwrap();
+        let spec: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        // /api/templates should have GET and POST
+        let templates = &spec["paths"]["/api/templates"];
+        assert!(templates["get"].is_object(), "/api/templates missing GET");
+        assert!(templates["post"].is_object(), "/api/templates missing POST");
+
+        // /api/templates/{id} should have GET, PUT, DELETE
+        let templates_id = &spec["paths"]["/api/templates/{id}"];
+        assert!(
+            templates_id["get"].is_object(),
+            "/api/templates/{{id}} missing GET"
+        );
+        assert!(
+            templates_id["put"].is_object(),
+            "/api/templates/{{id}} missing PUT"
+        );
+        assert!(
+            templates_id["delete"].is_object(),
+            "/api/templates/{{id}} missing DELETE"
+        );
+
+        // /api/templates/from-channel/{channel_id} should have POST
+        let from_channel = &spec["paths"]["/api/templates/from-channel/{channel_id}"];
+        assert!(
+            from_channel["post"].is_object(),
+            "from-channel missing POST"
+        );
+
+        // /api/templates/{id}/apply/{channel_id} should have POST
+        let apply = &spec["paths"]["/api/templates/{id}/apply/{channel_id}"];
+        assert!(apply["post"].is_object(), "apply missing POST");
+    }
+
+    #[test]
+    fn test_openapi_contains_template_schemas() {
+        let doc = ComsrvApiDoc::openapi();
+        let json_str = doc.to_pretty_json().unwrap();
+        let spec: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        let schemas = spec["components"]["schemas"].as_object().unwrap();
+
+        let expected = [
+            "TemplateListItem",
+            "TemplateDetail",
+            "CreateTemplateReq",
+            "CreateTemplateFromChannelReq",
+            "UpdateTemplateReq",
+            "ApplyTemplateReq",
+            "TemplateListQuery",
+        ];
+
+        for name in &expected {
+            assert!(
+                schemas.contains_key(*name),
+                "Missing schema: {}. Available: {:?}",
+                name,
+                schemas.keys().collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn test_openapi_templates_tag_exists() {
+        let doc = ComsrvApiDoc::openapi();
+        let json_str = doc.to_pretty_json().unwrap();
+        let spec: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        let tags = spec["tags"].as_array().unwrap();
+        let has_templates_tag = tags.iter().any(|t| t["name"] == "templates");
+        assert!(has_templates_tag, "Missing 'templates' tag in OpenAPI spec");
+    }
 }

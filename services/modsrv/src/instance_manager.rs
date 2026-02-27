@@ -13,9 +13,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use voltage_model::{validate_instance_name, KeySpaceConfig};
-use voltage_rtdb::{InstanceIndex, Rtdb, SlotBitmap};
+use voltage_rtdb::Rtdb;
+use voltage_rtdb_shm::{InstanceIndex, SlotBitmap};
 
+use crate::config::TopologyNode;
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
+
+/// Row type returned by SQLite instance queries
+type InstanceRow = (u32, String, String, Option<u32>, Option<String>, String);
 
 /// Parse properties JSON string into HashMap
 fn parse_properties_json(
@@ -35,14 +40,17 @@ fn parse_properties_json(
 }
 
 /// Build Instance from database row tuple
-fn build_instance_from_row(row: (u32, String, String, Option<String>, String)) -> Result<Instance> {
-    let (instance_id, instance_name, product_name, properties_json, _created_at) = row;
+fn build_instance_from_row(
+    row: (u32, String, String, Option<u32>, Option<String>, String),
+) -> Result<Instance> {
+    let (instance_id, instance_name, product_name, parent_id, properties_json, _created_at) = row;
     let properties = parse_properties_json(properties_json, instance_id)?;
     Ok(Instance {
         core: crate::config::InstanceCore {
             instance_id,
             instance_name,
             product_name,
+            parent_id,
             properties,
         },
         measurement_mappings: None,
@@ -55,7 +63,7 @@ fn build_instance_from_row(row: (u32, String, String, Option<String>, String)) -
 pub struct InstanceManager<R: Rtdb> {
     pub pool: SqlitePool,
     pub rtdb: Arc<R>,
-    pub(crate) routing_cache: Arc<voltage_rtdb::RoutingCache>,
+    pub(crate) routing_cache: Arc<voltage_routing::RoutingCache>,
     pub(crate) product_loader: Arc<ProductLoader>,
     /// Instance name → instance_id cache (for fast API lookups)
     pub(crate) name_cache: DashMap<String, u16>,
@@ -64,27 +72,27 @@ pub struct InstanceManager<R: Rtdb> {
     /// Supports hot add/remove with ArcSwap for lock-free reads
     dynamic_instance_index: Option<Arc<InstanceIndex>>,
     /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
-    slot_bitmap: Option<Arc<std::sync::RwLock<SlotBitmap>>>,
+    slot_bitmap: Option<Arc<parking_lot::RwLock<SlotBitmap>>>,
     // ========== SHM Action Writer (M2C via SHM) ==========
     /// UnifiedWriter for writing Control/Adjustment points to SHM
     /// When set, M2C commands go directly to SHM (primary path)
     /// Redis TODO queue remains as fallback
-    /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
-    pub(crate) shm_action_writer: std::sync::OnceLock<Arc<voltage_rtdb::UnifiedWriter>>,
+    /// Uses OnceLock for delayed initialization (set after `Arc<InstanceManager>` is created)
+    pub(crate) shm_action_writer: std::sync::OnceLock<Arc<voltage_rtdb_shm::UnifiedWriter>>,
     // ========== UDS Notifier (Event-driven M2C) ==========
     /// ShmNotifier for sending UDS notifications to comsrv
     /// When SHM write succeeds, send notification to trigger immediate dispatch
-    /// Uses OnceLock for delayed initialization (set after Arc<InstanceManager> is created)
+    /// Uses OnceLock for delayed initialization (set after `Arc<InstanceManager>` is created)
     /// Protected by tokio Mutex for async &mut access
     pub(crate) shm_notifier:
-        std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>>,
+        std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>>,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     pub fn new(
         pool: SqlitePool,
         rtdb: Arc<R>,
-        routing_cache: Arc<voltage_rtdb::RoutingCache>,
+        routing_cache: Arc<voltage_routing::RoutingCache>,
         product_loader: Arc<ProductLoader>,
     ) -> Self {
         Self {
@@ -111,7 +119,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub fn with_dynamic_allocation(
         mut self,
         dynamic_index: Arc<InstanceIndex>,
-        slot_bitmap: Arc<std::sync::RwLock<SlotBitmap>>,
+        slot_bitmap: Arc<parking_lot::RwLock<SlotBitmap>>,
     ) -> Self {
         self.dynamic_instance_index = Some(dynamic_index);
         self.slot_bitmap = Some(slot_bitmap);
@@ -125,9 +133,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// for comsrv's ShmCommandPoller, with Redis as fallback.
     ///
     /// Uses OnceLock for delayed initialization - can be called after
-    /// Arc<InstanceManager> is created. Returns true if set successfully,
+    /// `Arc<InstanceManager>` is created. Returns true if set successfully,
     /// false if already set.
-    pub fn set_shm_action_writer(&self, writer: Arc<voltage_rtdb::UnifiedWriter>) -> bool {
+    pub fn set_shm_action_writer(&self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> bool {
         self.shm_action_writer.set(writer).is_ok()
     }
 
@@ -138,11 +146,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Falls back gracefully if notification fails.
     ///
     /// Uses OnceLock for delayed initialization - can be called after
-    /// Arc<InstanceManager> is created. Returns true if set successfully,
+    /// `Arc<InstanceManager>` is created. Returns true if set successfully,
     /// false if already set.
     pub fn set_shm_notifier(
         &self,
-        notifier: Arc<tokio::sync::Mutex<voltage_rtdb::ShmNotifier>>,
+        notifier: Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>,
     ) -> bool {
         self.shm_notifier.set(notifier).is_ok()
     }
@@ -153,17 +161,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Get SlotBitmap stats (for monitoring)
-    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb::BitmapStats> {
-        self.slot_bitmap
-            .as_ref()
-            .and_then(|b| b.read().ok().map(|guard| guard.stats()))
+    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
+        self.slot_bitmap.as_ref().map(|b| b.read().stats())
     }
 
     /// Get the routing cache reference
     ///
     /// Returns a reference to the shared routing cache for use in API handlers
     /// that need to refresh the cache after routing management operations.
-    pub fn routing_cache(&self) -> &Arc<voltage_rtdb::RoutingCache> {
+    pub fn routing_cache(&self) -> &Arc<voltage_routing::RoutingCache> {
         &self.routing_cache
     }
 
@@ -260,7 +266,47 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // We rely on the constraint rather than check-then-act to avoid race conditions.
         let product = self.product_loader.get_product(&req.product_name)?;
 
-        // 3. Begin transaction for atomic creation
+        // 3. Hierarchy validation: soft check on pName (warn only, never block)
+        //    Product JSON defines pName for documentation, but we don't enforce it
+        //    since real-world topologies may differ from the product library defaults.
+        let parent_name = self
+            .product_loader
+            .get_product_parent_name(&req.product_name);
+        match (&parent_name, req.parent_id) {
+            (None, Some(_)) => {
+                warn!(
+                    "Root product '{}' typically has no parent, but parent_id was provided",
+                    req.product_name
+                );
+            },
+            (None, None) => {},
+            (Some(expected_parent), None) => {
+                warn!(
+                    "Product '{}' has pName='{}' but no parent_id provided — creating as standalone",
+                    req.product_name, expected_parent
+                );
+            },
+            (Some(expected_parent), Some(pid)) => {
+                // Validate parent exists (hard check — referential integrity)
+                let parent_product: Option<String> =
+                    sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
+                        .bind(pid as i64)
+                        .fetch_optional(&self.pool)
+                        .await?;
+
+                let parent_product =
+                    parent_product.ok_or_else(|| anyhow!("Parent instance {} not found", pid))?;
+
+                if parent_product != *expected_parent {
+                    warn!(
+                        "Parent instance {} is '{}', but '{}' pName suggests '{}' — allowing anyway",
+                        pid, parent_product, req.product_name, expected_parent
+                    );
+                }
+            },
+        }
+
+        // 4. Begin transaction for atomic creation
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
@@ -277,13 +323,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         if let Err(e) = sqlx::query(
             r#"
-            INSERT INTO instances (instance_id, instance_name, product_name, properties)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO instances (instance_id, instance_name, product_name, parent_id, properties)
+            VALUES (?, ?, ?, ?, ?)
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .bind(&req.instance_name)
         .bind(&req.product_name)
+        .bind(req.parent_id.map(|id| id as i64))
         .bind(&properties_json)
         .execute(&mut *tx)
         .await
@@ -303,15 +350,16 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Build point routing maps for Redis registration (generate Redis keys)
         // Note: Routing configuration is managed by routing_loader.rs, not stored here
+        let mut ibuf = itoa::Buffer::new();
         for point in &product.measurements {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point.measurement_id.to_string());
+                .instance_measurement_point_key(instance_id, ibuf.format(point.measurement_id));
             measurement_point_routings.insert(point.measurement_id, redis_key);
         }
 
         for point in &product.actions {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point.action_id.to_string());
+                .instance_action_point_key(instance_id, ibuf.format(point.action_id));
             action_point_routings.insert(point.action_id, redis_key);
         }
 
@@ -361,23 +409,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             ];
             let total: u32 = own_counts.iter().sum();
             if total > 0 {
-                match bitmap.write() {
-                    Ok(mut bitmap_guard) => {
-                        match index.add_instance(instance_id, own_counts, Some(&mut bitmap_guard)) {
-                            Ok(layout) => {
-                                debug!(
-                                    "Inst{} slot allocated: base={}, total={}",
-                                    instance_id, layout.own_base, layout.own_total
-                                );
-                            },
-                            Err(e) => {
-                                // Log warning but don't fail - dynamic allocation is optional
-                                warn!("Inst{} slot allocation failed: {}", instance_id, e);
-                            },
-                        }
+                let mut bitmap_guard = bitmap.write();
+                match index.add_instance(instance_id, own_counts, Some(&mut bitmap_guard)) {
+                    Ok(layout) => {
+                        debug!(
+                            "Inst{} slot allocated: base={}, total={}",
+                            instance_id, layout.own_base, layout.own_total
+                        );
                     },
                     Err(e) => {
-                        warn!("Inst{} bitmap lock poisoned: {}", instance_id, e);
+                        // Log warning but don't fail - dynamic allocation is optional
+                        warn!("Inst{} slot allocation failed: {}", instance_id, e);
                     },
                 }
             }
@@ -389,6 +431,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 instance_id,
                 instance_name: req.instance_name,
                 product_name: req.product_name,
+                parent_id: req.parent_id,
                 properties: req.properties,
             },
             measurement_mappings: Some(measurement_point_routings),
@@ -399,103 +442,57 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     /// List all instances, optionally filtered by product_name
     pub async fn list_instances(&self, product_name: Option<&str>) -> Result<Vec<Instance>> {
-        let query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
-                FROM instances
-                WHERE product_name = ?
-                ORDER BY instance_id ASC
-                "#,
-            )
-            .bind(pname)
-        } else {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
-                FROM instances
-                ORDER BY instance_id ASC
-                "#,
-            )
-        };
-
-        let rows = query.fetch_all(&self.pool).await?;
-
-        let instances = rows
-            .into_iter()
-            .map(build_instance_from_row)
-            .collect::<Result<Vec<_>>>()?;
-
+        let (_, instances) = self
+            .list_instances_paginated(product_name, 1, u32::MAX)
+            .await?;
         Ok(instances)
     }
 
     /// List instances with pagination
+    ///
+    /// Uses SQL `? IS NULL OR product_name = ?` pattern to handle optional filter
+    /// in a single query without Rust-side branching.
     pub async fn list_instances_paginated(
         &self,
         product_name: Option<&str>,
         page: u32,
         page_size: u32,
     ) -> Result<(u32, Vec<Instance>)> {
-        // Calculate offset
         let offset = (page - 1) * page_size;
 
-        // Get total count
-        let count_query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (i64,)>(
-                r#"
-                SELECT COUNT(*) FROM instances WHERE product_name = ?
-                "#,
-            )
-            .bind(pname)
-        } else {
-            sqlx::query_as::<_, (i64,)>(
-                r#"
-                SELECT COUNT(*) FROM instances
-                "#,
-            )
-        };
+        let (total,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM instances WHERE (? IS NULL OR product_name = ?)")
+                .bind(product_name)
+                .bind(product_name)
+                .fetch_one(&self.pool)
+                .await?;
 
-        let (total,) = count_query.fetch_one(&self.pool).await?;
-
-        // Get paginated data
-        let data_query = if let Some(pname) = product_name {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
-                FROM instances
-                WHERE product_name = ?
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(pname)
-            .bind(page_size as i64)
-            .bind(offset as i64)
-        } else {
-            sqlx::query_as::<_, (u32, String, String, Option<String>, String)>(
-                r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
-                FROM instances
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-            )
-            .bind(page_size as i64)
-            .bind(offset as i64)
-        };
-
-        let rows = data_query.fetch_all(&self.pool).await?;
+        let rows: Vec<InstanceRow> = sqlx::query_as(
+            r#"SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
+               FROM instances
+               WHERE (? IS NULL OR product_name = ?)
+               ORDER BY instance_id ASC
+               LIMIT ? OFFSET ?"#,
+        )
+        .bind(product_name)
+        .bind(product_name)
+        .bind(page_size as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
 
         let instances = rows
             .into_iter()
             .map(build_instance_from_row)
             .collect::<Result<Vec<_>>>()?;
 
-        let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
-        Ok((total_u32, instances))
+        Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
     }
 
     /// Search instances by name with fuzzy matching
+    ///
+    /// Uses SQL `? IS NULL OR product_name = ?` pattern to handle optional filter
+    /// in a single query without Rust-side branching.
     pub async fn search_instances(
         &self,
         keyword: &str,
@@ -506,72 +503,36 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let offset = (page - 1) * page_size;
         let like_pattern = format!("%{}%", keyword);
 
-        // Get total count
-        let (total,): (i64,) = if let Some(pname) = product_name {
-            sqlx::query_as(
-                r#"
-                SELECT COUNT(*) FROM instances
-                WHERE instance_name LIKE ? AND product_name = ?
-                "#,
-            )
-            .bind(&like_pattern)
-            .bind(pname)
-            .fetch_one(&self.pool)
-            .await?
-        } else {
-            sqlx::query_as(
-                r#"
-                SELECT COUNT(*) FROM instances
-                WHERE instance_name LIKE ?
-                "#,
-            )
-            .bind(&like_pattern)
-            .fetch_one(&self.pool)
-            .await?
-        };
+        let (total,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM instances WHERE instance_name LIKE ? AND (? IS NULL OR product_name = ?)",
+        )
+        .bind(&like_pattern)
+        .bind(product_name)
+        .bind(product_name)
+        .fetch_one(&self.pool)
+        .await?;
 
-        // Get paginated data
-        let rows: Vec<(u32, String, String, Option<String>, String)> =
-            if let Some(pname) = product_name {
-                sqlx::query_as(
-                    r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
-                FROM instances
-                WHERE instance_name LIKE ? AND product_name = ?
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-                )
-                .bind(&like_pattern)
-                .bind(pname)
-                .bind(page_size as i64)
-                .bind(offset as i64)
-                .fetch_all(&self.pool)
-                .await?
-            } else {
-                sqlx::query_as(
-                    r#"
-                SELECT instance_id, instance_name, product_name, properties, created_at
-                FROM instances
-                WHERE instance_name LIKE ?
-                ORDER BY instance_id ASC
-                LIMIT ? OFFSET ?
-                "#,
-                )
-                .bind(&like_pattern)
-                .bind(page_size as i64)
-                .bind(offset as i64)
-                .fetch_all(&self.pool)
-                .await?
-            };
+        let rows: Vec<InstanceRow> = sqlx::query_as(
+            r#"SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
+               FROM instances
+               WHERE instance_name LIKE ? AND (? IS NULL OR product_name = ?)
+               ORDER BY instance_id ASC
+               LIMIT ? OFFSET ?"#,
+        )
+        .bind(&like_pattern)
+        .bind(product_name)
+        .bind(product_name)
+        .bind(page_size as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
 
         let instances = rows
             .into_iter()
             .map(build_instance_from_row)
             .collect::<Result<Vec<_>>>()?;
 
-        let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
-        Ok((total_u32, instances))
+        Ok((u32::try_from(total).unwrap_or(u32::MAX), instances))
     }
 
     /// Rename an instance
@@ -581,7 +542,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             r#"SELECT COUNT(*) FROM instances WHERE instance_name = ? AND instance_id != ?"#,
         )
         .bind(new_name)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_one(&self.pool)
         .await?;
 
@@ -597,21 +558,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             r#"UPDATE instances SET instance_name = ?, updated_at = CURRENT_TIMESTAMP WHERE instance_id = ?"#,
         )
         .bind(new_name)
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .execute(&mut *tx)
         .await?;
 
         // Update measurement_routing table (redundant field)
         sqlx::query(r#"UPDATE measurement_routing SET instance_name = ? WHERE instance_id = ?"#)
             .bind(new_name)
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&mut *tx)
             .await?;
 
         // Update action_routing table (redundant field)
         sqlx::query(r#"UPDATE action_routing SET instance_name = ? WHERE instance_id = ?"#)
             .bind(new_name)
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&mut *tx)
             .await?;
 
@@ -644,20 +605,20 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     /// Get instance by ID
     pub async fn get_instance(&self, instance_id: u32) -> Result<Instance> {
-        let row = sqlx::query_as::<_, (String, String, Option<String>, String)>(
+        let row = sqlx::query_as::<_, (String, String, Option<u32>, Option<String>, String)>(
             r#"
-            SELECT instance_name, product_name, properties, created_at
+            SELECT instance_name, product_name, parent_id, properties, created_at
             FROM instances
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_optional(&self.pool)
         .await?;
 
         let row = row.ok_or_else(|| anyhow!("Instance not found: {}", instance_id))?;
 
-        let (instance_name, product_name, properties_json, _created_at) = row;
+        let (instance_name, product_name, parent_id, properties_json, _created_at) = row;
         let properties = parse_properties_json(properties_json, instance_id)?;
 
         // Load point routings from routing tables and generate Redis keys dynamically
@@ -672,13 +633,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
+        let mut ibuf = itoa::Buffer::new();
         for (point_id,) in measurement_points {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point_id.to_string());
+                .instance_measurement_point_key(instance_id, ibuf.format(point_id));
             measurement_point_routings.insert(point_id, redis_key);
         }
 
@@ -690,13 +652,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             WHERE instance_id = ?
             "#,
         )
-        .bind(instance_id as i32)
+        .bind(instance_id as i64)
         .fetch_all(&self.pool)
         .await?;
 
         for (point_id,) in action_points {
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point_id.to_string());
+                .instance_action_point_key(instance_id, ibuf.format(point_id));
             action_point_routings.insert(point_id, redis_key);
         }
 
@@ -705,6 +667,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 instance_id,
                 instance_name,
                 product_name,
+                parent_id,
                 properties,
             },
             measurement_mappings: Some(measurement_point_routings),
@@ -738,11 +701,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Group measurements by instance_id
         let mut measurement_routings: HashMap<u32, HashMap<u32, String>> = HashMap::new();
+        let mut ibuf = itoa::Buffer::new();
         for (instance_id, point_id) in all_measurements {
             let instance_id = instance_id as u32;
             let point_id = point_id as u32;
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point_id.to_string());
+                .instance_measurement_point_key(instance_id, ibuf.format(point_id));
             measurement_routings
                 .entry(instance_id)
                 .or_default()
@@ -755,7 +719,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             let instance_id = instance_id as u32;
             let point_id = point_id as u32;
             let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point_id.to_string());
+                .instance_action_point_key(instance_id, ibuf.format(point_id));
             action_routings
                 .entry(instance_id)
                 .or_default()
@@ -765,12 +729,35 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         Ok((measurement_routings, action_routings))
     }
 
-    /// Delete an instance by ID
-    pub async fn delete_instance(&self, instance_id: u32) -> Result<()> {
+    /// Collect all descendant instance IDs (BFS), returning them in leaf-first order
+    ///
+    /// Used for cascade delete: descendants must be deleted before the parent.
+    async fn collect_descendants(&self, instance_id: u32) -> Result<Vec<u32>> {
+        let mut all = Vec::new();
+        let mut queue = vec![instance_id];
+        while let Some(parent) = queue.pop() {
+            let children: Vec<(u32,)> =
+                sqlx::query_as("SELECT instance_id FROM instances WHERE parent_id = ?")
+                    .bind(parent as i64)
+                    .fetch_all(&self.pool)
+                    .await?;
+            for (child_id,) in children {
+                all.push(child_id);
+                queue.push(child_id);
+            }
+        }
+        all.reverse(); // Leaf nodes first, parent nodes last
+        Ok(all)
+    }
+
+    /// Delete a single instance by ID (internal — no cascade)
+    ///
+    /// Handles SQLite deletion, Redis cleanup, and dynamic slot deallocation.
+    async fn delete_single_instance(&self, instance_id: u32) -> Result<()> {
         // 1. Query instance_name before deletion (needed for Redis cleanup and logging)
         let instance_name: String =
             sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
-                .bind(instance_id as i32)
+                .bind(instance_id as i64)
                 .fetch_one(&self.pool)
                 .await
                 .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
@@ -789,7 +776,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // 3. Delete from SQLite within transaction (cascade will handle point routings)
         let result = sqlx::query("DELETE FROM instances WHERE instance_id = ?")
-            .bind(instance_id as i32)
+            .bind(instance_id as i64)
             .execute(&mut *tx)
             .await;
 
@@ -842,32 +829,111 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // 6. Dynamic Slot Deallocation: Remove instance from InstanceIndex and free slots
         if let (Some(index), Some(bitmap)) = (&self.dynamic_instance_index, &self.slot_bitmap) {
-            match bitmap.write() {
-                Ok(mut bitmap_guard) => {
-                    match index.remove_instance(instance_id, Some(&mut bitmap_guard)) {
-                        Ok(layout) => {
-                            debug!(
-                                "Inst{} slot freed: base={}, count={}",
-                                instance_id, layout.own_base, layout.own_total
-                            );
-                        },
-                        Err(e) => {
-                            // Log warning but don't fail - dynamic allocation is optional
-                            warn!("Inst{} slot deallocation failed: {}", instance_id, e);
-                        },
-                    }
+            let mut bitmap_guard = bitmap.write();
+            match index.remove_instance(instance_id, Some(&mut bitmap_guard)) {
+                Ok(layout) => {
+                    debug!(
+                        "Inst{} slot freed: base={}, count={}",
+                        instance_id, layout.own_base, layout.own_total
+                    );
                 },
                 Err(e) => {
-                    warn!("Inst{} bitmap lock poisoned: {}", instance_id, e);
+                    // Log warning but don't fail - dynamic allocation is optional
+                    warn!("Inst{} slot deallocation failed: {}", instance_id, e);
                 },
             }
         }
+
+        // 7. Remove from name cache
+        self.remove_from_name_cache(&instance_name);
 
         info!(
             "Successfully deleted instance: {} ({})",
             instance_id, instance_name
         );
         Ok(())
+    }
+
+    /// Delete an instance by ID with cascade delete of all descendants
+    ///
+    /// Collects all descendant instances (children, grandchildren, etc.),
+    /// deletes them leaf-first to ensure proper Redis cleanup for each,
+    /// then deletes the target instance itself.
+    pub async fn delete_instance(&self, instance_id: u32) -> Result<()> {
+        // 1. Collect all descendants (leaf-first order)
+        let descendants = self.collect_descendants(instance_id).await?;
+
+        if !descendants.is_empty() {
+            info!(
+                "Cascade delete: instance {} has {} descendants",
+                instance_id,
+                descendants.len()
+            );
+        }
+
+        // 2. Delete descendants leaf-first (each goes through full cleanup)
+        for desc_id in &descendants {
+            if let Err(e) = self.delete_single_instance(*desc_id).await {
+                warn!(
+                    "Failed to cascade-delete descendant instance {}: {}",
+                    desc_id, e
+                );
+                // Continue deleting other descendants
+            }
+        }
+
+        // 3. Delete the target instance itself
+        self.delete_single_instance(instance_id).await
+    }
+
+    // ============================================================================
+    // Topology Query Methods
+    // ============================================================================
+
+    /// Get direct child instances of a given parent
+    pub async fn get_children(&self, instance_id: u32) -> Result<Vec<Instance>> {
+        let rows: Vec<InstanceRow> = sqlx::query_as(
+            r#"
+                SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
+                FROM instances
+                WHERE parent_id = ?
+                ORDER BY instance_id ASC
+                "#,
+        )
+        .bind(instance_id as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(build_instance_from_row)
+            .collect::<Result<Vec<_>>>()
+    }
+
+    /// Get full topology tree starting from all root instances (Station)
+    ///
+    /// Returns a flat list of topology nodes with parent_id for tree reconstruction.
+    pub async fn get_topology_tree(&self) -> Result<Vec<TopologyNode>> {
+        let rows: Vec<(u32, String, String, Option<u32>)> = sqlx::query_as(
+            r#"
+            SELECT instance_id, instance_name, product_name, parent_id
+            FROM instances
+            ORDER BY parent_id NULLS FIRST, instance_id ASC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(instance_id, instance_name, product_name, parent_id)| TopologyNode {
+                    instance_id,
+                    instance_name,
+                    product_name,
+                    parent_id,
+                },
+            )
+            .collect())
     }
 }
 

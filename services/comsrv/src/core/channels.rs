@@ -4,7 +4,10 @@
 //! Actual protocol implementations are provided as plugins.
 
 // Core modules
-pub mod channel_manager; // Channel lifecycle manager (includes ChannelEntry, ChannelStats)
+mod channel_creation; // Channel creation/factory methods (private, impl on ChannelManager)
+pub mod channel_entry; // Channel entry types: ChannelEntry, ChannelMetadata, ChannelStats
+pub mod channel_manager; // Channel lifecycle manager: ChannelManager struct + query/lifecycle
+pub mod channel_task; // Unified channel task: async event loop (select! polling + commands)
 pub mod shm_listener; // UDS event-driven command listener (lower latency than polling)
 pub mod shm_poller; // SHM-based command polling (fallback, higher latency)
 pub mod traits; // Core traits and type definitions (re-exports from types)
@@ -20,7 +23,8 @@ pub use types::{ChannelCommand, ChannelStatus, ConnectionState, ProtocolValue};
 
 // Re-export other types from local modules
 pub use crate::core::config::FourRemote;
-pub use channel_manager::{ChannelEntry, ChannelManager, ChannelMetadata, ChannelStats};
+pub use channel_entry::{ChannelEntry, ChannelMetadata, ChannelStats};
+pub use channel_manager::ChannelManager;
 pub use shm_listener::ShmCommandListener;
 pub use shm_poller::ShmCommandPoller;
 

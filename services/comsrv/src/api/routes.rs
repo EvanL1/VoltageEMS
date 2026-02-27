@@ -4,6 +4,7 @@
 //! All handler implementations are in separate handler modules.
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -21,6 +22,7 @@ use crate::api::{
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
         mapping_handlers::*, network_handlers::*, point_handlers::*, protocol_handlers::*,
+        template_handlers::*,
     },
 };
 use common::admin_api::{get_log_level, set_log_level};
@@ -163,6 +165,15 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
         crate::api::handlers::mapping_handlers::get_channel_mappings_handler,
         crate::api::handlers::mapping_handlers::update_channel_mappings_handler,
 
+        // Template management
+        crate::api::handlers::template_handlers::list_templates,
+        crate::api::handlers::template_handlers::get_template,
+        crate::api::handlers::template_handlers::create_template,
+        crate::api::handlers::template_handlers::create_template_from_channel,
+        crate::api::handlers::template_handlers::update_template,
+        crate::api::handlers::template_handlers::delete_template,
+        crate::api::handlers::template_handlers::apply_template,
+
         // Admin endpoints
         common::admin_api::set_log_level,
         common::admin_api::get_log_level,
@@ -218,6 +229,14 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
             crate::api::handlers::point_handlers::OperationStats,
             crate::api::handlers::point_handlers::OperationStat,
             crate::api::handlers::point_handlers::PointBatchError,
+            // Template schemas
+            crate::dto::TemplateListItem,
+            crate::dto::TemplateDetail,
+            crate::dto::CreateTemplateReq,
+            crate::dto::CreateTemplateFromChannelReq,
+            crate::dto::UpdateTemplateReq,
+            crate::dto::ApplyTemplateReq,
+            crate::dto::TemplateListQuery,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
             common::admin_api::LogLevelResponse,
@@ -231,6 +250,7 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
     ),
     tags(
         (name = "comsrv", description = "Communication Service API"),
+        (name = "templates", description = "Channel template management (snapshot & apply)"),
         (name = "admin", description = "Administration and service management"),
         (name = "network", description = "Network interface configuration")
     )
@@ -321,6 +341,11 @@ pub fn create_api_routes_generic<R: Rtdb>(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
+        // Template management endpoints
+        .route("/api/templates", get(list_templates).post(create_template))
+        .route("/api/templates/from-channel/{channel_id}", post(create_template_from_channel))
+        .route("/api/templates/{id}", get(get_template).put(update_template).delete(delete_template))
+        .route("/api/templates/{id}/apply/{channel_id}", post(apply_template))
         // Network configuration endpoints
         .route("/api/network/interfaces", get(list_network_interfaces))
         .route(
@@ -330,6 +355,7 @@ pub fn create_api_routes_generic<R: Rtdb>(
         .route("/api/network/apply", post(apply_network_changes))
         // CRITICAL: Apply middleware BEFORE .with_state() for it to work
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
+        .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit
         .with_state(state)
 }
 

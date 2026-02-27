@@ -12,6 +12,7 @@ mod rtdb;
 mod rules;
 mod services;
 mod shm;
+mod shm_dashboard;
 mod utils;
 
 // Note: lib-mode (direct service library calls) has been removed in favor of HTTP-only mode.
@@ -185,63 +186,36 @@ enum Commands {
     },
 }
 
-/// Auto-detect configuration path from environment or defaults
-fn auto_detect_config_path() -> PathBuf {
-    std::env::var("VOLTAGE_CONFIG_PATH")
+/// Auto-detect a path from environment variable, /opt/MonarchEdge fallback, or local default
+fn auto_detect_path(env_var: &str, subdir: &str) -> PathBuf {
+    std::env::var(env_var)
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            if Path::new("/opt/MonarchEdge/config").exists() {
-                PathBuf::from("/opt/MonarchEdge/config")
+            let system_path = PathBuf::from("/opt/MonarchEdge").join(subdir);
+            if system_path.exists() {
+                system_path
             } else {
-                PathBuf::from("config")
+                PathBuf::from(subdir)
             }
         })
 }
 
-/// Auto-detect database path from environment or defaults
-fn auto_detect_db_path() -> PathBuf {
-    std::env::var("VOLTAGE_DATA_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            if Path::new("/opt/MonarchEdge/data").exists() {
-                PathBuf::from("/opt/MonarchEdge/data")
-            } else {
-                PathBuf::from("data")
-            }
-        })
+/// Resolve service URL from env var or default to scheme://localhost:port
+fn service_url(env_var: &str, scheme: &str, port: u16) -> String {
+    std::env::var(env_var).unwrap_or_else(|_| format!("{scheme}://localhost:{port}"))
 }
+
+const BANNER: &str = "\
+╔════════════════════════════════════════════════════╗
+║                                                    ║
+║               MONARCH CONFIG MANAGER               ║
+║                                                    ║
+║    Configuration Management for MonarchEdge        ║
+║                                                    ║
+╚════════════════════════════════════════════════════╝";
 
 fn print_banner() {
-    println!();
-    println!(
-        "{}",
-        "╔════════════════════════════════════════════════════╗".bright_blue()
-    );
-    println!(
-        "{}",
-        "║                                                    ║".bright_blue()
-    );
-    println!(
-        "{}",
-        "║               MONARCH CONFIG MANAGER               ║".bright_blue()
-    );
-    println!(
-        "{}",
-        "║                                                    ║".bright_blue()
-    );
-    println!(
-        "{}",
-        "║    Configuration Management for MonarchEdge        ║".bright_blue()
-    );
-    println!(
-        "{}",
-        "║                                                    ║".bright_blue()
-    );
-    println!(
-        "{}",
-        "╚════════════════════════════════════════════════════╝".bright_blue()
-    );
-    println!();
+    println!("\n{}\n", BANNER.bright_blue());
 }
 
 #[tokio::main]
@@ -264,12 +238,12 @@ async fn main() -> Result<()> {
     let config_path = cli
         .config_path
         .map(PathBuf::from)
-        .unwrap_or_else(auto_detect_config_path);
+        .unwrap_or_else(|| auto_detect_path("VOLTAGE_CONFIG_PATH", "config"));
 
     let db_path = cli
         .db_path
         .map(PathBuf::from)
-        .unwrap_or_else(auto_detect_db_path);
+        .unwrap_or_else(|| auto_detect_path("VOLTAGE_DATA_PATH", "data"));
 
     // Print banner for interactive commands
     if !cli.no_color {
@@ -320,25 +294,36 @@ async fn main() -> Result<()> {
 
         // Service management commands (all use HTTP API)
         Commands::Channels { command } => {
-            let base_url = std::env::var("VOLTAGE_COMSRV_URL")
-                .unwrap_or_else(|_| "http://localhost:6001".to_string());
-            channels::handle_command(command, &base_url).await?;
+            let url = service_url(
+                "VOLTAGE_COMSRV_URL",
+                "http",
+                voltage_model::service_ports::COMSRV_PORT,
+            );
+            channels::handle_command(command, &url).await?;
         },
         Commands::Models { command } => {
-            let base_url = std::env::var("VOLTAGE_MODSRV_URL")
-                .unwrap_or_else(|_| "http://localhost:6002".to_string());
-            models::handle_command(command, &base_url).await?;
+            let url = service_url(
+                "VOLTAGE_MODSRV_URL",
+                "http",
+                voltage_model::service_ports::MODSRV_PORT,
+            );
+            models::handle_command(command, &url).await?;
         },
         Commands::Rules { command } => {
-            // Rules merged into modsrv (port 6002)
-            let base_url = std::env::var("VOLTAGE_MODSRV_URL")
-                .unwrap_or_else(|_| "http://localhost:6002".to_string());
-            rules::handle_command(command, &base_url).await?;
+            let url = service_url(
+                "VOLTAGE_MODSRV_URL",
+                "http",
+                voltage_model::service_ports::MODSRV_PORT,
+            );
+            rules::handle_command(command, &url).await?;
         },
         Commands::Rtdb { command } => {
-            let redis_url = std::env::var("VOLTAGE_REDIS_URL")
-                .unwrap_or_else(|_| "redis://localhost:6379".to_string());
-            rtdb::handle_command(command, &redis_url).await?;
+            let url = service_url(
+                "VOLTAGE_REDIS_URL",
+                "redis",
+                voltage_model::service_ports::REDIS_PORT,
+            );
+            rtdb::handle_command(command, &url).await?;
         },
         Commands::Services { command } => {
             services::handle_command(command).await?;
@@ -435,6 +420,11 @@ async fn sync_command(
     }
 
     println!("\n{} Configuration synced successfully!", "DONE".green());
+
+    // Auto-reload running services to pick up new config
+    println!("\n{} Reloading services...", "-".bright_cyan());
+    crate::services::try_reload_services().await;
+
     Ok(())
 }
 
@@ -669,24 +659,15 @@ async fn run_db_checks(db_path: &Path) -> Result<bool> {
 
     let mut has_errors = false;
 
-    // Check for duplicate IDs
-    print!("  Checking channel IDs... ");
-    has_errors |= check_duplicates(&pool, "channels", "channel_id").await?;
+    // Check for duplicate IDs using the allowlist
+    for &(table, id_col) in ALLOWED_DUPLICATE_CHECKS {
+        print!("  Checking {} {}s... ", table, id_col.replace("_id", ""));
+        has_errors |= check_duplicates(&pool, table, id_col).await?;
+    }
 
-    print!("  Checking instance IDs... ");
-    has_errors |= check_duplicates(&pool, "instances", "instance_id").await?;
-
-    print!("  Checking rule IDs... ");
-    has_errors |= check_duplicates(&pool, "rules", "id").await?;
-
-    // Check point tables
-    for table in [
-        "telemetry_points",
-        "signal_points",
-        "control_points",
-        "adjustment_points",
-    ] {
-        print!("  Checking {} table... ", table.replace("_", " "));
+    // Check point tables for (channel_id, point_id) duplicates
+    for table in ALLOWED_POINT_TABLES {
+        print!("  Checking {} table... ", table.replace('_', " "));
         has_errors |= check_point_duplicates(&pool, table).await?;
     }
 
@@ -699,7 +680,26 @@ async fn run_db_checks(db_path: &Path) -> Result<bool> {
     Ok(has_errors)
 }
 
+/// Allowed table/column combinations for duplicate checks (SQL injection prevention)
+const ALLOWED_DUPLICATE_CHECKS: &[(&str, &str)] = &[
+    ("channels", "channel_id"),
+    ("instances", "instance_id"),
+    ("rules", "id"),
+];
+
 async fn check_duplicates(pool: &sqlx::SqlitePool, table: &str, id_column: &str) -> Result<bool> {
+    // Validate table/column against allowlist to prevent SQL injection
+    if !ALLOWED_DUPLICATE_CHECKS
+        .iter()
+        .any(|(t, c)| *t == table && *c == id_column)
+    {
+        anyhow::bail!(
+            "Invalid table/column for duplicate check: {}/{}",
+            table,
+            id_column
+        );
+    }
+
     let query = format!(
         "SELECT {}, COUNT(*) as count FROM {} GROUP BY {} HAVING count > 1",
         id_column, table, id_column
@@ -725,7 +725,20 @@ async fn check_duplicates(pool: &sqlx::SqlitePool, table: &str, id_column: &str)
     }
 }
 
+/// Allowed tables for point duplicate checks
+const ALLOWED_POINT_TABLES: &[&str] = &[
+    "telemetry_points",
+    "signal_points",
+    "control_points",
+    "adjustment_points",
+];
+
 async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str) -> Result<bool> {
+    // Validate table against allowlist to prevent SQL injection
+    if !ALLOWED_POINT_TABLES.contains(&table) {
+        anyhow::bail!("Invalid table for point duplicate check: {}", table);
+    }
+
     let query = format!(
         "SELECT channel_id, point_id, COUNT(*) as count FROM {} GROUP BY channel_id, point_id HAVING count > 1",
         table

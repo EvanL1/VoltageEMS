@@ -31,6 +31,33 @@ fn create_test_product_loader(pool: SqlitePool) -> Arc<ProductLoader> {
 
 use voltage_rtdb::helpers::create_test_rtdb;
 
+/// Setup standard hierarchy: Station(1) -> ESS(2), returns ESS instance_id for use as parent
+async fn setup_hierarchy(manager: &InstanceManager<voltage_rtdb::MemoryRtdb>) -> u32 {
+    manager
+        .create_instance(CreateInstanceRequest {
+            instance_id: 1,
+            instance_name: "station_root".to_string(),
+            product_name: "Station".to_string(),
+            parent_id: None,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("Failed to create Station");
+
+    manager
+        .create_instance(CreateInstanceRequest {
+            instance_id: 2,
+            instance_name: "ess_parent".to_string(),
+            product_name: "ESS".to_string(),
+            parent_id: Some(1),
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("Failed to create ESS");
+
+    2 // ESS instance_id
+}
+
 // ==================== Phase 1: CRUD Core Tests ====================
 
 #[tokio::test]
@@ -39,7 +66,7 @@ async fn test_instance_manager_new() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
 
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let _manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
     // Test passes if InstanceManager::new() doesn't panic
@@ -51,13 +78,15 @@ async fn test_create_instance_success() {
     // Use built-in product "Battery" instead of creating test product
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "test_battery_01".to_string(),
         product_name: "Battery".to_string(),
+        parent_id: Some(ess_id),
         properties: HashMap::new(),
     };
 
@@ -80,8 +109,9 @@ async fn test_create_instance_with_properties() {
     // Use built-in product "PCS" instead of creating test product
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     let mut properties = HashMap::new();
     properties.insert("location".to_string(), serde_json::json!("Roof A"));
@@ -91,6 +121,7 @@ async fn test_create_instance_with_properties() {
         instance_id: 2001,
         instance_name: "pcs_unit_01".to_string(),
         product_name: "PCS".to_string(),
+        parent_id: Some(ess_id),
         properties,
     };
 
@@ -114,13 +145,15 @@ async fn test_create_instance_already_exists() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     let req = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "duplicate_instance".to_string(),
         product_name: "Battery".to_string(),
+        parent_id: Some(ess_id),
         properties: HashMap::new(),
     };
 
@@ -146,13 +179,14 @@ async fn test_create_instance_product_not_found() {
 
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
     let req = CreateInstanceRequest {
         instance_id: 3001,
         instance_name: "orphan_instance".to_string(),
         product_name: "nonexistent_product".to_string(),
+        parent_id: None,
         properties: HashMap::new(),
     };
 
@@ -167,14 +201,16 @@ async fn test_list_instances_all() {
     // Use built-in products: Battery and PCS
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     // Create multiple instances using built-in products
     let req1 = CreateInstanceRequest {
         instance_id: 1001,
         instance_name: "battery_01".to_string(),
         product_name: "Battery".to_string(),
+        parent_id: Some(ess_id),
         properties: HashMap::new(),
     };
     manager.create_instance(req1).await.unwrap();
@@ -183,14 +219,15 @@ async fn test_list_instances_all() {
         instance_id: 1002,
         instance_name: "pcs_01".to_string(),
         product_name: "PCS".to_string(),
+        parent_id: Some(ess_id),
         properties: HashMap::new(),
     };
     manager.create_instance(req2).await.unwrap();
 
-    // List all instances
+    // List all instances (includes Station + ESS from hierarchy + Battery + PCS)
     let instances = manager.list_instances(None).await.unwrap();
 
-    assert_eq!(instances.len(), 2);
+    assert_eq!(instances.len(), 4);
 }
 
 #[tokio::test]
@@ -199,8 +236,9 @@ async fn test_list_instances_by_product() {
     // Use built-in products: Battery and PCS
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     // Create instances for different products
     manager
@@ -208,6 +246,7 @@ async fn test_list_instances_by_product() {
             instance_id: 1001,
             instance_name: "battery_instance_01".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -218,6 +257,7 @@ async fn test_list_instances_by_product() {
             instance_id: 1002,
             instance_name: "battery_instance_02".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -228,6 +268,7 @@ async fn test_list_instances_by_product() {
             instance_id: 2001,
             instance_name: "pcs_instance_01".to_string(),
             product_name: "PCS".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -245,8 +286,9 @@ async fn test_get_instance_success() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
     manager
@@ -254,6 +296,7 @@ async fn test_get_instance_success() {
             instance_id: 1001,
             instance_name: "get_test_instance".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -278,7 +321,7 @@ async fn test_get_instance_not_found() {
 
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
     let result = manager.get_instance(9999).await;
@@ -291,8 +334,9 @@ async fn test_delete_instance() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
     manager
@@ -300,6 +344,7 @@ async fn test_delete_instance() {
             instance_id: 1001,
             instance_name: "delete_test".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -338,7 +383,7 @@ async fn test_execute_action_instance_not_found() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
     // Execute action on non-existent instance - this now succeeds
@@ -358,8 +403,9 @@ async fn test_execute_action_no_route_stores_locally() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
     manager
@@ -367,6 +413,7 @@ async fn test_execute_action_no_route_stores_locally() {
             instance_id: 1001,
             instance_name: "action_test_instance".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -402,13 +449,14 @@ async fn test_execute_action_with_route_triggers_downstream() {
     // Configure M2C route: instance 1001, action point "1" -> channel 2, A, point 5
     let mut m2c_data = HashMap::new();
     m2c_data.insert("1001:A:1".to_string(), "2:A:5".to_string());
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::from_maps(
         HashMap::new(),
         m2c_data,
         HashMap::new(),
     ));
 
     let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
     manager
@@ -416,6 +464,7 @@ async fn test_execute_action_with_route_triggers_downstream() {
             instance_id: 1001,
             instance_name: "routed_action_instance".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -446,11 +495,6 @@ async fn test_execute_action_with_route_triggers_downstream() {
     let channel_key = config.channel_key(2, PointType::Adjustment);
     let channel_value = rtdb.hash_get(&channel_key, "5").await.unwrap();
     assert!(channel_value.is_some(), "Channel point should be updated");
-
-    // Verify TODO queue was triggered (check if there are any entries)
-    let todo_key = config.todo_queue_key(2, PointType::Adjustment);
-    let queue_entries = rtdb.list_range(&todo_key, 0, -1).await.unwrap();
-    assert!(!queue_entries.is_empty(), "TODO queue should have entry");
 }
 
 #[tokio::test]
@@ -463,19 +507,21 @@ async fn test_execute_action_multiple_points() {
     let mut m2c_data = HashMap::new();
     m2c_data.insert("1001:A:1".to_string(), "10:A:1".to_string());
     m2c_data.insert("1001:A:2".to_string(), "10:A:2".to_string());
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::from_maps(
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::from_maps(
         HashMap::new(),
         m2c_data,
         HashMap::new(),
     ));
 
     let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "multi_action_instance".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -505,14 +551,16 @@ async fn test_execute_action_value_overwrite() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "overwrite_test".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await
@@ -537,14 +585,16 @@ async fn test_execute_action_negative_values() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(voltage_rtdb::RoutingCache::new());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
     let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let ess_id = setup_hierarchy(&manager).await;
 
     manager
         .create_instance(CreateInstanceRequest {
             instance_id: 1001,
             instance_name: "negative_test".to_string(),
             product_name: "Battery".to_string(),
+            parent_id: Some(ess_id),
             properties: HashMap::new(),
         })
         .await

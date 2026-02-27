@@ -1,8 +1,8 @@
-# EdgeEMS - 边缘能源管理系统
+# VoltageEMS - 边缘能源管理系统
 
 ## 项目概述
 
-EdgeEMS是一个基于Vue 3 + TypeScript的现代化边缘能源管理系统，采用Composition API和Element Plus UI组件库构建。
+VoltageEMS 是一个基于Vue 3 + TypeScript的现代化边缘能源管理系统，采用Composition API和Element Plus UI组件库构建。
 
 ## 技术栈
 
@@ -295,7 +295,7 @@ npm run type-check
 ### 构建镜像
 
 ```bash
-docker build -t edgeems .
+docker build -t voltage-apps .
 ```
 
 ### 启动服务

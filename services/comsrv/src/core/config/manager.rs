@@ -114,115 +114,43 @@ impl ConfigManager {
     pub async fn validate_files(&self, config_dir: &Path) -> Result<()> {
         info!("Validating configuration files...");
 
-        // CSV files are always in the same directory as the config file
         let base_dir = config_dir.to_path_buf();
-
         debug!(
             "Validating files with base directory: {}",
             base_dir.display()
         );
 
-        // Validate each channel's configuration files
         for channel in &self.config.channels {
             info!("Validating files for channel {}", channel.id());
-
-            // Fixed directory structure: config_dir/{channel_id}/ and config_dir/{channel_id}/mapping/
-            let channel_dir = base_dir.join(channel.id().to_string());
+            let ch_id = channel.id();
+            let channel_dir = base_dir.join(ch_id.to_string());
             let mapping_dir = channel_dir.join("mapping");
 
-            // Check channel directory exists
-            if !channel_dir.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: directory '{}' does not exist",
-                    channel.id(),
-                    channel_dir.display()
-                )));
+            let check = |path: &Path, desc: &str| -> Result<()> {
+                if !path.exists() {
+                    return Err(ComSrvError::ConfigError(format!(
+                        "Channel {ch_id}: {desc} '{}' does not exist",
+                        path.display()
+                    )));
+                }
+                Ok(())
+            };
+
+            check(&channel_dir, "directory")?;
+            check(&mapping_dir, "mapping directory")?;
+
+            for name in &["telemetry", "signal", "control", "adjustment"] {
+                check(
+                    &channel_dir.join(format!("{name}.csv")),
+                    &format!("{name} file"),
+                )?;
+                check(
+                    &mapping_dir.join(format!("{name}_mapping.csv")),
+                    &format!("{name} mapping file"),
+                )?;
             }
 
-            // Check mapping directory exists
-            if !mapping_dir.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: mapping directory '{}' does not exist",
-                    channel.id(),
-                    mapping_dir.display()
-                )));
-            }
-
-            // Check each telemetry file
-            let telemetry_file = channel_dir.join("telemetry.csv");
-            if !telemetry_file.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: telemetry file '{}' does not exist",
-                    channel.id(),
-                    telemetry_file.display()
-                )));
-            }
-
-            let signal_file = channel_dir.join("signal.csv");
-            if !signal_file.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: signal file '{}' does not exist",
-                    channel.id(),
-                    signal_file.display()
-                )));
-            }
-
-            let control_file = channel_dir.join("control.csv");
-            if !control_file.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: control file '{}' does not exist",
-                    channel.id(),
-                    control_file.display()
-                )));
-            }
-
-            let adjustment_file = channel_dir.join("adjustment.csv");
-            if !adjustment_file.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: adjustment file '{}' does not exist",
-                    channel.id(),
-                    adjustment_file.display()
-                )));
-            }
-
-            // Check protocol mapping files
-            let telemetry_mapping = mapping_dir.join("telemetry_mapping.csv");
-            if !telemetry_mapping.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: telemetry mapping file '{}' does not exist",
-                    channel.id(),
-                    telemetry_mapping.display()
-                )));
-            }
-
-            let signal_mapping = mapping_dir.join("signal_mapping.csv");
-            if !signal_mapping.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: signal mapping file '{}' does not exist",
-                    channel.id(),
-                    signal_mapping.display()
-                )));
-            }
-
-            let control_mapping = mapping_dir.join("control_mapping.csv");
-            if !control_mapping.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: control mapping file '{}' does not exist",
-                    channel.id(),
-                    control_mapping.display()
-                )));
-            }
-
-            let adjustment_mapping = mapping_dir.join("adjustment_mapping.csv");
-            if !adjustment_mapping.exists() {
-                return Err(ComSrvError::ConfigError(format!(
-                    "Channel {}: adjustment mapping file '{}' does not exist",
-                    channel.id(),
-                    adjustment_mapping.display()
-                )));
-            }
-
-            info!("Channel {} configuration files validated", channel.id());
+            info!("Channel {} configuration files validated", ch_id);
         }
 
         info!("All configuration files validated successfully");

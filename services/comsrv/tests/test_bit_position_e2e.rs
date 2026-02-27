@@ -1,18 +1,18 @@
-//! 端到端测试：验证 bit_position 从配置文件到最终值的完整流程
+//! End-to-end test: verify the complete flow of bit_position from config to final value
 //!
-//! 这个测试文件验证 comsrv 的 bit_position 解析是否正确：
-//! 1. decode_registers() 函数的位提取逻辑
-//! 2. 各种边界条件 (bit 0-15)
-//! 3. 错误处理 (bit > 15)
+//! This test file verifies that comsrv's bit_position parsing is correct:
+//! 1. Bit extraction logic of decode_registers()
+//! 2. Various boundary conditions (bit 0-15)
+//! 3. Error handling (bit > 15)
 
 #![allow(clippy::disallowed_methods)] // Tests use unwrap for clarity
 
 use comsrv::protocols::codec::decode_registers;
 use comsrv::protocols::core::point::{ByteOrder, DataFormat};
 
-/// 测试寄存器 0x8421 的各位提取
+/// Test bit extraction from register 0x8421
 ///
-/// 0x8421 的二进制表示:
+/// Binary representation of 0x8421:
 /// ```text
 /// bit: 15 14 13 12 | 11 10  9  8 |  7  6  5  4 |  3  2  1  0
 ///       1  0  0  0 |  0  1  0  0 |  0  0  1  0 |  0  0  0  1
@@ -43,7 +43,7 @@ fn test_bit_position_extraction_0x8421() {
     let result = decode_registers(&reg, DataFormat::Bool, ByteOrder::Abcd, Some(15)).unwrap();
     assert_eq!(result.as_bool(), Some(true), "bit15 should be 1");
 
-    // 验证为 0 的位
+    // Verify bits that should be 0
     for bit in [2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14] {
         let result = decode_registers(&reg, DataFormat::Bool, ByteOrder::Abcd, Some(bit)).unwrap();
         assert_eq!(
@@ -55,10 +55,10 @@ fn test_bit_position_extraction_0x8421() {
     }
 }
 
-/// 测试边界条件：全 1 寄存器
+/// Test boundary condition: all-ones register
 #[test]
 fn test_bit_position_all_ones() {
-    let reg = [0xFFFFu16]; // 所有位为 1
+    let reg = [0xFFFFu16]; // All bits are 1
 
     for bit in 0..=15 {
         let result = decode_registers(&reg, DataFormat::Bool, ByteOrder::Abcd, Some(bit)).unwrap();
@@ -71,10 +71,10 @@ fn test_bit_position_all_ones() {
     }
 }
 
-/// 测试边界条件：全 0 寄存器
+/// Test boundary condition: all-zeros register
 #[test]
 fn test_bit_position_all_zeros() {
-    let reg = [0x0000u16]; // 所有位为 0
+    let reg = [0x0000u16]; // All bits are 0
 
     for bit in 0..=15 {
         let result = decode_registers(&reg, DataFormat::Bool, ByteOrder::Abcd, Some(bit)).unwrap();
@@ -87,7 +87,7 @@ fn test_bit_position_all_zeros() {
     }
 }
 
-/// 测试单个位为 1 的情况
+/// Test single bit set
 #[test]
 fn test_bit_position_single_bit_set() {
     for target_bit in 0..=15u8 {
@@ -110,31 +110,31 @@ fn test_bit_position_single_bit_set() {
     }
 }
 
-/// 测试非法 bit_position (>15) 应返回错误
+/// Test invalid bit_position (>15) should return error
 #[test]
 fn test_bit_position_invalid() {
     let reg = [0x0001u16];
 
-    // bit_position = 16 应该失败
+    // bit_position = 16 should fail
     assert!(
         decode_registers(&reg, DataFormat::Bool, ByteOrder::Abcd, Some(16)).is_err(),
         "bit_position=16 should return error"
     );
 
-    // bit_position = 255 应该失败
+    // bit_position = 255 should fail
     assert!(
         decode_registers(&reg, DataFormat::Bool, ByteOrder::Abcd, Some(255)).is_err(),
         "bit_position=255 should return error"
     );
 }
 
-/// 测试 bit_position=None 的默认行为 (应该使用 bit 0)
+/// Test default behavior of bit_position=None (should use bit 0)
 #[test]
 fn test_bit_position_default() {
     let reg_bit0_set = [0x0001u16]; // bit0 = 1
     let reg_bit0_clear = [0xFFFEu16]; // bit0 = 0
 
-    // None 应该等同于 Some(0)
+    // None should be equivalent to Some(0)
     let result = decode_registers(&reg_bit0_set, DataFormat::Bool, ByteOrder::Abcd, None).unwrap();
     assert_eq!(
         result.as_bool(),
@@ -151,15 +151,15 @@ fn test_bit_position_default() {
     );
 }
 
-/// 测试交替位模式 (0xAAAA 和 0x5555)
+/// Test alternating bit patterns (0xAAAA and 0x5555)
 #[test]
 fn test_bit_position_alternating_patterns() {
-    // 0xAAAA = 1010_1010_1010_1010 (偶数位为 0，奇数位为 1)
+    // 0xAAAA = 1010_1010_1010_1010 (even bits are 0, odd bits are 1)
     let reg_aaaa = [0xAAAAu16];
     for bit in 0..=15u8 {
         let result =
             decode_registers(&reg_aaaa, DataFormat::Bool, ByteOrder::Abcd, Some(bit)).unwrap();
-        let expected = bit % 2 == 1; // 奇数位为 1
+        let expected = bit % 2 == 1; // Odd bits are 1
         assert_eq!(
             result.as_bool(),
             Some(expected),
@@ -169,12 +169,12 @@ fn test_bit_position_alternating_patterns() {
         );
     }
 
-    // 0x5555 = 0101_0101_0101_0101 (偶数位为 1，奇数位为 0)
+    // 0x5555 = 0101_0101_0101_0101 (even bits are 1, odd bits are 0)
     let reg_5555 = [0x5555u16];
     for bit in 0..=15u8 {
         let result =
             decode_registers(&reg_5555, DataFormat::Bool, ByteOrder::Abcd, Some(bit)).unwrap();
-        let expected = bit % 2 == 0; // 偶数位为 1
+        let expected = bit % 2 == 0; // Even bits are 1
         assert_eq!(
             result.as_bool(),
             Some(expected),
@@ -185,11 +185,11 @@ fn test_bit_position_alternating_patterns() {
     }
 }
 
-/// 验证实际公式: (register >> bit_position) & 1 == 1
-/// 这是 byte_order.rs:37 的核心逻辑
+/// Verify actual formula: (register >> bit_position) & 1 == 1
+/// This is the core logic from byte_order.rs:37
 #[test]
 fn test_bit_extraction_formula() {
-    // 随机测试值
+    // Random test values
     let test_cases: [(u16, u8, bool); 10] = [
         (0x0001, 0, true),  // bit0
         (0x0002, 1, true),  // bit1
@@ -208,7 +208,7 @@ fn test_bit_extraction_formula() {
         let result =
             decode_registers(&reg, DataFormat::Bool, ByteOrder::Abcd, Some(bit_pos)).unwrap();
 
-        // 验证结果与手动计算一致
+        // Verify result matches manual calculation
         let manual_result = (reg_val >> bit_pos) & 1 == 1;
         assert_eq!(result.as_bool(), Some(expected));
         assert_eq!(

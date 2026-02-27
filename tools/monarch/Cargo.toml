@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+voltage-rtdb-shm = { path = "../../libs/voltage-rtdb-shm" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rules = { path = "../../libs/voltage-rules" }
 voltage-model = { path = "../../libs/voltage-model" }
@@ -32,7 +33,7 @@ sqlx = { workspace = true, default-features = false, features = [
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
+serde_yml = { workspace = true }
 csv = { workspace = true }
 
 # Error handling

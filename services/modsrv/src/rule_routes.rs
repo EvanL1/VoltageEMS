@@ -724,29 +724,20 @@ pub async fn execute_rule_now<R: Rtdb + Send + Sync + 'static, S: StateStore + '
         })
         .collect();
 
-    // Build response based on execution result
-    if result.success {
-        Ok(Json(SuccessResponse::new(json!({
-            "result": "executed",
-            "rule_id": result.rule_id,
-            "execution_id": execution_id,
-            "success": true,
-            "actions_executed": action_results,
-            "execution_path": result.execution_path,
-            "timestamp": timestamp
-        }))))
-    } else {
-        Ok(Json(SuccessResponse::new(json!({
-            "result": "failed",
-            "rule_id": result.rule_id,
-            "execution_id": execution_id,
-            "success": false,
-            "error": result.error,
-            "actions_executed": action_results,
-            "execution_path": result.execution_path,
-            "timestamp": timestamp
-        }))))
+    // Build unified response (include error field only on failure)
+    let mut response = json!({
+        "result": if result.success { "executed" } else { "failed" },
+        "rule_id": result.rule_id,
+        "execution_id": execution_id,
+        "success": result.success,
+        "actions_executed": action_results,
+        "execution_path": result.execution_path,
+        "timestamp": timestamp
+    });
+    if !result.success {
+        response["error"] = json!(result.error);
     }
+    Ok(Json(SuccessResponse::new(response)))
 }
 
 /// Get scheduler status

@@ -22,6 +22,7 @@ errors = { path = "../../libs/errors", features = ["axum-support"] }
 voltage-model = { path = "../../libs/voltage-model" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+voltage-rtdb-shm = { path = "../../libs/voltage-rtdb-shm" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rules = { path = "../../libs/voltage-rules" }
 voltage-calc = { path = "../../libs/voltage-calc" }  # For RtdbStateStore (stateful function persistence)
@@ -31,7 +32,7 @@ tokio = { workspace = true }
 redis = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
+serde_yml = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
@@ -51,12 +52,15 @@ csv = { workspace = true }  # For loading product CSV files
 # cron removed - not currently used
 evalexpr = { workspace = true }  # For expression evaluation
 dashmap = { workspace = true }  # For high-performance concurrent name→id cache
+parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
+itoa = { workspace = true }  # Stack-allocated u32→str formatting
+tower = { workspace = true }
+tower-http = { workspace = true }
 
 [dev-dependencies]
 # criterion removed - no benchmarks
 futures = { workspace = true }
 tempfile = { workspace = true }
-tower = { workspace = true }
 http-body-util = "0.1"
 
 [features]

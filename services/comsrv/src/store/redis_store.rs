@@ -31,10 +31,9 @@ use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
 use voltage_model::{KeySpaceConfig, PointType};
-use voltage_routing::ChannelPointUpdate;
-use voltage_rtdb::{
-    ChannelToSlotIndex, RoutingCache, Rtdb, UnifiedWriter, WriteBuffer, WriteBufferConfig,
-};
+use voltage_routing::{ChannelPointUpdate, RoutingCache};
+use voltage_rtdb::{Bytes, Rtdb, WriteBuffer, WriteBufferConfig};
+use voltage_rtdb_shm::{ChannelToSlotIndex, UnifiedWriter};
 
 /// Redis-backed data store for VoltageEMS.
 ///
@@ -61,12 +60,12 @@ pub struct RedisDataStore<R: Rtdb> {
     shared_writer: Option<Arc<UnifiedWriter>>,
     /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
     channel_index: Option<Arc<ChannelToSlotIndex>>,
-    /// Point configurations cache (channel_id -> Arc<configs> for O(1) clone)
+    /// Point configurations cache (channel_id -> `Arc<configs>` for O(1) clone)
     point_configs: DashMap<u32, Arc<Vec<PointConfig>>>,
     /// Single broadcast sender for all subscribers (avoids clone * N)
     event_sender: DataEventSender,
-    /// KeySpace configuration
-    key_config: KeySpaceConfig,
+    /// KeySpace configuration (cached static ref to avoid repeated allocation)
+    key_config: &'static KeySpaceConfig,
     /// Flush task handle for cleanup (uses RwLock for interior mutability)
     flush_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     /// Shutdown signal for flush task
@@ -85,15 +84,21 @@ impl<R: Rtdb> RedisDataStore<R> {
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         // Create single broadcast channel - all subscribers share this sender
         let (event_sender, _) = tokio::sync::broadcast::channel(1024);
+        // 24h TTL on written keys: prevents stale data after service crash/restart.
+        // TTL is refreshed every 5 minutes by WriteBuffer's throttled expire logic.
+        let wb_config = WriteBufferConfig {
+            key_ttl_seconds: Some(86400),
+            ..WriteBufferConfig::default()
+        };
         Self {
             rtdb,
             routing_cache,
-            write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
+            write_buffer: Arc::new(WriteBuffer::new(wb_config)),
             shared_writer: None,
             channel_index: None,
             point_configs: DashMap::new(),
             event_sender,
-            key_config: KeySpaceConfig::production(),
+            key_config: KeySpaceConfig::production_cached(),
             flush_handle: RwLock::new(None),
             shutdown_notify: Arc::new(Notify::new()),
         }
@@ -119,7 +124,7 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// Start the background flush task for the write buffer.
     ///
     /// The task runs until `shutdown()` is called or the store is dropped.
-    /// Uses interior mutability so this can be called on Arc<RedisDataStore>.
+    /// Uses interior mutability so this can be called on `Arc<RedisDataStore>`.
     /// Idempotent: if a task is already running, this is a no-op.
     pub async fn start_flush_task(&self) {
         // Check if task already running (prevent concurrent start race)
@@ -190,7 +195,19 @@ impl<R: Rtdb> RedisDataStore<R> {
 
         for point in batch.iter() {
             // Use explicit point_type and id (no decoding needed)
-            let value = point.value.as_f64().unwrap_or(0.0);
+            let value = match point.value.as_f64() {
+                Some(v) => v,
+                None => {
+                    trace!(
+                        "Ch{} [{:?}] Point {}: non-numeric value {:?}, defaulting to 0.0",
+                        channel_id,
+                        point.point_type,
+                        point.id,
+                        point.value
+                    );
+                    0.0
+                },
+            };
 
             // Use trace! to avoid flooding logs - only visible with RUST_LOG=trace
             trace!(
@@ -250,7 +267,7 @@ impl<R: Rtdb> RedisDataStore<R> {
         let _stats = if let (Some(writer), Some(index)) = (&self.shared_writer, &self.channel_index)
         {
             // Fast path: direct shared memory write with pre-computed channel → slot mapping
-            voltage_routing::write_channel_batch_direct(
+            voltage_rtdb_shm::write_channel_batch_direct(
                 writer,
                 index,
                 &self.write_buffer,
@@ -280,8 +297,9 @@ impl<R: Rtdb> RedisDataStore<R> {
         channel_id: u32,
         point_id: u32,
     ) -> ProtocolResult<Option<DataPoint>> {
-        // Convert point_id to string once outside the loop (avoids 4 allocations)
-        let point_id_str = point_id.to_string();
+        // Convert point_id on the stack (zero heap allocation)
+        let mut ibuf = itoa::Buffer::new();
+        let point_id_str = ibuf.format(point_id);
 
         // Try to read from each point type
         for point_type in [
@@ -292,7 +310,7 @@ impl<R: Rtdb> RedisDataStore<R> {
         ] {
             let key = self.key_config.channel_key(channel_id, point_type);
 
-            if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, &point_id_str).await {
+            if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, point_id_str).await {
                 let value_str = String::from_utf8_lossy(&value_bytes);
                 if let Ok(value) = value_str.parse::<f64>() {
                     return Ok(Some(DataPoint::new(point_id, point_type, value)));
@@ -304,18 +322,35 @@ impl<R: Rtdb> RedisDataStore<R> {
     }
 
     /// Read all points for a channel from Redis.
+    ///
+    /// Uses `tokio::join!` to parallelize 4 hash_get_all calls (one per PointType),
+    /// reducing latency from 4 sequential RTTs to 1 concurrent RTT.
     pub async fn read_all(&self, channel_id: u32) -> ProtocolResult<DataBatch> {
         let mut batch = DataBatch::default();
 
-        for point_type in [
-            PointType::Telemetry,
-            PointType::Signal,
-            PointType::Control,
-            PointType::Adjustment,
-        ] {
-            let key = self.key_config.channel_key(channel_id, point_type);
+        let key_t = self
+            .key_config
+            .channel_key(channel_id, PointType::Telemetry);
+        let key_s = self.key_config.channel_key(channel_id, PointType::Signal);
+        let key_c = self.key_config.channel_key(channel_id, PointType::Control);
+        let key_a = self
+            .key_config
+            .channel_key(channel_id, PointType::Adjustment);
 
-            if let Ok(values) = self.rtdb.hash_get_all(&key).await {
+        let (r_t, r_s, r_c, r_a) = tokio::join!(
+            self.rtdb.hash_get_all(&key_t),
+            self.rtdb.hash_get_all(&key_s),
+            self.rtdb.hash_get_all(&key_c),
+            self.rtdb.hash_get_all(&key_a),
+        );
+
+        for (point_type, result) in [
+            (PointType::Telemetry, r_t),
+            (PointType::Signal, r_s),
+            (PointType::Control, r_c),
+            (PointType::Adjustment, r_a),
+        ] {
+            if let Ok(values) = result {
                 for (point_id_str, value_bytes) in values {
                     let value_str = String::from_utf8_lossy(&value_bytes);
                     if let (Ok(point_id), Ok(value)) =
@@ -369,6 +404,7 @@ impl<R: Rtdb> RedisDataStore<R> {
             PointType::Adjustment,
         ] {
             let key = self.key_config.channel_key(channel_id, point_type);
+            // Ignore: best-effort cleanup — channel is being removed, stale keys are harmless
             let _ = self.rtdb.del(&key).await;
         }
 
@@ -376,6 +412,28 @@ impl<R: Rtdb> RedisDataStore<R> {
         self.point_configs.remove(&channel_id);
 
         Ok(())
+    }
+
+    /// Publish channel online status to Redis hash.
+    /// Only call when status actually changes to minimize Redis writes.
+    pub async fn publish_channel_online(&self, channel_id: u32, online: bool) {
+        let key = self.key_config.channel_online_key();
+        let value = if online { "1" } else { "0" };
+        if let Err(e) = self
+            .rtdb
+            .hash_set(&key, &channel_id.to_string(), Bytes::from(value))
+            .await
+        {
+            warn!("Ch{} failed to publish online status: {}", channel_id, e);
+        }
+    }
+
+    /// Remove channel online status from Redis hash (cleanup on channel removal).
+    pub async fn clear_channel_online(&self, channel_id: u32) {
+        let key = self.key_config.channel_online_key();
+        if let Err(e) = self.rtdb.hash_del(&key, &channel_id.to_string()).await {
+            warn!("Ch{} failed to clear online status: {}", channel_id, e);
+        }
     }
 }
 

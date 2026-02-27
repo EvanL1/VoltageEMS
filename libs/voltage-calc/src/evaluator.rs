@@ -122,7 +122,7 @@ impl<S: StateStore> CalcEngine<S> {
 
     /// Process stateful functions in formula and replace with computed values
     ///
-    /// Uses Cow<str> to avoid allocation when no functions are present (~70% of formulas).
+    /// Uses `Cow<str>` to avoid allocation when no functions are present (~70% of formulas).
     /// Pattern: function_name(arg1, arg2, ...)
     async fn process_stateful_functions<'a>(
         &self,

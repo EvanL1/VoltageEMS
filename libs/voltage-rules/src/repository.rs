@@ -316,8 +316,8 @@ fn hydrate_rule(row: SqliteRow) -> Result<Rule> {
         name,
         description,
         enabled: enabled != 0,
-        priority: priority as u32,
-        cooldown_ms: cooldown_ms as u64,
+        priority: u32::try_from(priority).unwrap_or(0),
+        cooldown_ms: u64::try_from(cooldown_ms).unwrap_or(0),
         trigger_config,
         flow,
     })

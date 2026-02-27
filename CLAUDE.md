@@ -46,5 +46,6 @@ sqlx::query_as::<_, Row>("SELECT * FROM t WHERE id = ?").bind(id)
 
 ```
 上行: Device → comsrv → Redis → route:c2m → inst:{id}:M
-下行: modsrv → route:m2c → inst:{id}:A → comsrv TODO 队列
+下行: modsrv → route:m2c → SHM写入 + UDS通知 → comsrv ShmListener → Device
+      (备份: Redis inst:{id}:A + TODO → comsrv ShmPoller 轮询)
 ```

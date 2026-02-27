@@ -38,6 +38,13 @@ pub struct WriteBufferConfig {
     pub flush_interval_ms: u64,
     /// Maximum fields per key before forcing a flush (default: 1000)
     pub max_fields_per_key: usize,
+    /// Maximum total pending keys before dropping oldest data (default: 10000)
+    /// Prevents OOM when Redis is unreachable for extended periods
+    pub max_pending_keys: usize,
+    /// Optional TTL in seconds for written keys (default: None = no expiry).
+    /// When set, refreshes key TTL periodically during flush cycles to prevent
+    /// stale keys from persisting after service crashes.
+    pub key_ttl_seconds: Option<i64>,
 }
 
 impl Default for WriteBufferConfig {
@@ -45,6 +52,8 @@ impl Default for WriteBufferConfig {
         Self {
             flush_interval_ms: 20,
             max_fields_per_key: 1000,
+            max_pending_keys: 10_000,
+            key_ttl_seconds: None,
         }
     }
 }
@@ -55,6 +64,8 @@ impl WriteBufferConfig {
         Self {
             flush_interval_ms: 10,
             max_fields_per_key: 500,
+            max_pending_keys: 10_000,
+            key_ttl_seconds: None,
         }
     }
 
@@ -63,6 +74,8 @@ impl WriteBufferConfig {
         Self {
             flush_interval_ms: 50,
             max_fields_per_key: 2000,
+            max_pending_keys: 20_000,
+            key_ttl_seconds: None,
         }
     }
 }
@@ -80,6 +93,8 @@ pub struct WriteBufferStats {
     pub forced_flushes: AtomicU64,
     /// Number of flush errors
     pub flush_errors: AtomicU64,
+    /// Number of dropped writes due to pending keys overflow
+    pub overflow_drops: AtomicU64,
 }
 
 impl WriteBufferStats {
@@ -91,6 +106,7 @@ impl WriteBufferStats {
             fields_flushed: self.fields_flushed.load(Ordering::Relaxed),
             forced_flushes: self.forced_flushes.load(Ordering::Relaxed),
             flush_errors: self.flush_errors.load(Ordering::Relaxed),
+            overflow_drops: self.overflow_drops.load(Ordering::Relaxed),
         }
     }
 }
@@ -103,6 +119,7 @@ pub struct WriteBufferStatsSnapshot {
     pub fields_flushed: u64,
     pub forced_flushes: u64,
     pub flush_errors: u64,
+    pub overflow_drops: u64,
 }
 
 /// Hash write buffer for aggregating Redis hash operations
@@ -115,7 +132,7 @@ pub struct WriteBufferStatsSnapshot {
 /// 3-layer writes (value/timestamp/raw). `Arc::clone()` is O(1).
 pub struct WriteBuffer {
     /// Pending data: key -> {field -> value}
-    /// Field names use Arc<str> for O(1) cloning in multi-layer writes
+    /// Field names use `Arc<str>` for O(1) cloning in multi-layer writes
     pending: DashMap<String, DashMap<Arc<str>, Bytes>>,
     /// Notification for forced flush
     flush_notify: Arc<Notify>,
@@ -123,6 +140,8 @@ pub struct WriteBuffer {
     config: WriteBufferConfig,
     /// Statistics
     stats: WriteBufferStats,
+    /// Epoch seconds of last TTL refresh (throttled to avoid excess Redis calls)
+    last_expire_secs: AtomicU64,
 }
 
 impl WriteBuffer {
@@ -133,6 +152,7 @@ impl WriteBuffer {
             flush_notify: Arc::new(Notify::new()),
             config,
             stats: WriteBufferStats::default(),
+            last_expire_secs: AtomicU64::new(0),
         }
     }
 
@@ -155,6 +175,19 @@ impl WriteBuffer {
     /// * `field` - Field name as `Arc<str>` for O(1) cloning in 3-layer writes
     /// * `value` - Field value
     pub fn buffer_hash_set(&self, key: &str, field: Arc<str>, value: Bytes) {
+        // Check global pending keys limit to prevent OOM
+        if self.pending.len() >= self.config.max_pending_keys && !self.pending.contains_key(key) {
+            self.stats.overflow_drops.fetch_add(1, Ordering::Relaxed);
+            tracing::error!(
+                pending_keys = self.pending.len(),
+                max = self.config.max_pending_keys,
+                dropped_key = key,
+                "WriteBuffer overflow: DATA LOSS - dropping write, triggering flush"
+            );
+            self.flush_notify.notify_one();
+            return;
+        }
+
         // Two-phase check: get_mut first to avoid allocation on hot path
         let len = if let Some(entry) = self.pending.get_mut(key) {
             entry.insert(field, value);
@@ -184,6 +217,22 @@ impl WriteBuffer {
     /// * `fields` - Field-value pairs with `Arc<str>` field names for O(1) cloning
     pub fn buffer_hash_mset(&self, key: &str, fields: Vec<(Arc<str>, Bytes)>) {
         if fields.is_empty() {
+            return;
+        }
+
+        // Check global pending keys limit to prevent OOM
+        if self.pending.len() >= self.config.max_pending_keys && !self.pending.contains_key(key) {
+            self.stats
+                .overflow_drops
+                .fetch_add(fields.len() as u64, Ordering::Relaxed);
+            tracing::error!(
+                pending_keys = self.pending.len(),
+                max = self.config.max_pending_keys,
+                dropped_fields = fields.len(),
+                dropped_key = key,
+                "WriteBuffer overflow: DATA LOSS - dropping mset, triggering flush"
+            );
+            self.flush_notify.notify_one();
             return;
         }
 
@@ -218,9 +267,8 @@ impl WriteBuffer {
     /// Collect and clear all pending data
     ///
     /// Optimized to avoid double iteration and unnecessary clones.
-    /// Converts `Arc<str>` field names to `String` for the Rtdb trait.
-    /// This conversion happens at flush time (batched), not per-write.
-    fn drain_pending(&self) -> Vec<(String, Vec<(String, Bytes)>)> {
+    /// Field names stay as `Arc<str>` (O(1) clone) — no heap allocation per field.
+    fn drain_pending(&self) -> crate::traits::HashMsetOps {
         // Pre-allocate with estimated capacity
         let estimated_len = self.pending.len();
         let mut operations = Vec::with_capacity(estimated_len);
@@ -229,11 +277,10 @@ impl WriteBuffer {
         // DashMap::retain provides mutable access and removes entries returning false
         self.pending.retain(|key, fields_map| {
             if !fields_map.is_empty() {
-                // Convert Arc<str> to String at flush time
-                // Drain the inner map to avoid cloning
+                // Arc::clone is O(1) — just a refcount increment
                 let fields: Vec<_> = fields_map
                     .iter()
-                    .map(|entry| (entry.key().to_string(), entry.value().clone()))
+                    .map(|entry| (Arc::clone(entry.key()), entry.value().clone()))
                     .collect();
 
                 // Clear the inner map instead of removing outer entry
@@ -331,6 +378,8 @@ impl WriteBuffer {
     /// Flush all pending data to Redis
     ///
     /// Returns the number of fields flushed.
+    /// When `key_ttl_seconds` is configured, periodically refreshes TTL on written keys
+    /// (throttled to every 5 minutes to minimize extra Redis calls).
     pub async fn flush<R>(&self, rtdb: &R) -> anyhow::Result<usize>
     where
         R: Rtdb,
@@ -341,9 +390,32 @@ impl WriteBuffer {
             return Ok(0);
         }
 
+        // Collect keys for TTL refresh before operations is consumed by pipeline
+        let ttl_keys: Vec<String> = if self.config.key_ttl_seconds.is_some() {
+            operations.iter().map(|(k, _)| k.clone()).collect()
+        } else {
+            Vec::new()
+        };
+
         let field_count: usize = operations.iter().map(|(_, fields)| fields.len()).sum();
 
         rtdb.pipeline_hash_mset(operations).await?;
+
+        // Refresh TTL on written keys (throttled to every 5 minutes)
+        if let Some(ttl) = self.config.key_ttl_seconds {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let last = self.last_expire_secs.load(Ordering::Relaxed);
+            if now.saturating_sub(last) >= 300 {
+                self.last_expire_secs.store(now, Ordering::Relaxed);
+                for key in &ttl_keys {
+                    let _ = rtdb.expire(key, ttl).await;
+                }
+                tracing::trace!(keys = ttl_keys.len(), ttl, "Refreshed TTL on flushed keys");
+            }
+        }
 
         self.stats.flush_count.fetch_add(1, Ordering::Relaxed);
         self.stats
@@ -483,6 +555,7 @@ mod tests {
         let config = WriteBufferConfig {
             flush_interval_ms: 20,
             max_fields_per_key: 3, // Low threshold for testing
+            ..Default::default()
         };
         let buffer = WriteBuffer::new(config);
 

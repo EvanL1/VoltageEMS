@@ -38,6 +38,9 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
+/// Delay between reconnection attempts in the MQTT event loop
+const RECONNECT_BACKOFF_DELAY: Duration = Duration::from_secs(1);
+
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -402,7 +405,7 @@ impl MqttChannel {
                     diagnostics.record_error(e.to_string());
 
                     // rumqttc will automatically attempt reconnection
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::time::sleep(RECONNECT_BACKOFF_DELAY).await;
                 },
             }
         }
@@ -451,7 +454,7 @@ impl ChannelRuntime for MqttChannel {
         let mapper = self
             .mapper
             .clone()
-            .expect("Mapper should be loaded at this point");
+            .ok_or_else(|| GatewayError::Config("MQTT mapper not loaded".into()))?;
         let channel_id = self.channel_id;
         let state = Arc::new(AtomicU8::new(ConnectionState::Connecting as u8));
         let state_clone = state.clone();

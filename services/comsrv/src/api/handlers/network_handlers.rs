@@ -330,41 +330,110 @@ fn validate_interface_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Find network configuration files
-fn find_network_files() -> std::io::Result<Vec<PathBuf>> {
-    let dir = std::path::Path::new(NETWORKD_CONFIG_DIR);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
+/// Find network configuration files (async version using spawn_blocking for read_dir iterator)
+async fn find_network_files() -> std::io::Result<Vec<PathBuf>> {
+    tokio::task::spawn_blocking(|| {
+        let dir = std::path::Path::new(NETWORKD_CONFIG_DIR);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
 
-    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|ext| ext == "network")
-        })
-        .collect();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|ext| ext == "network")
+            })
+            .collect();
 
-    files.sort();
-    Ok(files)
+        files.sort();
+        Ok(files)
+    })
+    .await
+    .map_err(|e| std::io::Error::other(format!("spawn_blocking: {e}")))?
 }
 
 /// Get interface status from /sys/class/net
-fn get_interface_status(name: &str) -> Option<bool> {
+async fn get_interface_status(name: &str) -> Option<bool> {
     let operstate_path = format!("/sys/class/net/{}/operstate", name);
-    std::fs::read_to_string(operstate_path)
+    tokio::fs::read_to_string(operstate_path)
+        .await
         .ok()
         .map(|state| state.trim() == "up")
 }
 
 /// Get MAC address from /sys/class/net
-fn get_mac_address(name: &str) -> Option<String> {
+async fn get_mac_address(name: &str) -> Option<String> {
     let mac_path = format!("/sys/class/net/{}/address", name);
-    std::fs::read_to_string(mac_path)
+    tokio::fs::read_to_string(mac_path)
+        .await
         .ok()
         .map(|mac| mac.trim().to_string())
+}
+
+// ============================================================================
+// Shared Helpers
+// ============================================================================
+
+/// Enrich interface config with runtime status (is_up, mac_address) from sysfs
+async fn enrich_runtime_status(config: &mut NetworkInterfaceConfig) {
+    if config.name.is_empty() {
+        return;
+    }
+    config.is_up = get_interface_status(&config.name).await;
+    if config.mac_address.is_none() {
+        config.mac_address = get_mac_address(&config.name).await;
+    }
+}
+
+/// Load and parse all network config files, enriching each with runtime status
+async fn load_all_configs() -> Result<Vec<NetworkInterfaceConfig>, AppError> {
+    let files = find_network_files().await.map_err(|e| {
+        AppError::internal_error(format!("Failed to read network config directory: {}", e))
+    })?;
+
+    let mut interfaces = Vec::new();
+    for file_path in files {
+        let content = match tokio::fs::read_to_string(&file_path).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("Failed to read {}: {}", file_path.display(), e);
+                continue;
+            },
+        };
+        let mut config = parse_network_file(&content);
+        config.config_file = Some(file_path.to_string_lossy().to_string());
+        enrich_runtime_status(&mut config).await;
+        interfaces.push(config);
+    }
+    Ok(interfaces)
+}
+
+/// Find a specific interface config by name, returning file path and config
+async fn find_interface_config(name: &str) -> Result<(PathBuf, NetworkInterfaceConfig), AppError> {
+    let files = find_network_files().await.map_err(|e| {
+        AppError::internal_error(format!("Failed to read network config directory: {}", e))
+    })?;
+
+    for file_path in files {
+        let content = match tokio::fs::read_to_string(&file_path).await {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let mut config = parse_network_file(&content);
+        if config.name == name {
+            config.config_file = Some(file_path.to_string_lossy().to_string());
+            enrich_runtime_status(&mut config).await;
+            return Ok((file_path, config));
+        }
+    }
+
+    Err(AppError::not_found(format!(
+        "Network interface '{}' not found",
+        name
+    )))
 }
 
 // ============================================================================
@@ -390,34 +459,7 @@ fn get_mac_address(name: &str) -> Option<String> {
 pub async fn list_network_interfaces<R: Rtdb>(
     State(_state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<NetworkInterfaceList>>, AppError> {
-    let files = find_network_files().map_err(|e| {
-        AppError::internal_error(format!("Failed to read network config directory: {}", e))
-    })?;
-
-    let mut interfaces = Vec::new();
-
-    for file_path in files {
-        let content = match std::fs::read_to_string(&file_path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Failed to read {}: {}", file_path.display(), e);
-                continue;
-            },
-        };
-
-        let mut config = parse_network_file(&content);
-        config.config_file = Some(file_path.to_string_lossy().to_string());
-
-        // Get runtime status
-        if !config.name.is_empty() {
-            config.is_up = get_interface_status(&config.name);
-            if config.mac_address.is_none() {
-                config.mac_address = get_mac_address(&config.name);
-            }
-        }
-
-        interfaces.push(config);
-    }
+    let interfaces = load_all_configs().await?;
 
     let result = NetworkInterfaceList {
         total: interfaces.len(),
@@ -451,36 +493,9 @@ pub async fn get_network_interface<R: Rtdb>(
     State(_state): State<AppState<R>>,
     Path(name): Path<String>,
 ) -> Result<Json<SuccessResponse<NetworkInterfaceConfig>>, AppError> {
-    // Validate interface name to prevent path traversal
     validate_interface_name(&name).map_err(AppError::bad_request)?;
-
-    let files = find_network_files().map_err(|e| {
-        AppError::internal_error(format!("Failed to read network config directory: {}", e))
-    })?;
-
-    for file_path in files {
-        let content = match std::fs::read_to_string(&file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let mut config = parse_network_file(&content);
-
-        if config.name == name {
-            config.config_file = Some(file_path.to_string_lossy().to_string());
-            config.is_up = get_interface_status(&name);
-            if config.mac_address.is_none() {
-                config.mac_address = get_mac_address(&name);
-            }
-
-            return Ok(Json(SuccessResponse::new(config)));
-        }
-    }
-
-    Err(AppError::not_found(format!(
-        "Network interface '{}' not found",
-        name
-    )))
+    let (_path, config) = find_interface_config(&name).await?;
+    Ok(Json(SuccessResponse::new(config)))
 }
 
 /// Update network interface configuration
@@ -514,40 +529,8 @@ pub async fn update_network_interface<R: Rtdb>(
     Path(name): Path<String>,
     Json(request): Json<NetworkConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<NetworkConfigUpdateResult>>, AppError> {
-    // Validate interface name to prevent path traversal
     validate_interface_name(&name).map_err(AppError::bad_request)?;
-
-    // Find existing configuration file
-    let files = find_network_files().map_err(|e| {
-        AppError::internal_error(format!("Failed to read network config directory: {}", e))
-    })?;
-
-    let mut found_file: Option<PathBuf> = None;
-    let mut current_config: Option<NetworkInterfaceConfig> = None;
-
-    for file_path in &files {
-        let content = match std::fs::read_to_string(file_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let config = parse_network_file(&content);
-        if config.name == name {
-            found_file = Some(file_path.clone());
-            current_config = Some(config);
-            break;
-        }
-    }
-
-    let (file_path, mut config) = match (found_file, current_config) {
-        (Some(f), Some(c)) => (f, c),
-        _ => {
-            return Err(AppError::not_found(format!(
-                "Network interface '{}' not found",
-                name
-            )));
-        },
-    };
+    let (file_path, mut config) = find_interface_config(&name).await?;
 
     // Apply updates
     if let Some(dhcp) = request.dhcp {
@@ -599,12 +582,13 @@ pub async fn update_network_interface<R: Rtdb>(
 
     // Backup existing file
     let backup_path = file_path.with_extension("network.bak");
-    if let Err(e) = std::fs::copy(&file_path, &backup_path) {
+    if let Err(e) = tokio::fs::copy(&file_path, &backup_path).await {
         tracing::warn!("Failed to create backup: {}", e);
     }
 
     // Write new configuration
-    std::fs::write(&file_path, &new_content)
+    tokio::fs::write(&file_path, &new_content)
+        .await
         .map_err(|e| AppError::internal_error(format!("Failed to write configuration: {}", e)))?;
 
     tracing::info!(
@@ -645,21 +629,22 @@ pub async fn apply_network_changes<R: Rtdb>(
     State(_state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<NetworkApplyResult>>, AppError> {
     // Get list of interfaces before reload
-    let files = find_network_files().unwrap_or_default();
-    let affected: Vec<String> = files
-        .iter()
-        .filter_map(|f| {
-            std::fs::read_to_string(f)
-                .ok()
-                .map(|c| parse_network_file(&c).name)
-        })
-        .filter(|n| !n.is_empty())
-        .collect();
+    let files = find_network_files().await.unwrap_or_default();
+    let mut affected = Vec::new();
+    for f in &files {
+        if let Ok(c) = tokio::fs::read_to_string(f).await {
+            let name = parse_network_file(&c).name;
+            if !name.is_empty() {
+                affected.push(name);
+            }
+        }
+    }
 
     // Reload networkd
-    let output = std::process::Command::new("networkctl")
+    let output = tokio::process::Command::new("networkctl")
         .arg("reload")
         .output()
+        .await
         .map_err(|e| AppError::internal_error(format!("Failed to execute networkctl: {}", e)))?;
 
     if !output.status.success() {

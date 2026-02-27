@@ -78,6 +78,7 @@ pub async fn create_instance(
         instance_id,
         instance_name: dto.instance_name,
         product_name: dto.product_name,
+        parent_id: dto.parent_id,
         properties: dto.properties.unwrap_or_default(),
     };
 
@@ -105,6 +106,13 @@ pub async fn create_instance(
                     "Invalid product_name: {}",
                     e
                 )))
+            } else if error_msg.contains("requires a parent")
+                || error_msg.contains("cannot have a parent")
+                || error_msg.contains("requires parent of type")
+                || error_msg.contains("Parent instance")
+            {
+                // Hierarchy validation error
+                Err(ModSrvError::InvalidData(error_msg))
             } else {
                 Err(ModSrvError::InternalError(format!(
                     "Failed to create instance: {}",

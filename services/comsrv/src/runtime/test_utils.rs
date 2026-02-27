@@ -4,9 +4,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use voltage_routing::RoutingCache;
+use voltage_rtdb::KeySpaceConfig;
 use voltage_rtdb::MemoryRtdb;
 use voltage_rtdb::Rtdb; // Trait must be in scope for generic bounds
-use voltage_rtdb::{KeySpaceConfig, RoutingCache};
 
 // ==================== Basic Test Infrastructure ====================
 

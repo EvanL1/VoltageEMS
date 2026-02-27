@@ -36,7 +36,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
@@ -203,6 +203,32 @@ pub struct HttpConfig {
     pub retry_delay: Duration,
 }
 
+/// Build an HTTP request with configured method, headers, and optional body.
+fn build_request(client: &Client, config: &HttpConfig, url: &str) -> reqwest::RequestBuilder {
+    let mut request = client.request(config.method.into(), url);
+    for (key, value) in &config.headers {
+        request = request.header(key.as_str(), value.as_str());
+    }
+    if let Some(body) = &config.body {
+        request = request
+            .header("Content-Type", "application/json")
+            .body(body.clone());
+    }
+    request
+}
+
+/// Guard against oversized responses to prevent OOM (max 10MB).
+fn check_response_size(response: &reqwest::Response) -> Result<()> {
+    if let Some(len) = response.content_length() {
+        if len > 10 * 1024 * 1024 {
+            return Err(GatewayError::Protocol(format!(
+                "Response too large: {len} bytes (max 10MB)"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// HTTP Channel implementation (Polling mode)
 ///
 /// Polls a device REST API at configured intervals and extracts
@@ -291,7 +317,9 @@ impl HttpChannel {
     /// Set connection state
     fn set_state(&self, state: ConnectionState) {
         self.state.store(state as u8, Ordering::SeqCst);
-        let _ = self.event_tx.send(DataEvent::ConnectionChanged(state));
+        if let Err(e) = self.event_tx.send(DataEvent::ConnectionChanged(state)) {
+            trace!("No subscribers for ConnectionChanged event: {e}");
+        }
     }
 
     /// Create HTTP client
@@ -302,44 +330,69 @@ impl HttpChannel {
             .map_err(|e| GatewayError::Protocol(format!("Failed to create HTTP client: {e}")))
     }
 
+    /// Validate URL to prevent SSRF attacks targeting internal services.
+    ///
+    /// Blocks loopback, link-local, and unspecified addresses. RFC 1918 private
+    /// addresses (10.x, 172.16-31.x, 192.168.x) are intentionally ALLOWED because
+    /// this is an industrial gateway that communicates with devices on private networks.
+    fn validate_url(url: &str) -> Result<()> {
+        let parsed = reqwest::Url::parse(url)
+            .map_err(|e| GatewayError::Config(format!("Invalid URL: {e}")))?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| GatewayError::Config("URL has no host".into()))?;
+        let host_lower = host.to_lowercase();
+
+        // Block well-known internal hostnames
+        if host_lower == "localhost" || host_lower == "0.0.0.0" {
+            return Err(GatewayError::Config(format!(
+                "SSRF protection: blocked request to internal address '{host}'"
+            )));
+        }
+
+        // IP-based checks: block loopback and link-local addresses
+        // Note: RFC 1918 private addresses are allowed (industrial devices live there)
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let is_blocked = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback()       // 127.0.0.0/8
+                    || v4.is_link_local()  // 169.254.0.0/16
+                    || v4.is_unspecified() // 0.0.0.0
+                },
+                std::net::IpAddr::V6(v6) => {
+                    v6.is_loopback()       // ::1
+                    || v6.is_unspecified() // ::
+                },
+            };
+            if is_blocked {
+                return Err(GatewayError::Config(format!(
+                    "SSRF protection: blocked request to internal address '{host}'"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Execute a single poll request
     async fn poll_once_internal(&self) -> Result<DataBatch> {
         let url = self.config.url.as_ref().ok_or_else(|| {
             GatewayError::Config("No URL configured for HTTP polling".to_string())
         })?;
-
         let client = self
             .client
             .as_ref()
             .ok_or_else(|| GatewayError::Protocol("HTTP client not initialized".to_string()))?;
-
         let mapper = self
             .mapper
             .as_ref()
             .ok_or_else(|| GatewayError::Config("JSON mapper not configured".to_string()))?;
 
-        // Build request
-        let mut request = client.request(self.config.method.into(), url);
-
-        // Add headers
-        for (key, value) in &self.config.headers {
-            request = request.header(key.as_str(), value.as_str());
-        }
-
-        // Add body if present
-        if let Some(body) = &self.config.body {
-            request = request
-                .header("Content-Type", "application/json")
-                .body(body.clone());
-        }
-
-        // Send request
-        let response = request
+        let response = build_request(client, &self.config, url)
             .send()
             .await
             .map_err(|e| GatewayError::Protocol(format!("HTTP request failed: {e}")))?;
 
-        // Check status
         let status = response.status();
         if !status.is_success() {
             return Err(GatewayError::Protocol(format!(
@@ -348,23 +401,20 @@ impl HttpChannel {
                 status.canonical_reason().unwrap_or("Unknown")
             )));
         }
+        check_response_size(&response)?;
 
-        // Parse response body
         let body = response
             .bytes()
             .await
             .map_err(|e| GatewayError::Protocol(format!("Failed to read response body: {e}")))?;
 
-        // Extract data points
         let batch = mapper.parse(&body)?;
-
         debug!(
             channel_id = self.channel_id,
             url = %url,
             points = batch.len(),
             "HTTP poll completed"
         );
-
         Ok(batch)
     }
 
@@ -395,68 +445,63 @@ impl HttpChannel {
 
         let mut interval = tokio::time::interval(config.interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
         let mut consecutive_failures = 0u32;
 
         loop {
             interval.tick().await;
 
-            // Build and send request
-            let mut request = client.request(config.method.into(), &url);
-            for (key, value) in &config.headers {
-                request = request.header(key.as_str(), value.as_str());
-            }
-            if let Some(body) = &config.body {
-                request = request
-                    .header("Content-Type", "application/json")
-                    .body(body.clone());
-            }
-
-            match request.send().await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        match response.bytes().await {
-                            Ok(body) => match mapper.parse(&body) {
-                                Ok(batch) => {
-                                    if !batch.is_empty() {
-                                        diagnostics.add_read(batch.len() as u64);
-                                        let _ =
-                                            event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
-                                    }
-                                    consecutive_failures = 0;
-                                    state.store(ConnectionState::Connected as u8, Ordering::SeqCst);
-                                },
-                                Err(e) => {
-                                    debug!(channel_id, error = %e, "Failed to parse HTTP response");
-                                    diagnostics.record_error(e.to_string());
-                                },
-                            },
-                            Err(e) => {
-                                debug!(channel_id, error = %e, "Failed to read response body");
-                                diagnostics.record_error(e.to_string());
-                            },
-                        }
-                    } else {
-                        consecutive_failures += 1;
-                        let status_msg = format!("HTTP status {}", response.status().as_u16());
-                        debug!(
-                            channel_id,
-                            status = response.status().as_u16(),
-                            "HTTP request returned error status"
-                        );
-                        diagnostics.record_error(status_msg);
-                    }
-                },
+            let response = match build_request(&client, &config, &url).send().await {
+                Ok(r) => r,
                 Err(e) => {
                     consecutive_failures += 1;
                     debug!(channel_id, error = %e, "HTTP request failed");
                     diagnostics.record_error(e.to_string());
-
                     if consecutive_failures >= config.max_retries && config.max_retries > 0 {
                         state.store(ConnectionState::Error as u8, Ordering::SeqCst);
                         let _ = event_tx.send(DataEvent::ConnectionChanged(ConnectionState::Error));
                         let _ = event_tx.send(DataEvent::Error(e.to_string()));
                     }
+                    continue;
+                },
+            };
+
+            if !response.status().is_success() {
+                consecutive_failures += 1;
+                let status = response.status().as_u16();
+                debug!(channel_id, status, "HTTP request returned error status");
+                diagnostics.record_error(format!("HTTP status {status}"));
+                continue;
+            }
+
+            if let Some(len) = response.content_length() {
+                if len > 10 * 1024 * 1024 {
+                    diagnostics.record_error(format!("Response too large: {len} bytes (max 10MB)"));
+                    consecutive_failures += 1;
+                    continue;
+                }
+            }
+
+            let body = match response.bytes().await {
+                Ok(b) => b,
+                Err(e) => {
+                    debug!(channel_id, error = %e, "Failed to read response body");
+                    diagnostics.record_error(e.to_string());
+                    continue;
+                },
+            };
+
+            match mapper.parse(&body) {
+                Ok(batch) => {
+                    if !batch.is_empty() {
+                        diagnostics.add_read(batch.len() as u64);
+                        let _ = event_tx.send(DataEvent::DataUpdate(Arc::new(batch)));
+                    }
+                    consecutive_failures = 0;
+                    state.store(ConnectionState::Connected as u8, Ordering::SeqCst);
+                },
+                Err(e) => {
+                    debug!(channel_id, error = %e, "Failed to parse HTTP response");
+                    diagnostics.record_error(e.to_string());
                 },
             }
         }
@@ -488,6 +533,11 @@ impl ChannelRuntime for HttpChannel {
         }
 
         self.set_state(ConnectionState::Connecting);
+
+        // SSRF protection: validate URL once at connect time
+        if let Some(url) = &self.config.url {
+            Self::validate_url(url)?;
+        }
 
         // Load JSON mappings if not already loaded
         self.load_mapper().await?;

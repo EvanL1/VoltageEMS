@@ -124,7 +124,7 @@ impl CoilStore {
     /// This is the format required for Modbus FC01/FC02 responses.
     ///
     /// Example: [true, false, true, false, true, false, true, false]
-    ///          becomes [0x55] (binary: 0101_0101, LSB=bit0=true)
+    ///          becomes \[0x55\] (binary: 0101_0101, LSB=bit0=true)
     pub fn pack_coils_to_bytes(values: &[bool]) -> Vec<u8> {
         let byte_count = values.len().div_ceil(8);
         let mut bytes = vec![0u8; byte_count];

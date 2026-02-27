@@ -2,17 +2,20 @@
 
 use anyhow::Result;
 use bytes::Bytes;
-use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
-use voltage_model::{KeySpaceConfig, PointType};
+use std::sync::Arc;
+
+/// Batched hash-mset operations: Vec of (key, Vec of (field, value))
+/// Field names use `Arc<str>` to avoid heap allocation on the hot path.
+pub type HashMsetOps = Vec<(String, Vec<(Arc<str>, Bytes)>)>;
 
 /// Unified RTDB Storage Trait
 ///
 /// Provides complete storage interface for VoltageEMS, combining:
 /// - Basic key-value operations
 /// - Structured data (Hash, List, Set)
-/// - Convenience operations (point initialization, command queuing)
+/// - Pipeline operations for batch writes
 ///
 /// Implementations:
 /// - `RedisRtdb`: Production Redis backend
@@ -22,14 +25,6 @@ use voltage_model::{KeySpaceConfig, PointType};
 /// The returned Future borrows both `&self` and parameters for the same lifetime,
 /// allowing implementations to use borrowed data directly without cloning.
 pub trait Rtdb: Send + Sync + 'static {
-    // ========== Introspection ==========
-
-    /// Allow downcasting to concrete types
-    ///
-    /// This enables runtime type checking and conversion to specific implementations
-    /// like RedisRtdb or MemoryRtdb when needed.
-    fn as_any(&self) -> &dyn Any;
-
     // ========== Basic Key-Value Operations ==========
 
     /// Get value by key
@@ -290,21 +285,20 @@ pub trait Rtdb: Send + Sync + 'static {
         pattern: &'a str,
     ) -> impl Future<Output = Result<Vec<String>>> + Send + 'a;
 
-    // ========== Time Operations ==========
+    // ========== Key Expiry Operations ==========
 
-    /// Get current Redis server time in milliseconds (Redis TIME)
+    /// Set a timeout on key (Redis EXPIRE)
     ///
-    /// Returns Unix timestamp in milliseconds.
-    /// In test implementations (MemoryRtdb), this returns system time.
-    ///
-    /// # Deprecation
-    /// This method mixes time acquisition with storage operations.
-    /// Use `voltage_rtdb::TimeProvider` trait instead for better separation of concerns.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use voltage_rtdb::TimeProvider trait instead for better separation of concerns"
-    )]
-    fn time_millis(&self) -> impl Future<Output = Result<i64>> + Send + '_;
+    /// Returns true if the timeout was set, false if key does not exist.
+    /// Default implementation is a no-op that returns false (for test backends).
+    fn expire<'a>(
+        &'a self,
+        key: &'a str,
+        seconds: i64,
+    ) -> impl Future<Output = Result<bool>> + Send + 'a {
+        let _ = (key, seconds);
+        async move { Ok(false) }
+    }
 
     // ========== Pipeline Operations ==========
 
@@ -321,79 +315,6 @@ pub trait Rtdb: Send + Sync + 'static {
     /// * `Err` if any operation fails
     fn pipeline_hash_mset(
         &self,
-        operations: Vec<(String, Vec<(String, Bytes)>)>,
+        operations: HashMsetOps,
     ) -> impl Future<Output = Result<()>> + Send + '_;
-
-    // ========== Convenience Operations (with default implementations) ==========
-
-    /// Write point data in initialization mode (no routing trigger)
-    ///
-    /// This method writes point value with timestamp=0, WITHOUT triggering routing.
-    /// Use during system initialization and configuration loading.
-    ///
-    /// # Operations
-    /// 1. HSET {key}:{point_id} → {value}
-    /// 2. HSET {key}:ts:{point_id} → 0
-    ///
-    /// # Arguments
-    /// * `key` - Full point key (e.g., "inst:1:A" or "comsrv:1001:T")
-    /// * `point_id` - Point identifier
-    /// * `value` - Point value
-    ///
-    /// # Examples
-    /// ```ignore
-    /// // Initialize instance action point
-    /// rtdb.write_point_init("inst:1:A", 10, 100.0).await?;
-    ///
-    /// // Initialize channel telemetry point
-    /// rtdb.write_point_init("comsrv:1001:T", 5, 230.5).await?;
-    /// ```
-    fn write_point_init<'a>(
-        &'a self,
-        key: &'a str,
-        point_id: u32,
-        value: f64,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        async move {
-            // Default implementation: write value + ts=0, no routing
-            let field = point_id.to_string();
-            let ts_field = format!("ts:{}", point_id);
-            let value_bytes = Bytes::from(value.to_string());
-            let ts_bytes = Bytes::from("0");
-
-            self.hash_set(key, &field, value_bytes).await?;
-            self.hash_set(key, &ts_field, ts_bytes).await?;
-            Ok(())
-        }
-    }
-
-    /// Enqueue control command to per-channel TODO queue: comsrv:{channel}:C:TODO
-    fn enqueue_control<'a>(
-        &'a self,
-        channel_id: u32,
-        payload_json: &'a str,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        // Move format! into async block to avoid borrowing temporary across await
-        let payload = payload_json.to_string();
-        async move {
-            let keyspace = KeySpaceConfig::production_cached();
-            let key = keyspace.todo_queue_key(channel_id, PointType::Control);
-            self.list_rpush(&key, Bytes::from(payload)).await
-        }
-    }
-
-    /// Enqueue adjustment command to per-channel TODO queue: comsrv:{channel}:A:TODO
-    fn enqueue_adjustment<'a>(
-        &'a self,
-        channel_id: u32,
-        payload_json: &'a str,
-    ) -> impl Future<Output = Result<()>> + Send + 'a {
-        // Move format! into async block to avoid borrowing temporary across await
-        let payload = payload_json.to_string();
-        async move {
-            let keyspace = KeySpaceConfig::production_cached();
-            let key = keyspace.todo_queue_key(channel_id, PointType::Adjustment);
-            self.list_rpush(&key, Bytes::from(payload)).await
-        }
-    }
 }

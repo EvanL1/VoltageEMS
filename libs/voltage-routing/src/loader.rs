@@ -46,17 +46,17 @@ impl RoutingMaps {
 pub async fn load_routing_maps(sqlite_pool: &sqlx::SqlitePool) -> Result<RoutingMaps> {
     debug!("Loading routing maps from SQLite");
 
-    let keyspace = KeySpaceConfig::production();
+    let keyspace = KeySpaceConfig::production_cached();
     let mut maps = RoutingMaps::default();
 
     // Load C2M routing (measurement_routing table)
-    load_c2m_routes(sqlite_pool, &keyspace, &mut maps.c2m).await?;
+    load_c2m_routes(sqlite_pool, keyspace, &mut maps.c2m).await?;
 
     // Load M2C routing (action_routing table)
-    load_m2c_routes(sqlite_pool, &keyspace, &mut maps.m2c).await?;
+    load_m2c_routes(sqlite_pool, keyspace, &mut maps.m2c).await?;
 
     // Load C2C routing (channel_routing table) - optional
-    load_c2c_routes(sqlite_pool, &keyspace, &mut maps.c2c).await;
+    load_c2c_routes(sqlite_pool, keyspace, &mut maps.c2c).await;
 
     info!(
         "Routes loaded: {} C2M, {} M2C, {} C2C",
@@ -85,6 +85,11 @@ async fn load_c2m_routes(
     .fetch_all(pool)
     .await?;
 
+    let total = rows.len();
+    let mut skipped = 0usize;
+
+    let mut ibuf = itoa::Buffer::new();
+
     for (instance_id, _, channel_id, channel_type, channel_point_id, measurement_id) in rows {
         let point_type = match voltage_model::PointType::from_str(&channel_type) {
             Some(pt) => pt,
@@ -95,16 +100,26 @@ async fn load_c2m_routes(
                     channel_id,
                     channel_point_id
                 );
+                skipped += 1;
                 continue;
             },
         };
 
         // From: channel_id:type:point_id -> To: instance_id:M:point_id
         let from_key =
-            keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
+            keyspace.c2m_route_key(channel_id, point_type, ibuf.format(channel_point_id));
         let to_key = format!("{}:M:{}", instance_id, measurement_id);
 
         c2m_map.insert(from_key, to_key);
+    }
+
+    if skipped > 0 {
+        tracing::warn!(
+            "C2M routes: loaded={}, skipped={} (of {} total)",
+            total - skipped,
+            skipped,
+            total
+        );
     }
 
     Ok(())
@@ -127,6 +142,11 @@ async fn load_m2c_routes(
     .fetch_all(pool)
     .await?;
 
+    let total = rows.len();
+    let mut skipped = 0usize;
+
+    let mut ibuf = itoa::Buffer::new();
+
     for (instance_id, _, action_id, channel_id, channel_type, channel_point_id) in rows {
         let point_type = match voltage_model::PointType::from_str(&channel_type) {
             Some(pt) => pt,
@@ -137,15 +157,25 @@ async fn load_m2c_routes(
                     channel_id,
                     channel_point_id
                 );
+                skipped += 1;
                 continue;
             },
         };
 
         // From: instance_id:A:point_id -> To: channel_id:type:point_id
         let from_key = format!("{}:A:{}", instance_id, action_id);
-        let to_key = keyspace.c2m_route_key(channel_id, point_type, &channel_point_id.to_string());
+        let to_key = keyspace.c2m_route_key(channel_id, point_type, ibuf.format(channel_point_id));
 
         m2c_map.insert(from_key, to_key);
+    }
+
+    if skipped > 0 {
+        tracing::warn!(
+            "M2C routes: loaded={}, skipped={} (of {} total)",
+            total - skipped,
+            skipped,
+            total
+        );
     }
 
     Ok(())
@@ -179,6 +209,8 @@ async fn load_c2c_routes(
         },
     };
 
+    let mut ibuf = itoa::Buffer::new();
+
     for (
         source_channel_id,
         source_type,
@@ -202,12 +234,12 @@ async fn load_c2c_routes(
         let from_key = keyspace.c2m_route_key(
             source_channel_id,
             source_point_type,
-            &source_point_id.to_string(),
+            ibuf.format(source_point_id),
         );
         let to_key = keyspace.c2m_route_key(
             target_channel_id,
             target_point_type,
-            &target_point_id.to_string(),
+            ibuf.format(target_point_id),
         );
 
         c2c_map.insert(from_key, to_key);

@@ -51,20 +51,19 @@ pub fn decode_registers(
             Ok(Value::Integer(registers[0] as i16 as i64))
         },
 
-        DataFormat::UInt32 => {
+        DataFormat::UInt32 | DataFormat::Int32 => {
             if registers.len() < 2 {
-                return Err(GatewayError::invalid_data("Need 2 registers for uint32"));
+                return Err(GatewayError::invalid_data(
+                    "Need 2 registers for 32-bit value",
+                ));
             }
             let bytes = reorder_bytes_32(registers[0], registers[1], byte_order);
-            Ok(Value::Integer(u32::from_be_bytes(bytes) as i64))
-        },
-
-        DataFormat::Int32 => {
-            if registers.len() < 2 {
-                return Err(GatewayError::invalid_data("Need 2 registers for int32"));
-            }
-            let bytes = reorder_bytes_32(registers[0], registers[1], byte_order);
-            Ok(Value::Integer(i32::from_be_bytes(bytes) as i64))
+            let v = if format == DataFormat::UInt32 {
+                u32::from_be_bytes(bytes) as i64
+            } else {
+                i32::from_be_bytes(bytes) as i64
+            };
+            Ok(Value::Integer(v))
         },
 
         DataFormat::Float32 => {
@@ -73,23 +72,17 @@ pub fn decode_registers(
             }
             let bytes = reorder_bytes_32(registers[0], registers[1], byte_order);
             let value = f32::from_be_bytes(bytes);
-            if value.is_nan() || value.is_infinite() {
+            if !value.is_finite() {
                 return Err(GatewayError::invalid_data("Invalid float32 value"));
             }
             Ok(Value::Float(value as f64))
         },
 
-        DataFormat::UInt64 => {
+        DataFormat::UInt64 | DataFormat::Int64 => {
             if registers.len() < 4 {
-                return Err(GatewayError::invalid_data("Need 4 registers for uint64"));
-            }
-            let bytes = reorder_bytes_64(&registers[0..4], byte_order);
-            Ok(Value::Integer(u64::from_be_bytes(bytes) as i64))
-        },
-
-        DataFormat::Int64 => {
-            if registers.len() < 4 {
-                return Err(GatewayError::invalid_data("Need 4 registers for int64"));
+                return Err(GatewayError::invalid_data(
+                    "Need 4 registers for 64-bit value",
+                ));
             }
             let bytes = reorder_bytes_64(&registers[0..4], byte_order);
             Ok(Value::Integer(i64::from_be_bytes(bytes)))
@@ -101,7 +94,7 @@ pub fn decode_registers(
             }
             let bytes = reorder_bytes_64(&registers[0..4], byte_order);
             let value = f64::from_be_bytes(bytes);
-            if value.is_nan() || value.is_infinite() {
+            if !value.is_finite() {
                 return Err(GatewayError::invalid_data("Invalid float64 value"));
             }
             Ok(Value::Float(value))
@@ -158,6 +151,11 @@ pub fn encode_registers(
             let v = value
                 .as_i64()
                 .ok_or_else(|| GatewayError::invalid_data("Cannot convert to integer"))?;
+            if v < 0 || v > u16::MAX as i64 {
+                return Err(GatewayError::invalid_data(format!(
+                    "Value {v} out of u16 range [0, 65535]"
+                )));
+            }
             Ok(vec![v as u16])
         },
 
@@ -165,14 +163,38 @@ pub fn encode_registers(
             let v = value
                 .as_i64()
                 .ok_or_else(|| GatewayError::invalid_data("Cannot convert to integer"))?;
+            if v < i16::MIN as i64 || v > i16::MAX as i64 {
+                return Err(GatewayError::invalid_data(format!(
+                    "Value {v} out of i16 range [-32768, 32767]"
+                )));
+            }
             Ok(vec![v as i16 as u16])
         },
 
-        DataFormat::UInt32 | DataFormat::Int32 => {
+        DataFormat::UInt32 => {
             let v = value
                 .as_i64()
                 .ok_or_else(|| GatewayError::invalid_data("Cannot convert to integer"))?;
+            if v < 0 || v > u32::MAX as i64 {
+                return Err(GatewayError::invalid_data(format!(
+                    "Value {v} out of u32 range [0, 4294967295]"
+                )));
+            }
             let bytes = (v as u32).to_be_bytes();
+            let (r0, r1) = reorder_to_registers_32(bytes, byte_order);
+            Ok(vec![r0, r1])
+        },
+
+        DataFormat::Int32 => {
+            let v = value
+                .as_i64()
+                .ok_or_else(|| GatewayError::invalid_data("Cannot convert to integer"))?;
+            if v < i32::MIN as i64 || v > i32::MAX as i64 {
+                return Err(GatewayError::invalid_data(format!(
+                    "Value {v} out of i32 range [-2147483648, 2147483647]"
+                )));
+            }
+            let bytes = (v as i32 as u32).to_be_bytes();
             let (r0, r1) = reorder_to_registers_32(bytes, byte_order);
             Ok(vec![r0, r1])
         },
@@ -181,6 +203,11 @@ pub fn encode_registers(
             let v = value
                 .as_f64()
                 .ok_or_else(|| GatewayError::invalid_data("Cannot convert to float"))?;
+            if !v.is_finite() {
+                return Err(GatewayError::invalid_data(
+                    "Cannot encode NaN/Infinity as float32",
+                ));
+            }
             let bytes = (v as f32).to_be_bytes();
             let (r0, r1) = reorder_to_registers_32(bytes, byte_order);
             Ok(vec![r0, r1])
@@ -199,6 +226,11 @@ pub fn encode_registers(
             let v = value
                 .as_f64()
                 .ok_or_else(|| GatewayError::invalid_data("Cannot convert to float"))?;
+            if !v.is_finite() {
+                return Err(GatewayError::invalid_data(
+                    "Cannot encode NaN/Infinity as float64",
+                ));
+            }
             let bytes = v.to_be_bytes();
             let regs = reorder_to_registers_64(bytes, byte_order);
             Ok(regs.to_vec())

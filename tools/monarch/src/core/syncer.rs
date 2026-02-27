@@ -17,6 +17,39 @@ use tracing::{debug, info, warn};
 use super::file_utils::{flatten_json, load_csv, load_csv_typed_with_errors, load_csv_with_errors};
 use super::schema;
 
+/// Try parsing a string as a JSON number. Empty strings default to 0.
+fn str_to_json_number(s: &str) -> Option<JsonValue> {
+    use serde_json::Number;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        Some(JsonValue::Number(Number::from(0)))
+    } else if let Ok(n) = trimmed.parse::<i64>() {
+        Some(JsonValue::Number(Number::from(n)))
+    } else if let Ok(f) = trimmed.parse::<f64>() {
+        Number::from_f64(f).map(JsonValue::Number)
+    } else {
+        None
+    }
+}
+
+/// Convert mapping entries: numeric_fields become JSON numbers, rest stay strings.
+fn convert_fields(
+    mapping: HashMap<String, String>,
+    numeric_fields: &[&str],
+) -> HashMap<String, JsonValue> {
+    mapping
+        .into_iter()
+        .map(|(k, v)| {
+            let json_val = if numeric_fields.contains(&k.as_str()) {
+                str_to_json_number(&v).unwrap_or(JsonValue::String(v))
+            } else {
+                JsonValue::String(v)
+            };
+            (k, json_val)
+        })
+        .collect()
+}
+
 /// Normalize protocol_data numeric fields to JSON numbers (not strings)
 ///
 /// Ensures type consistency between CSV import and runtime API operations.
@@ -28,70 +61,34 @@ fn normalize_protocol_mapping(
 ) -> HashMap<String, JsonValue> {
     use serde_json::Number;
 
-    let mut normalized: HashMap<String, JsonValue> = HashMap::new();
-
-    // Helper: convert string to JSON number if possible
-    // Empty strings are treated as 0
-    let to_number = |s: &str| -> Option<JsonValue> {
-        let trimmed = s.trim();
-        if trimmed.is_empty() {
-            // Empty strings default to 0
-            Some(JsonValue::Number(Number::from(0)))
-        } else if let Ok(n) = trimmed.parse::<i64>() {
-            Some(JsonValue::Number(Number::from(n)))
-        } else if let Ok(f) = trimmed.parse::<f64>() {
-            Number::from_f64(f).map(JsonValue::Number)
-        } else {
-            None
-        }
-    };
-
-    // Remove point_id from protocol_data (it's stored in separate column)
+    // point_id is stored in a separate column
     mapping.remove("point_id");
 
     match protocol {
         "modbus_tcp" | "modbus_rtu" => {
-            let numeric_fields = [
-                "slave_id",
-                "function_code",
-                "register_address",
-                "bit_position",
-            ];
-            for (key, value) in mapping {
-                if numeric_fields.contains(&key.as_str()) {
-                    // key.as_str() borrow ends after contains(), so we can move key directly
-                    normalized.insert(key, to_number(&value).unwrap_or(JsonValue::String(value)));
-                } else {
-                    normalized.insert(key, JsonValue::String(value));
-                }
-            }
-            // Add missing fields with default values to ensure JSON completeness
-            normalized
+            let mut normalized = convert_fields(
+                mapping,
+                &[
+                    "slave_id",
+                    "function_code",
+                    "register_address",
+                    "bit_position",
+                ],
+            );
+            // Ensure bit_position exists and is an integer (convert 0.0 → 0)
+            let bp = normalized
                 .entry("bit_position".to_string())
                 .or_insert(JsonValue::Number(Number::from(0)));
-
-            // Normalize bit_position to integer (convert 0.0 → 0, 1.0 → 1)
-            if let Some(JsonValue::Number(n)) = normalized.get("bit_position") {
-                if let Some(f) = n.as_f64() {
-                    let int_value = f.round() as i64;
-                    normalized.insert(
-                        "bit_position".to_string(),
-                        JsonValue::Number(Number::from(int_value)),
-                    );
-                }
+            if let Some(f) = bp.as_f64() {
+                *bp = JsonValue::Number(Number::from(f.round() as i64));
             }
+            normalized
         },
         "can" => {
-            let numeric_fields = ["can_id", "start_bit", "bit_length", "scale", "offset"];
-            for (key, value) in mapping {
-                if numeric_fields.contains(&key.as_str()) {
-                    // key.as_str() borrow ends after contains(), so we can move key directly
-                    normalized.insert(key, to_number(&value).unwrap_or(JsonValue::String(value)));
-                } else {
-                    normalized.insert(key, JsonValue::String(value));
-                }
-            }
-            // Add missing fields with default values to ensure JSON completeness
+            let mut normalized = convert_fields(
+                mapping,
+                &["can_id", "start_bit", "bit_length", "scale", "offset"],
+            );
             normalized
                 .entry("signed".to_string())
                 .or_insert(JsonValue::Bool(false));
@@ -101,27 +98,43 @@ fn normalize_protocol_mapping(
             normalized
                 .entry("offset".to_string())
                 .or_insert(JsonValue::Number(Number::from_f64(0.0).unwrap()));
+            normalized
         },
-        "di_do" | "gpio" | "dido" => {
-            let numeric_fields = ["gpio_number"];
-            for (key, value) in mapping {
-                if numeric_fields.contains(&key.as_str()) {
-                    // key.as_str() borrow ends after contains(), so we can move key directly
-                    normalized.insert(key, to_number(&value).unwrap_or(JsonValue::String(value)));
-                } else {
-                    normalized.insert(key, JsonValue::String(value));
-                }
-            }
-        },
-        _ => {
-            // Unknown protocol: keep all as strings
-            for (key, value) in mapping {
-                normalized.insert(key, JsonValue::String(value));
-            }
-        },
+        "di_do" | "gpio" | "dido" => convert_fields(mapping, &["gpio_number"]),
+        _ => convert_fields(mapping, &[]),
     }
+}
 
-    normalized
+/// Normalize legacy product names to match built-in product library.
+///
+/// Maps old snake_case names (from config files) to the canonical names
+/// used by `voltage-model` crate's built-in product definitions.
+fn normalize_product_name(name: &str) -> &str {
+    match name {
+        "battery_pack" => {
+            warn!("Legacy product name 'battery_pack' → 'Battery'. Please update instances.yaml");
+            "Battery"
+        },
+        "pcs" => {
+            warn!("Legacy product name 'pcs' → 'PCS'. Please update instances.yaml");
+            "PCS"
+        },
+        "diesel_generator" => {
+            warn!(
+                "Legacy product name 'diesel_generator' → 'Diesel'. Please update instances.yaml"
+            );
+            "Diesel"
+        },
+        "pv_inverter" => {
+            warn!("Legacy product name 'pv_inverter' → 'PVInverter'. Please update instances.yaml");
+            "PVInverter"
+        },
+        "pv_dcdc" | "PV_DCDC" => {
+            warn!("Legacy product name '{name}' → 'PV DCDC'. Please update instances.yaml");
+            "PV DCDC"
+        },
+        _ => name,
+    }
 }
 
 /// Error that occurred during sync
@@ -343,7 +356,7 @@ impl ConfigSyncer {
         let yaml_content = std::fs::read_to_string(&global_yaml_path)
             .with_context(|| format!("Failed to read {:?}", global_yaml_path))?;
         let yaml_config: JsonValue =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse global.yaml")?;
+            serde_yml::from_str(&yaml_content).context("Failed to parse global.yaml")?;
 
         // Start transaction
         let db_file = self.db_path.join("voltage.db");
@@ -393,7 +406,7 @@ impl ConfigSyncer {
         let yaml_content = std::fs::read_to_string(&yaml_path)
             .with_context(|| format!("Failed to read {:?}", yaml_path))?;
         let comsrv_config: ComsrvConfig =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse comsrv.yaml")?;
+            serde_yml::from_str(&yaml_content).context("Failed to parse comsrv.yaml")?;
 
         // Convert to JsonValue for database storage (avoiding double parsing)
         let mut yaml_config =
@@ -435,38 +448,28 @@ impl ConfigSyncer {
         // Start transaction
         let mut tx = pool.begin().await?;
 
-        // Clear existing configuration and track actual deleted records
-        // Delete in reverse dependency order to avoid foreign key constraint violations
-        // Delete all four point tables (they contain embedded protocol mappings)
-        let deleted1a = sqlx::query("DELETE FROM telemetry_points")
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let deleted1b = sqlx::query("DELETE FROM signal_points")
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let deleted1c = sqlx::query("DELETE FROM control_points")
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let deleted1d = sqlx::query("DELETE FROM adjustment_points")
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let deleted_points = deleted1a + deleted1b + deleted1c + deleted1d;
-
-        let deleted3 = sqlx::query("DELETE FROM channels") // channels is the parent table
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let deleted4 = sqlx::query("DELETE FROM service_config WHERE service_name = ?")
+        // Clear existing configuration in reverse dependency order
+        // (point tables first, then parent channels table, then config)
+        let mut deleted: u64 = 0;
+        for table in [
+            "telemetry_points",
+            "signal_points",
+            "control_points",
+            "adjustment_points",
+            "channels",
+        ] {
+            deleted += sqlx::query(&format!("DELETE FROM {table}"))
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        }
+        deleted += sqlx::query("DELETE FROM service_config WHERE service_name = ?")
             .bind("comsrv")
             .execute(&mut *tx)
             .await?
             .rows_affected();
 
-        stats.items_deleted = (deleted_points + deleted3 + deleted4) as usize;
+        stats.items_deleted = deleted as usize;
 
         // Insert service configuration
         let config_count = self
@@ -491,12 +494,6 @@ impl ConfigSyncer {
         stats.items_synced += channel_points_count;
 
         debug!("Points: {}", channel_points_count);
-
-        // Note: Channel mappings are now embedded as JSON in the point tables
-        // The insert_channel_mappings function is deprecated but kept for compatibility
-        // It now returns 0 as mappings are handled in insert_channel_specific_points
-        let mappings_count = 0;
-        stats.items_synced += mappings_count;
 
         // Update sync timestamp
         self.update_sync_timestamp(&mut tx, "comsrv").await?;
@@ -537,9 +534,9 @@ impl ConfigSyncer {
         let yaml_content = std::fs::read_to_string(&yaml_path)
             .with_context(|| format!("Failed to read {:?}", yaml_path))?;
         let _modsrv_config: ModsrvConfig =
-            serde_yaml::from_str(&yaml_content).context("Failed to parse modsrv.yaml")?;
+            serde_yml::from_str(&yaml_content).context("Failed to parse modsrv.yaml")?;
 
-        let yaml_config = serde_yaml::from_str::<JsonValue>(&yaml_content)
+        let yaml_config = serde_yml::from_str::<JsonValue>(&yaml_content)
             .context("Failed to parse modsrv.yaml as JSON")?;
 
         // Initialize schema if needed (creates database file if not exists)
@@ -586,8 +583,31 @@ impl ConfigSyncer {
 
         debug!("Config: {}", config_count);
 
-        // Note: Products are now compile-time built-in constants (voltage-model crate).
-        // No need to sync from CSV files. Products are embedded in the binary.
+        // Validate external product JSON files if directory exists
+        let products_dir = config_dir.join("products");
+        if products_dir.is_dir() {
+            let product_errors = voltage_model::product_lib::validate_product_dir(&products_dir);
+            for (filename, error) in &product_errors {
+                stats.errors.push(SyncError {
+                    item: format!("products/{}", filename),
+                    error: error.clone(),
+                });
+            }
+            if product_errors.is_empty() {
+                // Try loading to verify override semantics
+                match voltage_model::product_lib::ProductLibrary::load(Some(&products_dir)) {
+                    Ok(lib) => {
+                        info!("Products: {} (with external overrides)", lib.len());
+                    },
+                    Err(e) => {
+                        stats.errors.push(SyncError {
+                            item: "products/".to_string(),
+                            error: format!("Failed to load product library: {}", e),
+                        });
+                    },
+                }
+            }
+        }
 
         // Load and sync instances
         let instances_path = config_dir.join("instances.yaml");
@@ -923,7 +943,7 @@ impl ConfigSyncer {
         let mut count = 0;
 
         let yaml_content = std::fs::read_to_string(instances_path)?;
-        let instances_data: JsonValue = serde_yaml::from_str(&yaml_content)?;
+        let instances_data: JsonValue = serde_yml::from_str(&yaml_content)?;
 
         // Support both array format (recommended) and legacy object format
         if let Some(instances_array) = instances_data.get("instances").and_then(|v| v.as_array()) {
@@ -971,71 +991,23 @@ impl ConfigSyncer {
                     continue;
                 }
 
-                // Load properties from instance directory CSV
-                let instance_dir = config_dir.join("instances").join(instance_name);
-                eprintln!(
-                    "[sync] Instance: {}, dir: {:?}, exists: {}",
-                    instance_name,
-                    instance_dir,
-                    instance_dir.exists()
-                );
-                debug!(
-                    "Instance: {}, dir exists: {}",
-                    instance_name,
-                    instance_dir.exists()
-                );
-                let properties = if instance_dir.exists() {
-                    eprintln!(
-                        "[sync] Calling load_instance_properties for {}",
-                        instance_name
-                    );
-                    self.load_instance_properties(&instance_dir)
-                        .unwrap_or_else(|e| {
-                            eprintln!(
-                                "[sync] Failed to load properties for {}: {}",
-                                instance_name, e
-                            );
-                            debug!("Failed to load properties for {}: {}", instance_name, e);
-                            "{}".to_string()
-                        })
-                } else {
-                    eprintln!(
-                        "[sync] Instance directory does not exist: {:?}",
-                        instance_dir
-                    );
-                    debug!("Instance directory does not exist: {:?}", instance_dir);
-                    "{}".to_string()
-                };
+                // Parse optional parent_id for topology hierarchy
+                let parent_id = instance_data
+                    .get("parent_id")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
 
-                if let Err(e) = sqlx::query(
-                    "INSERT INTO instances (instance_id, instance_name, product_name, properties) VALUES (?, ?, ?, ?)",
-                )
-                .bind(instance_id)
-                .bind(instance_name)
-                .bind(product_name)
-                .bind(&properties)
-                .execute(&mut **tx)
-                .await
-                {
-                    errors.push(SyncError {
-                        item: format!("Instance: {}", instance_name),
-                        error: e.to_string(),
-
-                    });
-                    continue; // Skip to next instance
-                }
-
-                count += 1;
-
-                // Load instance mappings
-                if instance_dir.exists() {
-                    let mappings_csv = instance_dir.join("channel_routing.csv");
-                    if mappings_csv.exists() {
-                        count += self
-                            .insert_instance_mappings(tx, instance_name, &mappings_csv, errors)
-                            .await?;
-                    }
-                }
+                count += self
+                    .process_single_instance(
+                        tx,
+                        instance_id,
+                        instance_name,
+                        product_name,
+                        parent_id,
+                        config_dir,
+                        errors,
+                    )
+                    .await?;
             }
         } else if let Some(instances) = instances_data.get("instances").and_then(|v| v.as_object())
         {
@@ -1049,71 +1021,83 @@ impl ConfigSyncer {
                 // Generate a new instance_id for legacy format
                 let instance_id = self.get_next_instance_id(tx).await?;
 
-                // Load properties from instance directory CSV
-                let instance_dir = config_dir.join("instances").join(instance_name);
-                eprintln!(
-                    "[sync] Instance: {}, dir: {:?}, exists: {}",
-                    instance_name,
-                    instance_dir,
-                    instance_dir.exists()
-                );
-                debug!(
-                    "Instance: {}, dir exists: {}",
-                    instance_name,
-                    instance_dir.exists()
-                );
-                let properties = if instance_dir.exists() {
-                    eprintln!(
-                        "[sync] Calling load_instance_properties for {}",
-                        instance_name
-                    );
-                    self.load_instance_properties(&instance_dir)
-                        .unwrap_or_else(|e| {
-                            eprintln!(
-                                "[sync] Failed to load properties for {}: {}",
-                                instance_name, e
-                            );
-                            debug!("Failed to load properties for {}: {}", instance_name, e);
-                            "{}".to_string()
-                        })
-                } else {
-                    eprintln!(
-                        "[sync] Instance directory does not exist: {:?}",
-                        instance_dir
-                    );
-                    debug!("Instance directory does not exist: {:?}", instance_dir);
+                count += self
+                    .process_single_instance(
+                        tx,
+                        instance_id,
+                        instance_name,
+                        product_name,
+                        None,
+                        config_dir,
+                        errors,
+                    )
+                    .await?;
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Process a single instance: load properties, insert into DB, load mappings
+    async fn process_single_instance(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        instance_id: u32,
+        instance_name: &str,
+        product_name: &str,
+        parent_id: Option<u32>,
+        config_dir: &Path,
+        errors: &mut Vec<SyncError>,
+    ) -> Result<usize> {
+        let mut count = 0;
+
+        // Load properties from instance directory CSV
+        let instance_dir = config_dir.join("instances").join(instance_name);
+        debug!(
+            "Instance: {}, dir exists: {}",
+            instance_name,
+            instance_dir.exists()
+        );
+        let properties = if instance_dir.exists() {
+            self.load_instance_properties(&instance_dir)
+                .unwrap_or_else(|e| {
+                    debug!("Failed to load properties for {}: {}", instance_name, e);
                     "{}".to_string()
-                };
+                })
+        } else {
+            debug!("Instance directory does not exist: {:?}", instance_dir);
+            "{}".to_string()
+        };
 
-                if let Err(e) = sqlx::query(
-                    "INSERT INTO instances (instance_id, instance_name, product_name, properties) VALUES (?, ?, ?, ?)",
-                )
-                .bind(instance_id)
-                .bind(instance_name)
-                .bind(product_name)
-                .bind(&properties)
-                .execute(&mut **tx)
-                .await
-                {
-                    errors.push(SyncError {
-                        item: format!("Instance: {}", instance_name),
-                        error: e.to_string(),
+        let normalized_product = normalize_product_name(product_name);
 
-                    });
-                    continue; // Skip to next instance
-                }
+        if let Err(e) = sqlx::query(
+            "INSERT INTO instances (instance_id, instance_name, product_name, parent_id, properties) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(instance_id)
+        .bind(instance_name)
+        .bind(normalized_product)
+        .bind(parent_id.map(|id| id as i64))
+        .bind(&properties)
+        .execute(&mut **tx)
+        .await
+        {
+            errors.push(SyncError {
+                item: format!("Instance: {}", instance_name),
+                error: e.to_string(),
+            });
+            return Ok(0);
+        }
 
-                count += 1;
+        count += 1;
 
-                // Load instance mappings
-                if instance_dir.exists() {
-                    let mappings_csv = instance_dir.join("channel_routing.csv");
-                    if mappings_csv.exists() {
-                        count += self
-                            .insert_instance_mappings(tx, instance_name, &mappings_csv, errors)
-                            .await?;
-                    }
-                }
+        // Load instance mappings
+        if instance_dir.exists() {
+            let mappings_csv = instance_dir.join("channel_routing.csv");
+            if mappings_csv.exists() {
+                count += self
+                    .insert_instance_mappings(tx, instance_name, &mappings_csv, errors)
+                    .await?;
             }
         }
 
@@ -1178,26 +1162,26 @@ impl ConfigSyncer {
 
         let mut success_count = 0;
         for mapping in mappings.iter() {
-            // Parse and validate channel_id (required, must be > 0)
-            let channel_id = match mapping
-                .get("channel_id")
-                .and_then(|v| v.parse::<i32>().ok())
-            {
-                Some(id) if id > 0 => id,
-                _ => {
-                    errors.push(SyncError {
-                        item: format!("Routing for {}", instance_name),
-                        error: format!(
-                            "Invalid or missing channel_id: {:?}",
-                            mapping.get("channel_id")
-                        ),
-                    });
-                    continue;
-                },
+            // Parse required positive integer fields
+            let parse_id = |field: &str| -> Option<i32> {
+                mapping
+                    .get(field)
+                    .and_then(|v| v.parse::<i32>().ok())
+                    .filter(|&id| id > 0)
             };
-            let channel_type = mapping.get("channel_type").cloned().unwrap_or_default();
 
-            // Validate channel_type before inserting
+            let Some(channel_id) = parse_id("channel_id") else {
+                errors.push(SyncError {
+                    item: format!("Routing for {}", instance_name),
+                    error: format!(
+                        "Invalid or missing channel_id: {:?}",
+                        mapping.get("channel_id")
+                    ),
+                });
+                continue;
+            };
+
+            let channel_type = mapping.get("channel_type").cloned().unwrap_or_default();
             if !["T", "S", "C", "A"].contains(&channel_type.as_str()) {
                 errors.push(SyncError {
                     item: format!(
@@ -1212,106 +1196,68 @@ impl ConfigSyncer {
                 continue;
             }
 
-            // Parse and validate channel_point_id (required, must be > 0)
-            let channel_point_id = match mapping
-                .get("channel_point_id")
-                .and_then(|v| v.parse::<i32>().ok())
-            {
-                Some(id) if id > 0 => id,
-                _ => {
-                    errors.push(SyncError {
-                        item: format!(
-                            "Routing {}:{} for {}",
-                            channel_id, channel_type, instance_name
-                        ),
-                        error: format!(
-                            "Invalid or missing channel_point_id: {:?}",
-                            mapping.get("channel_point_id")
-                        ),
-                    });
-                    continue;
-                },
-            };
-            let instance_type = mapping.get("instance_type").cloned().unwrap_or_default();
-            // Parse and validate instance_point_id (required, must be > 0)
-            let instance_point_id = match mapping
-                .get("instance_point_id")
-                .and_then(|v| v.parse::<i32>().ok())
-            {
-                Some(id) if id > 0 => id,
-                _ => {
-                    errors.push(SyncError {
-                        item: format!(
-                            "Routing {}:{} for {}",
-                            channel_id, channel_type, instance_name
-                        ),
-                        error: format!(
-                            "Invalid or missing instance_point_id: {:?}",
-                            mapping.get("instance_point_id")
-                        ),
-                    });
-                    continue;
-                },
+            let route_ctx = format!("{}:{} for {}", channel_id, channel_type, instance_name);
+
+            let Some(channel_point_id) = parse_id("channel_point_id") else {
+                errors.push(SyncError {
+                    item: format!("Routing {}", route_ctx),
+                    error: format!(
+                        "Invalid or missing channel_point_id: {:?}",
+                        mapping.get("channel_point_id")
+                    ),
+                });
+                continue;
             };
 
-            // Insert into appropriate routing table based on instance_type
-            // M (Measurement) points go to measurement_routing (from T/S channels)
-            // A (Action) points go to action_routing (to C/A channels)
-            let insert_result = if instance_type == "M" {
-                // Measurement routing: T/S → M
-                sqlx::query(
-                    "INSERT INTO measurement_routing (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id)
-                    VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?)"
-                )
-                .bind(instance_name)
-                .bind(instance_name)
-                .bind(channel_id)
-                .bind(&channel_type)
-                .bind(channel_point_id)
-                .bind(instance_point_id)
-                .execute(&mut **tx)
-                .await
-            } else if instance_type == "A" {
-                // Action routing: A → C/A
-                sqlx::query(
-                    "INSERT INTO action_routing (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id)
-                    VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?)"
-                )
-                .bind(instance_name)
-                .bind(instance_name)
-                .bind(instance_point_id)
-                .bind(channel_id)
-                .bind(&channel_type)
-                .bind(channel_point_id)
-                .execute(&mut **tx)
-                .await
-            } else {
-                Err(sqlx::Error::Configuration(
-                    format!(
-                        "Invalid instance_type: {}. Must be 'M' or 'A'",
-                        instance_type
+            let instance_type = mapping.get("instance_type").cloned().unwrap_or_default();
+
+            let Some(instance_point_id) = parse_id("instance_point_id") else {
+                errors.push(SyncError {
+                    item: format!("Routing {}", route_ctx),
+                    error: format!(
+                        "Invalid or missing instance_point_id: {:?}",
+                        mapping.get("instance_point_id")
+                    ),
+                });
+                continue;
+            };
+
+            // M (Measurement) → measurement_routing, A (Action) → action_routing
+            let insert_result = match instance_type.as_str() {
+                "M" => {
+                    sqlx::query(
+                        "INSERT INTO measurement_routing (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id)
+                        VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?)"
                     )
-                    .into(),
-                ))
+                    .bind(instance_name).bind(instance_name)
+                    .bind(channel_id).bind(&channel_type).bind(channel_point_id).bind(instance_point_id)
+                    .execute(&mut **tx).await
+                },
+                "A" => {
+                    sqlx::query(
+                        "INSERT INTO action_routing (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id)
+                        VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?)"
+                    )
+                    .bind(instance_name).bind(instance_name)
+                    .bind(instance_point_id).bind(channel_id).bind(&channel_type).bind(channel_point_id)
+                    .execute(&mut **tx).await
+                },
+                _ => Err(sqlx::Error::Configuration(
+                    format!("Invalid instance_type: {}. Must be 'M' or 'A'", instance_type).into(),
+                )),
             };
 
             if let Err(e) = insert_result {
+                let kind = if instance_type == "M" {
+                    "Measurement"
+                } else {
+                    "Action"
+                };
                 errors.push(SyncError {
-                    item: format!(
-                        "{} routing {}:{}:{} for {}",
-                        if instance_type == "M" {
-                            "Measurement"
-                        } else {
-                            "Action"
-                        },
-                        channel_id,
-                        channel_type,
-                        channel_point_id,
-                        instance_name
-                    ),
+                    item: format!("{} routing {}:{}", kind, route_ctx, channel_point_id),
                     error: e.to_string(),
                 });
-                continue; // Skip to next mapping
+                continue;
             }
 
             success_count += 1;
@@ -1342,7 +1288,7 @@ impl ConfigSyncer {
                 },
                 Some("yaml") | Some("yml") => {
                     let yaml_content = std::fs::read_to_string(&path)?;
-                    serde_yaml::from_str(&yaml_content)?
+                    serde_yml::from_str(&yaml_content)?
                 },
                 _ => continue, // Skip non-JSON/YAML files
             };

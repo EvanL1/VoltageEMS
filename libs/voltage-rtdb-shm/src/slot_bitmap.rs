@@ -91,8 +91,11 @@ impl<'a> SlotBitmapView<'a> {
     /// - Memory must remain valid for lifetime 'a
     /// - Caller must ensure exclusive access during mutation
     pub unsafe fn from_raw(header_ptr: *const SlotBitmapHeader, bitmap_ptr: *mut u64) -> Self {
+        // SAFETY: Caller guarantees header_ptr is valid, aligned, and lives for 'a.
         let header = &*header_ptr;
         let word_count = (header.total_slots as usize).div_ceil(64);
+        // SAFETY: Caller guarantees bitmap_ptr points to at least word_count u64 values
+        // and the memory remains valid and exclusively accessible for lifetime 'a.
         let bitmap = std::slice::from_raw_parts_mut(bitmap_ptr, word_count);
         Self { header, bitmap }
     }

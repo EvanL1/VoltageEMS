@@ -14,6 +14,7 @@
 //!         └─────────────────────────────────────────┘
 //! ```
 
+use crate::shared_config::DEFAULT_SNAPSHOT_INTERVAL_SECS;
 use crate::unified_shm::UnifiedWriter;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -44,7 +45,7 @@ impl SnapshotConfig {
     pub fn with_default_interval(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            interval: Duration::from_secs(300),
+            interval: Duration::from_secs(DEFAULT_SNAPSHOT_INTERVAL_SECS),
         }
     }
 
@@ -60,7 +61,7 @@ impl SnapshotConfig {
         let interval_secs = std::env::var("SHM_SNAPSHOT_INTERVAL")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(300u64);
+            .unwrap_or(DEFAULT_SNAPSHOT_INTERVAL_SECS);
 
         Self {
             path: PathBuf::from(path),
@@ -73,7 +74,7 @@ impl Default for SnapshotConfig {
     fn default() -> Self {
         Self {
             path: PathBuf::from("data/shm-snapshot.bin"),
-            interval: Duration::from_secs(300), // 5 minutes
+            interval: Duration::from_secs(DEFAULT_SNAPSHOT_INTERVAL_SECS),
         }
     }
 }

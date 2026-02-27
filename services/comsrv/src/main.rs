@@ -37,10 +37,8 @@ use comsrv::{
     shutdown_services, wait_for_shutdown,
 };
 use voltage_routing::load_routing_maps;
-use voltage_rtdb::{
-    is_shm_available, snapshot_exists, ChannelToSlotIndex, SharedConfig, SnapshotConfig,
-    SnapshotManager, UnifiedWriter,
-};
+use voltage_rtdb_shm::{is_shm_available, snapshot_exists, SnapshotConfig, SnapshotManager};
+use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, UnifiedWriter};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -123,6 +121,17 @@ async fn main() -> VoltageResult<()> {
         },
     }
 
+    // Clear channel online status from previous run (crash recovery)
+    {
+        use voltage_rtdb::Rtdb;
+        let online_key = voltage_model::KeySpaceConfig::production_cached().channel_online_key();
+        if let Err(e) = redis_rtdb.del(&online_key).await {
+            warn!("Failed to clear channel online hash: {}", e);
+        } else {
+            debug!("Cleared channel online status hash (fresh start)");
+        }
+    }
+
     // ============ Phase 2: Load routing configuration from unified database ============
     info!("Loading routing cache from unified database...");
     let routing_cache = {
@@ -133,7 +142,7 @@ async fn main() -> VoltageResult<()> {
 
         info!("Loaded routing cache: {} total routes", maps.total_routes());
 
-        Arc::new(voltage_rtdb::RoutingCache::from_maps(
+        Arc::new(voltage_routing::RoutingCache::from_maps(
             maps.c2m, maps.m2c, maps.c2c,
         ))
     };
@@ -152,10 +161,10 @@ async fn main() -> VoltageResult<()> {
 
             // Helper to load usize value from service_config
             async fn load_usize(pool: &sqlx::SqlitePool, key: &str) -> Option<usize> {
-                sqlx::query_scalar::<_, String>(&format!(
-                    "SELECT value FROM service_config WHERE service_name = 'global' AND key = '{}'",
-                    key
-                ))
+                sqlx::query_scalar::<_, String>(
+                    "SELECT value FROM service_config WHERE service_name = 'global' AND key = ?",
+                )
+                .bind(key)
                 .fetch_optional(pool)
                 .await
                 .ok()
@@ -285,12 +294,14 @@ async fn main() -> VoltageResult<()> {
 
     // Use concrete type (native AFIT requires static dispatch)
     let rtdb: Arc<voltage_rtdb::RedisRtdb> = Arc::new(redis_rtdb);
+    // Keep a reference for shutdown cleanup (clear online status hash)
+    let rtdb_for_shutdown = Arc::clone(&rtdb);
 
     // Create UnifiedReader for SHM command listener (reads from same SHM file)
     // This allows event-driven M2C dispatch with ~1-2ms latency
     let (shm_listener_shutdown_tx, shm_listener_shutdown_rx) = tokio::sync::watch::channel(false);
     let unified_reader = if shared_writer.is_some() {
-        match voltage_rtdb::UnifiedReader::open(&SharedConfig::default(), &routing_cache) {
+        match voltage_rtdb_shm::UnifiedReader::open(&SharedConfig::default(), &routing_cache) {
             Ok(reader) => {
                 info!("UnifiedReader opened for event-driven M2C dispatch");
                 Some(Arc::new(reader))
@@ -337,7 +348,12 @@ async fn main() -> VoltageResult<()> {
 
     info!("Starting {} service", app_config.service.name);
     if app_config.redis.enabled {
-        info!("Redis storage enabled at: {}", app_config.redis.url);
+        // Strip credentials from Redis URL before logging to avoid leaking secrets
+        let safe_url = app_config.redis.url.find('@').map_or_else(
+            || app_config.redis.url.as_str(),
+            |pos| &app_config.redis.url[pos..],
+        );
+        info!("Redis storage enabled at: redis://*{}", safe_url);
     }
 
     // Start communication channels
@@ -430,6 +446,17 @@ async fn main() -> VoltageResult<()> {
         warning_handle,
     )
     .await;
+
+    // Clear channel online status hash (all channels offline after shutdown)
+    {
+        use voltage_rtdb::Rtdb;
+        let online_key = voltage_model::KeySpaceConfig::production_cached().channel_online_key();
+        if let Err(e) = rtdb_for_shutdown.del(&online_key).await {
+            warn!("Failed to clear channel online hash on shutdown: {}", e);
+        } else {
+            info!("Cleared channel online status (service stopped)");
+        }
+    }
 
     // Wait for SHM listener task to complete (if it was started)
     if let Some(handle) = shm_listener_handle {
