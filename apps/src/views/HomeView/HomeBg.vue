@@ -166,12 +166,12 @@
             <div class="no-rem__card-title">PV</div>
             <div class="no-rem__card-content">
               <div class="no-rem__card-content-item">
-                <div class="no-rem__name">P:</div>
-                <div class="no-rem__value">{{ pv.P }}</div>
-                <div class="no-rem__unit">kw</div>
+              
+                <span class="no-rem__name">{{ props.data.pv.P?.name }}:</span>
+                <span class="no-rem__value">{{ props.data.pv.P?.value }}</span>
+                <span class="no-rem__unit">{{ props.data.pv.P?.unit }}</span>
               </div>
             </div>
-            <!-- <div class="no-rem__card-alarm"></div> -->
           </div>
         </foreignObject>
 
@@ -198,19 +198,16 @@
           stroke="url(#paint6_linear_1172_2531)"
         />
         <foreignObject x="91" y="284" width="160" height="120">
-          <foreignObject x="1322" y="237" width="160" height="100">
-            <div class="no-rem__card">
-              <div class="no-rem__card-title">Load</div>
-              <div class="no-rem__card-content">
-                <div class="no-rem__card-content-item">
-                  <span class="no-rem__name">P:</span>
-                  <span class="no-rem__value">{{ load.P }}</span>
-                  <span class="no-rem__unit">kw</span>
-                </div>
+          <div class="no-rem__card">
+            <div class="no-rem__card-title">Load</div>
+            <div class="no-rem__card-content">
+              <div class="no-rem__card-content-item">
+                <span class="no-rem__name">{{ props.data.load.P?.name }}:</span>
+                <span class="no-rem__value">{{ props.data.load.P?.value }}</span>
+                <span class="no-rem__unit">{{ props.data.load.P?.unit }}</span>
               </div>
             </div>
-            >
-          </foreignObject>
+          </div>
         </foreignObject>
         <!-- <circle cx="234" cy="309" r="15" fill="#DA2D2C" />
         <path
@@ -244,14 +241,14 @@
             <div class="no-rem__card-title">Diesel</div>
             <div class="no-rem__card-content">
               <div class="no-rem__card-content-item">
-                <span class="no-rem__name">P:</span>
-                <span class="no-rem__value">{{ diesel.p }}</span>
-                <span class="no-rem__unit">kw</span>
+                <span class="no-rem__name">{{ props.data.diesel.p?.name }}:</span>
+                <span class="no-rem__value">{{ props.data.diesel.p?.value }}</span>
+                <span class="no-rem__unit">{{ props.data.diesel.p?.unit }}</span>
               </div>
               <div class="no-rem__card-content-item">
-                <span class="no-rem__name">Oil:</span>
-                <span class="no-rem__value">{{ diesel.oil }}</span>
-                <span class="no-rem__unit">%</span>
+                <span class="no-rem__name">{{ props.data.diesel.oil?.name }}:</span>
+                <span class="no-rem__value">{{ props.data.diesel.oil?.value }}</span>
+                <span class="no-rem__unit">{{ props.data.diesel.oil?.unit }}</span>
               </div>
             </div>
           </div>
@@ -284,17 +281,16 @@
             <div class="no-rem__card-title">ESS</div>
             <div class="no-rem__card-content">
               <div class="no-rem__card-content-item">
-                <span class="no-rem__name">P:</span>
-                <span class="no-rem__value">{{ ess.p }}</span>
-                <span class="no-rem__unit">kw</span>
+                <span class="no-rem__name">{{ props.data.ess.p?.name }}:</span>
+                <span class="no-rem__value">{{ props.data.ess.p?.value }}</span>
+                <span class="no-rem__unit">{{ props.data.ess.p?.unit }}</span>
               </div>
               <div class="no-rem__card-content-item">
-                <span class="no-rem__name">SOC:</span>
-                <span class="no-rem__value">{{ ess.soc }}</span>
-                <span class="no-rem__unit">%</span>
+                <span class="no-rem__name">{{ props.data.ess.soc?.name }}:</span>
+                <span class="no-rem__value">{{ props.data.ess.soc?.value }}</span>
+                <span class="no-rem__unit">{{ props.data.ess.soc?.unit }}</span>
               </div>
             </div>
-            <!-- <div class="no-rem__card-alarm"></div> -->
           </div>
         </foreignObject>
         <circle
@@ -693,28 +689,24 @@
       </defs>
     </svg>
   </div>
+
 </template>
 <script setup lang="ts">
 import jiantou from '@/assets/images/jiantou.png'
+interface TopologyPoint {
+  id?: number
+  name?: string
+  value?: unknown
+  unit?: string
+}
 const props = defineProps<{
   data: {
-    pv: {
-      P: number
-    }
-    ess: {
-      p: number
-      soc: number
-    }
-    load: {
-      P: number
-    }
-    diesel: {
-      p: number
-      oil: number
-    }
+    pv: { P?: TopologyPoint }
+    load: { P?: TopologyPoint }
+    diesel: { p?: TopologyPoint; oil?: TopologyPoint }
+    ess: { p?: TopologyPoint; soc?: TopologyPoint }
   }
 }>()
-const { pv, ess, load, diesel } = toRefs(props.data)
 </script>
 <style lang="scss" scoped>
 .energy-bg {

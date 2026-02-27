@@ -109,7 +109,18 @@ class WebSocketManager {
         data: {
           source: 'rule',
           channels: config.channels!,
-          interval: config.interval,
+          interval: config.interval!,
+        },
+      }
+    } else if (config.source === 'homepage') {
+      // homepage 类型订阅
+      subscribeMessage = {
+        id: messageId,
+        type: 'subscribe',
+        timestamp: '',
+        data: {
+          source: 'homepage',
+          interval: config.interval ?? 1000,
         },
       }
     } else {
@@ -121,7 +132,7 @@ class WebSocketManager {
         data: {
           channels: config.channels!,
           data_types: config.dataTypes!,
-          interval: config.interval,
+          interval: config.interval!,
           source: config.source,
         },
       }
@@ -142,6 +153,16 @@ class WebSocketManager {
         data: {
           source: 'rule',
           channels: config.channels!,
+        },
+      }
+    } else if (config.source === 'homepage') {
+      // homepage 类型取消订阅
+      unsubscribeMessage = {
+        id: messageId,
+        type: 'unsubscribe',
+        timestamp: '',
+        data: {
+          source: 'homepage',
         },
       }
     } else {
@@ -216,7 +237,15 @@ class WebSocketManager {
     }
     // 检查是否已存在相同的订阅
     for (const [subId, record] of this.subscriptions) {
-      if (
+      if (normalizedConfig.source === 'homepage') {
+        if (
+          record.config.source === 'homepage' &&
+          record.config.interval === normalizedConfig.interval
+        ) {
+          record.listeners = { ...record.listeners, ...listeners }
+          return record.id
+        }
+      } else if (
         record.config.source === normalizedConfig.source &&
         record.config.interval === normalizedConfig.interval &&
         JSON.stringify([...(record.config.channels || [])].sort()) ===
@@ -233,7 +262,15 @@ class WebSocketManager {
 
     // 检查待订阅队列中是否已存在
     for (const [messageId, subInfo] of this.pendingSubscriptionsMap) {
-      if (
+      if (normalizedConfig.source === 'homepage') {
+        if (
+          subInfo.config.source === 'homepage' &&
+          subInfo.config.interval === normalizedConfig.interval
+        ) {
+          subInfo.listeners = { ...subInfo.listeners, ...listeners }
+          return subInfo.subscriptionId
+        }
+      } else if (
         subInfo.config.source === normalizedConfig.source &&
         subInfo.config.interval === normalizedConfig.interval &&
         JSON.stringify([...(subInfo.config.channels || [])].sort()) ===
@@ -457,6 +494,9 @@ class WebSocketManager {
       case 'alarm_num':
         this.handleAlarmNum((message as any).data)
         break
+      case 'homepage_batch':
+        this.handleHomepageBatch((message as any).data, (message as any).timestamp)
+        break
       default:
         console.warn('[WebSocket] 未知消息类型:', (message as any).type)
     }
@@ -465,8 +505,12 @@ class WebSocketManager {
   /** 处理单条数据更新 */
   private handleDataUpdate(data: any): void {
     this.subscriptions.forEach((record) => {
-      // 只处理 inst 或 comsrv 类型的订阅
-      if (record.config.source !== 'rule' && record.config.channels?.includes(data.channel_id)) {
+      if (record.config.source === 'homepage') {
+        record.listeners.onDataUpdate?.(data)
+      } else if (
+        record.config.source !== 'rule' &&
+        record.config.channels?.includes(data.channel_id)
+      ) {
         record.listeners.onDataUpdate?.(data)
       }
     })
@@ -475,7 +519,10 @@ class WebSocketManager {
   /** 处理批量数据更新 */
   private handleBatchDataUpdate(data: any, timestamp: string): void {
     this.subscriptions.forEach((record) => {
-      if (record.config.source === 'rule') {
+      if (record.config.source === 'homepage') {
+        // homepage 类型：直接透传数据
+        record.listeners.onBatchDataUpdate?.(data, timestamp)
+      } else if (record.config.source === 'rule') {
         // 处理 rule 类型的数据：检查 rule_id 是否匹配
         if (data.rule_id && record.config.channels?.includes(data.rule_id)) {
           record.listeners.onBatchDataUpdate?.(data, timestamp)
@@ -533,6 +580,15 @@ class WebSocketManager {
     if (!data.result.success) {
       ElMessage.error(`控制命令执行失败: ${data.result.message}`)
     }
+  }
+
+  /** 处理 homepage_batch：首页点位批量推送 */
+  private handleHomepageBatch(data: any, timestamp?: number | string): void {
+    this.subscriptions.forEach((record) => {
+      if (record.config.source === 'homepage') {
+        record.listeners.onBatchDataUpdate?.(data, String(timestamp ?? ''))
+      }
+    })
   }
 
   /** 处理告警数量更新 */

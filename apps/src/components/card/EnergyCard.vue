@@ -25,9 +25,9 @@
 import { computed } from 'vue'
 
 const props = defineProps<{
-  title: string
+  title?: string
   icon: string
-  value: string
+  value?: unknown
   unit?: string
 }>()
 </script>

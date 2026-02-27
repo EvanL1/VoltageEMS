@@ -3,15 +3,8 @@
     <!-- <EnergyBgCopy></EnergyBgCopy> -->
     <div class="home-left">
       <div class="home-left-top">
-        <EnergyCard
-          class="home-left-top-item"
-          v-for="item in energyDashboardList"
-          :key="item.title"
-          :title="item.title"
-          :icon="item.icon"
-          :value="item.value"
-          :unit="item.unit"
-        />
+        <EnergyCard class="home-left-top-item" v-for="item in energyDashboardList" :key="item.id" :title="item.title"
+          :icon="item.icon" :value="item.value" :unit="item.unit" />
       </div>
       <div class="home-left-middle">
         <!-- <img :src="tuopuSvg" alt="">
@@ -21,20 +14,12 @@
       <div class="home-left-bottom">
         <div class="home-left-LineChart">
           <ModuleCard title="Power Curve">
-            <LineChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="lineChartYAxiosOption"
-              :series="lineChartSeries"
-            />
+            <LineChart :xAxiosOption="xAxiosOption" :yAxiosOption="lineChartYAxiosOption" :series="lineChartSeries" />
           </ModuleCard>
         </div>
         <div class="home-left-EnergyChart">
           <ModuleCard title="Energy Chart">
-            <StackedBarChart
-              :xAxiosOption="xAxiosOption"
-              :yAxiosOption="yAxiosOption"
-              :series="exampleSeries"
-            />
+            <StackedBarChart :xAxiosOption="xAxiosOption" :yAxiosOption="yAxiosOption" :series="exampleSeries" />
           </ModuleCard>
         </div>
       </div>
@@ -43,13 +28,8 @@
       <div class="home-station">
         <ModuleCard title="Station infomation">
           <div class="home-stationList">
-            <div v-for="item in stationInfoList" :key="item.title" class="home-stationItem">
-              <EnergyCard
-                :title="item.title"
-                :icon="item.icon"
-                :value="item.value"
-                :unit="item.unit"
-              />
+            <div v-for="item in stationInfoList" :key="item.id" class="home-stationItem">
+              <EnergyCard :title="item.title" :icon="item.icon" :value="item.value" :unit="item.unit" />
             </div>
           </div>
         </ModuleCard>
@@ -65,25 +45,12 @@
               </div>
             </div> -->
           <div class="home-decice-Carousel">
-            <el-carousel
-              ref="carouselRef"
-              :autoplay="false"
-              arrow="never"
-              indicator-position="none"
-              style="width: 100%; height: 100%"
-            >
-              <el-carousel-item
-                v-for="(item, index) in deviceInfoList"
-                :key="index"
-                style="width: 100%; height: 100%"
-              >
+            <el-carousel ref="carouselRef" :autoplay="false" arrow="never" indicator-position="none"
+              style="width: 100%; height: 100%">
+              <el-carousel-item v-for="(item, index) in deviceInfoList" :key="index" style="width: 100%; height: 100%">
                 <div class="home-decice-Carousel-item">
                   <div class="home-deviceValue">
-                    <div
-                      class="home-deviceValue-item"
-                      v-for="dataItem in item.data"
-                      :key="dataItem.title"
-                    >
+                    <div class="home-deviceValue-item" v-for="dataItem in item.data" :key="dataItem.id">
                       <span class="deviceValue-item-title">{{ dataItem.title }}:</span>
                       <span class="deviceValue-item-value">{{ dataItem.value }}</span>
                       &nbsp;
@@ -127,6 +94,8 @@
 
 <script setup lang="ts">
 import type { EnergyCard } from '@/types/home'
+import { HOMEPAGE_POINT_IDS } from '@/types/home'
+import useWebSocket from '@/composables/useWebSocket'
 
 import ModuleCard from '@/components/card/ModuleCard.vue'
 import StackedBarChart from '@/components/charts/StackedBarChart.vue'
@@ -141,168 +110,184 @@ import arrowRightImg from '@/assets/icons/arrow-right.svg'
 
 import devicePV from '@/assets/icons/device-pv.svg'
 import deviceDiesel from '@/assets/icons/device-diesel.svg'
-import deviceBMS from '@/assets/icons/device-BMS.svg'
-import devicePCS from '@/assets/icons/device-PCS.svg'
 import deviceBattery from '@/assets/images/device-battery.png'
 
-import PVEnergy from '@/assets/icons/PVEnergy.svg'
-import DieselEnergy from '@/assets/icons/DieselEnergy.svg'
-import EnergyUsed from '@/assets/icons/EnergyUsed.svg'
-import SavingBilling from '@/assets/icons/SavingBilling.svg'
-import ESSEnergyIcon from '@/assets/icons/ESSEnergy.svg'
-import tuopuSvg from '@/assets/icons/home-tuopu.svg'
-// import tuopu from '@/assets/icons/tuopu.svg'
-import useWebSocket from '@/composables/useWebSocket'
+import PVEnergy from '@/assets/icons/icon-pv-energy.svg'
+import DieselEnergy from '@/assets/icons/icon-diesel-energy.svg'
+import EnergyUsed from '@/assets/icons/icon-energy-used.svg'
+import SavingBilling from '@/assets/icons/icon-saving-billing.svg'
+import ESSEnergyIcon from '@/assets/icons/icon-ess-energy.svg'
 
 import HomeBg from './HomeBg.vue'
+
+/** imgurl 到图标路径（Energy Card / Station 使用，拓扑图与 Device 无视 imgurl） */
+const ICON_BY_IMGURL: Record<string, string> = {
+  'icon-pv-energy': PVEnergy,
+  'icon-diesel-energy': DieselEnergy,
+  'icon-energy-used': EnergyUsed,
+  'icon-saving-billing': SavingBilling,
+  'icon-ess-energy': ESSEnergyIcon,
+}
+const iconGlob = import.meta.glob<{ default: string }>('@/assets/icons/*.svg', { eager: true })
+for (const [path, mod] of Object.entries(iconGlob)) {
+  const m = path.match(/([^/\\]+)\.svg$/)
+  const url = (mod?.default ?? (mod as any)) as string
+  if (m && typeof url === 'string') ICON_BY_IMGURL[m[1]] = url
+}
+function getIconByImgurl(imgurl?: string): string {
+  if (!imgurl) return PVEnergy
+  return ICON_BY_IMGURL[imgurl] ?? PVEnergy
+}
+
+/** 点位存储：id -> { id, name, value, unit, imgurl }，由 homepage_batch 推送更新 */
+interface PointInfo {
+  id: number
+  name: string
+  value: string | number
+  unit: string
+  imgurl?: string
+}
+const pointStore = reactive<Record<number, PointInfo>>({})
+
+/** 无数据时展示 '-' */
+function displayValue(v: string | number): string | number {
+  return v ?? '-'
+}
+/** Energy Card / Station 点位默认 name/unit（无 WebSocket 数据时的占位） */
+const HOMEPAGE_POINT_DEFAULTS: Record<number, { name: string; unit: string, imgurl?: string }> = {
+  1: { name: 'PV Energy', unit: 'kWh', imgurl: 'icon-pv-energy' },
+  2: { name: 'Diesel Energy', unit: 'kWh', imgurl: 'icon-diesel-energy' },
+  3: { name: 'Energy Used', unit: 'kWh', imgurl: 'icon-energy-used' },
+  4: { name: 'Saving Billing', unit: '$', imgurl: 'icon-saving-billing' },
+  5: { name: 'PV Power', unit: 'kW', imgurl: 'icon-pv-energy' },
+  6: { name: 'Diesel Power', unit: 'kW', imgurl: 'icon-diesel-energy' },
+  7: { name: 'ESS Power', unit: 'kW', imgurl: 'icon-ess-energy' },
+  8: { name: 'P', unit: 'kW' },
+  9: { name: 'U', unit: 'V' },
+  10: { name: 'P', unit: 'kW' },
+  11: { name: 'U', unit: 'V' },
+  12: { name: 'P', unit: 'kW' },
+  13: { name: 'U', unit: 'V' },
+  14: { name: 'P', unit: 'kW' },
+  15: { name: 'P', unit: 'kW' },
+  16: { name: 'P', unit: 'kW' },
+  17: { name: 'Oil', unit: '%' },
+  18: { name: 'P', unit: 'kW' },
+  19: { name: 'SOC', unit: '%' },
+}
+
+/** Energy Card：id 1-4 */
+const energyDashboardList = computed<EnergyCard[]>(() =>
+  HOMEPAGE_POINT_IDS.energyCard.map((id) => {
+    const p = pointStore[id]
+    const def = HOMEPAGE_POINT_DEFAULTS[id]
+    return {
+      id,
+      title: p?.name ?? def?.name,
+      icon: getIconByImgurl(p?.imgurl ?? def?.imgurl),
+      value: displayValue(p?.value),
+      unit: (p?.unit ?? def?.unit),
+    }
+  }),
+)
+
+/** Station information：id 5-7 */
+const stationInfoList = computed<EnergyCard[]>(() =>
+  HOMEPAGE_POINT_IDS.stationInfo.map((id) => {
+    const p = pointStore[id]
+    const def = HOMEPAGE_POINT_DEFAULTS[id]
+    return {
+      id,
+      title: (p?.name ?? def?.name),
+      icon: getIconByImgurl(p?.imgurl ?? def?.imgurl),
+      value: displayValue(p?.value),
+      unit: (p?.unit ?? def?.unit),
+    }
+  }),
+)
+
+// 拓朴图数据
+const tuopuData = computed(() => {
+  const { topology } = HOMEPAGE_POINT_IDS
+  const fmt = (p: PointInfo | undefined, defaultName: string, defaultUnit: string) =>
+    p
+      ? { ...p, name: p.name ?? defaultName, value: displayValue(p.value), unit: p.unit ?? defaultUnit }
+      : { id: undefined, name: defaultName, value: '-' as const, unit: defaultUnit }
+  return {
+    pv: { P: fmt(pointStore[topology.pv.P], HOMEPAGE_POINT_DEFAULTS[14].name ?? '', HOMEPAGE_POINT_DEFAULTS[14].unit ?? '') },
+    load: { P: fmt(pointStore[topology.load.P], HOMEPAGE_POINT_DEFAULTS[15].name ?? '', HOMEPAGE_POINT_DEFAULTS[15].unit ?? 'kW') },
+    diesel: {
+      p: fmt(pointStore[topology.diesel.p], HOMEPAGE_POINT_DEFAULTS[16].name ?? '', HOMEPAGE_POINT_DEFAULTS[16].unit ?? ''),
+      oil: fmt(pointStore[topology.diesel.oil], HOMEPAGE_POINT_DEFAULTS[17].name ?? '', HOMEPAGE_POINT_DEFAULTS[17].unit ?? '%'),
+    },
+    ess: {
+      p: fmt(pointStore[topology.ess.p], HOMEPAGE_POINT_DEFAULTS[18].name ?? '', HOMEPAGE_POINT_DEFAULTS[18].unit ?? 'kW'),
+      soc: fmt(pointStore[topology.ess.soc], HOMEPAGE_POINT_DEFAULTS[19].name ?? '', HOMEPAGE_POINT_DEFAULTS[19].unit ?? '%'),
+    },
+  }
+})
+
+/** Device information：PV/Diesel/ESS 轮播（拓扑图与 Device 无视 imgurl，使用固定图标） */
+interface DevicePointItem {
+  id: number
+  title: string
+  value: string | number
+  unit: string
+}
+interface DeviceSlide {
+  data: DevicePointItem[]
+  icon: string
+  name: string
+}
+const deviceIcons = [devicePV, deviceDiesel, deviceBattery]
+const deviceNames = ['PV', 'Diesel Generator', 'ESS']
+const deviceInfoList = computed<DeviceSlide[]>(() =>
+  HOMEPAGE_POINT_IDS.deviceInfo.map((ids, idx) => ({
+    data: ids.map((pointId) => {
+      const p = pointStore[pointId]
+      const def = HOMEPAGE_POINT_DEFAULTS[pointId]
+      return {
+        id: pointId,
+        title: (p?.name ?? def?.name),
+        value: displayValue(p?.value),
+        unit: (p?.unit ?? def?.unit),
+      }
+    }),
+    icon: deviceIcons[idx],
+    name: deviceNames[idx],
+  })),
+)
+
+/** 应用 homepage_batch 推送数据*/
+function applyHomepageBatch(data: {
+  updates?: Array<{ id: number; name: string; value?: number; unit: string; imgurl?: string }>
+}) {
+  const updates = data?.updates ?? []
+  for (const u of updates) {
+    pointStore[u.id] = {
+      id: u.id,
+      name: u.name,
+      value: u.value ?? '',
+      unit: u.unit,
+      imgurl: u.imgurl,
+    }
+  }
+}
+
+/** 首页 WebSocket 订阅：进入订阅、离开取消 */
 useWebSocket(
   {
-    channels: [2],
-    dataTypes: ['T'],
-    interval: 100,
-    source: 'comsrv',
+    source: 'homepage',
+    interval: 1000,
   },
   {
     onBatchDataUpdate: (data: any) => {
-      const channel2TData = data.updates.find(
-        (item: any) => item.channel_id === 2 && item.data_type === 'T',
-      )?.values
-      if (channel2TData) {
-        tuopuData.value.ess.p = Number(channel2TData['3'].toFixed(1))
-        tuopuData.value.ess.soc = Number(channel2TData['4'].toFixed(1))
-        deviceInfoList[2].data[0].value = Number(channel2TData['3'].toFixed(1))
-        deviceInfoList[2].data[1].value = Number(channel2TData['1'].toFixed(1))
+      if (data?.updates?.length) {
+        applyHomepageBatch(data)
       }
     },
   },
 )
-const tuopuData = ref({
-  pv: {
-    P: 0,
-  },
-  ess: {
-    p: 0,
-    soc: 0,
-  },
-  load: {
-    P: 0,
-  },
-  diesel: {
-    p: 0,
-    oil: 0,
-  },
-})
-const deviceInfoList = reactive([
-  {
-    data: [
-      {
-        title: 'P',
-        value: 45,
-        unit: 'KW',
-      },
-      {
-        title: 'U',
-        value: 22,
-        unit: 'V',
-      },
-    ],
-    icon: devicePV,
-    name: 'PV',
-  },
-  {
-    data: [
-      {
-        title: 'P',
-        value: 45,
-        unit: 'KW',
-      },
-      {
-        title: 'U',
-        value: 22,
-        unit: 'V',
-      },
-    ],
-    icon: deviceDiesel,
-    name: 'Diesel Generator',
-  },
-  {
-    data: [
-      {
-        title: 'P',
-        value: 0,
-        unit: 'KW',
-      },
-      {
-        title: 'U',
-        value: 0,
-        unit: 'V',
-      },
-    ],
-    icon: deviceBattery,
-    name: 'ESS',
-  },
-  // {
-  //   data: [
-  //     {
-  //       title: 'P',
-  //       value: 45,
-  //       unit: 'KW',
-  //     },
-  //     {
-  //       title: 'U',
-  //       value: 22,
-  //       unit: 'V',
-  //     },
-  //   ],
-  //   icon: devicePCS,
-  //   name: 'ESS',
-  // },
-])
-const energyDashboardList = reactive<EnergyCard[]>([
-  {
-    title: 'PV Energy',
-    icon: PVEnergy,
-    value: '150',
-    unit: 'kWh',
-  },
-  {
-    title: 'Diesel Energy',
-    icon: DieselEnergy,
-    value: '150',
-    unit: 'KWh',
-  },
-  {
-    title: 'Energy Used',
-    icon: EnergyUsed,
-    value: '150',
-    unit: 'kWh',
-  },
-  {
-    title: 'Saving Billing',
-    icon: SavingBilling,
-    value: '$ 40.7',
-  },
-])
-const stationInfoList = reactive<EnergyCard[]>([
-  {
-    title: 'PV',
-    icon: PVEnergy,
-    value: '150',
-    unit: 'kW',
-  },
-  {
-    title: 'Diesel',
-    icon: DieselEnergy,
-    value: '150',
-    unit: 'kW',
-  },
-  {
-    title: 'ESS',
-    icon: ESSEnergyIcon,
-    value: '200',
-    unit: 'KWh',
-  },
-])
 
 const alterInfoList = reactive([
   {

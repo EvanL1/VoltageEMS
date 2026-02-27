@@ -56,6 +56,10 @@ export interface SubscribeMessage extends WebSocketMessage {
         channels: number[] // 规则ID数组
         interval: number // 推送间隔(ms)
       }
+    | {
+        source: 'homepage'
+        interval: number // 推送间隔(ms)
+      }
 }
 
 // 取消订阅
@@ -69,6 +73,9 @@ export interface UnsubscribeMessage extends WebSocketMessage {
     | {
         source: 'rule'
         channels: number[] // 规则ID数组
+      }
+    | {
+        source: 'homepage'
       }
 }
 
@@ -206,6 +213,23 @@ export interface AlarmNumMessage extends WebSocketMessage {
     update_time: string
   }
 }
+
+/** homepage_batch：首页点位批量推送 */
+export interface HomepageBatchMessage extends WebSocketMessage {
+  type: 'homepage_batch'
+  id: string
+  timestamp: number
+  data: {
+    updates: Array<{
+      id: number
+      name: string
+      values: number
+      unit: string
+      imgurl?: string
+    }>
+  }
+}
+
 // 联合类型
 export type ClientMessage = SubscribeMessage | UnsubscribeMessage | ControlMessage | PingMessage
 export type ServerMessage =
@@ -214,20 +238,21 @@ export type ServerMessage =
   | DataBatchMessage
   | AlarmMessage
   | SubscribeAckMessage
-  | UnsubscribeAckMessage // ==================== 新增：取消订阅确认消息类型 ====================
+  | UnsubscribeAckMessage
   | ControlAckMessage
   | ErrorMessage
   | PongMessage
   | AlarmNumMessage
+  | HomepageBatchMessage
 // WebSocket连接状态
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error'
 
 // 订阅配置
 export interface SubscriptionConfig {
-  source: 'inst' | 'comsrv' | 'rule'
+  source: 'inst' | 'comsrv' | 'rule' | 'homepage'
   channels?: number[] // inst/comsrv 类型为频道ID数组，rule 类型为规则ID数组
   dataTypes?: DataType[]
-  interval: number
+  interval?: number // homepage 类型必填，其他可选
 }
 
 // 数据监听器类型
