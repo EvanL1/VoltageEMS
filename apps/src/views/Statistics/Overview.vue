@@ -126,8 +126,8 @@
 </template>
 
 <script setup lang="ts">
-import PVEnergy from '@/assets/icons/PVEnergy.svg'
-import ESS from '@/assets/icons/ESSEnergy.svg'
+import PVEnergy from '@/assets/icons/icon-pv-energy.svg'
+import ESS from '@/assets/icons/icon-ess-energy.svg'
 import DG from '@/assets/icons/DGEnergy.svg'
 import { queryPowerTrend } from '@/api/Statistic/overview'
 import dayjs from 'dayjs'
