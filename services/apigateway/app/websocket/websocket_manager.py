@@ -271,7 +271,7 @@ class WebSocketManager:
             interval = data.get("data", {}).get("interval", 1000)
 
             # 前端完全控制订阅的source/channels/data_types，不做额外验证
-            # 数据源可以是任意字符串（如 inst/comsrv/aaasrv 等）
+            # 数据源可以是任意字符串（如 inst/comsrv/aaasrv/homepage 等）
 
             # 更新订阅信息
             self.connection_manager.subscriptions[client_id] = {
@@ -282,16 +282,40 @@ class WebSocketManager:
             }
 
             # 发送订阅确认
-            ack_message = create_subscribe_ack_message(
-                data.get("id", "sub"),
-                channels,
-                []
-            )
+            if source == "homepage":
+                # 首页订阅确认（不需要channels参数）
+                ack_message = {
+                    "type": "subscribe_ack",
+                    "id": f"{data.get('id', 'sub')}_ack",
+                    "timestamp": int(time.time()),
+                    "data": {
+                        "source": "homepage",
+                        "request_id": data.get("id", "sub"),
+                        "message": "首页数据订阅成功"
+                    }
+                }
+            else:
+                # 普通订阅确认
+                ack_message = create_subscribe_ack_message(
+                    data.get("id", "sub"),
+                    channels,
+                    []
+                )
+            
             await self.send_message(client_id, ack_message)
 
             # 立即推送一次数据
-            await self._push_initial_data_to_client(client_id, source, channels, data_types)
-
+            if source == "homepage":
+                # 首页订阅：先加载缓存，再推送
+                if hasattr(self, 'data_scheduler') and self.data_scheduler:
+                    await self.data_scheduler.load_homepage_cache()
+                    await self.data_scheduler._push_homepage_data_with_calculation(client_id)
+                else:
+                    # 如果 data_scheduler 不可用，使用简单推送
+                    await self._push_homepage_data_to_client(client_id)
+            else:
+                await self._push_initial_data_to_client(client_id, source, channels, data_types)
+            
             # 重置数据调度器的推送时间，避免立即再次推送
             if hasattr(self, 'data_scheduler') and self.data_scheduler:
                 self.data_scheduler.reset_client_push_time(client_id)
@@ -449,6 +473,44 @@ class WebSocketManager:
         except Exception as e:
             logger.error(f"推送规则监控数据失败: {e}")
     
+    async def _push_homepage_data_to_client(self, client_id: str):
+        """推送首页数据到客户端"""
+        try:
+            from app.services.database import get_database
+            
+            # 获取所有计算点位
+            db = get_database()
+            points, total = await db.get_all_calculated_points(offset=0, limit=1000)
+            
+            if not points:
+                logger.info(f"没有首页数据需要推送给客户端 {client_id}")
+                return
+            
+            # 构建首页数据更新消息
+            updates = []
+            for point in points:
+                updates.append({
+                    "id": point["id"],
+                    "name": point["name"],
+                    "value": 0,  # 默认值，实际应该根据formula计算
+                    "unit": point["unit"] or ""
+                })
+            
+            homepage_message = {
+                "type": "homepage_batch",
+                "id": f"homepage_batch_{int(time.time())}",
+                "timestamp": int(time.time()),
+                "data": {
+                    "updates": updates
+                }
+            }
+            
+            await self.send_message(client_id, homepage_message)
+            logger.info(f"已向客户端 {client_id} 推送首页数据，点位数量: {len(updates)}")
+            
+        except Exception as e:
+            logger.error(f"推送首页数据失败: {e}")
+    
     async def _push_initial_data_to_client(self, client_id: str, source: str, channels: List[int], data_types: List[str]):
         """订阅成功后立即推送一次数据"""
         try:
@@ -507,18 +569,43 @@ class WebSocketManager:
     async def _handle_unsubscribe(self, client_id: str, data: Dict[str, Any]):
         """处理取消订阅请求"""
         try:
+            source = data.get("data", {}).get("source", "inst")
             channels = data.get("data", {}).get("channels", [])
             
             # 更新订阅信息
             unsubscribed_channels = []
             if client_id in self.connection_manager.subscriptions:
-                current_channels = self.connection_manager.subscriptions[client_id]["channels"]
-                # 记录实际取消订阅的通道
-                unsubscribed_channels = [ch for ch in channels if ch in current_channels]
-                # 更新订阅列表
-                self.connection_manager.subscriptions[client_id]["channels"] = [
-                    ch for ch in current_channels if ch not in channels
-                ]
+                if source == "homepage":
+                    # 首页取消订阅，清空订阅信息
+                    self.connection_manager.subscriptions[client_id] = {
+                        "source": "inst",
+                        "channels": [],
+                        "data_types": [],
+                        "interval": 1000
+                    }
+                    # 发送首页取消订阅确认
+                    ack_message = {
+                        "type": "unsubscribe_ack",
+                        "id": f"{data.get('id', 'unsub')}_ack",
+                        "timestamp": int(time.time()),
+                        "data": {
+                            "source": "homepage",
+                            "request_id": data.get("id", "unsub"),
+                            "message": "首页数据取消订阅成功"
+                        }
+                    }
+                    await self.send_message(client_id, ack_message)
+                    logger.info(f"客户端 {client_id} 取消订阅了首页数据")
+                    return
+                else:
+                    # 普通取消订阅
+                    current_channels = self.connection_manager.subscriptions[client_id]["channels"]
+                    # 记录实际取消订阅的通道
+                    unsubscribed_channels = [ch for ch in channels if ch in current_channels]
+                    # 更新订阅列表
+                    self.connection_manager.subscriptions[client_id]["channels"] = [
+                        ch for ch in current_channels if ch not in channels
+                    ]
             
             # 发送取消订阅确认
             ack_message = create_unsubscribe_ack_message(
@@ -704,4 +791,51 @@ class WebSocketManager:
                 "message": f"广播失败: {str(e)}",
                 "client_count": 0,
                 "clients": []
+            }
+    
+    async def broadcast_homepage_data(self, homepage_data: List[Dict[str, Any]]):
+        """广播首页数据到订阅了homepage的客户端"""
+        try:
+            # 筛选订阅了homepage的客户端
+            homepage_clients = []
+            for client_id, subscription in self.connection_manager.subscriptions.items():
+                if subscription.get("source") == "homepage":
+                    homepage_clients.append(client_id)
+            
+            if not homepage_clients:
+                logger.debug("没有客户端订阅首页数据，跳过推送")
+                return {
+                    "success": True,
+                    "message": "没有客户端订阅首页数据",
+                    "client_count": 0
+                }
+            
+            # 构建首页数据消息
+            homepage_message = {
+                "type": "homepage_batch",
+                "id": f"homepage_batch_{int(time.time())}",
+                "timestamp": int(time.time()),
+                "data": {
+                    "updates": homepage_data
+                }
+            }
+            
+            # 向订阅的客户端推送
+            for client_id in homepage_clients:
+                await self.send_message(client_id, homepage_message)
+            
+            logger.info(f"首页数据推送成功，接收客户端数量: {len(homepage_clients)}")
+            return {
+                "success": True,
+                "message": f"首页数据已推送到 {len(homepage_clients)} 个客户端",
+                "client_count": len(homepage_clients),
+                "clients": homepage_clients
+            }
+            
+        except Exception as e:
+            logger.error(f"广播首页数据失败: {e}")
+            return {
+                "success": False,
+                "message": f"广播失败: {str(e)}",
+                "client_count": 0
             }

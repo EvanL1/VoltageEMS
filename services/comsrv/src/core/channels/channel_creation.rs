@@ -34,6 +34,9 @@ use crate::core::channels::converters::{
 #[cfg(all(feature = "can", target_os = "linux"))]
 use crate::core::channels::factory::create_can_channel;
 
+#[cfg(feature = "voltage_485")]
+use crate::core::channels::factory::create_voltage_485_channel;
+
 /// Get the base directory for channel log files.
 /// Uses VOLTAGE_LOG_DIR environment variable if set, otherwise falls back to "/app/logs".
 fn get_channel_log_base_dir() -> String {
@@ -183,6 +186,11 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 self.create_can_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
+            #[cfg(feature = "voltage_485")]
+            "voltage_485" => {
+                self.create_voltage_485_channel_impl(channel_id, runtime_config, base_config)
+                    .await
+            },
             _ => {
                 #[allow(unused_mut)]
                 let mut supported = String::from("virtual");
@@ -192,6 +200,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 supported.push_str(", gpio/di_do");
                 #[cfg(all(feature = "can", target_os = "linux"))]
                 supported.push_str(", can");
+                #[cfg(feature = "voltage_485")]
+                supported.push_str(", voltage_485");
 
                 Err(anyhow::anyhow!(
                     "Unsupported protocol '{}' for channel {}. Supported: {}",
@@ -558,6 +568,48 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             store,
             base_config,
             "can".to_string(),
+            poll_interval_ms,
+            log_handler,
+        ))
+    }
+
+    /// Create Voltage-485 channel entry.
+    #[cfg(feature = "voltage_485")]
+    async fn create_voltage_485_channel_impl(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry<R>> {
+        debug!("Ch{} creating Voltage-485 channel", channel_id);
+
+        let store = self.create_data_store();
+        let point_configs = convert_to_point_configs(runtime_config);
+        store.set_point_configs(channel_id, point_configs);
+        store.start_flush_task().await;
+
+        let params = &runtime_config.base.parameters;
+
+        let mut protocol =
+            create_voltage_485_channel(channel_id, runtime_config.name(), params, runtime_config);
+
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
+
+        let poll_interval_ms = params
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000);
+
+        Ok(ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "voltage_485".to_string(),
             poll_interval_ms,
             log_handler,
         ))

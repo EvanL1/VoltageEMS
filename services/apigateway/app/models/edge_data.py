@@ -160,6 +160,37 @@ class RuleDefinition(BaseModel):
     actions: List[Dict[str, Any]]
     cooldown: int
 
+# 计算点位相关模型
+class CalculatedPoint(BaseModel):
+    """计算点位完整模型"""
+    id: int
+    name: str = Field(..., min_length=1, max_length=100, description="点位名称")
+    formula: Optional[str] = Field(None, description="计算公式")
+    unit: Optional[str] = Field(None, max_length=50, description="单位")
+    imgurl: Optional[str] = Field(None, max_length=500, description="图片URL")
+    description: Optional[str] = Field(None, description="描述")
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CalculatedPointCreate(BaseModel):
+    """创建计算点位请求模型"""
+    name: str = Field(..., min_length=1, max_length=100, description="点位名称")
+    formula: Optional[str] = Field(None, description="计算公式")
+    unit: Optional[str] = Field(None, max_length=50, description="单位")
+    imgurl: Optional[str] = Field(None, max_length=500, description="图片URL")
+    description: Optional[str] = Field(None, description="描述")
+
+class CalculatedPointUpdate(BaseModel):
+    """更新计算点位请求模型"""
+    name: Optional[str] = Field(None, min_length=1, max_length=100, description="点位名称")
+    formula: Optional[str] = Field(None, description="计算公式")
+    unit: Optional[str] = Field(None, max_length=50, description="单位")
+    imgurl: Optional[str] = Field(None, max_length=500, description="图片URL")
+    description: Optional[str] = Field(None, description="描述")
+
 # 数据转换函数
 def create_data_update_message(channel_id: int, data_type: str, values: Dict[str, Union[str, float, int]]) -> DataUpdateMessage:
     """创建数据更新消息"""

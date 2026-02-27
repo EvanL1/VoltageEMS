@@ -16,6 +16,7 @@ from app.websocket.websocket_manager import WebSocketManager
 from app.core.config import settings
 from app.models.response import WebSocketMessage
 from app.core.edge_data_client import EdgeDataClient
+from app.utils.formula_calculator import FormulaCalculator
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,13 @@ class DataScheduler:
         self.redis_client = redis_client
         self.websocket_manager = websocket_manager
         self.edge_data_client = EdgeDataClient(redis_client.redis_client)
+        self.formula_calculator = FormulaCalculator(self.edge_data_client)
         self.running = False
         self.scheduler_task = None
+        
+        # 首页数据缓存：缓存点位配置信息（不含实时值）
+        self.homepage_points_cache: List[Dict[str, Any]] = []
+        self.homepage_cache_loaded = False
         
     async def start(self):
         """启动数据调度器"""
@@ -121,6 +127,11 @@ class DataScheduler:
             channels = subscription.get("channels", [])
             data_types = subscription.get("data_types", ["T"])
             
+            # 特殊处理 homepage 数据源
+            if source == "homepage":
+                await self._push_homepage_data_with_calculation(client_id)
+                return
+            
             if not channels:
                 return
             
@@ -177,6 +188,91 @@ class DataScheduler:
         except Exception as e:
             logger.error(f"向客户端 {client_id} 推送数据失败: {e}")
 
+    async def load_homepage_cache(self):
+        """从数据库加载首页点位配置到缓存"""
+        try:
+            from app.services.database import get_database
+            
+            db = get_database()
+            points, total = await db.get_all_calculated_points(offset=0, limit=1000)
+            
+            # 更新缓存
+            self.homepage_points_cache = []
+            for point in points:
+                self.homepage_points_cache.append({
+                    "id": point["id"],
+                    "name": point["name"],
+                    "formula": point["formula"],
+                    "unit": point["unit"] or "",
+                    "imgurl": point["imgurl"] or ""
+                })
+            
+            self.homepage_cache_loaded = True
+            logger.info(f"首页点位缓存已加载，点位数量: {len(self.homepage_points_cache)}")
+            
+        except Exception as e:
+            logger.error(f"加载首页点位缓存失败: {e}")
+            self.homepage_points_cache = []
+            self.homepage_cache_loaded = False
+    
+    async def _push_homepage_data_with_calculation(self, client_id: str):
+        """计算并推送首页数据"""
+        try:
+            # 如果缓存未加载，先加载
+            if not self.homepage_cache_loaded:
+                await self.load_homepage_cache()
+            
+            if not self.homepage_points_cache:
+                logger.debug(f"没有首页点位数据需要推送给客户端 {client_id}")
+                return
+            
+            # 根据缓存的点位配置，计算每个点位的值
+            updates = []
+            for point_config in self.homepage_points_cache:
+                point_id = point_config["id"]
+                name = point_config["name"]
+                formula = point_config["formula"]
+                unit = point_config["unit"]
+                imgurl = point_config["imgurl"]
+                
+                # 计算点位值
+                if formula:
+                    value = await self.formula_calculator.calculate(formula)
+                    if value is None:
+                        value = 0.0
+                else:
+                    value = 0.0
+                
+                updates.append({
+                    "id": point_id,
+                    "name": name,
+                    "value": value,
+                    "unit": unit,
+                    "imgurl": imgurl
+                })
+            
+            # 构建并推送消息
+            homepage_message = {
+                "type": "homepage_batch",
+                "id": f"homepage_batch_{int(time.time())}",
+                "timestamp": int(time.time()),
+                "data": {
+                    "updates": updates
+                }
+            }
+            
+            await self.websocket_manager.send_message(client_id, homepage_message)
+            logger.debug(f"已向客户端 {client_id} 推送首页数据，点位数量: {len(updates)}")
+            
+        except Exception as e:
+            logger.error(f"计算并推送首页数据失败: {e}")
+    
+    def invalidate_homepage_cache(self):
+        """使首页点位缓存失效（用于点位增删改后）"""
+        self.homepage_cache_loaded = False
+        self.homepage_points_cache = []
+        logger.info("首页点位缓存已失效")
+    
     async def _push_rule_data_to_client(self, client_id: str, subscription: dict):
         """推送规则监控数据到客户端
 

@@ -44,6 +44,11 @@ pub fn create_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         return create_dl645_channel(config);
     }
 
+    #[cfg(feature = "voltage_485")]
+    if protocol.eq_ignore_ascii_case("voltage_485") {
+        return create_voltage_485_channel(config);
+    }
+
     #[cfg(feature = "mqtt")]
     if protocol.eq_ignore_ascii_case("mqtt") {
         return create_mqtt_channel(config);
@@ -282,6 +287,28 @@ fn create_http_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>
         channel_config,
         config.id,
         config.name.clone(),
+    );
+
+    Ok(Box::new(channel))
+}
+
+#[cfg(feature = "voltage_485")]
+fn create_voltage_485_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::voltage_485::Voltage485ParamsConfig;
+
+    let params: Voltage485ParamsConfig = serde_json::from_value(config.parameters.clone())
+        .map_err(|e| GatewayError::Config(format!("Invalid Voltage-485 parameters: {}", e)))?;
+
+    let channel_config = params.to_channel_config();
+
+    // Gateway factory path does not have RuntimeChannelConfig, so we create
+    // with an empty poll_targets list. Points will need to be configured
+    // via the main channel_creation path instead.
+    let channel = crate::protocols::adapters::voltage_485::Voltage485Channel::new(
+        channel_config,
+        config.id,
+        config.name.clone(),
+        Vec::new(),
     );
 
     Ok(Box::new(channel))

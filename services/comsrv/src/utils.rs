@@ -140,6 +140,9 @@ pub fn normalize_protocol_name(name: &str) -> Cow<'static, str> {
         // OPC UA variations
         "opcua" | "opc_ua" | "opc ua" => Cow::Borrowed("opcua"),
 
+        // Voltage-485 private protocol
+        "voltage_485" | "voltage485" | "v485" => Cow::Borrowed("voltage_485"),
+
         // Default: return cleaned name with underscores
         _ => Cow::Owned(normalized),
     }

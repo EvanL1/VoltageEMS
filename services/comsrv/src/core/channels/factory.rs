@@ -21,6 +21,11 @@ use crate::protocols::adapters::can::{CanClient, CanConfig, CanPoint};
 #[cfg(all(target_os = "linux", feature = "gpio"))]
 use crate::core::config::RuntimeChannelConfig;
 
+#[cfg(feature = "voltage_485")]
+use crate::protocols::adapters::voltage_485::{
+    PollTarget, Voltage485Channel, Voltage485ChannelConfig, Voltage485PointMapping,
+};
+
 // ============================================================================
 // Virtual Channel Factory
 // ============================================================================
@@ -225,4 +230,98 @@ pub fn create_can_channel(
     client.add_points(points)?;
 
     Ok(Box::new(client))
+}
+
+// ============================================================================
+// Voltage-485 Channel Factory
+// ============================================================================
+
+/// Create a Voltage-485 channel from runtime configuration.
+///
+/// Parses per-point `protocol_mappings` JSON (`{"device_id": N}`) to build
+/// the list of poll targets, then assembles the serial channel.
+#[cfg(feature = "voltage_485")]
+pub fn create_voltage_485_channel(
+    channel_id: u32,
+    channel_name: &str,
+    params: &std::collections::HashMap<String, serde_json::Value>,
+    runtime_config: &crate::core::config::RuntimeChannelConfig,
+) -> Box<dyn ChannelRuntime> {
+    use std::time::Duration;
+    use voltage_model::PointType;
+
+    let device = params
+        .get("device")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/dev/ttyAP0");
+    let baud_rate = params
+        .get("baud_rate")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .unwrap_or(115_200);
+    let timeout_ms = params
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1000);
+    let retry_count = params
+        .get("retry_count")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32)
+        .unwrap_or(2);
+    let frame_delay_ms = params
+        .get("frame_delay_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(50);
+
+    let config = Voltage485ChannelConfig {
+        device: device.to_string(),
+        baud_rate,
+        io_timeout: Duration::from_millis(timeout_ms),
+        retry_count,
+        frame_delay: Duration::from_millis(frame_delay_ms),
+    };
+
+    let mut targets = Vec::new();
+
+    for pt in &runtime_config.telemetry_points {
+        if let Some(json_str) = pt.base.protocol_mappings.as_deref() {
+            match serde_json::from_str::<Voltage485PointMapping>(json_str) {
+                Ok(mapping) => targets.push(PollTarget {
+                    point_id: pt.base.point_id,
+                    point_type: PointType::Telemetry,
+                    device_id: mapping.device_id,
+                    cmd: mapping.cmd,
+                }),
+                Err(e) => tracing::warn!(
+                    "Ch{} point {} invalid voltage_485 mapping: {}",
+                    channel_id, pt.base.point_id, e
+                ),
+            }
+        }
+    }
+
+    for pt in &runtime_config.signal_points {
+        if let Some(json_str) = pt.base.protocol_mappings.as_deref() {
+            match serde_json::from_str::<Voltage485PointMapping>(json_str) {
+                Ok(mapping) => targets.push(PollTarget {
+                    point_id: pt.base.point_id,
+                    point_type: PointType::Signal,
+                    device_id: mapping.device_id,
+                    cmd: mapping.cmd,
+                }),
+                Err(e) => tracing::warn!(
+                    "Ch{} point {} invalid voltage_485 mapping: {}",
+                    channel_id, pt.base.point_id, e
+                ),
+            }
+        }
+    }
+
+    let name = if channel_name.is_empty() {
+        format!("v485_{}", channel_id)
+    } else {
+        format!("v485_{}", channel_id)
+    };
+
+    Box::new(Voltage485Channel::new(config, channel_id, name, targets))
 }
