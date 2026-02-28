@@ -1071,8 +1071,14 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             Ok(v) => v,
             Err(action) => return action,
         };
-        self.write_to_point(instance_id, point, value, pt, &format!("Calc '{}'", calc.output))
-            .await
+        self.write_to_point(
+            instance_id,
+            point,
+            value,
+            pt,
+            &format!("Calc '{}'", calc.output),
+        )
+        .await
     }
 
     /// Write period delta result to instance point (always measurement type)
@@ -1098,8 +1104,14 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             value,
             period
         );
-        self.write_to_point(instance_id, point, value, "M", &format!("PeriodDelta({})", period))
-            .await
+        self.write_to_point(
+            instance_id,
+            point,
+            value,
+            "M",
+            &format!("PeriodDelta({})", period),
+        )
+        .await
     }
 
     /// Write directly to measurement point (no routing)

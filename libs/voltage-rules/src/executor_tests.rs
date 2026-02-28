@@ -13,7 +13,9 @@ fn new_executor() -> (Arc<MemoryRtdb>, RuleExecutor<MemoryRtdb>) {
 }
 
 /// Helper: setup SOC strategy test with given battery value
-async fn setup_soc_test(soc_value: &'static str) -> (Arc<MemoryRtdb>, RuleExecutor<MemoryRtdb>, Rule) {
+async fn setup_soc_test(
+    soc_value: &'static str,
+) -> (Arc<MemoryRtdb>, RuleExecutor<MemoryRtdb>, Rule) {
     let (rtdb, executor) = new_executor();
     // Setup instance name index
     for (name, id) in [("battery_01", "5"), ("pv_01", "6"), ("diesel_gen_01", "7")] {
@@ -377,9 +379,15 @@ fn test_rpn_complex_expression() {
 fn test_rpn_all_operators() {
     // (a + b) - (c * d / e) = (10+5) - (6*4/2) = 15 - 12 = 3
     let formula = vec![
-        json!("a"), json!("b"), json!("+"),
-        json!("c"), json!("d"), json!("*"),
-        json!("e"), json!("/"), json!("-"),
+        json!("a"),
+        json!("b"),
+        json!("+"),
+        json!("c"),
+        json!("d"),
+        json!("*"),
+        json!("e"),
+        json!("/"),
+        json!("-"),
     ];
     let mut values = HashMap::new();
     for (k, v) in [("a", 10.0), ("b", 5.0), ("c", 6.0), ("d", 4.0), ("e", 2.0)] {

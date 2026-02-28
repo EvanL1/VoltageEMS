@@ -16,7 +16,6 @@ mod reload;
 pub use lifecycle::*;
 pub use reload::*;
 
-use helpers::*;
 use crate::api::routes::AppState;
 use crate::core::config::{ChannelCore, ChannelLoggingConfig};
 use crate::dto::{AppError, ParameterChangeType, SuccessResponse};
@@ -24,6 +23,7 @@ use axum::{
     extract::{Path, State},
     response::Json,
 };
+use helpers::*;
 #[allow(unused_imports)] // Used in utoipa examples
 use serde_json::json;
 use std::sync::Arc;
