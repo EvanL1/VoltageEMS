@@ -5,7 +5,7 @@
 #   ARCH: arm64 | amd64 (default: arm64)
 #   TARGET: Rust target triple (default based on ARCH)
 #   --services: Comma-separated list of services to include (optional, default: all)
-#   --with-swagger: Enable Swagger UI in modsrv (for API documentation)
+#   --with-swagger: Enable Swagger UI in Rust services (comsrv, modsrv)
 #
 # Service names: comsrv, modsrv, hissrv, apigateway, netsrv, alarmsrv, apps, redis, influxdb
 # Service groups: python/py (all Python services), rust (all Rust services)
@@ -352,7 +352,7 @@ mkdir -p "$BUILD_DIR/docker"
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     echo -e "${BLUE}Building Rust services...${NC}"
 
-    # Determine swagger feature for modsrv
+    # Determine swagger feature for Rust services (comsrv + modsrv)
     if [[ "$ENABLE_SWAGGER" == "1" ]]; then
         echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
         CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv --features swagger-ui
