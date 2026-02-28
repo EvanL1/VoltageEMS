@@ -1,6 +1,6 @@
 [package]
 name = "errors"
-version = "0.1.0"
+version = "0.1.9"
 edition = "2021"
 license.workspace = true
 description = "Unified error handling for VoltageEMS services"
