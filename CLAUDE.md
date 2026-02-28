@@ -6,6 +6,21 @@
 
 **禁止**: 使用 `mod.rs` 组织 Rust 代码 | 硬编码 Redis 键字符串 | 编译时 SQLx 宏
 
+**禁止过度工程化**: 始终从最简方案开始，优先扩展现有代码。未经明确要求，禁止引入新 service、新框架、新抽象层。方案设计时默认推荐最小侵入选项。
+
+## 代码简化
+
+- **目标**: 单文件 <800 行，超过则拆分模块或提取 helper
+- **多文件任务**: 优先完成所有文件再打磨单个；接近 rate limit 时保存进度转下一个
+- **验证**: 每个文件改完 `cargo check`，全部完成 `cargo test`，报告前后行数
+- 常用手法: 提取重复 match/error-handling 为 helper | 宏处理重复测试代码 | `.expect()` → `Result` + `// SAFETY:` 注释 | generics/traits 去重 adapter | 拆分 God Object（config/client/logging/poll）
+
+## 构建验证
+
+- 修改后必须 `cargo check` + `cargo test`
+- cargo lock 被占用时重试最多 3 次（间隔 2s）
+- **并行 agent**: 只关注自己修改文件的编译错误，其他文件错误忽略并标注
+
 ## 常用命令
 
 ```bash
