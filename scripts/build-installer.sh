@@ -352,15 +352,17 @@ mkdir -p "$BUILD_DIR/docker"
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     echo -e "${BLUE}Building Rust services...${NC}"
 
-    # Determine swagger feature for Rust services (comsrv + modsrv)
+    SWAGGER_FLAG=""
     if [[ "$ENABLE_SWAGGER" == "1" ]]; then
+        SWAGGER_FLAG="--features swagger-ui"
         echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
-        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv --features swagger-ui
-        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p modsrv --features swagger-ui
     else
         echo -e "${YELLOW}Building without Swagger UI (use --with-swagger to enable)${NC}"
-        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv -p modsrv
     fi
+
+    for service in comsrv modsrv; do
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p $service $SWAGGER_FLAG
+    done
 
     for service in comsrv modsrv; do
         if [[ ! -f "$ROOT_DIR/target/$TARGET/release/$service" ]]; then
