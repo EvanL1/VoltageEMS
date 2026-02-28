@@ -379,6 +379,7 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
         "$ROOT_DIR"
 
     if [ $? -eq 0 ]; then
+        mkdir -p "$BUILD_DIR/docker"
         docker save voltageems:latest | gzip > "$BUILD_DIR/docker/voltageems.tar.gz"
         sync
         echo -e "${GREEN}✓ Saved voltageems.tar.gz${NC}"

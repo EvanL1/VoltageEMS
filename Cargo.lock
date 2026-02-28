@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "comsrv"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1200,7 +1200,7 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
 name = "errors"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "axum",
@@ -2211,7 +2211,7 @@ dependencies = [
 
 [[package]]
 name = "modsrv"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2255,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "monarch"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -3558,7 +3558,7 @@ checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 
 [[package]]
 name = "simulator"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4535,7 +4535,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voltage-calc"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "bytes",
  "chrono",
@@ -4551,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-core"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "heapless",
  "schemars",
@@ -4560,7 +4560,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-infra"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "bb8",
@@ -4578,7 +4578,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-model"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "csv",
@@ -4596,7 +4596,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-routing"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4614,7 +4614,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-rtdb"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4637,7 +4637,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-rtdb-shm"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4656,7 +4656,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-rules"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4678,7 +4678,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-schema-macro"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "darling 0.20.11",
  "heck",
@@ -4689,7 +4689,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-shm"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "memmap2",
  "tempfile",
@@ -4698,7 +4698,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-sim"
-version = "0.1.0"
+version = "0.1.9"
 dependencies = [
  "chrono",
  "rand 0.8.5",
