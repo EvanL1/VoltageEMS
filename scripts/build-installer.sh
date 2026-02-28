@@ -355,7 +355,7 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     # Determine swagger feature for modsrv
     if [[ "$ENABLE_SWAGGER" == "1" ]]; then
         echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
-        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv
+        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p comsrv --features swagger-ui
         CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p modsrv --features swagger-ui
     else
         echo -e "${YELLOW}Building without Swagger UI (use --with-swagger to enable)${NC}"
