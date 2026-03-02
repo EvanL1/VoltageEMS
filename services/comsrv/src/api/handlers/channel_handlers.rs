@@ -656,7 +656,7 @@ pub async fn search_channels<R: Rtdb>(
     )))
 }
 
-/// List all channels (lightweight: id + name only)
+/// List all channels (lightweight: id + name + protocol)
 ///
 /// @route GET /api/channels/list
 #[utoipa::path(
@@ -666,8 +666,8 @@ pub async fn search_channels<R: Rtdb>(
         (status = 200, description = "Channel list", body = serde_json::Value,
             example = json!({
                 "list": [
-                    {"id": 1, "name": "PCS#1"},
-                    {"id": 2, "name": "BAMS#1"}
+                    {"id": 1, "name": "PCS#1", "protocol": "modbus_tcp"},
+                    {"id": 2, "name": "BAMS#1", "protocol": "iec104"}
                 ]
             })
         )
@@ -677,8 +677,8 @@ pub async fn search_channels<R: Rtdb>(
 pub async fn list_channels<R: Rtdb>(
     State(state): State<AppState<R>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {
-    let channels: Vec<(i64, String)> =
-        sqlx::query_as("SELECT channel_id, name FROM channels ORDER BY channel_id")
+    let channels: Vec<(i64, String, Option<String>)> =
+        sqlx::query_as("SELECT channel_id, name, protocol FROM channels ORDER BY channel_id")
             .fetch_all(&state.sqlite_pool)
             .await
             .map_err(|e| {
@@ -688,7 +688,7 @@ pub async fn list_channels<R: Rtdb>(
 
     let list: Vec<serde_json::Value> = channels
         .into_iter()
-        .map(|(id, name)| serde_json::json!({"id": id, "name": name}))
+        .map(|(id, name, protocol)| serde_json::json!({"id": id, "name": name, "protocol": protocol}))
         .collect();
 
     Ok(Json(SuccessResponse::new(
