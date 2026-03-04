@@ -5,7 +5,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Subcommand)]
@@ -97,6 +97,7 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
             // IMPORTANT: Ensure SHM file exists before Docker starts
             // Docker bind mount creates directory if source doesn't exist!
             ensure_shm_file_exists();
+            ensure_logs_dir_exists();
 
             let mut args = vec!["up".to_string(), "-d".to_string()];
 
@@ -117,6 +118,7 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
         },
         ServiceCommands::Restart { services } => {
             ensure_shm_file_exists();
+            ensure_logs_dir_exists();
 
             let filtered: Vec<String> = services
                 .into_iter()
@@ -215,6 +217,7 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
             smart,
         } => {
             ensure_shm_file_exists();
+            ensure_logs_dir_exists();
 
             if smart {
                 println!("Refreshing services with smart mode...");
@@ -473,6 +476,40 @@ pub async fn try_reload_services() {
 
     if !any_reloaded {
         println!("  Services not running. Start with: monarch services start");
+    }
+}
+
+/// Ensure logs directory exists (handles broken symlinks from external storage)
+///
+/// When external storage (e.g., SD card) is unavailable, the symlink to the
+/// external logs directory is broken. Docker bind mount fails with
+/// "mkdir: file exists" because it can't create a directory over a symlink.
+/// This creates a local fallback directory so services can start without
+/// external storage — file logging resumes automatically once storage is mounted
+/// and services are restarted.
+fn ensure_logs_dir_exists() {
+    let logs_path = std::env::var("VOLTAGE_LOG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs"));
+
+    // Broken symlink: is_symlink() = true but exists() = false (target unreachable)
+    if logs_path.is_symlink() && !logs_path.exists() {
+        eprintln!(
+            "Warning: {} is a broken symlink (external storage unavailable), creating local fallback",
+            logs_path.display()
+        );
+        if let Err(e) = fs::remove_file(&logs_path) {
+            eprintln!("Failed to remove broken symlink: {}", e);
+            return;
+        }
+        if let Err(e) = fs::create_dir_all(&logs_path) {
+            eprintln!("Failed to create logs directory: {}", e);
+        }
+    } else if !logs_path.exists() {
+        println!("Creating logs directory: {}", logs_path.display());
+        if let Err(e) = fs::create_dir_all(&logs_path) {
+            eprintln!("Failed to create logs directory: {}", e);
+        }
     }
 }
 

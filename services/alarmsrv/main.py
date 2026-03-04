@@ -815,10 +815,12 @@ async def call_data_broadcast():
 
 
 if __name__ == "__main__":
-    # 确保日志目录存在
+    # 确保日志目录存在 (外部存储不可用时跳过文件日志)
     log_dir = Path(settings.LOG_FILE).parent
-    if not log_dir.exists():
+    try:
         log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.warning(f"日志目录 {log_dir} 不可用，仅控制台输出")
     
     # 启动服务
     uvicorn.run(

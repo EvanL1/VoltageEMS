@@ -487,15 +487,30 @@ fn build_env_filter(service_name: &str, api_level: &str) -> (EnvFilter, String) 
 }
 
 /// Initialize logging system with configuration
+///
+/// If the log directory is unavailable (e.g., external storage not mounted),
+/// starts with console-only logging. File logging can be activated later
+/// via `reload_logging()` when the directory becomes available.
 pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Error>> {
-    // Create log directory if it doesn't exist
-    fs::create_dir_all(&config.log_dir)?;
+    // Try to create log directory — graceful degradation if unavailable
+    let log_dir_available = fs::create_dir_all(&config.log_dir).is_ok();
+    if !log_dir_available {
+        eprintln!(
+            "Warning: Log directory {:?} unavailable, starting with console-only logging",
+            config.log_dir
+        );
+    }
 
-    // Create custom daily rolling file writer with format: {service}{YYYYMMDD}.log
-    let custom_writer =
-        DailyRollingWriter::new(config.service_name.clone(), config.log_dir.clone())?;
+    // Create file writer: real DailyRollingWriter or io::sink() fallback
+    let file_writer_result = if log_dir_available {
+        DailyRollingWriter::new(config.service_name.clone(), config.log_dir.clone())
+            .map(|w| -> Box<dyn std::io::Write + Send> { Box::new(w) })
+    } else {
+        Ok(Box::new(std::io::sink()) as Box<dyn std::io::Write + Send>)
+    };
+    let file_writer = file_writer_result?;
 
-    let (non_blocking, guard) = tracing_appender::non_blocking(custom_writer);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_writer);
 
     // Store guard to prevent dropping
     let guards = GUARDS.get_or_init(|| Arc::new(Mutex::new(Vec::new())));
@@ -571,7 +586,7 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     };
 
     // API file layer (only api_access target) - created if enable_api_log is true
-    let api_file_layer = if config.enable_api_log {
+    let api_file_layer = if config.enable_api_log && log_dir_available {
         // Create API daily rolling file writer (reuses DailyRollingWriter with "_api" suffix)
         let api_writer =
             DailyRollingWriter::new_api(config.service_name.clone(), config.log_dir.clone())?;
@@ -625,20 +640,31 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
         *slot = runtime;
     }
 
-    tracing::info!("Logging: {} @ {:?}", config.service_name, config.log_dir);
+    if log_dir_available {
+        tracing::info!("Logging: {} @ {:?}", config.service_name, config.log_dir);
+    } else {
+        tracing::warn!(
+            "Logging: {} console-only (log dir {:?} unavailable, will activate on reload)",
+            config.service_name,
+            config.log_dir
+        );
+    }
 
-    if config.enable_api_log {
+    if config.enable_api_log && log_dir_available {
         let current_date = chrono::Local::now().format("%Y%m%d");
         tracing::debug!("API log: {}_{}_api.log", current_date, config.service_name);
     }
 
     // Start background compression task (extracted to log_rotation module)
-    let handle = crate::log_rotation::spawn_compression_task(
-        config.log_dir,
-        config.service_name,
-        config.max_log_files,
-    );
-    store_logging_task_handle(handle);
+    // Only start if log directory is available (nothing to compress otherwise)
+    if log_dir_available {
+        let handle = crate::log_rotation::spawn_compression_task(
+            config.log_dir,
+            config.service_name,
+            config.max_log_files,
+        );
+        store_logging_task_handle(handle);
+    }
 
     Ok(())
 }
