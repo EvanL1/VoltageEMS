@@ -13,6 +13,8 @@ pub mod logging;
 pub mod metadata;
 pub mod point;
 pub mod quality;
+#[cfg(feature = "json-mapping")]
+pub mod script_runner;
 pub mod slot;
 pub mod traits;
 
