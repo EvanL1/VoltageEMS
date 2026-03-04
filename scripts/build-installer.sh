@@ -250,12 +250,10 @@ build_python_services() {
     fi
 
     echo -e "${BLUE}Building unified Python services image $tag for $ARCH...${NC}"
-    docker build --platform $DOCKER_PLATFORM \
+    if docker build --platform $DOCKER_PLATFORM \
         -f "$dockerfile" \
         -t "$tag" \
-        "$context"
-
-    if [ $? -eq 0 ]; then
+        "$context"; then
         docker save "$tag" | gzip > "$output"
         local size=$(ls -lh "$output" | awk '{print $5}')
         echo -e "${GREEN}✓ Saved python-services.tar.gz ($size)${NC}"
@@ -346,8 +344,6 @@ fi
 echo ""
 echo -e "${BLUE}[2/5] Building Docker images for $ARCH...${NC}"
 
-mkdir -p "$BUILD_DIR/docker"
-
 # Build Rust services if needed
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     echo -e "${BLUE}Building Rust services...${NC}"
@@ -360,9 +356,8 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
         echo -e "${YELLOW}Building without Swagger UI (use --with-swagger to enable)${NC}"
     fi
 
-    for service in comsrv modsrv; do
-        CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p $service $SWAGGER_FLAG
-    done
+    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
+        -p comsrv -p modsrv $SWAGGER_FLAG
 
     for service in comsrv modsrv; do
         if [[ ! -f "$ROOT_DIR/target/$TARGET/release/$service" ]]; then
@@ -374,14 +369,11 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
 
     # Build voltageems Docker image using pre-compiled binaries
     echo -e "${BLUE}Building VoltageEMS Docker image...${NC}"
-    docker build --platform $DOCKER_PLATFORM \
+    if docker build --platform $DOCKER_PLATFORM \
         --build-arg TARGET_TRIPLE=$TARGET \
         -f "$ROOT_DIR/Dockerfile" \
         -t voltageems:latest \
-        "$ROOT_DIR"
-
-    if [ $? -eq 0 ]; then
-        mkdir -p "$BUILD_DIR/docker"
+        "$ROOT_DIR"; then
         docker save voltageems:latest | gzip > "$BUILD_DIR/docker/voltageems.tar.gz"
         sync
         echo -e "${GREEN}✓ Saved voltageems.tar.gz${NC}"
@@ -407,12 +399,10 @@ if [[ -n "${BUILD_IMAGES[voltage-apps:latest]:-}" ]]; then
     FRONTEND_DOCKERFILE="$ROOT_DIR/apps/Dockerfile"
     if [[ -f "$FRONTEND_DOCKERFILE" ]]; then
         echo -e "${BLUE}Building voltage-apps:latest for $ARCH...${NC}"
-        docker build --platform $DOCKER_PLATFORM \
+        if docker build --platform $DOCKER_PLATFORM \
             -f "$FRONTEND_DOCKERFILE" \
             -t voltage-apps:latest \
-            "$ROOT_DIR/apps"
-        
-        if [ $? -eq 0 ]; then
+            "$ROOT_DIR/apps"; then
             docker save voltage-apps:latest | gzip > "$BUILD_DIR/docker/apps.tar.gz"
             sync
             size=$(ls -lh "$BUILD_DIR/docker/apps.tar.gz" | awk '{print $5}')
@@ -556,7 +546,6 @@ fi
 
 # Ensure all files are written to disk before creating archive
 sync
-sleep 3
 
 # Create installer description
 if [[ -n "$SELECTED_SERVICES" ]]; then

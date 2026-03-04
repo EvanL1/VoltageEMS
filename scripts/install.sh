@@ -22,7 +22,12 @@ LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
 # =============================================================================
 # Command Line Arguments
 # =============================================================================
-AUTO_MODE=false  # Default to interactive mode
+# Default: auto mode when stdin is not a TTY (e.g. makeself, pipe, ssh)
+if [ -t 0 ]; then
+    AUTO_MODE=false
+else
+    AUTO_MODE=true
+fi
 SHOW_HELP=false
 SERVICES_ALREADY_STARTED=false  # Track if services were started during Smart Update
 
@@ -437,19 +442,7 @@ ensure_core_services_running() {
             local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
             echo "  Starting $service..."
 
-            # Detect docker compose command
-            local compose_cmd
-            if docker compose version &>/dev/null 2>&1; then
-                compose_cmd="docker compose"
-            elif command -v docker-compose &>/dev/null; then
-                compose_cmd="docker-compose"
-            else
-                echo -e "    ${YELLOW}Warning: docker-compose not found${NC}"
-                continue
-            fi
-
-            # Use timeout with direct docker compose command
-            if timeout 60 $compose_cmd -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service" 2>&1; then
+            if timeout 60 run_docker_compose -f "$INSTALL_DIR/docker-compose.yml" up -d --no-deps "$service" 2>&1; then
                 services_started=$((services_started + 1))
             else
                 echo -e "    ${YELLOW}Warning: Failed to start $service${NC}"
@@ -1288,139 +1281,142 @@ echo -e "${GREEN}================================${NC}"
 echo -e "${GREEN}  Installation Complete!        ${NC}"
 echo -e "${GREEN}================================${NC}"
 echo ""
-echo "Installed components:"
-echo "  • CLI Tool: monarch (unified management)"
-echo "  • Docker Images: voltage-redis, voltageems"
-echo "  • Installation directory: $INSTALL_DIR"
-if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
-    echo "  • Log directory: $LOG_DIR (symlinked from $INSTALL_DIR/logs)"
-else
-    echo "  • Log directory: $LOG_DIR"
-fi
-echo ""
+echo "  Installation directory: $INSTALL_DIR"
 
-# Display actual permissions for verification
-echo -e "${BLUE}Directory Permissions:${NC}"
-echo "--------------------------------------------"
-ls -ld "$INSTALL_DIR" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", $9":", $1, $3, $4}'
-
-if [[ -d "$INSTALL_DIR/data" ]]; then
-    ls -ld "$INSTALL_DIR/data" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "├── data:", $1, $3, $4}'
-fi
-
-if [[ -L "$INSTALL_DIR/logs" ]]; then
-    LINK_INFO=$(ls -ld "$INSTALL_DIR/logs" 2>/dev/null)
-    TARGET=$(readlink "$INSTALL_DIR/logs" 2>/dev/null)
-    echo "$LINK_INFO" | awk -v target="$TARGET" '{printf "%-20s %s %s:%s -> %s\n", "├── logs:", $1, $3, $4, target}'
-elif [[ -d "$INSTALL_DIR/logs" ]]; then
-    ls -ld "$INSTALL_DIR/logs" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "├── logs:", $1, $3, $4}'
-fi
-
-if [[ -d "$INSTALL_DIR/config.template" ]]; then
-    ls -ld "$INSTALL_DIR/config.template" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "├── config.template:", $1, $3, $4}'
-fi
-
-if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
-    ls -l "$INSTALL_DIR/docker-compose.yml" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "└── docker-compose:", $1, $3, $4}'
-fi
-echo "--------------------------------------------"
-
-# If using external log directory, show its permissions too
-if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]] && [[ -d "$LOG_DIR" ]]; then
+if [[ "$AUTO_MODE" != true ]]; then
+    echo "Installed components:"
+    echo "  • CLI Tool: monarch (unified management)"
+    echo "  • Docker Images: voltage-redis, voltageems"
+    if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
+        echo "  • Log directory: $LOG_DIR (symlinked from $INSTALL_DIR/logs)"
+    else
+        echo "  • Log directory: $LOG_DIR"
+    fi
     echo ""
-    echo -e "${BLUE}External Log Directory Permissions:${NC}"
+
+    # Display actual permissions for verification
+    echo -e "${BLUE}Directory Permissions:${NC}"
     echo "--------------------------------------------"
-    ls -ld "$LOG_DIR" 2>/dev/null | awk '{printf "%-25s %s %s:%s\n", $9":", $1, $3, $4}'
+    ls -ld "$INSTALL_DIR" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", $9":", $1, $3, $4}'
 
-    # Show service subdirectories
-    for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
-        if [[ -d "$LOG_DIR/$service" ]]; then
-            ls -ld "$LOG_DIR/$service" 2>/dev/null | awk -v svc="├── $service:" '{printf "%-25s %s %s:%s\n", svc, $1, $3, $4}'
-        fi
-    done
+    if [[ -d "$INSTALL_DIR/data" ]]; then
+        ls -ld "$INSTALL_DIR/data" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "├── data:", $1, $3, $4}'
+    fi
+
+    if [[ -L "$INSTALL_DIR/logs" ]]; then
+        LINK_INFO=$(ls -ld "$INSTALL_DIR/logs" 2>/dev/null)
+        TARGET=$(readlink "$INSTALL_DIR/logs" 2>/dev/null)
+        echo "$LINK_INFO" | awk -v target="$TARGET" '{printf "%-20s %s %s:%s -> %s\n", "├── logs:", $1, $3, $4, target}'
+    elif [[ -d "$INSTALL_DIR/logs" ]]; then
+        ls -ld "$INSTALL_DIR/logs" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "├── logs:", $1, $3, $4}'
+    fi
+
+    if [[ -d "$INSTALL_DIR/config.template" ]]; then
+        ls -ld "$INSTALL_DIR/config.template" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "├── config.template:", $1, $3, $4}'
+    fi
+
+    if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+        ls -l "$INSTALL_DIR/docker-compose.yml" 2>/dev/null | awk '{printf "%-20s %s %s:%s\n", "└── docker-compose:", $1, $3, $4}'
+    fi
     echo "--------------------------------------------"
-fi
 
-echo ""
+    # If using external log directory, show its permissions too
+    if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]] && [[ -d "$LOG_DIR" ]]; then
+        echo ""
+        echo -e "${BLUE}External Log Directory Permissions:${NC}"
+        echo "--------------------------------------------"
+        ls -ld "$LOG_DIR" 2>/dev/null | awk '{printf "%-25s %s %s:%s\n", $9":", $1, $3, $4}'
 
-# Check if permissions might need attention
-MAIN_OWNER=$(stat -c "%U" "$INSTALL_DIR" 2>/dev/null || stat -f "%Su" "$INSTALL_DIR" 2>/dev/null || echo "unknown")
-if [[ "$MAIN_OWNER" == "root" ]]; then
-    echo -e "${YELLOW}⚠ Note: Directory is owned by root${NC}"
-    echo -e "${YELLOW}  To change owner: sudo chown -R <user>:docker $INSTALL_DIR${NC}"
+        # Show service subdirectories
+        for service in comsrv modsrv hissrv apigateway netsrv alarmsrv; do
+            if [[ -d "$LOG_DIR/$service" ]]; then
+                ls -ld "$LOG_DIR/$service" 2>/dev/null | awk -v svc="├── $service:" '{printf "%-25s %s %s:%s\n", svc, $1, $3, $4}'
+            fi
+        done
+        echo "--------------------------------------------"
+    fi
+
     echo ""
-fi
 
-echo "Permission Configuration:"
-echo "  • Directories owned by: $ACTUAL_USER:docker"
-echo "  • Ensure your user is in docker group:"
-echo -e "    ${YELLOW}sudo usermod -aG docker \$USER${NC}"
-echo "    (logout and login for changes to take effect)"
-echo ""
-echo "Network Configuration:"
-echo -e "${YELLOW}  • Using host network mode for optimal performance${NC}"
-echo "  • Services available on localhost:"
-echo "    - Redis: 6379          (data store)"
-echo "    - InfluxDB: 8181       (time-series database - InfluxDB 3.x)"
-echo "    - ComSrv: 6001         (communication - Rust)"
-echo "    - ModSrv: 6002         (model + rules - Rust)"
-echo "    - HisSrv: 6004         (history - Python)"
-echo "    - APIGateway: 6005     (gateway - Python)"
-echo "    - NetSrv: 6006         (network - Python)"
-echo "    - AlarmSrv: 6007       (alarm - Python)"
-echo "    - Frontend: 8080       (Vue.js + nginx)"
-echo ""
-echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
-echo "  Before starting services, you must:"
-echo "  1. Copy Rust service configuration template:"
-echo "     cp -r $INSTALL_DIR/config.template/comsrv $INSTALL_DIR/config/comsrv"
-echo "     cp -r $INSTALL_DIR/config.template/modsrv $INSTALL_DIR/config/modsrv"
-echo "  2. Customize configuration files in config/ directory:"
-echo "     - Rust services: config/comsrv/, config/modsrv/ (copy from config.template first)"
-echo "     - Python services: config/hissrv/, config/apigateway/, config/netsrv/, config/alarmsrv/ (already installed)"
-echo "  3. Sync configurations to database:"
-echo "     monarch sync"
-echo ""
-echo -e "${BLUE}Database Management:${NC}"
-echo "  monarch init          - Add missing tables (safe, preserves data)"
-echo "  monarch init --force  - Reset database (WARNING: deletes all data)"
-echo "  monarch sync          - Sync configuration files to database"
-echo ""
-echo "Quick Start:"
-echo -e "  ${YELLOW}source /etc/profile.d/monarchedge.sh${NC}  - Load environment variables (or re-login)"
-echo "  monarch services start - Start all services"
-echo "  monarch services stop  - Stop all services"
-echo "  monarch services status - Check service status"
-echo "  monarch services logs <service> - View service logs"
-echo ""
-echo "CLI Management (via monarch):"
-echo ""
-echo "  Configuration:"
-echo "    monarch sync                  - Sync all configurations"
-echo "    monarch status                - Show sync status"
-echo "    monarch export modsrv         - Export configuration from database"
-echo ""
-echo "  Channels:"
-echo "    monarch channels list         - List all channels"
-echo "    monarch channels status 1     - Get channel status"
-echo "    monarch channels reload       - Reload configurations"
-echo ""
-echo "  Models:"
-echo "    monarch models products list  - List products"
-echo "    monarch models instances list - List instances"
-echo "    monarch models products import pv - Import product"
-echo ""
-echo "  Rules:"
-echo "    monarch rules list            - List all rules"
-echo "    monarch rules enable R001     - Enable a rule"
-echo "    monarch rules test R001       - Test a rule"
-echo ""
-echo "  Services:"
-echo "    monarch services start        - Start all services"
-echo "    monarch services stop         - Stop all services"
-echo "    monarch services logs comsrv  - View service logs"
-echo ""
-echo -e "${YELLOW}Note: Using host network mode - ensure ports are not in use${NC}"
+    # Check if permissions might need attention
+    MAIN_OWNER=$(stat -c "%U" "$INSTALL_DIR" 2>/dev/null || stat -f "%Su" "$INSTALL_DIR" 2>/dev/null || echo "unknown")
+    if [[ "$MAIN_OWNER" == "root" ]]; then
+        echo -e "${YELLOW}⚠ Note: Directory is owned by root${NC}"
+        echo -e "${YELLOW}  To change owner: sudo chown -R <user>:docker $INSTALL_DIR${NC}"
+        echo ""
+    fi
+
+    echo "Permission Configuration:"
+    echo "  • Directories owned by: $ACTUAL_USER:docker"
+    echo "  • Ensure your user is in docker group:"
+    echo -e "    ${YELLOW}sudo usermod -aG docker \$USER${NC}"
+    echo "    (logout and login for changes to take effect)"
+    echo ""
+    echo "Network Configuration:"
+    echo -e "${YELLOW}  • Using host network mode for optimal performance${NC}"
+    echo "  • Services available on localhost:"
+    echo "    - Redis: 6379          (data store)"
+    echo "    - InfluxDB: 8181       (time-series database - InfluxDB 3.x)"
+    echo "    - ComSrv: 6001         (communication - Rust)"
+    echo "    - ModSrv: 6002         (model + rules - Rust)"
+    echo "    - HisSrv: 6004         (history - Python)"
+    echo "    - APIGateway: 6005     (gateway - Python)"
+    echo "    - NetSrv: 6006         (network - Python)"
+    echo "    - AlarmSrv: 6007       (alarm - Python)"
+    echo "    - Frontend: 8080       (Vue.js + nginx)"
+    echo ""
+    echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
+    echo "  Before starting services, you must:"
+    echo "  1. Copy Rust service configuration template:"
+    echo "     cp -r $INSTALL_DIR/config.template/comsrv $INSTALL_DIR/config/comsrv"
+    echo "     cp -r $INSTALL_DIR/config.template/modsrv $INSTALL_DIR/config/modsrv"
+    echo "  2. Customize configuration files in config/ directory:"
+    echo "     - Rust services: config/comsrv/, config/modsrv/ (copy from config.template first)"
+    echo "     - Python services: config/hissrv/, config/apigateway/, config/netsrv/, config/alarmsrv/ (already installed)"
+    echo "  3. Sync configurations to database:"
+    echo "     monarch sync"
+    echo ""
+    echo -e "${BLUE}Database Management:${NC}"
+    echo "  monarch init          - Add missing tables (safe, preserves data)"
+    echo "  monarch init --force  - Reset database (WARNING: deletes all data)"
+    echo "  monarch sync          - Sync configuration files to database"
+    echo ""
+    echo "Quick Start:"
+    echo -e "  ${YELLOW}source /etc/profile.d/monarchedge.sh${NC}  - Load environment variables (or re-login)"
+    echo "  monarch services start - Start all services"
+    echo "  monarch services stop  - Stop all services"
+    echo "  monarch services status - Check service status"
+    echo "  monarch services logs <service> - View service logs"
+    echo ""
+    echo "CLI Management (via monarch):"
+    echo ""
+    echo "  Configuration:"
+    echo "    monarch sync                  - Sync all configurations"
+    echo "    monarch status                - Show sync status"
+    echo "    monarch export modsrv         - Export configuration from database"
+    echo ""
+    echo "  Channels:"
+    echo "    monarch channels list         - List all channels"
+    echo "    monarch channels status 1     - Get channel status"
+    echo "    monarch channels reload       - Reload configurations"
+    echo ""
+    echo "  Models:"
+    echo "    monarch models products list  - List products"
+    echo "    monarch models instances list - List instances"
+    echo "    monarch models products import pv - Import product"
+    echo ""
+    echo "  Rules:"
+    echo "    monarch rules list            - List all rules"
+    echo "    monarch rules enable R001     - Enable a rule"
+    echo "    monarch rules test R001       - Test a rule"
+    echo ""
+    echo "  Services:"
+    echo "    monarch services start        - Start all services"
+    echo "    monarch services stop         - Stop all services"
+    echo "    monarch services logs comsrv  - View service logs"
+    echo ""
+    echo -e "${YELLOW}Note: Using host network mode - ensure ports are not in use${NC}"
+fi
 echo ""
 
 # =============================================================================
@@ -1471,10 +1467,10 @@ echo ""
 # Try to detect installer package location
 INSTALLER_NAME=""
 POSSIBLE_LOCATIONS=(
-    "$LAUNCH_DIR/MonarchEdge-arm64-*.run"
-    "/tmp/MonarchEdge-arm64-*.run"
-    "$HOME/MonarchEdge-arm64-*.run"
-    "$HOME/Downloads/MonarchEdge-arm64-*.run"
+    "$LAUNCH_DIR/MonarchEdge-*-*.run"
+    "/tmp/MonarchEdge-*-*.run"
+    "$HOME/MonarchEdge-*-*.run"
+    "$HOME/Downloads/MonarchEdge-*-*.run"
 )
 
 # Search for installer in common locations
