@@ -400,8 +400,8 @@ mod tests {
 
     #[test]
     fn test_convert_plugin_value_float() {
-        let v = convert_plugin_value(&json!(3.14));
-        assert_eq!(v.as_f64(), Some(3.14));
+        let v = convert_plugin_value(&json!(3.25));
+        assert_eq!(v.as_f64(), Some(3.25));
     }
 
     #[test]

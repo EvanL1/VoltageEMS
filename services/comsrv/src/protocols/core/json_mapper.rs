@@ -580,10 +580,10 @@ mod tests {
     #[test]
     fn test_string_to_float_conversion() {
         let mapper = make_mapper(vec![make_mapping(1, "$.val", JsonDataType::Float)]);
-        let payload = br#"{"val": "3.14"}"#;
+        let payload = br#"{"val": "3.25"}"#;
         let batch = mapper.parse(payload).unwrap();
         let v = batch.iter().next().unwrap().value.as_f64().unwrap();
-        assert!((v - 3.14).abs() < f64::EPSILON);
+        assert!((v - 3.25).abs() < f64::EPSILON);
     }
 
     #[test]
