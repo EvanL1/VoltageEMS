@@ -3,7 +3,7 @@
 //! Contains ChannelEntry, ChannelMetadata, ChannelStats, and related helpers.
 
 use arc_swap::ArcSwapOption;
-use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
@@ -12,7 +12,7 @@ use tracing::warn;
 use crate::core::config::ChannelConfig;
 use crate::protocols::core::logging::ChannelLogHandler;
 use crate::protocols::gateway::ChannelRuntime;
-use crate::runtime::reconnect::ReconnectPolicy;
+use crate::runtime::reconnect::{AutoRecoveryPolicy, ReconnectPolicy};
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
@@ -89,6 +89,14 @@ pub struct ChannelEntry<R: Rtdb> {
     cached_connection_state: Arc<AtomicU8>,
     /// Cached diagnostics for non-blocking access (updated by unified task after each poll)
     cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
+
+    // ── Watchdog shared fields (written by task, read by lifecycle/health) ──
+    /// Heartbeat timestamp in millis since epoch (0 = task not yet started)
+    pub(crate) watchdog_heartbeat_ms: Arc<AtomicI64>,
+    /// Total reconnect attempts (synced from ReconnectHelper stats)
+    pub(crate) reconnect_total_attempts: Arc<AtomicU64>,
+    /// Whether reconnection has permanently failed
+    pub(crate) reconnect_failed: Arc<AtomicBool>,
 }
 
 impl<R: Rtdb> std::fmt::Debug for ChannelEntry<R> {
@@ -109,6 +117,12 @@ pub struct ChannelStats {
     pub created_at: Instant,
     /// Last accessed timestamp in milliseconds since Unix epoch
     pub last_accessed_ms: i64,
+    /// Watchdog heartbeat timestamp in millis since epoch (0 = not yet started)
+    pub watchdog_heartbeat_ms: i64,
+    /// Whether reconnection has permanently failed
+    pub reconnect_failed: bool,
+    /// Total reconnect attempts so far
+    pub reconnect_total_attempts: u64,
 }
 
 impl<R: Rtdb + 'static> ChannelEntry<R> {
@@ -154,6 +168,16 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
 
         // Parse reconnection policy from channel parameters
         let reconnect_policy = parse_reconnect_policy(&channel_config.parameters);
+        let auto_recovery_policy = parse_auto_recovery_policy(&channel_config.parameters);
+
+        // Create watchdog shared atomics
+        let watchdog_heartbeat_ms = Arc::new(AtomicI64::new(0));
+        let reconnect_total_attempts = Arc::new(AtomicU64::new(0));
+        let reconnect_failed = Arc::new(AtomicBool::new(false));
+
+        let heartbeat_clone = Arc::clone(&watchdog_heartbeat_ms);
+        let attempts_clone = Arc::clone(&reconnect_total_attempts);
+        let failed_clone = Arc::clone(&reconnect_failed);
 
         // Spawn the unified channel task
         let store_clone = Arc::clone(&store);
@@ -169,6 +193,10 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
                 cached_diagnostics_clone,
                 log_handler,
                 reconnect_policy,
+                auto_recovery_policy,
+                heartbeat_clone,
+                attempts_clone,
+                failed_clone,
             )
             .await;
         });
@@ -182,18 +210,32 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             command_tx: Some(business_tx),
             cached_connection_state: cached_state,
             cached_diagnostics,
+            watchdog_heartbeat_ms,
+            reconnect_total_attempts,
+            reconnect_failed,
         }
     }
 
     /// Get channel statistics
     pub async fn get_stats(&self, channel_id: u32) -> ChannelStats {
+        let heartbeat = self.watchdog_heartbeat_ms.load(Ordering::Relaxed);
+        // Use heartbeat as last_accessed if available (fixes bug: task never called touch())
+        let last_accessed = if heartbeat > 0 {
+            heartbeat
+        } else {
+            self.metadata.last_accessed_ms.load(Ordering::Relaxed)
+        };
+
         ChannelStats {
             channel_id,
             name: self.metadata.name.to_string(),
             protocol_type: self.metadata.protocol_type.clone(),
             is_connected: self.is_connected(),
             created_at: self.metadata.created_at,
-            last_accessed_ms: self.metadata.last_accessed_ms.load(Ordering::Relaxed),
+            last_accessed_ms: last_accessed,
+            watchdog_heartbeat_ms: heartbeat,
+            reconnect_failed: self.reconnect_failed.load(Ordering::Relaxed),
+            reconnect_total_attempts: self.reconnect_total_attempts.load(Ordering::Relaxed),
         }
     }
 
@@ -408,4 +450,32 @@ fn parse_reconnect_policy(
         max_delay_ms,
         backoff_multiplier,
     )
+}
+
+/// Parse auto-recovery policy from channel parameters.
+///
+/// Supports: watchdog_recovery_cooldown_secs, watchdog_max_recovery_rounds
+/// Returns None if max_recovery_rounds is explicitly set to 0.
+fn parse_auto_recovery_policy(
+    params: &std::collections::HashMap<String, serde_json::Value>,
+) -> Option<AutoRecoveryPolicy> {
+    let cooldown_secs = params
+        .get("watchdog_recovery_cooldown_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+
+    let max_rounds = params
+        .get("watchdog_max_recovery_rounds")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(3);
+
+    if max_rounds == 0 {
+        return None;
+    }
+
+    Some(AutoRecoveryPolicy {
+        cooldown: std::time::Duration::from_secs(cooldown_secs),
+        max_recovery_rounds: max_rounds,
+    })
 }

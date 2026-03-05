@@ -149,11 +149,56 @@ pub async fn health_check<R: Rtdb>(
     let total_channels = manager.channel_count();
     let running_channels = manager.running_channel_count().await;
 
+    // Fix: channels check should report Unhealthy when < 50% are running
+    let channels_healthy = total_channels == 0 || running_channels * 2 >= total_channels;
+    if !channels_healthy {
+        overall_healthy = false;
+    }
+
     checks.insert(
         "channels".to_string(),
         ComponentHealth {
-            status: HealthServiceStatus::Healthy,
+            status: if channels_healthy {
+                HealthServiceStatus::Healthy
+            } else {
+                HealthServiceStatus::Unhealthy
+            },
             message: Some(format!("{}/{} running", running_channels, total_channels)),
+            duration_ms: None,
+        },
+    );
+
+    // Watchdog check: report failed and stuck channel counts
+    let all_stats = manager.get_all_channel_stats().await;
+    let now_ms = crate::core::channels::channel_entry::unix_timestamp_ms();
+    let stuck_timeout_ms: i64 = 120 * 1000;
+
+    let failed_count = all_stats.iter().filter(|s| s.reconnect_failed).count();
+    let stuck_count = all_stats
+        .iter()
+        .filter(|s| {
+            s.watchdog_heartbeat_ms > 0 && (now_ms - s.watchdog_heartbeat_ms) > stuck_timeout_ms
+        })
+        .count();
+    let total_reconnects: u64 = all_stats.iter().map(|s| s.reconnect_total_attempts).sum();
+
+    let watchdog_healthy = stuck_count == 0;
+    if !watchdog_healthy {
+        overall_healthy = false;
+    }
+
+    checks.insert(
+        "watchdog".to_string(),
+        ComponentHealth {
+            status: if watchdog_healthy {
+                HealthServiceStatus::Healthy
+            } else {
+                HealthServiceStatus::Unhealthy
+            },
+            message: Some(format!(
+                "failed={}, stuck={}, total_reconnects={}",
+                failed_count, stuck_count, total_reconnects
+            )),
             duration_ms: None,
         },
     );

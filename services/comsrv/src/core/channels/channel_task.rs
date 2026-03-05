@@ -6,8 +6,9 @@
 //! - Periodic polling
 
 use arc_swap::ArcSwapOption;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::core::channels::traits::ChannelCommand;
@@ -15,7 +16,7 @@ use crate::core::channels::types::ProtocolCommand;
 use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
 use crate::protocols::core::traits::PollResult;
 use crate::protocols::gateway::ChannelRuntime;
-use crate::runtime::reconnect::{ReconnectHelper, ReconnectPolicy, ReconnectState};
+use crate::runtime::reconnect::{AutoRecoveryPolicy, ReconnectHelper, ReconnectPolicy, ReconnectState};
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
@@ -99,6 +100,10 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
     cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
     log_handler: Arc<dyn ChannelLogHandler>,
     reconnect_policy: ReconnectPolicy,
+    auto_recovery_policy: Option<AutoRecoveryPolicy>,
+    watchdog_heartbeat_ms: Arc<AtomicI64>,
+    reconnect_total_attempts: Arc<AtomicU64>,
+    reconnect_failed: Arc<AtomicBool>,
 ) {
     info!(
         "Ch{} unified task started (interval: {}ms, reconnect: max_attempts={}, initial_delay={:?})",
@@ -107,6 +112,9 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
 
     // Create reconnection helper for auto-reconnect functionality
     let mut reconnect_helper = ReconnectHelper::new(reconnect_policy);
+    if let Some(policy) = auto_recovery_policy {
+        reconnect_helper = reconnect_helper.with_auto_recovery(policy);
+    }
 
     // Track previous online state for change detection (avoid redundant Redis writes)
     let mut prev_online: Option<bool> = None;
@@ -152,6 +160,7 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
                     &mut failed_log_tick_counter, &cached_state, &cached_diagnostics,
                     &mut prev_online, &mut prev_error_count,
                     &store, &log_handler, channel_id,
+                    &watchdog_heartbeat_ms, &reconnect_total_attempts, &reconnect_failed,
                 ).await;
                 match action {
                     TickAction::Continue => continue,
@@ -292,7 +301,16 @@ async fn handle_poll_tick<R: Rtdb>(
     store: &Arc<RedisDataStore<R>>,
     log_handler: &Arc<dyn ChannelLogHandler>,
     channel_id: u32,
+    watchdog_heartbeat_ms: &AtomicI64,
+    reconnect_total_attempts: &AtomicU64,
+    reconnect_failed: &AtomicBool,
 ) -> TickAction {
+    // Update watchdog heartbeat on every tick (proves task is alive)
+    watchdog_heartbeat_ms.store(
+        super::channel_entry::unix_timestamp_ms(),
+        Ordering::Relaxed,
+    );
+
     // Step 1: Check connection state before polling
     let conn_state = protocol.connection_state();
 
@@ -307,6 +325,8 @@ async fn handle_poll_tick<R: Rtdb>(
             store,
             log_handler,
             channel_id,
+            reconnect_total_attempts,
+            reconnect_failed,
         )
         .await;
     }
@@ -315,6 +335,8 @@ async fn handle_poll_tick<R: Rtdb>(
     if reconnect_helper.connection_state() != ReconnectState::Connected {
         reconnect_helper.mark_connected();
         *failed_log_tick_counter = 0;
+        // Sync reconnect stats
+        reconnect_failed.store(false, Ordering::Relaxed);
     }
 
     // Step 3: Poll data using ChannelRuntime interface
@@ -377,17 +399,48 @@ async fn handle_disconnected<R: Rtdb>(
     store: &Arc<RedisDataStore<R>>,
     log_handler: &Arc<dyn ChannelLogHandler>,
     channel_id: u32,
+    reconnect_total_attempts: &AtomicU64,
+    reconnect_failed: &AtomicBool,
 ) -> TickAction {
+    // Sync reconnect stats to shared atomics on every disconnected tick
+    reconnect_total_attempts.store(reconnect_helper.stats().total_attempts, Ordering::Relaxed);
+
     match reconnect_helper.connection_state() {
         ReconnectState::Failed => {
+            reconnect_failed.store(true, Ordering::Relaxed);
+
+            // Check auto-recovery before giving up
+            if reconnect_helper.check_auto_recovery() {
+                info!(
+                    "Ch{} auto-recovery triggered, returning to Disconnected state",
+                    channel_id
+                );
+                reconnect_failed.store(false, Ordering::Relaxed);
+                *failed_log_tick_counter = 0;
+                update_cached_state(protocol.as_ref(), cached_state);
+                check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+                return TickAction::Continue;
+            }
+
             // Max retry attempts reached, log periodically (every 60 ticks)
             *failed_log_tick_counter += 1;
             if failed_log_tick_counter.is_multiple_of(60) {
-                warn!(
-                    "Ch{} reconnection failed (max attempts reached), \
-                     manual intervention required (disable/enable)",
-                    channel_id
-                );
+                if let Some(remaining) = reconnect_helper.recovery_cooldown_remaining() {
+                    warn!(
+                        "Ch{} reconnection failed (max attempts reached), \
+                         auto-recovery in {:?} (round {}/{})",
+                        channel_id,
+                        remaining,
+                        reconnect_helper.recovery_rounds() + 1,
+                        3 // max_recovery_rounds default
+                    );
+                } else {
+                    warn!(
+                        "Ch{} reconnection permanently failed, \
+                         manual intervention required (disable/enable)",
+                        channel_id
+                    );
+                }
             }
             update_cached_state(protocol.as_ref(), cached_state);
             check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
@@ -433,16 +486,21 @@ async fn handle_disconnected<R: Rtdb>(
                 }
             }
 
-            // Attempt reconnection
+            // Attempt reconnection with timeout to prevent hanging
             info!("Ch{} attempting reconnect", channel_id);
-            match protocol.connect().await {
-                Ok(()) => {
+            match tokio::time::timeout(Duration::from_secs(30), protocol.connect()).await {
+                Ok(Ok(())) => {
                     info!("Ch{} reconnected successfully", channel_id);
                     reconnect_helper.mark_connected();
+                    reconnect_failed.store(false, Ordering::Relaxed);
                     *failed_log_tick_counter = 0;
                 },
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!("Ch{} reconnect failed: {}", channel_id, e);
+                    reconnect_helper.record_failure();
+                },
+                Err(_) => {
+                    warn!("Ch{} reconnect timed out (30s)", channel_id);
                     reconnect_helper.record_failure();
                 },
             }

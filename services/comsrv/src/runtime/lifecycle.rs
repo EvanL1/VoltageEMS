@@ -26,6 +26,10 @@ const CHANNEL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Interval between periodic cleanup/statistics cycles
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
 
+/// Heartbeat timeout: if a task hasn't updated its heartbeat in this duration,
+/// it's considered stuck and will be force-aborted.
+const WATCHDOG_HEARTBEAT_TIMEOUT_SECS: i64 = 120;
+
 /// Overall timeout for the service shutdown sequence
 const SERVICE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -285,11 +289,33 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    // Clean up idle channels (1 hour idle time)
                     // Direct access without RwLock (lock-free)
 
                     // Log statistics
                     let all_stats = channel_manager.get_all_channel_stats().await;
+                    let now_ms = crate::core::channels::channel_entry::unix_timestamp_ms();
+                    let timeout_ms = WATCHDOG_HEARTBEAT_TIMEOUT_SECS * 1000;
+
+                    // Watchdog: detect stuck tasks (heartbeat stale > 120s)
+                    for stat in &all_stats {
+                        // Skip channels that haven't started yet (heartbeat = 0)
+                        if stat.watchdog_heartbeat_ms == 0 {
+                            continue;
+                        }
+                        let age_ms = now_ms - stat.watchdog_heartbeat_ms;
+                        if age_ms > timeout_ms {
+                            error!(
+                                "Ch{} ({}) watchdog: heartbeat stale for {}s, aborting task",
+                                stat.channel_id,
+                                stat.name,
+                                age_ms / 1000
+                            );
+                            // Abort the stuck task
+                            if let Some(entry) = channel_manager.get_channel(stat.channel_id) {
+                                entry.abort_task();
+                            }
+                        }
+                    }
 
                     // Collect active channels for display
                     let active_channels: Vec<String> = all_stats
@@ -298,18 +324,22 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
                         .map(|s| format!("{}({})", s.name, s.channel_id))
                         .collect();
 
+                    let failed_count = all_stats.iter().filter(|s| s.reconnect_failed).count();
+
                     if active_channels.is_empty() {
                         info!(
-                            "Channel stats: configured={}, initialized={}, active=0",
+                            "Channel stats: configured={}, initialized={}, active=0, failed={}",
                             configured_count,
-                            all_stats.len()
+                            all_stats.len(),
+                            failed_count,
                         );
                     } else {
                         info!(
-                            "Channel stats: configured={}, initialized={}, active={} [{}]",
+                            "Channel stats: configured={}, initialized={}, active={}, failed={} [{}]",
                             configured_count,
                             all_stats.len(),
                             active_channels.len(),
+                            failed_count,
                             active_channels.join(", ")
                         );
                     }
