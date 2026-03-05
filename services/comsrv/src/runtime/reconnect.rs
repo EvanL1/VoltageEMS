@@ -765,7 +765,10 @@ mod tests {
 
         // Should trigger recovery
         assert!(helper.check_auto_recovery());
-        assert_eq!(helper.context.connection_state, ReconnectState::Disconnected);
+        assert_eq!(
+            helper.context.connection_state,
+            ReconnectState::Disconnected
+        );
         assert_eq!(helper.recovery_rounds(), 1);
         assert_eq!(helper.context.current_attempt, 0);
     }

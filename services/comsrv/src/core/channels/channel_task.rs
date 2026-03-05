@@ -16,7 +16,9 @@ use crate::core::channels::types::ProtocolCommand;
 use crate::protocols::core::logging::{ChannelLogConfig, ChannelLogHandler};
 use crate::protocols::core::traits::PollResult;
 use crate::protocols::gateway::ChannelRuntime;
-use crate::runtime::reconnect::{AutoRecoveryPolicy, ReconnectHelper, ReconnectPolicy, ReconnectState};
+use crate::runtime::reconnect::{
+    AutoRecoveryPolicy, ReconnectHelper, ReconnectPolicy, ReconnectState,
+};
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
@@ -306,10 +308,7 @@ async fn handle_poll_tick<R: Rtdb>(
     reconnect_failed: &AtomicBool,
 ) -> TickAction {
     // Update watchdog heartbeat on every tick (proves task is alive)
-    watchdog_heartbeat_ms.store(
-        super::channel_entry::unix_timestamp_ms(),
-        Ordering::Relaxed,
-    );
+    watchdog_heartbeat_ms.store(super::channel_entry::unix_timestamp_ms(), Ordering::Relaxed);
 
     // Step 1: Check connection state before polling
     let conn_state = protocol.connection_state();
