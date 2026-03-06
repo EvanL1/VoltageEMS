@@ -50,7 +50,7 @@ pub async fn run_server(
     device_map: DeviceMap,
     faults: FaultConfig,
     devices: &[DeviceConfig],
-    sm_store: StateMachineStore,
+    sm_store: Arc<StateMachineStore>,
 ) -> Result<()> {
     let socket_addr: SocketAddr = addr.parse()?;
     let listener = TcpListener::bind(socket_addr).await?;
@@ -59,7 +59,6 @@ pub async fn run_server(
     let faults = Arc::new(faults);
     let writable = Arc::new(WritableRegisters::new());
     let coil_store = Arc::new(CoilStore::new());
-    let sm_store = Arc::new(sm_store);
 
     // Initialize coils and discrete inputs from device configuration
     for device in devices {

@@ -76,18 +76,19 @@ impl StateMachine {
     }
 
     /// Called when a coil is written. Returns new state if transitioned.
+    ///
+    /// Uses a single write lock for the entire check-and-set to avoid TOCTOU races.
     pub fn on_coil_write(&self, address: u16, value: bool) -> Option<DeviceState> {
-        let current = self.current_state();
+        let mut state = self.state.write().expect("state lock poisoned");
         for t in &self.transitions {
-            if t.from == current {
+            if t.from == *state {
                 if let Trigger::Coil {
                     address: a,
                     value: v,
                 } = &t.trigger
                 {
                     if *a == address && *v == value {
-                        let mut s = self.state.write().expect("state lock poisoned");
-                        *s = t.to;
+                        *state = t.to;
                         return Some(t.to);
                     }
                 }
@@ -97,18 +98,19 @@ impl StateMachine {
     }
 
     /// Called when a register is written. Returns new state if transitioned.
+    ///
+    /// Uses a single write lock for the entire check-and-set to avoid TOCTOU races.
     pub fn on_register_write(&self, address: u16, value: u16) -> Option<DeviceState> {
-        let current = self.current_state();
+        let mut state = self.state.write().expect("state lock poisoned");
         for t in &self.transitions {
-            if t.from == current {
+            if t.from == *state {
                 if let Trigger::Register {
                     address: a,
                     value: v,
                 } = &t.trigger
                 {
                     if *a == address && *v == value {
-                        let mut s = self.state.write().expect("state lock poisoned");
-                        *s = t.to;
+                        *state = t.to;
                         return Some(t.to);
                     }
                 }

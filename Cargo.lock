@@ -3563,16 +3563,20 @@ name = "simulator"
 version = "0.1.9"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "clap",
  "rand 0.8.5",
  "serde",
+ "serde_json",
  "serde_yml",
+ "socketcan",
  "tokio",
  "tokio-serial",
  "tracing",
  "tracing-subscriber",
  "voltage-sim",
+ "voltage_j1939",
 ]
 
 [[package]]

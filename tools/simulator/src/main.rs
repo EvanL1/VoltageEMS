@@ -30,7 +30,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use scenarios::TriggerConfig;
@@ -191,6 +191,11 @@ async fn main() -> Result<()> {
             "Starting Modbus RTU server on {} @ {} baud",
             rtu_port, args.baud
         );
+        if scenario.devices.iter().any(|d| d.state_machine.is_some()) {
+            warn!(
+                "RTU mode does not support state machine triggers — state machines will be ignored"
+            );
+        }
         rtu_server::run_rtu_server(&rtu_port, args.baud, device_map, &scenario.devices).await?;
     } else {
         let addr = format!("{}:{}", args.bind, args.port);
@@ -200,7 +205,7 @@ async fn main() -> Result<()> {
             device_map,
             scenario.faults,
             &scenario.devices,
-            StateMachineStore::clone(&sm_store),
+            Arc::clone(&sm_store),
         )
         .await?;
     }
