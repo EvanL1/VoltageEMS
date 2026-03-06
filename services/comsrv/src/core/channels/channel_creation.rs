@@ -619,9 +619,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     fn create_data_store(&self) -> Arc<RedisDataStore<R>> {
         let store = RedisDataStore::new(Arc::clone(&self.rtdb), Arc::clone(&self.routing_cache));
 
-        let store = if let (Some(writer), Some(index)) = (&self.shared_writer, &self.channel_index)
-        {
-            store.with_shared_memory(Arc::clone(writer), Arc::clone(index))
+        let store = if let Some(handle) = &self.shm_handle {
+            store.with_shm_handle(Arc::clone(handle))
         } else {
             store
         };

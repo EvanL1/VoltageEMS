@@ -181,13 +181,11 @@ async fn main() -> Result<()> {
     // ShmNotifier is shared between InstanceManager and RuleScheduler for unified M2C dispatch
     let shm_notifier: Option<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>> =
         if let Some(ref writer) = shm_action_writer {
-            // Set SHM action writer for direct M2C writes
-            if state
+            // Set SHM action writer for direct M2C writes (+ store config for rebuild)
+            state
                 .instance_manager
-                .set_shm_action_writer(Arc::clone(writer))
-            {
-                info!("InstanceManager: SHM action writer configured");
-            }
+                .set_shm_action_writer(Arc::clone(writer), shm_config.clone());
+            info!("InstanceManager: SHM action writer configured");
 
             // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency)
             match voltage_rtdb_shm::ShmNotifier::connect_default().await {

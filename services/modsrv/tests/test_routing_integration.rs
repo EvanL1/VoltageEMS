@@ -17,6 +17,7 @@ use std::sync::Arc;
 use voltage_routing::RoutingCache;
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_measurement_routing_load_from_db() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
@@ -111,6 +112,7 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_action_routing_load_from_db() -> Result<()> {
     let env = TestEnv::create().await?;
 
@@ -202,6 +204,7 @@ async fn test_action_routing_load_from_db() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_multiple_routing_for_instance() -> Result<()> {
     let env = TestEnv::create().await?;
 

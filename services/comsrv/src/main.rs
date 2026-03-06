@@ -38,7 +38,7 @@ use comsrv::{
 };
 use voltage_routing::load_routing_maps;
 use voltage_rtdb_shm::{is_shm_available, snapshot_exists, SnapshotConfig, SnapshotManager};
-use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, UnifiedWriter};
+use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, ShmHandle, UnifiedWriter};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -154,7 +154,7 @@ async fn main() -> VoltageResult<()> {
     // UnifiedWriter: creates shared memory with indexes from RoutingCache
     // Simplified: no SlotMeta, indexes are Vec in process memory
     // Now with snapshot restore/save support
-    let (shared_writer, channel_index, snapshot_manager_handle, snapshot_shutdown_tx) = {
+    let (shm_handle, snapshot_manager_handle, snapshot_shutdown_tx) = {
         // Load SharedConfig parameters from database
         let config = {
             let mut cfg = SharedConfig::default();
@@ -245,42 +245,39 @@ async fn main() -> VoltageResult<()> {
                     let index = ChannelToSlotIndex::from_unified_writer(&writer);
                     info!("ChannelToSlotIndex: {} mappings", index.len());
 
-                    let writer = Arc::new(writer);
+                    // Create ShmHandle (runtime-swappable writer + index)
+                    let handle = Arc::new(ShmHandle::new(config.clone(), writer, index));
 
                     // Start SnapshotManager if configured
+                    // SnapshotManager holds Arc<ShmHandle> — always snapshots the latest writer after rebuild
                     let (snapshot_handle, snapshot_tx) = if let (Some(path), Some(interval)) =
                         (config.snapshot_path(), config.snapshot_interval())
                     {
                         let (tx, rx) = tokio::sync::watch::channel(false);
                         let snapshot_config = SnapshotConfig::new(path.clone(), interval);
                         let manager =
-                            SnapshotManager::new(Arc::clone(&writer), snapshot_config, rx);
-                        let handle = manager.start();
+                            SnapshotManager::new(Arc::clone(&handle), snapshot_config, rx);
+                        let snap_handle = manager.start();
                         info!(
                             "SnapshotManager started: interval={:?}, path={:?}",
                             interval, path
                         );
-                        (Some(handle), Some(tx))
+                        (Some(snap_handle), Some(tx))
                     } else {
                         debug!("SnapshotManager not started (snapshot disabled)");
                         (None, None)
                     };
 
-                    (
-                        Some(writer),
-                        Some(Arc::new(index)),
-                        snapshot_handle,
-                        snapshot_tx,
-                    )
+                    (Some(handle), snapshot_handle, snapshot_tx)
                 },
                 Err(e) => {
                     tracing::warn!("UnifiedWriter not available: {}", e);
-                    (None, None, None, None)
+                    (None, None, None)
                 },
             }
         } else {
             info!("SharedMemory path not found, skipping (non-Docker environment)");
-            (None, None, None, None)
+            (None, None, None)
         }
     };
 
@@ -297,23 +294,9 @@ async fn main() -> VoltageResult<()> {
     // Keep a reference for shutdown cleanup (clear online status hash)
     let rtdb_for_shutdown = Arc::clone(&rtdb);
 
-    // Create UnifiedReader for SHM command listener (reads from same SHM file)
-    // This allows event-driven M2C dispatch with ~1-2ms latency
     let (shm_listener_shutdown_tx, shm_listener_shutdown_rx) = tokio::sync::watch::channel(false);
-    let unified_reader = if shared_writer.is_some() {
-        match voltage_rtdb_shm::UnifiedReader::open(&SharedConfig::default(), &routing_cache) {
-            Ok(reader) => {
-                info!("UnifiedReader opened for event-driven M2C dispatch");
-                Some(Arc::new(reader))
-            },
-            Err(e) => {
-                warn!("UnifiedReader unavailable: {}", e);
-                None
-            },
-        }
-    } else {
-        None
-    };
+
+    let has_shm_listener = shm_handle.is_some();
 
     // Create channel manager with optional shared memory and CommandTxCache support
     // Lock-free architecture - no RwLock wrapper needed
@@ -322,14 +305,13 @@ async fn main() -> VoltageResult<()> {
         rtdb,
         routing_cache,
         sqlite_pool.clone(),
-        shared_writer,
-        channel_index,
+        shm_handle,
         Some(Arc::clone(&command_tx_cache)),
     );
 
     // Configure SHM listener for event-driven M2C dispatch (if SHM available)
-    let channel_manager = if let Some(reader) = unified_reader {
-        channel_manager.with_shm_listener(reader, shm_listener_shutdown_rx)
+    let channel_manager = if has_shm_listener {
+        channel_manager.with_shm_listener(shm_listener_shutdown_rx)
     } else {
         channel_manager
     };

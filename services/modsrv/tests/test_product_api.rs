@@ -15,6 +15,7 @@ use common::TestEnv;
 use modsrv::product_loader::ProductLoader;
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_product_list_lightweight() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
@@ -55,6 +56,7 @@ async fn test_product_list_lightweight() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_product_detail_complete() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
@@ -87,6 +89,7 @@ async fn test_product_detail_complete() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_product_closed_loop() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
@@ -133,6 +136,7 @@ async fn test_product_closed_loop() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_product_not_found() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
@@ -162,6 +166,7 @@ async fn test_product_not_found() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_product_hierarchy() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
@@ -208,6 +213,7 @@ async fn test_product_hierarchy() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_product_exists() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;
@@ -233,6 +239,7 @@ async fn test_product_exists() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_product_count() -> Result<()> {
     // 1. Create test environment
     let env = TestEnv::create().await?;

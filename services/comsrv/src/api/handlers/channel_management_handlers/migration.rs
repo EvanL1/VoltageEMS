@@ -165,7 +165,7 @@ pub(super) async fn change_channel_id<R: Rtdb + 'static>(
         new_id
     );
 
-    // 9. Reload routing cache
+    // 9. Reload routing cache and rebuild SHM
     if let Err(e) = ChannelManager::<voltage_rtdb::RedisRtdb>::reload_routing_cache(
         &state.sqlite_pool,
         &manager.routing_cache,
@@ -173,6 +173,10 @@ pub(super) async fn change_channel_id<R: Rtdb + 'static>(
     .await
     {
         tracing::warn!("Routing cache reload failed: {}", e);
+    } else if let Some(handle) = manager.shm_handle() {
+        if let Err(e) = handle.rebuild(&manager.routing_cache) {
+            tracing::warn!("SHM rebuild after migration failed: {}", e);
+        }
     }
 
     // 10. Create and connect new channel (if enabled)

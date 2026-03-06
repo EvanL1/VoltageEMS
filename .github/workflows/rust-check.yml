@@ -243,7 +243,7 @@ jobs:
           # Clean Redis test database
           docker compose exec -T voltage-redis redis-cli FLUSHDB
           # Run integration tests (single-threaded to avoid race conditions)
-          cargo test --workspace --test '*' -- --test-threads=1
+          cargo test --workspace --test '*' -- --include-ignored --test-threads=1
 
       # Cleanup Docker resources
       - name: Stop Redis

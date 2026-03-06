@@ -1,16 +1,26 @@
 //! UDS Event Notification Protocol
 //!
 //! Used for M2C command notifications from modsrv → comsrv.
-//! Notifications carry only "pointer" information (channel_id, point_type, point_id);
-//! actual data is read from SHM.
+//! Notifications carry the full command event so comsrv does not need to
+//! re-read SHM and collapse multiple writes to the same point.
 
 use bytemuck::{Pod, Zeroable};
 use voltage_model::PointType;
 
-/// M2C command notification (12 bytes, fixed size)
+/// M2C command notification (48 bytes, fixed size)
 ///
 /// Sent via Unix Domain Socket to notify comsrv of new Control/Adjustment commands.
 /// Uses `#[repr(C)]` to ensure C-compatible memory layout for cross-process transport.
+///
+/// # Protocol Semantics
+///
+/// Notifications are **command events**. Each message carries:
+/// - routing target (`channel_id`, `point_type`, `point_id`)
+/// - command payload (`value_bits`, `timestamp_ms`)
+/// - producer ordering (`producer_id`, `seq`)
+///
+/// `producer_id + seq` lets comsrv reject duplicate or stale events after
+/// reconnects without depending on SHM state.
 ///
 /// # Safety
 /// Deriving `Pod` + `Zeroable` guarantees at compile time:
@@ -21,25 +31,45 @@ use voltage_model::PointType;
 pub struct ShmNotification {
     /// Channel ID
     pub channel_id: u32,
+    /// Point ID
+    pub point_id: u32,
     /// Point type (Control=2, Adjustment=3)
     pub point_type: u8,
     /// Alignment padding
-    pub _padding: [u8; 3],
-    /// Point ID
-    pub point_id: u32,
+    pub _padding: [u8; 7],
+    /// Command value encoded via `f64::to_bits()`
+    pub value_bits: u64,
+    /// Command timestamp (milliseconds since UNIX epoch)
+    pub timestamp_ms: u64,
+    /// Producer incarnation ID
+    pub producer_id: u64,
+    /// Monotonic sequence number within the producer incarnation
+    pub seq: u64,
 }
 
 impl ShmNotification {
     /// Fixed message size
-    pub const SIZE: usize = 12;
+    pub const SIZE: usize = 48;
 
     /// Create a new notification
-    pub fn new(channel_id: u32, point_type: PointType, point_id: u32) -> Self {
+    pub fn new(
+        channel_id: u32,
+        point_type: PointType,
+        point_id: u32,
+        value: f64,
+        timestamp_ms: u64,
+        producer_id: u64,
+        seq: u64,
+    ) -> Self {
         Self {
             channel_id,
-            point_type: point_type as u8,
-            _padding: [0; 3],
             point_id,
+            point_type: point_type as u8,
+            _padding: [0; 7],
+            value_bits: value.to_bits(),
+            timestamp_ms,
+            producer_id,
+            seq,
         }
     }
 
@@ -53,6 +83,12 @@ impl ShmNotification {
     /// Create from byte array (zero-copy, compile-time safety guarantee)
     pub fn from_bytes(bytes: &[u8; Self::SIZE]) -> Self {
         *bytemuck::from_bytes(bytes)
+    }
+
+    /// Decode command value
+    #[inline]
+    pub fn value(&self) -> f64 {
+        f64::from_bits(self.value_bits)
     }
 
     /// Get point type
@@ -79,7 +115,7 @@ mod tests {
 
     #[test]
     fn test_notification_roundtrip() {
-        let notif = ShmNotification::new(1001, PointType::Control, 42);
+        let notif = ShmNotification::new(1001, PointType::Control, 42, 123.45, 99, 7, 11);
         let bytes = notif.to_bytes();
         let decoded = ShmNotification::from_bytes(&bytes);
 
@@ -87,5 +123,9 @@ mod tests {
         assert_eq!(decoded.channel_id, 1001);
         assert_eq!(decoded.get_point_type(), Some(PointType::Control));
         assert_eq!(decoded.point_id, 42);
+        assert_eq!(decoded.value(), 123.45);
+        assert_eq!(decoded.timestamp_ms, 99);
+        assert_eq!(decoded.producer_id, 7);
+        assert_eq!(decoded.seq, 11);
     }
 }

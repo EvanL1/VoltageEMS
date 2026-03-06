@@ -94,6 +94,7 @@ async fn create_test_instance(
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_rename_instance_success() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -116,6 +117,7 @@ async fn test_rename_instance_success() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_rename_instance_duplicate_error() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -141,6 +143,7 @@ async fn test_rename_instance_duplicate_error() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_rename_instance_not_found() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -160,6 +163,7 @@ async fn test_rename_instance_not_found() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_delete_instance_success() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -186,6 +190,7 @@ async fn test_delete_instance_success() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_delete_instance_not_found() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -198,6 +203,7 @@ async fn test_delete_instance_not_found() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_delete_instance_cascade_routing() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -255,6 +261,7 @@ async fn test_delete_instance_cascade_routing() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_list_instances_all() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -293,6 +300,7 @@ async fn test_list_instances_all() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_list_instances_by_product() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -323,6 +331,7 @@ async fn test_list_instances_by_product() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_list_instances_empty() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -342,6 +351,7 @@ async fn test_list_instances_empty() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_list_instances_paginated() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -394,6 +404,7 @@ async fn test_list_instances_paginated() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_list_instances_paginated_with_filter() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -437,6 +448,7 @@ async fn test_list_instances_paginated_with_filter() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_search_instances_by_name() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -478,6 +490,7 @@ async fn test_search_instances_by_name() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_search_instances_with_product_filter() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -512,6 +525,7 @@ async fn test_search_instances_with_product_filter() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_batch_create_instances() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -547,6 +561,7 @@ async fn test_batch_create_instances() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_batch_delete_instances() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -587,6 +602,7 @@ async fn test_batch_delete_instances() {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_next_instance_id_empty_db() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -602,6 +618,7 @@ async fn test_get_next_instance_id_empty_db() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_next_instance_id_after_delete() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;
@@ -632,6 +649,7 @@ async fn test_get_next_instance_id_after_delete() {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_instance_properties_preserved() {
     let env = TestEnv::create().await.expect("Failed to create test env");
     let manager = create_test_instance_manager(&env).await;

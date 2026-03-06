@@ -15,7 +15,7 @@
 //! ```
 
 use crate::shared_config::DEFAULT_SNAPSHOT_INTERVAL_SECS;
-use crate::unified_shm::UnifiedWriter;
+use crate::ShmHandle;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -83,7 +83,7 @@ impl Default for SnapshotConfig {
 ///
 /// Manages periodic snapshot saving and provides manual save capability.
 pub struct SnapshotManager {
-    writer: Arc<UnifiedWriter>,
+    shm_handle: Arc<ShmHandle>,
     config: SnapshotConfig,
     shutdown_rx: watch::Receiver<bool>,
 }
@@ -92,16 +92,16 @@ impl SnapshotManager {
     /// Create new snapshot manager
     ///
     /// # Arguments
-    /// - `writer`: Arc to the UnifiedWriter
+    /// - `shm_handle`: Arc to the ShmHandle (always gets latest writer after rebuild)
     /// - `config`: Snapshot configuration
     /// - `shutdown_rx`: Watch receiver for shutdown signal
     pub fn new(
-        writer: Arc<UnifiedWriter>,
+        shm_handle: Arc<ShmHandle>,
         config: SnapshotConfig,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
         Self {
-            writer,
+            shm_handle,
             config,
             shutdown_rx,
         }
@@ -162,7 +162,11 @@ impl SnapshotManager {
     ///
     /// Can be called at any time to force an immediate snapshot.
     pub fn save_now(&self) -> Result<()> {
-        self.writer
+        let writer = self
+            .shm_handle
+            .writer_arc()
+            .context("SHM writer not available for snapshot")?;
+        writer
             .save_snapshot(&self.config.path)
             .context("Failed to save snapshot")
     }

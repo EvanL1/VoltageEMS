@@ -14,9 +14,7 @@ use crate::core::channels::shm_listener::ShmCommandListener;
 use crate::core::channels::shm_poller::ShmCommandPoller;
 use crate::error::{ComSrvError, Result};
 use voltage_rtdb::Rtdb;
-use voltage_rtdb_shm::{
-    ChannelIndex, ChannelToSlotIndex, SlotBitmap, UnifiedReader, UnifiedWriter,
-};
+use voltage_rtdb_shm::{ChannelIndex, ShmHandle, SlotBitmap, UnifiedReader};
 
 // Re-export types for backwards compatibility
 pub use crate::core::channels::channel_entry::{unix_timestamp_ms, ChannelMetadata};
@@ -45,10 +43,8 @@ pub struct ChannelManager<R: Rtdb> {
     pub routing_cache: Arc<voltage_routing::RoutingCache>,
     /// SQLite connection pool for configuration loading
     pub(super) sqlite_pool: Option<sqlx::SqlitePool>,
-    /// Shared memory writer for zero-copy cross-process data sharing (optional)
-    pub(super) shared_writer: Option<Arc<UnifiedWriter>>,
-    /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
-    pub(super) channel_index: Option<Arc<ChannelToSlotIndex>>,
+    /// Runtime-swappable shared memory handle (writer + index, rebuilt on routing reload)
+    pub(super) shm_handle: Option<Arc<ShmHandle>>,
     /// Command TX cache for O(1) hot path access
     /// Shared with AppState for direct API access bypassing RwLock
     pub(super) command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
@@ -95,8 +91,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             rtdb,
             routing_cache,
             sqlite_pool: None,
-            shared_writer: None,
-            channel_index: None,
+            shm_handle: None,
             command_tx_cache: None,
             dynamic_channel_index: None,
             slot_bitmap: None,
@@ -119,8 +114,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             rtdb,
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
-            shared_writer: None,
-            channel_index: None,
+            shm_handle: None,
             command_tx_cache: None,
             dynamic_channel_index: None,
             slot_bitmap: None,
@@ -136,8 +130,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         rtdb: Arc<R>,
         routing_cache: Arc<voltage_routing::RoutingCache>,
         sqlite_pool: sqlx::SqlitePool,
-        shared_writer: Option<Arc<UnifiedWriter>>,
-        channel_index: Option<Arc<ChannelToSlotIndex>>,
+        shm_handle: Option<Arc<ShmHandle>>,
         command_tx_cache: Option<Arc<crate::api::command_cache::CommandTxCache>>,
     ) -> Self {
         Self {
@@ -146,8 +139,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             rtdb,
             routing_cache,
             sqlite_pool: Some(sqlite_pool),
-            shared_writer,
-            channel_index,
+            shm_handle,
             command_tx_cache,
             dynamic_channel_index: None,
             slot_bitmap: None,
@@ -204,14 +196,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     }
 
     /// Configure SHM command listener for event-driven M2C dispatch
-    pub fn with_shm_listener(
-        mut self,
-        unified_reader: Arc<UnifiedReader>,
-        shutdown_rx: tokio::sync::watch::Receiver<bool>,
-    ) -> Self {
-        let listener = ShmCommandListener::new(unified_reader.clone(), None, shutdown_rx);
-
-        self.unified_reader = Some(unified_reader);
+    pub fn with_shm_listener(mut self, shutdown_rx: tokio::sync::watch::Receiver<bool>) -> Self {
+        let listener = ShmCommandListener::new(None, shutdown_rx);
         self.shm_listener = Some(Arc::new(listener));
         self
     }
@@ -225,6 +211,11 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Get SHM listener for channel registration (internal use)
     pub fn shm_listener(&self) -> Option<&Arc<ShmCommandListener>> {
         self.shm_listener.as_ref()
+    }
+
+    /// Get ShmHandle for routing reload SHM rebuild
+    pub fn shm_handle(&self) -> Option<&Arc<ShmHandle>> {
+        self.shm_handle.as_ref()
     }
 
     /// Get dynamic ChannelIndex (for external access, e.g., API stats)

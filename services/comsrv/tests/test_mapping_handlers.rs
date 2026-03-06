@@ -321,6 +321,7 @@ async fn make_request(
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_mappings_for_nonexistent_channel() -> Result<()> {
     let pool = create_test_database().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -333,6 +334,7 @@ async fn test_get_mappings_for_nonexistent_channel() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_mappings_returns_grouped_format() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -362,6 +364,7 @@ async fn test_get_mappings_returns_grouped_format() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_mappings_telemetry_points() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -391,6 +394,7 @@ async fn test_get_mappings_telemetry_points() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_mappings_signal_points() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -409,6 +413,7 @@ async fn test_get_mappings_signal_points() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_mappings_control_points() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -427,6 +432,7 @@ async fn test_get_mappings_control_points() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_get_mappings_adjustment_points() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -451,6 +457,7 @@ async fn test_get_mappings_adjustment_points() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_replace_mode_success() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -490,6 +497,7 @@ async fn test_update_mappings_replace_mode_success() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_multiple_points() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -543,6 +551,7 @@ async fn test_update_mappings_multiple_points() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_merge_mode_partial_update() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -586,6 +595,7 @@ async fn test_update_mappings_merge_mode_partial_update() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_validate_only_success() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -627,6 +637,7 @@ async fn test_update_mappings_validate_only_success() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_validate_only_with_errors() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -667,6 +678,7 @@ async fn test_update_mappings_validate_only_with_errors() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_channel_not_found() -> Result<()> {
     let pool = create_test_database().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -704,6 +716,7 @@ async fn test_update_mappings_channel_not_found() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_point_not_found() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -738,6 +751,7 @@ async fn test_update_mappings_point_not_found() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_invalid_four_remote() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -775,6 +789,7 @@ async fn test_update_mappings_invalid_four_remote() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_modbus_validation_invalid_slave_id() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -809,6 +824,7 @@ async fn test_modbus_validation_invalid_slave_id() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_modbus_validation_invalid_function_code() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -843,6 +859,7 @@ async fn test_modbus_validation_invalid_function_code() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_modbus_validation_fc_mismatch_telemetry_with_write() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -877,6 +894,7 @@ async fn test_modbus_validation_fc_mismatch_telemetry_with_write() -> Result<()>
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_modbus_validation_fc_mismatch_control_with_read() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -911,6 +929,7 @@ async fn test_modbus_validation_fc_mismatch_control_with_read() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_modbus_validation_invalid_data_type() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -945,6 +964,7 @@ async fn test_modbus_validation_invalid_data_type() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_modbus_validation_invalid_byte_order() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -983,6 +1003,7 @@ async fn test_modbus_validation_invalid_byte_order() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_gpio_validation_success() -> Result<()> {
     let pool = create_test_database_with_gpio_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -1014,6 +1035,7 @@ async fn test_gpio_validation_success() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_gpio_validation_invalid_gpio_number() -> Result<()> {
     let pool = create_test_database_with_gpio_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -1046,6 +1068,7 @@ async fn test_gpio_validation_invalid_gpio_number() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_gpio_validation_invalid_point_type() -> Result<()> {
     let pool = create_test_database_with_gpio_channel().await?;
 
@@ -1091,6 +1114,7 @@ async fn test_gpio_validation_invalid_point_type() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_virtual_validation_success() -> Result<()> {
     let pool = create_test_database_with_virtual_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -1122,6 +1146,7 @@ async fn test_virtual_validation_success() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_virtual_validation_empty_expression() -> Result<()> {
     let pool = create_test_database_with_virtual_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -1157,6 +1182,7 @@ async fn test_virtual_validation_empty_expression() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_clear_mapping_with_null() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -1187,6 +1213,7 @@ async fn test_clear_mapping_with_null() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_clear_mapping_with_empty_object() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;
@@ -1221,6 +1248,7 @@ async fn test_clear_mapping_with_empty_object() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_mappings_with_auto_reload_disabled() -> Result<()> {
     let pool = create_test_database_with_modbus_channel().await?;
     let app = create_test_app_with_pool(pool).await?;

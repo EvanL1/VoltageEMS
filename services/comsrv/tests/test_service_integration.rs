@@ -482,6 +482,7 @@ impl Drop for ServiceTestEnvironment {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_service_startup_and_health() -> Result<()> {
     let mut rng = rand::thread_rng();
     let test_id = rng.gen::<u32>();
@@ -520,6 +521,7 @@ async fn test_service_startup_and_health() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_service_api_endpoints() -> Result<()> {
     let mut rng = rand::thread_rng();
     let test_id = rng.gen::<u32>();
@@ -571,6 +573,7 @@ async fn test_service_api_endpoints() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_service_redis_connectivity() -> Result<()> {
     let mut rng = rand::thread_rng();
     let test_id = rng.gen::<u32>();
@@ -603,6 +606,7 @@ async fn test_service_redis_connectivity() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_service_graceful_shutdown() -> Result<()> {
     let mut rng = rand::thread_rng();
     let test_id = rng.gen::<u32>();
@@ -642,7 +646,7 @@ async fn test_service_graceful_shutdown() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore] // Flaky: error output location varies by build state
+#[ignore] // requires Redis
 async fn test_service_handles_invalid_database() -> Result<()> {
     let invalid_db_path = "/nonexistent/path/comsrv.db";
 
@@ -665,7 +669,7 @@ async fn test_service_handles_invalid_database() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore] // This test requires a long-running service
+#[ignore] // requires Redis
 async fn test_service_memory_stability() -> Result<()> {
     let mut rng = rand::thread_rng();
     let test_id = rng.gen::<u32>();

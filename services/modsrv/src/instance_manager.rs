@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 use voltage_model::{validate_instance_name, KeySpaceConfig};
 use voltage_rtdb::Rtdb;
@@ -21,6 +22,17 @@ use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 
 /// Row type returned by SQLite instance queries
 type InstanceRow = (u32, String, String, Option<u32>, Option<String>, String);
+
+#[derive(serde::Deserialize)]
+struct ComsrvRoutingReloadResult {
+    errors: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ComsrvRoutingReloadResponse {
+    success: bool,
+    data: ComsrvRoutingReloadResult,
+}
 
 /// Parse properties JSON string into HashMap
 fn parse_properties_json(
@@ -77,8 +89,10 @@ pub struct InstanceManager<R: Rtdb> {
     /// UnifiedWriter for writing Control/Adjustment points to SHM
     /// When set, M2C commands go directly to SHM (primary path)
     /// Redis TODO queue remains as fallback
-    /// Uses OnceLock for delayed initialization (set after `Arc<InstanceManager>` is created)
-    pub(crate) shm_action_writer: std::sync::OnceLock<Arc<voltage_rtdb_shm::UnifiedWriter>>,
+    /// Uses ArcSwapOption for runtime hot-swap on routing reload
+    pub(crate) shm_action_writer: arc_swap::ArcSwapOption<voltage_rtdb_shm::UnifiedWriter>,
+    /// SharedConfig for SHM file paths and sizing (needed for writer rebuild)
+    pub(crate) shm_config: std::sync::OnceLock<voltage_rtdb_shm::SharedConfig>,
     // ========== UDS Notifier (Event-driven M2C) ==========
     /// ShmNotifier for sending UDS notifications to comsrv
     /// When SHM write succeeds, send notification to trigger immediate dispatch
@@ -103,7 +117,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             name_cache: DashMap::new(),
             dynamic_instance_index: None,
             slot_bitmap: None,
-            shm_action_writer: std::sync::OnceLock::new(),
+            shm_action_writer: arc_swap::ArcSwapOption::empty(),
+            shm_config: std::sync::OnceLock::new(),
             shm_notifier: std::sync::OnceLock::new(),
         }
     }
@@ -132,11 +147,36 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// in addition to Redis TODO queue. SHM serves as the primary path
     /// for comsrv's ShmCommandPoller, with Redis as fallback.
     ///
-    /// Uses OnceLock for delayed initialization - can be called after
-    /// `Arc<InstanceManager>` is created. Returns true if set successfully,
-    /// false if already set.
-    pub fn set_shm_action_writer(&self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> bool {
-        self.shm_action_writer.set(writer).is_ok()
+    /// Uses ArcSwapOption for runtime-swappable initialization.
+    /// Also stores SharedConfig via OnceLock for future rebuilds.
+    pub fn set_shm_action_writer(
+        &self,
+        writer: Arc<voltage_rtdb_shm::UnifiedWriter>,
+        config: voltage_rtdb_shm::SharedConfig,
+    ) {
+        self.shm_action_writer.store(Some(writer));
+        let _ = self.shm_config.set(config); // ignore if already set
+    }
+
+    /// Re-open the SHM action writer after routing changes
+    ///
+    /// Called after `refresh_routing_cache()` to ensure the writer's slot layout
+    /// matches the updated routing. The old writer is atomically swapped out
+    /// via ArcSwapOption and dropped after all in-flight reads complete.
+    pub fn rebuild_shm_action_writer(&self) {
+        let Some(config) = self.shm_config.get() else {
+            return; // SHM not configured
+        };
+        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(config, &self.routing_cache) {
+            Ok(writer) => {
+                self.shm_action_writer
+                    .store(Some(std::sync::Arc::new(writer)));
+                tracing::info!("SHM action writer rebuilt after routing change");
+            },
+            Err(e) => {
+                tracing::warn!("SHM action writer rebuild failed: {}", e);
+            },
+        }
     }
 
     /// Configure UDS notifier for event-driven M2C command dispatch
@@ -171,6 +211,64 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// that need to refresh the cache after routing management operations.
     pub fn routing_cache(&self) -> &Arc<voltage_routing::RoutingCache> {
         &self.routing_cache
+    }
+
+    /// Refresh routing cache from database and rebuild SHM action writer
+    ///
+    /// Refreshes local routing cache, asks comsrv to reload its routing/SHM view,
+    /// then re-opens the local SHM action writer against the updated header.
+    pub async fn refresh_routing_and_shm(&self) -> anyhow::Result<usize> {
+        let count =
+            crate::bootstrap::refresh_routing_cache(&self.pool, &self.routing_cache).await?;
+        self.reload_comsrv_routing().await?;
+        self.rebuild_shm_action_writer();
+        Ok(count)
+    }
+
+    async fn reload_comsrv_routing(&self) -> anyhow::Result<()> {
+        let base_url = std::env::var(common::ENV_COMSRV_URL)
+            .unwrap_or_else(|_| common::DEFAULT_COMSRV_URL.to_string());
+        let url = format!("{}/api/routing/reload", base_url.trim_end_matches('/'));
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| anyhow!("Failed to build comsrv reload client: {}", e))?;
+
+        let response = client
+            .post(&url)
+            .send()
+            .await
+            .map_err(|e| anyhow!("Failed to call comsrv routing reload at {}: {}", url, e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "comsrv routing reload returned HTTP {}: {}",
+                status,
+                body
+            ));
+        }
+
+        let payload: ComsrvRoutingReloadResponse = response
+            .json()
+            .await
+            .map_err(|e| anyhow!("Invalid comsrv routing reload response: {}", e))?;
+
+        if !payload.success {
+            return Err(anyhow!("comsrv routing reload reported success=false"));
+        }
+
+        if !payload.data.errors.is_empty() {
+            return Err(anyhow!(
+                "comsrv routing reload completed with errors: {}",
+                payload.data.errors.join("; ")
+            ));
+        }
+
+        info!("comsrv routing reload completed via {}", url);
+        Ok(())
     }
 
     /// Get the product loader reference
@@ -537,6 +635,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     /// Rename an instance
     pub async fn rename_instance(&self, instance_id: u32, new_name: &str) -> Result<()> {
+        // Validate instance name format before checking uniqueness
+        if let Err(e) = validate_instance_name(new_name) {
+            anyhow::bail!("Invalid instance name: {}", e);
+        }
+
         // Check if new name already exists
         let (count,): (i64,) = sqlx::query_as(
             r#"SELECT COUNT(*) FROM instances WHERE instance_name = ? AND instance_id != ?"#,

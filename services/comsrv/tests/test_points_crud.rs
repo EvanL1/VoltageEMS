@@ -210,6 +210,7 @@ async fn make_request(
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_telemetry_point_crud_lifecycle() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -334,6 +335,7 @@ async fn test_telemetry_point_crud_lifecycle() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_signal_point_crud_lifecycle() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -436,6 +438,7 @@ async fn test_signal_point_crud_lifecycle() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_control_point_crud_lifecycle() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -536,6 +539,7 @@ async fn test_control_point_crud_lifecycle() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_adjustment_point_crud_lifecycle() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -642,6 +646,7 @@ async fn test_adjustment_point_crud_lifecycle() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_duplicate_point_creation() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -681,6 +686,7 @@ async fn test_duplicate_point_creation() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_nonexistent_point() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -705,6 +711,7 @@ async fn test_update_nonexistent_point() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_delete_nonexistent_point() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -725,6 +732,7 @@ async fn test_delete_nonexistent_point() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_point_with_nonexistent_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -752,6 +760,7 @@ async fn test_create_point_with_nonexistent_channel() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_with_empty_fields() -> Result<()> {
     let mut app = create_test_app().await?;
 

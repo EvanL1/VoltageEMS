@@ -182,6 +182,28 @@ fn verify_slot_count(file_slot_count: usize, calculated_slots: usize) -> Result<
     Ok(())
 }
 
+/// Validate a shared memory header for writer-side reconfiguration.
+///
+/// Unlike `validate_shm_header`, this intentionally does not verify
+/// `routing_hash` because the caller is about to replace it.
+fn validate_reconfigurable_header(header: &UnifiedHeader) -> Result<u32> {
+    if header.magic != UNIFIED_MAGIC {
+        bail!(
+            "Invalid magic: expected 0x{:X}, got 0x{:X}",
+            UNIFIED_MAGIC,
+            header.magic
+        );
+    }
+    if header.version != UNIFIED_VERSION {
+        bail!(
+            "Version mismatch: expected {}, got {}",
+            UNIFIED_VERSION,
+            header.version
+        );
+    }
+    Ok(header.max_slots)
+}
+
 /// Shared accessor methods for both UnifiedWriter and UnifiedReader.
 ///
 /// Both types store an mmap region with identical layout: Header + PointSlot[].
@@ -598,7 +620,74 @@ impl UnifiedWriter {
         self.mmap
             .flush()
             .context("Failed to flush mmap before snapshot")?;
-        save_snapshot_impl(&self.mmap, self.slot_count, path, "Writer")
+        let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;
+        save_snapshot_impl(&self.mmap, current_slot_count, path, "Writer")
+    }
+
+    /// Reconfigure the existing SHM file in place for an updated routing cache.
+    ///
+    /// This keeps the same underlying file/inode alive so existing mmaps are not
+    /// invalidated by truncation. All point slots are cleared before the new
+    /// layout is published to avoid stale values being interpreted as new points.
+    pub fn reconfigure_existing(
+        config: &SharedConfig,
+        routing_cache: &RoutingCache,
+    ) -> Result<Self> {
+        let path = config.path();
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .with_context(|| format!("Failed to open {:?} for SHM reconfigure", path))?;
+
+        let mut mmap = unsafe {
+            MmapOptions::new()
+                .map_mut(&file)
+                .with_context(|| "Failed to mmap for SHM reconfigure")?
+        };
+
+        let max_slots = {
+            let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
+            validate_reconfigurable_header(header)?
+        };
+
+        let (channel_layouts, slot_count) = allocate_layouts(routing_cache);
+        if slot_count > max_slots as usize {
+            bail!("Too many slots: {} (max={})", slot_count, max_slots);
+        }
+
+        mmap[slot_offset()..].fill(0);
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(std::time::Duration::ZERO)
+            .as_millis() as u64;
+
+        let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };
+        header
+            .slot_count
+            .store(slot_count as u32, Ordering::Release);
+        header.last_update_ts.store(now_ms, Ordering::Relaxed);
+        header.writer_heartbeat.store(now_ms, Ordering::Relaxed);
+        header
+            .routing_hash
+            .store(routing_cache.content_hash(), Ordering::Release);
+
+        tracing::info!(
+            "Reconfigured unified shared memory in place: {:?}, slots={}, channels={}",
+            path,
+            slot_count,
+            channel_layouts.iter().filter(|l| l.is_valid()).count()
+        );
+
+        Ok(Self {
+            mmap,
+            path: path.to_path_buf(),
+            max_slots,
+            slot_count,
+            channel_layouts,
+        })
     }
 
     /// Restore from snapshot file
@@ -862,7 +951,8 @@ impl UnifiedReader {
         let layout = self.channel_layouts.get(channel_id as usize)?;
         let slot = layout.slot(point_type, point_id)?;
         let point = self.slot_at(slot);
-        Some((point.get_value(), point.get_timestamp()))
+        let (value, _raw, timestamp) = point.load_consistent();
+        Some((value, timestamp))
     }
 
     /// Get value by instance key (requires RoutingCache for C2M lookup)

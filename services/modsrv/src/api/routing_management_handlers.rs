@@ -190,16 +190,13 @@ pub async fn create_instance_routing(
         )));
     }
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        // Log error but don't fail the request - cache will be refreshed on next service restart
-        tracing::warn!("Failed to refresh routing cache after create: {}", e);
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!("Failed to refresh routing after create: {}", e))
+        })?;
 
     Ok(Json(SuccessResponse::new(json!({
         "routing": {
@@ -434,15 +431,13 @@ pub async fn update_instance_routing(
             )));
         }
 
-        // Refresh routing cache after successful database update
-        if let Err(e) = crate::bootstrap::refresh_routing_cache(
-            &state.instance_manager.pool,
-            state.instance_manager.routing_cache(),
-        )
-        .await
-        {
-            tracing::warn!("Failed to refresh routing cache after update: {}", e);
-        }
+        state
+            .instance_manager
+            .refresh_routing_and_shm()
+            .await
+            .map_err(|e| {
+                ModSrvError::InternalError(format!("Failed to refresh routing after update: {}", e))
+            })?;
 
         Ok(Json(SuccessResponse::new(json!({
             "message": format!("Updated {} routings", success_count)
@@ -489,15 +484,16 @@ pub async fn delete_instance_routing(
         Ok((measurement_count, action_count)) => {
             let total_count = measurement_count + action_count;
 
-            // Refresh routing cache after successful database update
-            if let Err(e) = crate::bootstrap::refresh_routing_cache(
-                &state.instance_manager.pool,
-                state.instance_manager.routing_cache(),
-            )
-            .await
-            {
-                tracing::warn!("Failed to refresh routing cache after delete: {}", e);
-            }
+            state
+                .instance_manager
+                .refresh_routing_and_shm()
+                .await
+                .map_err(|e| {
+                    ModSrvError::InternalError(format!(
+                        "Failed to refresh routing after delete: {}",
+                        e
+                    ))
+                })?;
 
             Ok(Json(SuccessResponse::new(json!({
                 "message": format!(

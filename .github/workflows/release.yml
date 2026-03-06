@@ -50,6 +50,7 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace -- -D warnings
+          cargo test --workspace --lib --bins
 
   # ============================================================================
   # Job 2: Build Multi-Arch Installers (Parallel Matrix)

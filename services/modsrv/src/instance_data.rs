@@ -317,14 +317,20 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // RouteContext provides numeric fields for efficient SHM writes
         if let Some(ctx) = &outcome.route_context {
             // Write action value to shared memory (zero-copy IPC)
-            if let Some(writer) = self.shm_action_writer.get() {
-                writer.set_action(
+            if let Some(writer) = self.shm_action_writer.load().as_ref() {
+                let mirrored = writer.set_action(
                     ctx.target_channel_id,
                     ctx.target_point_type,
                     ctx.target_point_id,
                     value,
                     ctx.timestamp_ms as u64,
                 );
+                if !mirrored {
+                    warn!(
+                        "SHM action mirror miss for ch={} pt={} point={}",
+                        ctx.target_channel_id, ctx.target_point_type, ctx.target_point_id
+                    );
+                }
             }
             // UDS notification for event-driven dispatch (~1-2ms latency)
             if let Some(notifier_lock) = self.shm_notifier.get() {
@@ -332,7 +338,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     Ok(mut guard) => {
                         if let Some(pt) = voltage_model::PointType::from_u8(ctx.target_point_type) {
                             let result = guard
-                                .notify(ctx.target_channel_id, pt, ctx.target_point_id)
+                                .notify(
+                                    ctx.target_channel_id,
+                                    pt,
+                                    ctx.target_point_id,
+                                    value,
+                                    ctx.timestamp_ms as u64,
+                                )
                                 .await;
                             if result.fallback_used {
                                 warn!(

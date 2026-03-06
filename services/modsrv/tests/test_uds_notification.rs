@@ -51,7 +51,9 @@ async fn test_uds_notification_roundtrip() {
     assert!(notifier.is_connected(), "Notifier should be connected");
 
     // 4. Send Control notification
-    let result = notifier.notify(1001, PointType::Control, 42).await;
+    let result = notifier
+        .notify(1001, PointType::Control, 42, 12.5, 1_700_000_001)
+        .await;
     assert!(result.uds_sent, "UDS notification should be sent");
 
     // 5. Verify reception
@@ -62,6 +64,8 @@ async fn test_uds_notification_roundtrip() {
 
     assert_eq!(received.channel_id, 1001);
     assert_eq!(received.point_id, 42);
+    assert_eq!(received.value(), 12.5);
+    assert_eq!(received.timestamp_ms, 1_700_000_001);
     assert_eq!(
         received.get_point_type(),
         Some(PointType::Control),
@@ -69,7 +73,9 @@ async fn test_uds_notification_roundtrip() {
     );
 
     // 6. Send Adjustment notification
-    let result = notifier.notify(2002, PointType::Adjustment, 99).await;
+    let result = notifier
+        .notify(2002, PointType::Adjustment, 99, 88.0, 1_700_000_002)
+        .await;
     assert!(result.uds_sent, "UDS notification should be sent");
 
     let received = tokio::time::timeout(Duration::from_secs(1), rx.recv())
@@ -79,6 +85,8 @@ async fn test_uds_notification_roundtrip() {
 
     assert_eq!(received.channel_id, 2002);
     assert_eq!(received.point_id, 99);
+    assert_eq!(received.value(), 88.0);
+    assert_eq!(received.timestamp_ms, 1_700_000_002);
     assert_eq!(
         received.get_point_type(),
         Some(PointType::Adjustment),
@@ -121,7 +129,15 @@ async fn test_uds_latency_under_5ms() {
     let mut latencies = vec![];
     for i in 0..100u32 {
         let start = Instant::now();
-        let result = notifier.notify(1001, PointType::Adjustment, i).await;
+        let result = notifier
+            .notify(
+                1001,
+                PointType::Adjustment,
+                i,
+                i as f64,
+                1_700_000_000 + i as u64,
+            )
+            .await;
         assert!(result.uds_sent, "UDS notification should be sent");
         let recv_time = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -168,7 +184,9 @@ async fn test_uds_graceful_degradation() {
 
     // Sending notifications should silently succeed (stream is None, uses fallback/disabled)
     let mut notifier = notifier;
-    let result = notifier.notify(1001, PointType::Control, 1).await;
+    let result = notifier
+        .notify(1001, PointType::Control, 1, 1.0, 1_700_000_003)
+        .await;
     // When not connected, UDS is disabled - notify still "succeeds" but doesn't send
     assert!(
         !result.uds_sent || result.disabled,
@@ -210,7 +228,15 @@ async fn test_uds_batch_notifications() {
         } else {
             PointType::Adjustment
         };
-        let result = notifier.notify(1000 + i, point_type, i * 10).await;
+        let result = notifier
+            .notify(
+                1000 + i,
+                point_type,
+                i * 10,
+                i as f64,
+                1_700_000_100 + i as u64,
+            )
+            .await;
         assert!(result.uds_sent, "UDS notification {} should be sent", i);
     }
 
@@ -237,25 +263,41 @@ async fn test_uds_batch_notifications() {
 
 /// Test 5: ShmNotification serialization/deserialization
 ///
-/// Verifies correctness of the 12-byte notification protocol
+/// Verifies correctness of the fixed-size notification protocol
 #[test]
 fn test_notification_serialization() {
-    let notification = ShmNotification::new(12345, PointType::Control, 67890);
+    let notification = ShmNotification::new(
+        12345,
+        PointType::Control,
+        67890,
+        321.5,
+        1_700_000_010,
+        77,
+        9,
+    );
 
     // Verify fields
     assert_eq!(notification.channel_id, 12345);
     assert_eq!(notification.point_id, 67890);
+    assert_eq!(notification.value(), 321.5);
+    assert_eq!(notification.timestamp_ms, 1_700_000_010);
+    assert_eq!(notification.producer_id, 77);
+    assert_eq!(notification.seq, 9);
     assert_eq!(notification.get_point_type(), Some(PointType::Control));
 
     // Serialize
     let bytes = notification.to_bytes();
     assert_eq!(bytes.len(), ShmNotification::SIZE);
-    assert_eq!(bytes.len(), 12, "Notification should be exactly 12 bytes");
+    assert_eq!(bytes.len(), 48, "Notification should be exactly 48 bytes");
 
     // Deserialize
     let restored = ShmNotification::from_bytes(&bytes);
     assert_eq!(restored.channel_id, 12345);
     assert_eq!(restored.point_id, 67890);
+    assert_eq!(restored.value(), 321.5);
+    assert_eq!(restored.timestamp_ms, 1_700_000_010);
+    assert_eq!(restored.producer_id, 77);
+    assert_eq!(restored.seq, 9);
     assert_eq!(restored.get_point_type(), Some(PointType::Control));
 }
 
@@ -263,11 +305,11 @@ fn test_notification_serialization() {
 #[test]
 fn test_notification_point_types() {
     // Control
-    let control = ShmNotification::new(1, PointType::Control, 1);
+    let control = ShmNotification::new(1, PointType::Control, 1, 1.0, 11, 21, 31);
     assert_eq!(control.get_point_type(), Some(PointType::Control));
 
     // Adjustment
-    let adjustment = ShmNotification::new(1, PointType::Adjustment, 1);
+    let adjustment = ShmNotification::new(1, PointType::Adjustment, 1, 2.0, 12, 22, 32);
     assert_eq!(adjustment.get_point_type(), Some(PointType::Adjustment));
 
     // Round-trip test

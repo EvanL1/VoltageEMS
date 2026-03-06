@@ -84,18 +84,16 @@ pub async fn upsert_measurement_routing(
         .await
         .map_err(|e| ModSrvError::InvalidData(format!("Failed to upsert routing: {}", e)))?;
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after upsert measurement routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after upsert measurement routing: {}",
+                e
+            ))
+        })?;
 
     Ok(Json(SuccessResponse::new(json!({
         "message": format!("Routing updated for measurement point {}", point_id)
@@ -137,18 +135,16 @@ pub async fn delete_measurement_routing(
         )));
     }
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after delete measurement routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after delete measurement routing: {}",
+                e
+            ))
+        })?;
 
     Ok(Json(SuccessResponse::new(json!({
         "message": format!("Routing deleted for measurement point {}", point_id),
@@ -193,18 +189,16 @@ pub async fn toggle_measurement_routing(
         )));
     }
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after toggle measurement routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after toggle measurement routing: {}",
+                e
+            ))
+        })?;
 
     let action = if request.enabled {
         "enabled"
@@ -284,18 +278,16 @@ pub async fn upsert_action_routing(
         .await
         .map_err(|e| ModSrvError::InvalidData(format!("Failed to upsert routing: {}", e)))?;
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after upsert action routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after upsert action routing: {}",
+                e
+            ))
+        })?;
 
     Ok(Json(SuccessResponse::new(json!({
         "message": format!("Routing updated for action point {}", point_id)
@@ -337,18 +329,16 @@ pub async fn delete_action_routing(
         )));
     }
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after delete action routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after delete action routing: {}",
+                e
+            ))
+        })?;
 
     Ok(Json(SuccessResponse::new(json!({
         "message": format!("Routing deleted for action point {}", point_id),
@@ -393,18 +383,16 @@ pub async fn toggle_action_routing(
         )));
     }
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after toggle action routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after toggle action routing: {}",
+                e
+            ))
+        })?;
 
     let action = if request.enabled {
         "enabled"

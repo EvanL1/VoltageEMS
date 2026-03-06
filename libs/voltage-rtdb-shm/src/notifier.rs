@@ -8,12 +8,12 @@
 //! `notify()` returns `NotifyResult` instead of a simple `io::Result<()>`,
 //! allowing callers to distinguish:
 //! - Successfully sent (`uds_sent = true`)
-//! - Degraded to polling (`fallback_used = true`)
+//! - Degraded to fallback delivery (`fallback_used = true`)
 //! - Completely disabled (`disabled = true`)
 
 use std::io;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
@@ -32,7 +32,7 @@ pub const DEFAULT_UDS_PATH: &str = "/tmp/voltage-m2c.sock";
 pub struct NotifyResult {
     /// UDS send succeeded
     pub uds_sent: bool,
-    /// Degraded to polling fallback (UDS send failed)
+    /// Degraded to fallback path (UDS send failed)
     pub fallback_used: bool,
     /// Notifications completely disabled (path is empty or unconfigured)
     pub disabled: bool,
@@ -47,7 +47,7 @@ impl NotifyResult {
         }
     }
 
-    /// UDS failed, degraded to polling fallback
+    /// UDS failed, degraded to fallback path
     fn degraded() -> Self {
         Self {
             fallback_used: true,
@@ -69,7 +69,7 @@ impl NotifyResult {
         self.uds_sent
     }
 
-    /// Check if immediate polling is needed (degraded case)
+    /// Check if the slower fallback path is in use
     #[inline]
     pub fn needs_immediate_poll(&self) -> bool {
         self.fallback_used
@@ -100,6 +100,8 @@ pub enum UdsHealth {
 pub struct ShmNotifier {
     stream: Option<UnixStream>,
     path: String,
+    producer_id: u64,
+    next_seq: u64,
     /// Last connection attempt time
     last_connect_attempt: Option<Instant>,
     /// Current backoff duration (milliseconds)
@@ -116,6 +118,14 @@ impl ShmNotifier {
     /// Retry interval (milliseconds)
     const RETRY_DELAY_MS: u64 = 10;
 
+    fn new_producer_id() -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        now ^ ((std::process::id() as u64) << 32)
+    }
+
     /// Connect to UDS listener
     ///
     /// If connection fails, returns a disabled notifier (notifications will be ignored).
@@ -129,6 +139,8 @@ impl ShmNotifier {
                 Ok(Self {
                     stream: Some(stream),
                     path: path_str,
+                    producer_id: Self::new_producer_id(),
+                    next_seq: 1,
                     last_connect_attempt: None,
                     backoff_ms: Self::MIN_BACKOFF_MS,
                 })
@@ -141,6 +153,8 @@ impl ShmNotifier {
                 Ok(Self {
                     stream: None,
                     path: path_str,
+                    producer_id: Self::new_producer_id(),
+                    next_seq: 1,
                     last_connect_attempt: Some(Instant::now()),
                     backoff_ms: Self::MIN_BACKOFF_MS,
                 })
@@ -158,6 +172,8 @@ impl ShmNotifier {
         Self {
             stream: None,
             path: String::new(),
+            producer_id: Self::new_producer_id(),
+            next_seq: 1,
             last_connect_attempt: None,
             backoff_ms: Self::MIN_BACKOFF_MS,
         }
@@ -183,16 +199,15 @@ impl ShmNotifier {
     ///
     /// Returns `NotifyResult` instead of `io::Result<()>`, allowing callers to distinguish:
     /// - `uds_sent = true`: UDS send succeeded, command will be processed via low-latency path
-    /// - `fallback_used = true`: UDS failed, degraded to polling fallback (increased latency)
+    /// - `fallback_used = true`: UDS failed, degraded to fallback path
     /// - `disabled = true`: Notification feature is completely disabled
     ///
     /// ## Usage Example
     ///
     /// ```rust,ignore
-    /// let result = notifier.notify(channel_id, point_type, point_id).await;
+    /// let result = notifier.notify(channel_id, point_type, point_id, value, timestamp_ms).await;
     /// if result.needs_immediate_poll() {
-    ///     // UDS failed, may need to trigger immediate polling
-    ///     poller.trigger_immediate_check();
+    ///     // UDS failed, rely on the slower fallback path
     /// }
     /// ```
     pub async fn notify(
@@ -200,6 +215,8 @@ impl ShmNotifier {
         channel_id: u32,
         point_type: PointType,
         point_id: u32,
+        value: f64,
+        timestamp_ms: u64,
     ) -> NotifyResult {
         if self.path.is_empty() {
             return NotifyResult::off();
@@ -208,14 +225,25 @@ impl ShmNotifier {
         self.try_reconnect().await;
 
         if let Some(ref mut stream) = self.stream {
-            let bytes = ShmNotification::new(channel_id, point_type, point_id).to_bytes();
+            let seq = self.next_seq;
+            self.next_seq = self.next_seq.wrapping_add(1).max(1);
+            let bytes = ShmNotification::new(
+                channel_id,
+                point_type,
+                point_id,
+                value,
+                timestamp_ms,
+                self.producer_id,
+                seq,
+            )
+            .to_bytes();
 
             for attempt in 0..Self::MAX_RETRIES {
                 match stream.write_all(&bytes).await {
                     Ok(_) => {
                         debug!(
-                            "ShmNotifier: sent ch={} type={:?} point={}",
-                            channel_id, point_type, point_id
+                            "ShmNotifier: sent ch={} type={:?} point={} seq={}",
+                            channel_id, point_type, point_id, seq
                         );
                         return NotifyResult::sent();
                     },
@@ -307,7 +335,7 @@ mod tests {
         assert!(!notifier.is_connected());
 
         // Disabled notifier should return disabled = true
-        let result = notifier.notify(1001, PointType::Control, 0).await;
+        let result = notifier.notify(1001, PointType::Control, 0, 1.0, 123).await;
         assert!(result.disabled);
         assert!(!result.uds_sent);
         assert!(!result.fallback_used);

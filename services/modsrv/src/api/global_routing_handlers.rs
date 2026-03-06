@@ -217,15 +217,13 @@ pub async fn delete_all_routing_handler(
         .await
         .map_err(|e| ModSrvError::InternalError(format!("Failed to commit transaction: {}", e)))?;
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!("Failed to refresh routing cache after delete_all: {}", e);
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!("Failed to refresh routing after delete_all: {}", e))
+        })?;
 
     let result = json!({
         "deleted": {
@@ -379,18 +377,16 @@ pub async fn delete_instance_routing_handler(
         .await
         .map_err(|e| ModSrvError::InternalError(format!("Failed to commit transaction: {}", e)))?;
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after delete instance routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after delete instance routing: {}",
+                e
+            ))
+        })?;
 
     let result = json!({
         "instance_name": instance_name,
@@ -455,18 +451,16 @@ pub async fn delete_channel_routing_handler(
         .await
         .map_err(|e| ModSrvError::InternalError(format!("Failed to commit transaction: {}", e)))?;
 
-    // Refresh routing cache after successful database update
-    if let Err(e) = crate::bootstrap::refresh_routing_cache(
-        &state.instance_manager.pool,
-        state.instance_manager.routing_cache(),
-    )
-    .await
-    {
-        tracing::warn!(
-            "Failed to refresh routing cache after delete channel routing: {}",
-            e
-        );
-    }
+    state
+        .instance_manager
+        .refresh_routing_and_shm()
+        .await
+        .map_err(|e| {
+            ModSrvError::InternalError(format!(
+                "Failed to refresh routing after delete channel routing: {}",
+                e
+            ))
+        })?;
 
     let result = json!({
         "channel_id": channel_id,

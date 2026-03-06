@@ -162,6 +162,7 @@ async fn make_request(
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_channel_with_auto_id() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -193,6 +194,7 @@ async fn test_create_channel_with_auto_id() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_channel_with_manual_id() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -221,6 +223,7 @@ async fn test_create_channel_with_manual_id() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_channel_duplicate_name() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -256,6 +259,7 @@ async fn test_create_channel_duplicate_name() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_channel_duplicate_id() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -291,6 +295,7 @@ async fn test_create_channel_duplicate_id() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_channel_disabled() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -318,6 +323,7 @@ async fn test_create_channel_disabled() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_channel_name() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -349,6 +355,7 @@ async fn test_update_channel_name() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_channel_parameters() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -391,6 +398,7 @@ async fn test_update_channel_parameters() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_channel_not_found() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -409,6 +417,7 @@ async fn test_update_channel_not_found() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_channel_name_conflict() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -456,6 +465,7 @@ async fn test_update_channel_name_conflict() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_enable_disable_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -504,6 +514,7 @@ async fn test_enable_disable_channel() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_enable_already_enabled_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -540,6 +551,7 @@ async fn test_enable_already_enabled_channel() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_enable_nonexistent_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -563,6 +575,7 @@ async fn test_enable_nonexistent_channel() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_delete_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -593,6 +606,7 @@ async fn test_delete_channel() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_delete_nonexistent_channel() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -609,6 +623,7 @@ async fn test_delete_nonexistent_channel() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_reload_configuration() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -638,6 +653,7 @@ async fn test_reload_configuration() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_reload_routing() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -659,6 +675,7 @@ async fn test_reload_routing() -> Result<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_channel_missing_required_fields() -> Result<()> {
     let app = create_test_app().await?;
 
@@ -691,6 +708,7 @@ async fn test_create_channel_missing_required_fields() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_create_channel_with_logging_config() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -716,6 +734,7 @@ async fn test_create_channel_with_logging_config() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_update_channel_logging_config() -> Result<()> {
     let mut app = create_test_app().await?;
 
@@ -749,6 +768,7 @@ async fn test_update_channel_logging_config() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore] // requires Redis
 async fn test_sequential_channel_id_assignment() -> Result<()> {
     let mut app = create_test_app().await?;
 

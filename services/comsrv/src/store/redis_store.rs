@@ -33,7 +33,7 @@ use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSend
 use voltage_model::{KeySpaceConfig, PointType};
 use voltage_routing::{ChannelPointUpdate, RoutingCache};
 use voltage_rtdb::{Bytes, Rtdb, WriteBuffer, WriteBufferConfig};
-use voltage_rtdb_shm::{ChannelToSlotIndex, UnifiedWriter};
+use voltage_rtdb_shm::ShmHandle;
 
 /// Redis-backed data store for VoltageEMS.
 ///
@@ -56,10 +56,8 @@ pub struct RedisDataStore<R: Rtdb> {
     routing_cache: Arc<RoutingCache>,
     /// Write buffer for aggregating Redis writes
     write_buffer: Arc<WriteBuffer>,
-    /// Shared memory writer for zero-copy cross-process data sharing (optional)
-    shared_writer: Option<Arc<UnifiedWriter>>,
-    /// Pre-computed channel → slot mapping for O(1) shared memory writes (optional)
-    channel_index: Option<Arc<ChannelToSlotIndex>>,
+    /// Runtime-swappable shared memory handle (writer + index, rebuilt on routing reload)
+    shm_handle: Option<Arc<ShmHandle>>,
     /// Point configurations cache (channel_id -> `Arc<configs>` for O(1) clone)
     point_configs: DashMap<u32, Arc<Vec<PointConfig>>>,
     /// Single broadcast sender for all subscribers (avoids clone * N)
@@ -94,8 +92,7 @@ impl<R: Rtdb> RedisDataStore<R> {
             rtdb,
             routing_cache,
             write_buffer: Arc::new(WriteBuffer::new(wb_config)),
-            shared_writer: None,
-            channel_index: None,
+            shm_handle: None,
             point_configs: DashMap::new(),
             event_sender,
             key_config: KeySpaceConfig::production_cached(),
@@ -104,20 +101,16 @@ impl<R: Rtdb> RedisDataStore<R> {
         }
     }
 
-    /// Set shared memory writer and channel index for high-performance writes.
+    /// Set shared memory handle for high-performance writes.
     ///
     /// When enabled, writes go directly to shared memory using pre-computed
     /// channel → slot mappings, bypassing the C2M routing lookup at runtime.
     /// This provides ~89% latency reduction for batch writes.
     ///
-    /// Falls back to WriteBuffer path if shared memory is not available.
-    pub fn with_shared_memory(
-        mut self,
-        writer: Arc<UnifiedWriter>,
-        index: Arc<ChannelToSlotIndex>,
-    ) -> Self {
-        self.shared_writer = Some(writer);
-        self.channel_index = Some(index);
+    /// The ShmHandle is runtime-swappable via ArcSwap, so routing reloads
+    /// automatically rebuild the writer and index without restarting channels.
+    pub fn with_shm_handle(mut self, handle: Arc<ShmHandle>) -> Self {
+        self.shm_handle = Some(handle);
         self
     }
 
@@ -264,16 +257,26 @@ impl<R: Rtdb> RedisDataStore<R> {
         let updates = self.batch_to_updates(channel_id, &batch);
 
         // Select write path: prefer shared memory direct write for best performance
-        let _stats = if let (Some(writer), Some(index)) = (&self.shared_writer, &self.channel_index)
-        {
-            // Fast path: direct shared memory write with pre-computed channel → slot mapping
-            voltage_rtdb_shm::write_channel_batch_direct(
-                writer,
-                index,
-                &self.write_buffer,
-                &self.routing_cache,
-                updates,
-            )
+        let _stats = if let Some(handle) = &self.shm_handle {
+            if let (Some(writer_guard), Some(index_guard)) = (handle.writer(), handle.index()) {
+                // Fast path: direct shared memory write with pre-computed channel → slot mapping
+                let writer = writer_guard.as_ref().expect("writer guard non-empty");
+                let index = index_guard.as_ref().expect("index guard non-empty");
+                voltage_rtdb_shm::write_channel_batch_direct(
+                    writer,
+                    index,
+                    &self.write_buffer,
+                    &self.routing_cache,
+                    updates,
+                )
+            } else {
+                // SHM handle exists but writer/index not yet initialized
+                voltage_routing::write_channel_batch_buffered(
+                    &self.write_buffer,
+                    &self.routing_cache,
+                    updates,
+                )
+            }
         } else {
             // Fallback path: buffered write to Redis only
             voltage_routing::write_channel_batch_buffered(
