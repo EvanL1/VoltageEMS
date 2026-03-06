@@ -23,7 +23,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         info!("Syncing instances from SQLite to Redis...");
 
-        let instances = self.list_instances(None).await?;
+        let (_, instances) = self.list_instances_paginated(None, 1, 10_000).await?;
         let total = instances.len();
 
         if total == 0 {
@@ -198,74 +198,52 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         instance_name: &str,
         properties: &HashMap<String, serde_json::Value>,
     ) -> Result<()> {
-        // Fetch instance metadata within the transaction
+        self.load_and_sync_instance(tx.as_mut(), instance_name, properties)
+            .await
+    }
+
+    /// Sync instance to Redis without transaction (for error recovery)
+    ///
+    /// Reads from committed database data and syncs to Redis.
+    /// Used when commit fails and we need to revert Redis to the old (committed) state.
+    pub async fn sync_instance_to_redis_internal(
+        &self,
+        instance_name: &str,
+        properties: &HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        self.load_and_sync_instance(&self.pool, instance_name, properties)
+            .await
+    }
+
+    /// Load instance data from SQLite and sync to Redis.
+    ///
+    /// Generic over the SQLite data source via `Acquire` — works with both
+    /// a live transaction and the committed connection pool.
+    async fn load_and_sync_instance<'a, A>(
+        &self,
+        acquirer: A,
+        instance_name: &str,
+        properties: &HashMap<String, serde_json::Value>,
+    ) -> Result<()>
+    where
+        A: sqlx::Acquire<'a, Database = sqlx::Sqlite>,
+    {
+        let mut conn = acquirer
+            .acquire()
+            .await
+            .map_err(|e| anyhow!("Failed to acquire connection for {}: {}", instance_name, e))?;
+
         let (instance_id, product_name): (u32, String) = sqlx::query_as(
-            r#"
-            SELECT instance_id, product_name
-            FROM instances
-            WHERE instance_name = ?
-            "#,
+            "SELECT instance_id, product_name FROM instances WHERE instance_name = ?",
         )
         .bind(instance_name)
-        .fetch_one(tx.as_mut())
+        .fetch_one(&mut *conn)
         .await
-        .map_err(|e| {
-            anyhow!(
-                "Failed to load instance {} within transaction: {}",
-                instance_name,
-                e
-            )
-        })?;
+        .map_err(|e| anyhow!("Failed to load instance {}: {}", instance_name, e))?;
 
-        // Fetch point routings from routing tables and generate Redis keys dynamically
-        let mut measurement_point_routings: HashMap<u32, String> = HashMap::new();
-        let mut action_point_routings: HashMap<u32, String> = HashMap::new();
+        let (measurement_point_routings, action_point_routings) =
+            Self::fetch_routing_maps(&mut conn, instance_id, instance_name).await?;
 
-        // Query measurement routing within transaction
-        let measurement_points: Vec<(u32,)> = sqlx::query_as(
-            r#"
-            SELECT measurement_id
-            FROM measurement_routing
-            WHERE instance_id = ?
-            "#,
-        )
-        .bind(instance_id)
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| {
-            anyhow!(
-                "Failed to load measurement routing for {}: {}",
-                instance_name,
-                e
-            )
-        })?;
-
-        for (point_id,) in measurement_points {
-            let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point_id.to_string());
-            measurement_point_routings.insert(point_id, redis_key);
-        }
-
-        // Query action routing within transaction
-        let action_points: Vec<(u32,)> = sqlx::query_as(
-            r#"
-            SELECT action_id
-            FROM action_routing
-            WHERE instance_id = ?
-            "#,
-        )
-        .bind(instance_id)
-        .fetch_all(tx.as_mut())
-        .await
-        .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
-
-        for (point_id,) in action_points {
-            let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point_id.to_string());
-            action_point_routings.insert(point_id, redis_key);
-        }
-
-        // Load product definition (products are compile-time constants)
         let product = self.product_loader.get_product(&product_name)?;
 
         self.register_instance_in_redis(
@@ -281,96 +259,53 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await
     }
 
-    /// Sync instance to Redis without transaction (for error recovery)
-    ///
-    /// Reads from committed database data and syncs to Redis.
-    /// Used when commit fails and we need to revert Redis to the old (committed) state.
-    pub async fn sync_instance_to_redis_internal(
-        &self,
+    /// Fetch measurement and action routing maps, generating Redis keys for each point.
+    async fn fetch_routing_maps(
+        conn: &mut sqlx::SqliteConnection,
+        instance_id: u32,
         instance_name: &str,
-        properties: &HashMap<String, serde_json::Value>,
-    ) -> Result<()> {
-        // Fetch instance metadata from committed data (no transaction)
-        let (instance_id, product_name): (u32, String) = sqlx::query_as(
-            r#"
-            SELECT instance_id, product_name
-            FROM instances
-            WHERE instance_name = ?
-            "#,
-        )
-        .bind(instance_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| {
-            anyhow!(
-                "Failed to load instance {} from database: {}",
-                instance_name,
-                e
-            )
-        })?;
+    ) -> Result<(HashMap<u32, String>, HashMap<u32, String>)> {
+        let ks = KeySpaceConfig::production_cached();
 
-        // Fetch point routings from routing tables and generate Redis keys dynamically
-        let mut measurement_point_routings: HashMap<u32, String> = HashMap::new();
-        let mut action_point_routings: HashMap<u32, String> = HashMap::new();
+        let measurement_points: Vec<(u32,)> =
+            sqlx::query_as("SELECT measurement_id FROM measurement_routing WHERE instance_id = ?")
+                .bind(instance_id)
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to load measurement routing for {}: {}",
+                        instance_name,
+                        e
+                    )
+                })?;
 
-        // Query measurement routing (no transaction)
-        let measurement_points: Vec<(u32,)> = sqlx::query_as(
-            r#"
-            SELECT measurement_id
-            FROM measurement_routing
-            WHERE instance_id = ?
-            "#,
-        )
-        .bind(instance_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| {
-            anyhow!(
-                "Failed to load measurement routing for {}: {}",
-                instance_name,
-                e
-            )
-        })?;
+        let measurement_map: HashMap<u32, String> = measurement_points
+            .into_iter()
+            .map(|(id,)| {
+                let key = ks.instance_measurement_point_key(instance_id, &id.to_string());
+                (id, key)
+            })
+            .collect();
 
-        for (point_id,) in measurement_points {
-            let redis_key = KeySpaceConfig::production_cached()
-                .instance_measurement_point_key(instance_id, &point_id.to_string());
-            measurement_point_routings.insert(point_id, redis_key);
-        }
+        let action_points: Vec<(u32,)> =
+            sqlx::query_as("SELECT action_id FROM action_routing WHERE instance_id = ?")
+                .bind(instance_id)
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(|e| {
+                    anyhow!("Failed to load action routing for {}: {}", instance_name, e)
+                })?;
 
-        // Query action routing (no transaction)
-        let action_points: Vec<(u32,)> = sqlx::query_as(
-            r#"
-            SELECT action_id
-            FROM action_routing
-            WHERE instance_id = ?
-            "#,
-        )
-        .bind(instance_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| anyhow!("Failed to load action routing for {}: {}", instance_name, e))?;
+        let action_map: HashMap<u32, String> = action_points
+            .into_iter()
+            .map(|(id,)| {
+                let key = ks.instance_action_point_key(instance_id, &id.to_string());
+                (id, key)
+            })
+            .collect();
 
-        for (point_id,) in action_points {
-            let redis_key = KeySpaceConfig::production_cached()
-                .instance_action_point_key(instance_id, &point_id.to_string());
-            action_point_routings.insert(point_id, redis_key);
-        }
-
-        // Load product definition (products are compile-time constants)
-        let product = self.product_loader.get_product(&product_name)?;
-
-        self.register_instance_in_redis(
-            instance_id,
-            instance_name,
-            &product_name,
-            properties,
-            &product.measurements,
-            &product.actions,
-            &measurement_point_routings,
-            &action_point_routings,
-        )
-        .await
+        Ok((measurement_map, action_map))
     }
 
     /// Register instance metadata and point routing mappings to Redis
