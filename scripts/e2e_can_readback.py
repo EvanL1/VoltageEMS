@@ -95,9 +95,11 @@ def verify_lynk(interface):
         data = frames[0x351]
         charge_v = struct.unpack_from("<h", data, 0)[0]
         charge_i = struct.unpack_from("<h", data, 2)[0]
-        ok = charge_v == 560 and charge_i == 200
+        discharge_i = struct.unpack_from("<h", data, 4)[0]
+        discharge_v = struct.unpack_from("<h", data, 6)[0]
+        ok = charge_v == 560 and charge_i == 200 and discharge_i == 200 and discharge_v == 480
         status = f"{GREEN}✓{NC}" if ok else f"{RED}✗{NC}"
-        detail = f"0x351 charge_v={charge_v} charge_i={charge_i}"
+        detail = f"0x351 charge_v={charge_v} charge_i={charge_i} discharge_i={discharge_i} discharge_v={discharge_v}"
         print(f"{LINE_V}   {status} {detail}")
         passed += 1 if ok else 0
         failed += 0 if ok else 1

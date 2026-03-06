@@ -47,6 +47,12 @@ devices:
         type: register
         address: 2000
         value: 99
+    - from: fault
+      to: standby
+      trigger:
+        type: register
+        address: 2000
+        value: 0
   j1939:
     interface: vcan1
     source_address: 0

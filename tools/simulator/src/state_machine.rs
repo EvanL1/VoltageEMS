@@ -19,17 +19,20 @@ pub enum DeviceState {
     Maintenance,
 }
 
-impl DeviceState {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for DeviceState {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "standby" => Some(Self::Standby),
-            "running" => Some(Self::Running),
-            "fault" => Some(Self::Fault),
-            "maintenance" => Some(Self::Maintenance),
-            _ => None,
+            "standby" => Ok(Self::Standby),
+            "running" => Ok(Self::Running),
+            "fault" => Ok(Self::Fault),
+            "maintenance" => Ok(Self::Maintenance),
+            _ => Err(format!("unknown state: {s}")),
         }
     }
+}
 
+impl DeviceState {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Standby => "standby",

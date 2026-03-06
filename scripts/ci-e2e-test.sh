@@ -19,6 +19,8 @@
 #   Phase 8:  Health API       - Verify comsrv + modsrv health endpoints
 #   Phase 9:  M2C Downlink     - Test modsrv action execution (device control)
 #   Phase 10: Instance Data    - Verify instance list + measurement queries
+#   Phase 11: CAN LYNK         - Battery CAN readback via vcan0 (Linux-only, optional)
+#   Phase 12: J1939 Diesel     - Diesel J1939 readback via vcan1 (Linux-only, optional)
 #
 # Function Codes Tested:
 #   FC01 - Read Coils           (Signal read)
@@ -100,6 +102,8 @@ DIESEL_SIM_PID=""
 LOAD_SIM_PID=""
 COMSRV_PID=""
 MODSRV_PID=""
+CAN_SIM_PID=""
+J1939_SIM_PID=""
 
 cleanup() {
     echo ""
@@ -110,6 +114,8 @@ cleanup() {
     [ -n "$BATTERY_SIM_PID" ] && kill "$BATTERY_SIM_PID" 2>/dev/null || true
     [ -n "$DIESEL_SIM_PID" ] && kill "$DIESEL_SIM_PID" 2>/dev/null || true
     [ -n "$LOAD_SIM_PID" ] && kill "$LOAD_SIM_PID" 2>/dev/null || true
+    [ -n "$CAN_SIM_PID" ] && kill "$CAN_SIM_PID" 2>/dev/null || true
+    [ -n "$J1939_SIM_PID" ] && kill "$J1939_SIM_PID" 2>/dev/null || true
     rm -rf /tmp/e2e_comsrv.db /tmp/e2e_modsrv.db
     log_info "Cleanup complete"
 }
@@ -808,10 +814,67 @@ fi
 
 print_phase_end "$([ $DATA_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
 
+# Step 11: CAN LYNK Battery Readback (Linux-only, requires vcan0)
+CAN_RESULT=0
+print_phase "[Phase 11] CAN LYNK Battery Readback (optional)"
+if [ "$(uname -s)" != "Linux" ]; then
+    echo -e "${LINE_V} ${YELLOW}⚠${NC}  Skipping: not Linux (current OS: $(uname -s))"
+    print_phase_end "pass"
+elif ! ip link show vcan0 > /dev/null 2>&1; then
+    echo -e "${LINE_V} ${YELLOW}⚠${NC}  Skipping: vcan0 interface not found"
+    print_phase_end "pass"
+else
+    echo -e "${LINE_V} Starting CAN LYNK battery simulator (port 5024)..."
+    ./target/release/simulator \
+        --scenario tools/simulator/scenarios/e2e_battery_can.yaml \
+        --port 5024 --http-port 9100 --log-level warn &
+    CAN_SIM_PID=$!
+    sleep 2
+
+    echo -e "${LINE_V} Running CAN LYNK readback verification..."
+    python3 scripts/e2e_can_readback.py --type lynk --interface vcan0
+    CAN_RESULT=$?
+
+    print_phase_end "$([ $CAN_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
+    if [ $CAN_RESULT -ne 0 ]; then
+        log_warn "Phase 11 failed, continuing to collect remaining results"
+    fi
+fi
+
+# Step 12: J1939 Diesel Readback (Linux-only, requires vcan1)
+J1939_RESULT=0
+print_phase "[Phase 12] J1939 Diesel Readback (optional)"
+if [ "$(uname -s)" != "Linux" ]; then
+    echo -e "${LINE_V} ${YELLOW}⚠${NC}  Skipping: not Linux (current OS: $(uname -s))"
+    print_phase_end "pass"
+elif ! ip link show vcan1 > /dev/null 2>&1; then
+    echo -e "${LINE_V} ${YELLOW}⚠${NC}  Skipping: vcan1 interface not found"
+    print_phase_end "pass"
+else
+    echo -e "${LINE_V} Starting J1939 diesel simulator (port 5025)..."
+    ./target/release/simulator \
+        --scenario tools/simulator/scenarios/e2e_diesel_j1939.yaml \
+        --port 5025 --http-port 9101 --log-level warn &
+    J1939_SIM_PID=$!
+    sleep 2
+
+    echo -e "${LINE_V} Running J1939 readback verification..."
+    python3 scripts/e2e_can_readback.py --type j1939 --interface vcan1
+    J1939_RESULT=$?
+
+    print_phase_end "$([ $J1939_RESULT -eq 0 ] && echo 'pass' || echo 'fail')"
+
+    if [ $J1939_RESULT -ne 0 ]; then
+        log_warn "Phase 12 failed, continuing to collect remaining results"
+    fi
+fi
+
 # Combine results
 FINAL_RESULT=0
 if [ $E2E_RESULT -ne 0 ] || [ $C2M_RESULT -ne 0 ] || [ $CA_RESULT -ne 0 ] || \
-   [ $HEALTH_RESULT -ne 0 ] || [ $ACTION_RESULT -ne 0 ] || [ $DATA_RESULT -ne 0 ]; then
+   [ $HEALTH_RESULT -ne 0 ] || [ $ACTION_RESULT -ne 0 ] || [ $DATA_RESULT -ne 0 ] || \
+   [ $CAN_RESULT -ne 0 ] || [ $J1939_RESULT -ne 0 ]; then
     FINAL_RESULT=1
 fi
 
@@ -835,6 +898,8 @@ CA_STATUS="$([ $CA_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAI
 HEALTH_STATUS="$([ $HEALTH_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
 ACTION_STATUS="$([ $ACTION_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
 DATA_STATUS="$([ $DATA_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+CAN_STATUS="$([ $CAN_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
+J1939_STATUS="$([ $J1939_RESULT -eq 0 ] && echo "${GREEN}PASS${NC}" || echo "${RED}FAIL${NC}")"
 
 echo -e "${BOX_V}  Phase 5  Redis Data + Online:        ${REDIS_RESULT}                     ${BOX_V}"
 echo -e "${BOX_V}  Phase 6  C2M + M2C Routing:          ${ROUTE_RESULT}                     ${BOX_V}"
@@ -842,6 +907,8 @@ echo -e "${BOX_V}  Phase 7  C/A Write (FC05/FC06):      ${CA_STATUS}            
 echo -e "${BOX_V}  Phase 8  Health API:                  ${HEALTH_STATUS}                     ${BOX_V}"
 echo -e "${BOX_V}  Phase 9  M2C Action Downlink:         ${ACTION_STATUS}                     ${BOX_V}"
 echo -e "${BOX_V}  Phase 10 Instance Data Query:         ${DATA_STATUS}                     ${BOX_V}"
+echo -e "${BOX_V}  Phase 11 CAN LYNK Readback (opt):    ${CAN_STATUS}                     ${BOX_V}"
+echo -e "${BOX_V}  Phase 12 J1939 Diesel Readback (opt):${J1939_STATUS}                     ${BOX_V}"
 echo -e "${BOX_V}                                                               ${BOX_V}"
 
 if [ $FINAL_RESULT -eq 0 ]; then

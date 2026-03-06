@@ -109,13 +109,16 @@ async fn main() -> Result<()> {
     let mut sm_store = StateMachineStore::new();
     for device in &scenario.devices {
         if let Some(ref sm_config) = device.state_machine {
-            let initial = DeviceState::from_str(&sm_config.initial_state).unwrap_or_default();
+            let initial = sm_config
+                .initial_state
+                .parse::<DeviceState>()
+                .unwrap_or_default();
             let transitions: Vec<Transition> = sm_config
                 .transitions
                 .iter()
                 .filter_map(|t| {
-                    let from = DeviceState::from_str(&t.from)?;
-                    let to = DeviceState::from_str(&t.to)?;
+                    let from = t.from.parse::<DeviceState>().ok()?;
+                    let to = t.to.parse::<DeviceState>().ok()?;
                     let trigger = match &t.trigger {
                         TriggerConfig::Coil { address, value } => Trigger::Coil {
                             address: *address,
