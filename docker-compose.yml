@@ -3,7 +3,8 @@ services:
   voltage-redis:
     image: redis:8-alpine
     container_name: voltage-redis
-    user: "0:0"  # Root to ensure socket directory permissions
+    user: "0:0"  # Root to bypass entrypoint gosu privilege drop
+    entrypoint: ["redis-server"]  # Skip docker-entrypoint.sh (drops to redis user, breaks socket bind)
     network_mode: host
     labels:
       - "voltageems.role=infrastructure"
@@ -14,7 +15,6 @@ services:
       - redis-socket:/run/redis:rw # Unix socket directory for better performance
     restart: unless-stopped
     command: [
-      "redis-server",
       "--appendonly", "yes",
       "--save", "60", "1",
       "--unixsocket", "/run/redis/redis.sock",

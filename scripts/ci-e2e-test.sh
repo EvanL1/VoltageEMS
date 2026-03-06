@@ -150,9 +150,7 @@ if [ "$SKIP_BUILD" = false ]; then
     print_phase "[Phase 0] Building Binaries"
     echo -e "${LINE_V} Building simulator, comsrv, modsrv, and monarch..."
     BUILD_LOG="/tmp/e2e_build.log"
-    cargo build --release -p simulator -p comsrv -p modsrv -p monarch 2>&1 | tee "$BUILD_LOG" | tail -5
-    BUILD_PIPE=("${PIPESTATUS[@]}")
-    if [ "${BUILD_PIPE[0]}" -ne 0 ]; then
+    if ! cargo build --release -p simulator -p comsrv -p modsrv -p monarch 2>&1 | tee "$BUILD_LOG" | tail -5; then
         echo -e "${LINE_V} ${RED}Build failed. Last 20 lines:${NC}"
         tail -20 "$BUILD_LOG"
         print_phase_end "fail"
@@ -251,27 +249,23 @@ print_phase_end "pass"
 print_phase "[Phase 3] Database Configuration (Monarch)"
 
 echo -e "${LINE_V} Initializing database..."
-./target/release/monarch init \
+if ! ./target/release/monarch init \
     --config-path config.e2e \
     --db-path /tmp/e2e_comsrv.db 2>&1 | while read -r line; do
     echo -e "${LINE_V}   $line"
-done
-MONARCH_INIT_PIPE=("${PIPESTATUS[@]}")
-if [ "${MONARCH_INIT_PIPE[0]}" -ne 0 ]; then
+done; then
     echo -e "${LINE_V} ${RED}✗${NC} monarch init failed"
     print_phase_end "fail"
     exit 1
 fi
 
 echo -e "${LINE_V} Syncing configuration..."
-./target/release/monarch sync \
+if ! ./target/release/monarch sync \
     --config-path config.e2e \
     --db-path /tmp/e2e_comsrv.db \
     --force 2>&1 | while read -r line; do
     echo -e "${LINE_V}   $line"
-done
-MONARCH_SYNC_PIPE=("${PIPESTATUS[@]}")
-if [ "${MONARCH_SYNC_PIPE[0]}" -ne 0 ]; then
+done; then
     echo -e "${LINE_V} ${RED}✗${NC} monarch sync failed"
     print_phase_end "fail"
     exit 1
@@ -475,104 +469,122 @@ echo -e "${LINE_V} ${GREEN}✓${NC} modsrv running (PID: $MODSRV_PID)"
 echo -e "${LINE_V} Waiting for C2M routing initialization (5 seconds)..."
 sleep 5
 
-# Verify C2M routing and instance data
+# Verify C2M + M2C routing via modsrv public API (black-box)
 $PYTHON_CMD << 'PYTHON_C2M_VERIFY'
-import redis
+import json
 import sys
+import urllib.request
 
-# Colors
 GREEN = '\033[0;32m'
 RED = '\033[0;31m'
 YELLOW = '\033[1;33m'
 NC = '\033[0m'
-LINE_V = '│'
+LINE_V = '\u2502'
 
 def check_mark(ok):
-    return f"{GREEN}✓{NC}" if ok else f"{RED}✗{NC}"
+    return f"{GREEN}\u2713{NC}" if ok else f"{RED}\u2717{NC}"
 
-r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
-
-print(f"{LINE_V}")
-print(f"{LINE_V} Checking modsrv instance initialization...")
-print(f"{LINE_V}")
+def api_get(path):
+    url = f"http://127.0.0.1:6002{path}"
+    with urllib.request.urlopen(url, timeout=5) as resp:
+        return json.loads(resp.read())
 
 all_passed = True
 
-# ⚠️ 重要：C2M 和 M2C 路由是内存中的"指针"（RoutingCache），不在 Redis 中！
-# - C2M Pointer: "1001:T:1" → "inst:1:M:1" (上行数据路由)
-# - M2C Pointer: "inst:1:A:1" → "1001:A:1" (下行控制路由)
-# modsrv 日志 "Routes: N C2M, M M2C" 确认指针已加载到内存
-# 验证方式: 检查 inst:{id}:M 和 inst:{id}:A 数据是否存在
-print(f"{LINE_V}   {YELLOW}ℹ{NC} C2M/M2C routing pointers stored in memory (RoutingCache), NOT Redis")
-print(f"{LINE_V}   {YELLOW}ℹ{NC} Verified via modsrv startup log: 'Routes: N C2M, M M2C'")
+# ── Instance verification ────────────────────────────────────────────
 print(f"{LINE_V}")
-print(f"{LINE_V} C2M Pointer Verification (Measurement points):")
+print(f"{LINE_V} Verifying modsrv instances via API (black-box)...")
+print(f"{LINE_V}")
 
-# Check instance M data (inst:1:M, inst:2:M, inst:3:M, inst:4:M)
-# This verifies sync_instances_to_redis() ran successfully
-instances = {
-    1: ("e2e_pv", 14),       # PV DCDC: 14 M points
-    2: ("e2e_battery", 19),  # Battery: 19 M points
-    3: ("e2e_diesel", 17),   # Diesel: 17 M points
-    4: ("e2e_load", 8),      # Load: 8 M points
+try:
+    inst_resp = api_get("/api/instances")
+except Exception as e:
+    print(f"{LINE_V} {RED}\u2717 Cannot reach modsrv API: {e}{NC}")
+    sys.exit(1)
+
+instances = inst_resp.get("data", [])
+inst_ok = len(instances) >= 4
+print(f"{LINE_V}   GET /api/instances: {len(instances)} instances {check_mark(inst_ok)}")
+if not inst_ok:
+    all_passed = False
+
+expected_names = {"e2e_pv", "e2e_battery", "e2e_diesel", "e2e_load"}
+actual_names = {inst.get("name", "") for inst in instances}
+names_ok = expected_names.issubset(actual_names)
+missing = expected_names - actual_names
+if names_ok:
+    print(f"{LINE_V}   Instance names: all 4 present {check_mark(True)}")
+else:
+    print(f"{LINE_V}   Instance names: missing {missing} {check_mark(False)}")
+    all_passed = False
+
+# ── C2M + M2C routing verification ──────────────────────────────────
+print(f"{LINE_V}")
+print(f"{LINE_V} C2M + M2C Routing Verification (via /api/routing):")
+print(f"{LINE_V}   {YELLOW}i{NC} Routing pointers live in memory (RoutingCache)")
+print(f"{LINE_V}   {YELLOW}i{NC} /api/routing reflects DB-persisted routing config")
+
+try:
+    routing_resp = api_get("/api/routing")
+except Exception as e:
+    print(f"{LINE_V} {RED}\u2717 Cannot query routing API: {e}{NC}")
+    sys.exit(1)
+
+data = routing_resp.get("data", {})
+m_routes = data.get("measurement_routing", [])
+a_routes = data.get("action_routing", [])
+
+# C2M: group measurement routes by instance_id
+m_by_inst = {}
+for r in m_routes:
+    iid = r.get("instance_id")
+    m_by_inst.setdefault(iid, []).append(r)
+
+expected_m = {
+    1: ("e2e_pv", 14),
+    2: ("e2e_battery", 19),
+    3: ("e2e_diesel", 17),
+    4: ("e2e_load", 8),
 }
 
-for inst_id, (name, expected) in instances.items():
-    m_data = r.hgetall(f"inst:{inst_id}:M")
-    # Filter out meta fields
-    real_points = {k: v for k, v in m_data.items() if not k.startswith('_')}
-    point_count = len(real_points)
-    ok = point_count >= expected
-    print(f"{LINE_V}   inst:{inst_id}:M ({name}): {point_count}/{expected} measurements {check_mark(ok)}")
+print(f"{LINE_V}")
+print(f"{LINE_V}   C2M (Measurement Routing):")
+for inst_id, (name, min_count) in expected_m.items():
+    count = len(m_by_inst.get(inst_id, []))
+    ok = count >= min_count
+    print(f"{LINE_V}     inst:{inst_id} ({name}): {count}/{min_count} routes {check_mark(ok)}")
     if not ok:
         all_passed = False
 
-# Also check instance name index exists (inst:name:index)
-name_index = r.hgetall("inst:name:index")
-index_ok = len(name_index) >= 4
-print(f"{LINE_V}   inst:name:index: {len(name_index)} entries {check_mark(index_ok)}")
-if not index_ok:
-    all_passed = False
+# M2C: group action routes by instance_id
+a_by_inst = {}
+for r in a_routes:
+    iid = r.get("instance_id")
+    a_by_inst.setdefault(iid, []).append(r)
 
-print(f"{LINE_V}")
-
-# ========================================
-# M2C Pointer Verification (Action points)
-# ========================================
-# M2C 指针验证 (下行路由)
-# 注意: M2C 指针在内存中 (RoutingCache)，不在 Redis
-# 但 inst:{id}:A Hash 在 register_instance() 时预初始化
-# 与 M 点保持一致，便于查询和验证 M2C 路由配置
-print(f"{LINE_V} M2C Pointer Verification (Action points):")
-print(f"{LINE_V}   {YELLOW}ℹ{NC} M2C pointers in memory (RoutingCache), not Redis")
-print(f"{LINE_V}   {YELLOW}ℹ{NC} inst:*:A Hash pre-initialized at startup (consistent with M)")
-
-# 验证 inst:{id}:A Hash 存在且点数正确
-# A 点数量取决于产品定义和 channel_routing 配置
-action_points = {
-    1: ("e2e_pv", 0),       # PV DCDC: 无 A 点 (纯测量设备)
-    2: ("e2e_battery", 3),  # Battery: 3 A 点 (channel_routing 中 C1-C3 → A1-A3)
-    3: ("e2e_diesel", 5),   # Diesel: 5 A 点 (channel_routing 中 C1-C5 → A1-A5)
-    4: ("e2e_load", 0),     # Load: 无 A 点 (纯测量设备)
+expected_a = {
+    1: ("e2e_pv", 0),
+    2: ("e2e_battery", 3),
+    3: ("e2e_diesel", 5),
+    4: ("e2e_load", 0),
 }
 
-for inst_id, (name, expected) in action_points.items():
-    a_data = r.hgetall(f"inst:{inst_id}:A")
-    # 过滤元字段 (_updated_at 等)
-    real_points = {k: v for k, v in a_data.items() if not k.startswith('_')}
-    point_count = len(real_points)
-    ok = point_count >= expected
-    print(f"{LINE_V}   inst:{inst_id}:A ({name}): {point_count}/{expected} actions {check_mark(ok)}")
+print(f"{LINE_V}")
+print(f"{LINE_V}   M2C (Action Routing):")
+for inst_id, (name, min_count) in expected_a.items():
+    count = len(a_by_inst.get(inst_id, []))
+    ok = count >= min_count
+    print(f"{LINE_V}     inst:{inst_id} ({name}): {count}/{min_count} routes {check_mark(ok)}")
     if not ok:
         all_passed = False
 
 print(f"{LINE_V}")
 
 if all_passed:
-    print(f"{LINE_V} {GREEN}✓ C2M + M2C routing pointers verified!{NC}")
+    print(f"{LINE_V} {GREEN}\u2713 C2M + M2C routing verified via API!{NC}")
     sys.exit(0)
 else:
-    print(f"{LINE_V} {RED}✗ Routing pointer verification failed{NC}")
+    print(f"{LINE_V} {RED}\u2717 Routing verification failed{NC}")
     sys.exit(1)
 PYTHON_C2M_VERIFY
 
@@ -704,6 +716,14 @@ echo -e "${LINE_V} Testing M2C downlink via modsrv action API..."
 echo -e "${LINE_V}"
 
 ACTION_PASSED=true
+
+# Reset Phase 7 coils to isolate M2C routing path
+echo -e "${LINE_V} Resetting Phase 7 coils to isolate M2C routing..."
+$PYTHON_CMD scripts/e2e_modbus_readback.py --reset-coils
+RESET_RESULT=$?
+if [ $RESET_RESULT -ne 0 ]; then
+    log_warn "Coil reset failed — Phase 9 results may be contaminated by Phase 7"
+fi
 
 # test_action function (reuses test_write pattern)
 test_action() {

@@ -71,6 +71,34 @@ def read_registers(sock, unit_id, addr, count):
 # ── Readback verification ──────────────────────────────────────────────
 
 
+def write_coil(sim_port, unit_id, addr, value, retries=3):
+    """FC05: write single coil to simulator. Used to reset Phase 7 contamination."""
+    for attempt in range(retries):
+        sock = None
+        try:
+            sock = socket.socket()
+            sock.settimeout(5)
+            sock.connect(("127.0.0.1", sim_port))
+            coil_val = 0xFF00 if value else 0x0000
+            data = struct.pack(">HH", addr, coil_val)
+            resp = modbus_tcp_request(sock, unit_id, 0x05, data)
+            if len(resp) >= 9:
+                return True, f"coil[{addr}]={'ON' if value else 'OFF'}"
+            if attempt < retries - 1:
+                time.sleep(0.3)
+                continue
+            return False, f"no response from port {sim_port}"
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(0.3)
+                continue
+            return False, f"{e}"
+        finally:
+            if sock:
+                sock.close()
+    return False, "exhausted retries"
+
+
 def verify_coil(sim_port, unit_id, addr, expected, description, retries=3):
     """Read a single coil from simulator and compare to expected value."""
     for attempt in range(retries):
@@ -172,16 +200,47 @@ PHASE7_REG_CASES = [
 #   inst:2 (Battery) A:1→1002 C:1, A:2→1002 C:2, A:3→1002 C:3
 #   inst:3 (Diesel)  A:1→1003 C:1, A:2→1003 C:2
 #
-# Only verify coils NOT already written in Phase 7 (to isolate M2C path):
-#   Phase 7 wrote: coil 200 on 5021, coil 200 on 5022
-#   Phase 9 new:   coil 201,202 on 5021;  coil 201 on 5022
+# Coil 200 was written true by Phase 7, so before Phase 9 actions we reset
+# it to false (via --reset-coils). This isolates the M2C path: if coil 200
+# reads true after M2C action, it proves A1→C1 routing actually worked.
+
+PHASE9_RESET_COILS = [
+    # (sim_port, unit_id, coil_addr, value, description)
+    (5021, 1, 200, False, "Reset Battery coil[200] (Phase 7 contamination)"),
+    (5022, 1, 200, False, "Reset Diesel coil[200] (Phase 7 contamination)"),
+]
 
 PHASE9_COIL_CASES = [
     # (sim_port, unit_id, coil_addr, expected_bool, description)
+    (5021, 1, 200, True, "Battery A1 via M2C (C:1)"),
     (5021, 1, 201, True, "Battery A2 via M2C (C:2)"),
     (5021, 1, 202, True, "Battery A3 via M2C (C:3)"),
+    (5022, 1, 200, True, "Diesel A1 via M2C (C:1)"),
     (5022, 1, 201, True, "Diesel A2 via M2C (C:2)"),
 ]
+
+
+def reset_phase9_coils():
+    """Reset coils contaminated by Phase 7, so Phase 9 can isolate M2C path."""
+    print(f"{LINE_V}")
+    print(f"{LINE_V} Resetting Phase 7 coils to isolate M2C routing path...")
+    all_ok = True
+    for port, uid, addr, value, desc in PHASE9_RESET_COILS:
+        ok, detail = write_coil(port, uid, addr, value)
+        status = f"{GREEN}✓{NC}" if ok else f"{RED}✗{NC}"
+        print(f"{LINE_V}   {status} {desc}: {detail}")
+        if not ok:
+            all_ok = False
+    # Verify coils are actually false after reset
+    time.sleep(0.3)
+    for port, uid, addr, _, desc in PHASE9_RESET_COILS:
+        ok, detail = verify_coil(port, uid, addr, False, f"Confirm {desc}")
+        status = f"{GREEN}✓{NC}" if ok else f"{RED}✗{NC}"
+        print(f"{LINE_V}   {status} Confirm reset: {detail}")
+        if not ok:
+            all_ok = False
+    print(f"{LINE_V}")
+    return 0 if all_ok else 1
 
 
 def run_phase(phase):
@@ -251,10 +310,21 @@ def run_phase(phase):
 def main():
     parser = argparse.ArgumentParser(description="E2E Modbus readback verification")
     parser.add_argument(
-        "--phase", type=int, required=True, choices=[7, 9], help="Test phase to verify"
+        "--phase", type=int, choices=[7, 9], help="Test phase to verify"
+    )
+    parser.add_argument(
+        "--reset-coils",
+        action="store_true",
+        help="Reset Phase 7 coils before Phase 9 M2C verification",
     )
     args = parser.parse_args()
-    sys.exit(run_phase(args.phase))
+
+    if args.reset_coils:
+        sys.exit(reset_phase9_coils())
+    elif args.phase:
+        sys.exit(run_phase(args.phase))
+    else:
+        parser.error("either --phase or --reset-coils is required")
 
 
 if __name__ == "__main__":
