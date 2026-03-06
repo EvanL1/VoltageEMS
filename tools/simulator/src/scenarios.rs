@@ -38,6 +38,18 @@ pub struct DeviceConfig {
     /// Discrete input configurations (FC02, read-only)
     #[serde(default)]
     pub discrete_inputs: Vec<DiscreteInputConfig>,
+
+    /// Optional state machine configuration
+    #[serde(default)]
+    pub state_machine: Option<StateMachineConfig>,
+
+    /// CAN LYNK sender configuration (Linux only)
+    #[serde(default)]
+    pub can_lynk: Option<CanLynkConfig>,
+
+    /// J1939 sender configuration (Linux only)
+    #[serde(default)]
+    pub j1939: Option<J1939SenderConfig>,
 }
 
 /// Coil configuration for initial state.
@@ -188,6 +200,68 @@ pub enum FaultScenario {
         /// Probability of triggering (0.0 - 1.0)
         probability: f64,
     },
+}
+
+/// State machine configuration for a device.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateMachineConfig {
+    /// Initial state name (standby, running, fault, maintenance)
+    #[serde(default = "default_initial_state")]
+    pub initial_state: String,
+
+    /// Transition rules
+    #[serde(default)]
+    pub transitions: Vec<TransitionConfig>,
+}
+
+/// A transition rule in YAML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionConfig {
+    /// Source state
+    pub from: String,
+    /// Target state
+    pub to: String,
+    /// Trigger type and parameters
+    pub trigger: TriggerConfig,
+}
+
+/// Trigger configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TriggerConfig {
+    Coil { address: u16, value: bool },
+    Register { address: u16, value: u16 },
+}
+
+fn default_initial_state() -> String {
+    "standby".to_string()
+}
+
+/// CAN LYNK sender configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanLynkConfig {
+    /// vcan interface name (e.g., "vcan0")
+    pub interface: String,
+    /// Send interval in milliseconds
+    #[serde(default = "default_can_interval")]
+    pub interval_ms: u64,
+}
+
+/// J1939 sender configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct J1939SenderConfig {
+    /// vcan interface name
+    pub interface: String,
+    /// ECU source address (default 0x00)
+    #[serde(default)]
+    pub source_address: u8,
+    /// Send interval in milliseconds
+    #[serde(default = "default_can_interval")]
+    pub interval_ms: u64,
+}
+
+fn default_can_interval() -> u64 {
+    1000
 }
 
 /// Load scenario from YAML file.

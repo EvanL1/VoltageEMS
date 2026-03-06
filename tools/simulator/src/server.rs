@@ -16,6 +16,7 @@
 use crate::coils::CoilStore;
 use crate::devices::{generate_registers, DeviceMap};
 use crate::scenarios::{DeviceConfig, FaultConfig, FaultScenario};
+use crate::state_machine::StateMachineStore;
 use crate::writable::WritableRegisters;
 use anyhow::Result;
 use rand::Rng;
@@ -49,6 +50,7 @@ pub async fn run_server(
     device_map: DeviceMap,
     faults: FaultConfig,
     devices: &[DeviceConfig],
+    sm_store: StateMachineStore,
 ) -> Result<()> {
     let socket_addr: SocketAddr = addr.parse()?;
     let listener = TcpListener::bind(socket_addr).await?;
@@ -57,6 +59,7 @@ pub async fn run_server(
     let faults = Arc::new(faults);
     let writable = Arc::new(WritableRegisters::new());
     let coil_store = Arc::new(CoilStore::new());
+    let sm_store = Arc::new(sm_store);
 
     // Initialize coils and discrete inputs from device configuration
     for device in devices {
@@ -87,10 +90,13 @@ pub async fn run_server(
                 let faults = Arc::clone(&faults);
                 let writable = Arc::clone(&writable);
                 let coil_store = Arc::clone(&coil_store);
+                let sm_store = Arc::clone(&sm_store);
 
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        handle_connection(stream, device_map, faults, writable, coil_store).await
+                    if let Err(e) = handle_connection(
+                        stream, device_map, faults, writable, coil_store, sm_store,
+                    )
+                    .await
                     {
                         error!("Connection error from {}: {}", peer_addr, e);
                     }
@@ -111,6 +117,7 @@ async fn handle_connection(
     faults: Arc<FaultConfig>,
     writable: Arc<WritableRegisters>,
     coil_store: Arc<CoilStore>,
+    sm_store: Arc<StateMachineStore>,
 ) -> Result<()> {
     let mut buf = [0u8; 260]; // Max Modbus frame size
 
@@ -172,6 +179,7 @@ async fn handle_connection(
             &device_map,
             &writable,
             &coil_store,
+            &sm_store,
         );
 
         stream.write_all(&response).await?;
@@ -189,6 +197,7 @@ fn process_request(
     device_map: &DeviceMap,
     writable: &WritableRegisters,
     coil_store: &CoilStore,
+    sm_store: &StateMachineStore,
 ) -> Vec<u8> {
     let timestamp_ms = chrono::Utc::now().timestamp_millis();
 
@@ -358,6 +367,18 @@ fn process_request(
 
             coil_store.write_coil(unit_id, addr, value);
 
+            if let Some(sm) = sm_store.get(&unit_id) {
+                if let Some(new_state) = sm.on_coil_write(addr, value) {
+                    info!(
+                        "State transition: unit={} -> {} (coil {}={})",
+                        unit_id,
+                        new_state.as_str(),
+                        addr,
+                        value
+                    );
+                }
+            }
+
             build_write_single_coil_response(transaction_id, unit_id, addr, value)
         },
 
@@ -384,6 +405,18 @@ fn process_request(
 
             // Store the written value for subsequent reads
             writable.write_single(unit_id, addr, value);
+
+            if let Some(sm) = sm_store.get(&unit_id) {
+                if let Some(new_state) = sm.on_register_write(addr, value) {
+                    info!(
+                        "State transition: unit={} -> {} (reg {}={})",
+                        unit_id,
+                        new_state.as_str(),
+                        addr,
+                        value
+                    );
+                }
+            }
 
             build_write_single_response(transaction_id, unit_id, addr, value)
         },
@@ -426,6 +459,20 @@ fn process_request(
             );
 
             coil_store.write_coils(unit_id, addr, &values);
+
+            if let Some(sm) = sm_store.get(&unit_id) {
+                for (i, &v) in values.iter().enumerate() {
+                    if let Some(new_state) = sm.on_coil_write(addr + i as u16, v) {
+                        info!(
+                            "State transition: unit={} -> {} (coil {}={})",
+                            unit_id,
+                            new_state.as_str(),
+                            addr + i as u16,
+                            v
+                        );
+                    }
+                }
+            }
 
             build_write_multiple_coils_response(transaction_id, unit_id, addr, quantity)
         },
@@ -473,6 +520,20 @@ fn process_request(
 
             // Store all written values
             writable.write_multiple(unit_id, addr, &values);
+
+            if let Some(sm) = sm_store.get(&unit_id) {
+                for (i, &v) in values.iter().enumerate() {
+                    if let Some(new_state) = sm.on_register_write(addr + i as u16, v) {
+                        info!(
+                            "State transition: unit={} -> {} (reg {}={})",
+                            unit_id,
+                            new_state.as_str(),
+                            addr + i as u16,
+                            v
+                        );
+                    }
+                }
+            }
 
             build_write_multiple_response(transaction_id, unit_id, addr, quantity)
         },

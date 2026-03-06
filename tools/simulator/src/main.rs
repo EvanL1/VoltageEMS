@@ -18,13 +18,18 @@ mod devices;
 mod rtu_server;
 mod scenarios;
 mod server;
+mod state_machine;
 mod writable;
 
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+
+use scenarios::TriggerConfig;
+use state_machine::{DeviceState, StateMachine, StateMachineStore, Transition, Trigger};
 
 /// Modbus TCP/RTU Slave Simulator
 #[derive(Parser, Debug)]
@@ -91,6 +96,43 @@ async fn main() -> Result<()> {
     // Build device register map
     let device_map = devices::build_device_map(&scenario.devices)?;
 
+    // Build state machines from scenario config
+    let mut sm_store = StateMachineStore::new();
+    for device in &scenario.devices {
+        if let Some(ref sm_config) = device.state_machine {
+            let initial = DeviceState::from_str(&sm_config.initial_state).unwrap_or_default();
+            let transitions: Vec<Transition> = sm_config
+                .transitions
+                .iter()
+                .filter_map(|t| {
+                    let from = DeviceState::from_str(&t.from)?;
+                    let to = DeviceState::from_str(&t.to)?;
+                    let trigger = match &t.trigger {
+                        TriggerConfig::Coil { address, value } => Trigger::Coil {
+                            address: *address,
+                            value: *value,
+                        },
+                        TriggerConfig::Register { address, value } => Trigger::Register {
+                            address: *address,
+                            value: *value,
+                        },
+                    };
+                    Some(Transition { from, trigger, to })
+                })
+                .collect();
+            info!(
+                "State machine for unit {}: initial={}, {} transition(s)",
+                device.unit_id,
+                sm_config.initial_state,
+                transitions.len()
+            );
+            sm_store.insert(
+                device.unit_id,
+                Arc::new(StateMachine::new(initial, transitions)),
+            );
+        }
+    }
+
     // Start server based on mode
     if let Some(rtu_port) = args.rtu {
         // RTU mode
@@ -103,7 +145,14 @@ async fn main() -> Result<()> {
         // TCP mode (default)
         let addr = format!("{}:{}", args.bind, args.port);
         info!("Starting Modbus TCP server on {}", addr);
-        server::run_server(&addr, device_map, scenario.faults, &scenario.devices).await?;
+        server::run_server(
+            &addr,
+            device_map,
+            scenario.faults,
+            &scenario.devices,
+            sm_store,
+        )
+        .await?;
     }
 
     Ok(())
