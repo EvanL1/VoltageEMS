@@ -58,69 +58,18 @@ pub async fn create_instance(
     State(state): State<Arc<AppState>>,
     Json(dto): Json<CreateInstanceDto>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    // Auto-generate instance_id if not provided
-    let instance_id = if let Some(id) = dto.instance_id {
-        id
-    } else {
-        // Get next available ID from database
-        match state.instance_manager.get_next_instance_id().await {
-            Ok(id) => id,
-            Err(e) => {
-                return Err(ModSrvError::InternalError(format!(
-                    "Failed to generate instance ID: {}",
-                    e
-                )));
-            },
-        }
-    };
-
     let req = CreateInstanceRequest {
-        instance_id,
+        instance_id: dto.instance_id,
         instance_name: dto.instance_name,
         product_name: dto.product_name,
         parent_id: dto.parent_id,
         properties: dto.properties.unwrap_or_default(),
     };
 
-    match state.instance_manager.create_instance(req).await {
-        Ok(instance) => Ok(Json(SuccessResponse::new(json!({
-            "instance": instance
-        })))),
-        Err(e) => {
-            // Check for specific error types with improved messages
-            let error_msg = e.to_string();
-            if error_msg.contains("already exists") {
-                // Extract instance name from error message if possible
-                let instance_name = error_msg.split('\'').nth(1).unwrap_or("unknown");
-                Err(ModSrvError::InstanceExists(format!(
-                    "Instance name '{}' is already in use. Please choose a different name.",
-                    instance_name
-                )))
-            } else if error_msg.contains("UNIQUE constraint failed: instances.instance_name") {
-                // Database-level unique constraint violation
-                Err(ModSrvError::InstanceExists(
-                    "Instance name must be unique. This name is already taken.".to_string(),
-                ))
-            } else if error_msg.contains("product") && error_msg.contains("not found") {
-                Err(ModSrvError::InvalidData(format!(
-                    "Invalid product_name: {}",
-                    e
-                )))
-            } else if error_msg.contains("requires a parent")
-                || error_msg.contains("cannot have a parent")
-                || error_msg.contains("requires parent of type")
-                || error_msg.contains("Parent instance")
-            {
-                // Hierarchy validation error
-                Err(ModSrvError::InvalidData(error_msg))
-            } else {
-                Err(ModSrvError::InternalError(format!(
-                    "Failed to create instance: {}",
-                    e
-                )))
-            }
-        },
-    }
+    let instance = state.instance_manager.create_instance(req).await?;
+    Ok(Json(SuccessResponse::new(json!({
+        "instance": instance
+    }))))
 }
 
 /// Update instance name and/or properties
@@ -198,23 +147,10 @@ pub async fn update_instance(
     // Handle renaming
     if is_renaming {
         // Rename in SQLite (includes transaction)
-        if let Err(e) = state
+        state
             .instance_manager
             .rename_instance(id, new_instance_name)
-            .await
-        {
-            let error_msg = e.to_string();
-            if error_msg.contains("already exists") {
-                return Err(ModSrvError::InstanceExists(format!(
-                    "Instance name '{}' already exists",
-                    new_instance_name
-                )));
-            }
-            return Err(ModSrvError::InternalError(format!(
-                "Failed to rename instance: {}",
-                e
-            )));
-        }
+            .await?;
 
         // Rename in Redis (best effort)
         if let Err(e) = crate::redis_state::rename_instance_in_redis(
@@ -327,22 +263,10 @@ pub async fn delete_instance(
     State(state): State<Arc<AppState>>,
     Path(id): Path<u32>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match state.instance_manager.delete_instance(id).await {
-        Ok(_) => Ok(Json(SuccessResponse::new(json!({
-            "message": format!("Instance {} deleted", id)
-        })))),
-        Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("not found") {
-                Err(ModSrvError::InstanceNotFound(id.to_string()))
-            } else {
-                Err(ModSrvError::InternalError(format!(
-                    "Failed to delete instance: {}",
-                    e
-                )))
-            }
-        },
-    }
+    state.instance_manager.delete_instance(id).await?;
+    Ok(Json(SuccessResponse::new(json!({
+        "message": format!("Instance {} deleted", id)
+    }))))
 }
 
 /// Sync measurement data to an instance
@@ -378,22 +302,14 @@ pub async fn sync_instance_measurement(
     Path(id): Path<u32>,
     Json(data): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match state.instance_manager.sync_measurement(id, data).await {
-        Ok(_) => Ok(Json(SuccessResponse::new(json!({
-            "message": "Measurement synced"
-        })))),
-        Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("not found") {
-                Err(ModSrvError::InstanceNotFound(id.to_string()))
-            } else {
-                Err(ModSrvError::InternalError(format!(
-                    "Failed to sync measurement: {}",
-                    e
-                )))
-            }
-        },
-    }
+    state
+        .instance_manager
+        .sync_measurement(id, data)
+        .await
+        .map_err(|e| ModSrvError::InternalError(format!("Failed to sync measurement: {}", e)))?;
+    Ok(Json(SuccessResponse::new(json!({
+        "message": "Measurement synced"
+    }))))
 }
 
 /// Sync all instances to Redis
@@ -499,30 +415,15 @@ pub async fn execute_instance_action(
     Path(id): Path<u32>,
     Json(req): Json<ActionRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    match state
+    state
         .instance_manager
         .execute_action(id, &req.point_id, req.value)
         .await
-    {
-        Ok(_) => Ok(Json(SuccessResponse::new(json!({
-            "message": "Action executed",
-            "instance_id": id,
-            "point_id": req.point_id,
-            "value": req.value
-        })))),
-        Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("not found") {
-                Err(ModSrvError::InternalError(format!(
-                    "Not found: Instance {} or action point '{}' not found",
-                    id, req.point_id
-                )))
-            } else {
-                Err(ModSrvError::InternalError(format!(
-                    "Failed to execute action: {}",
-                    e
-                )))
-            }
-        },
-    }
+        .map_err(|e| ModSrvError::InternalError(format!("Failed to execute action: {}", e)))?;
+    Ok(Json(SuccessResponse::new(json!({
+        "message": "Action executed",
+        "instance_id": id,
+        "point_id": req.point_id,
+        "value": req.value
+    }))))
 }

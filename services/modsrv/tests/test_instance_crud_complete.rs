@@ -42,7 +42,7 @@ async fn create_test_instance_manager(env: &TestEnv) -> InstanceManager<MemoryRt
 /// Returns ESS instance_id (9902) as parent for Battery/PCS instances
 async fn setup_hierarchy(manager: &InstanceManager<MemoryRtdb>) -> u32 {
     let station_req = CreateInstanceRequest {
-        instance_id: 9901,
+        instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
         product_name: "Station".to_string(),
         parent_id: None,
@@ -54,7 +54,7 @@ async fn setup_hierarchy(manager: &InstanceManager<MemoryRtdb>) -> u32 {
         .expect("Failed to create Station");
 
     let ess_req = CreateInstanceRequest {
-        instance_id: 9902,
+        instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
         product_name: "ESS".to_string(),
         parent_id: Some(9901),
@@ -77,7 +77,7 @@ async fn create_test_instance(
     parent_id: Option<u32>,
 ) {
     let req = CreateInstanceRequest {
-        instance_id,
+        instance_id: Some(instance_id),
         instance_name: instance_name.to_string(),
         product_name: product_name.to_string(),
         parent_id,
@@ -280,8 +280,8 @@ async fn test_list_instances_all() {
     }
 
     // List all instances (5 Battery + 2 hierarchy = 7)
-    let instances = manager
-        .list_instances(None)
+    let (_, instances) = manager
+        .list_instances_paginated(None, 1, 10_000)
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 7);
@@ -312,16 +312,16 @@ async fn test_list_instances_by_product() {
     create_test_instance(&manager, 3, "inst_pcs_1", "PCS", Some(ess_id)).await;
 
     // List only Battery instances
-    let instances = manager
-        .list_instances(Some("Battery"))
+    let (_, instances) = manager
+        .list_instances_paginated(Some("Battery"), 1, 10_000)
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 2);
     assert!(instances.iter().all(|i| i.core.product_name == "Battery"));
 
     // List only PCS instances
-    let instances = manager
-        .list_instances(Some("PCS"))
+    let (_, instances) = manager
+        .list_instances_paginated(Some("PCS"), 1, 10_000)
         .await
         .expect("Failed to list instances");
     assert_eq!(instances.len(), 1);
@@ -337,8 +337,8 @@ async fn test_list_instances_empty() {
     let manager = create_test_instance_manager(&env).await;
 
     // List instances when none exist
-    let instances = manager
-        .list_instances(None)
+    let (_, instances) = manager
+        .list_instances_paginated(None, 1, 10_000)
         .await
         .expect("Failed to list instances");
     assert!(instances.is_empty());
@@ -550,13 +550,6 @@ async fn test_batch_create_instances() {
         .expect("Failed to list");
     assert_eq!(total, 22);
 
-    // Verify get_next_instance_id (max is 9902, so next = 9903)
-    let next_id = manager
-        .get_next_instance_id()
-        .await
-        .expect("Failed to get next ID");
-    assert_eq!(next_id, 9903);
-
     env.cleanup().await.expect("Cleanup failed");
 }
 
@@ -588,7 +581,10 @@ async fn test_batch_delete_instances() {
     }
 
     // Verify: only even-numbered Battery remain + 2 hierarchy instances
-    let instances = manager.list_instances(None).await.expect("Failed to list");
+    let (_, instances) = manager
+        .list_instances_paginated(None, 1, 10_000)
+        .await
+        .expect("Failed to list");
     assert_eq!(instances.len(), 7);
 
     let ids: Vec<u32> = instances.iter().map(|i| i.core.instance_id).collect();
@@ -601,52 +597,7 @@ async fn test_batch_delete_instances() {
 // Edge Cases Tests
 // ============================================================================
 
-#[tokio::test]
-#[ignore] // requires Redis
-async fn test_get_next_instance_id_empty_db() {
-    let env = TestEnv::create().await.expect("Failed to create test env");
-    let manager = create_test_instance_manager(&env).await;
-
-    // Get next ID when no instances exist
-    let next_id = manager
-        .get_next_instance_id()
-        .await
-        .expect("Failed to get next ID");
-    assert_eq!(next_id, 1, "First instance ID should be 1");
-
-    env.cleanup().await.expect("Cleanup failed");
-}
-
-#[tokio::test]
-#[ignore] // requires Redis
-async fn test_get_next_instance_id_after_delete() {
-    let env = TestEnv::create().await.expect("Failed to create test env");
-    let manager = create_test_instance_manager(&env).await;
-    let ess_id = setup_hierarchy(&manager).await;
-
-    // Setup using built-in product
-    create_test_instance(&manager, 1, "inst_1", "Battery", Some(ess_id)).await;
-    create_test_instance(&manager, 5, "inst_5", "Battery", Some(ess_id)).await; // Skip IDs
-
-    // Next ID should be max + 1 (max is 9902 from hierarchy)
-    let next_id = manager
-        .get_next_instance_id()
-        .await
-        .expect("Failed to get next ID");
-    assert_eq!(next_id, 9903, "Next ID should be max(9902) + 1 = 9903");
-
-    // Delete instance 5
-    manager.delete_instance(5).await.expect("Delete failed");
-
-    // Next ID still based on max (9902 from hierarchy)
-    let next_id = manager
-        .get_next_instance_id()
-        .await
-        .expect("Failed to get next ID");
-    assert_eq!(next_id, 9903, "Next ID still max(9902) + 1 = 9903");
-
-    env.cleanup().await.expect("Cleanup failed");
-}
+// get_next_instance_id tests removed — TOCTOU fix: DB auto-assigns IDs via last_insert_rowid()
 
 #[tokio::test]
 #[ignore] // requires Redis
@@ -662,7 +613,7 @@ async fn test_instance_properties_preserved() {
     properties.insert("enabled".to_string(), serde_json::json!(true));
 
     let req = CreateInstanceRequest {
-        instance_id: 1,
+        instance_id: Some(1),
         instance_name: "props_test".to_string(),
         product_name: "Battery".to_string(),
         parent_id: Some(ess_id),

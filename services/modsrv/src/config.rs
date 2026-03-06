@@ -370,8 +370,8 @@ impl Instance {
 /// Request to create a new instance
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateInstanceRequest {
-    /// Required unique identifier (numeric)
-    pub instance_id: u32,
+    /// Instance ID — `Some(id)` to use a specific ID, `None` to let DB auto-assign
+    pub instance_id: Option<u32>,
 
     /// Instance name for Redis keys
     pub instance_name: String,

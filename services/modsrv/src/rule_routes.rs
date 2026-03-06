@@ -396,39 +396,33 @@ pub async fn create_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
     State(state): State<Arc<RuleEngineState<R, S>>>,
     Json(req): Json<CreateRuleRequest>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, ModSrvError> {
-    // Get next sequential ID
-    let next_id: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) + 1 FROM rules")
-        .fetch_one(&state.pool)
-        .await
-        .map_err(|e| ModSrvError::DatabaseError(format!("Failed to get next rule ID: {}", e)))?;
-
     // Insert empty rule record (metadata only, no flow)
-    if let Err(e) = sqlx::query(
+    // Let SQLite auto-assign INTEGER PRIMARY KEY to avoid TOCTOU race
+    let result = sqlx::query(
         r#"
-        INSERT INTO rules (id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms)
-        VALUES (?, ?, ?, '{}', NULL, 'vue-flow', FALSE, 0, 0)
+        INSERT INTO rules (name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms)
+        VALUES (?, ?, '{}', NULL, 'vue-flow', FALSE, 0, 0)
         "#,
     )
-    .bind(next_id)
     .bind(&req.name)
     .bind(&req.description)
     .execute(&state.pool)
     .await
-    {
-        error!("Create rule {}: {}", next_id, e);
-        return Err(ModSrvError::InternalError(
-            "Failed to create rule".to_string(),
-        ));
-    }
+    .map_err(|e| {
+        error!("Create rule: {}", e);
+        ModSrvError::InternalError("Failed to create rule".to_string())
+    })?;
+
+    let new_id = result.last_insert_rowid();
 
     // Reload scheduler to pick up new rule
     if let Err(e) = state.scheduler.reload_rules().await {
         warn!("Reload scheduler: {}", e);
     }
 
-    debug!("Rule created: {} ({})", req.name, next_id);
+    debug!("Rule created: {} ({})", req.name, new_id);
     Ok(Json(SuccessResponse::new(json!({
-        "id": next_id,
+        "id": new_id,
         "name": req.name,
         "status": "created"
     }))))

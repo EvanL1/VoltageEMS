@@ -35,7 +35,7 @@ use voltage_rtdb::helpers::create_test_rtdb;
 async fn setup_hierarchy(manager: &InstanceManager<voltage_rtdb::MemoryRtdb>) -> u32 {
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1,
+            instance_id: Some(1),
             instance_name: "station_root".to_string(),
             product_name: "Station".to_string(),
             parent_id: None,
@@ -46,7 +46,7 @@ async fn setup_hierarchy(manager: &InstanceManager<voltage_rtdb::MemoryRtdb>) ->
 
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 2,
+            instance_id: Some(2),
             instance_name: "ess_parent".to_string(),
             product_name: "ESS".to_string(),
             parent_id: Some(1),
@@ -83,7 +83,7 @@ async fn test_create_instance_success() {
     let ess_id = setup_hierarchy(&manager).await;
 
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "test_battery_01".to_string(),
         product_name: "Battery".to_string(),
         parent_id: Some(ess_id),
@@ -118,7 +118,7 @@ async fn test_create_instance_with_properties() {
     properties.insert("capacity".to_string(), serde_json::json!(5000));
 
     let req = CreateInstanceRequest {
-        instance_id: 2001,
+        instance_id: Some(2001),
         instance_name: "pcs_unit_01".to_string(),
         product_name: "PCS".to_string(),
         parent_id: Some(ess_id),
@@ -150,7 +150,7 @@ async fn test_create_instance_already_exists() {
     let ess_id = setup_hierarchy(&manager).await;
 
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "duplicate_instance".to_string(),
         product_name: "Battery".to_string(),
         parent_id: Some(ess_id),
@@ -183,7 +183,7 @@ async fn test_create_instance_product_not_found() {
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
 
     let req = CreateInstanceRequest {
-        instance_id: 3001,
+        instance_id: Some(3001),
         instance_name: "orphan_instance".to_string(),
         product_name: "nonexistent_product".to_string(),
         parent_id: None,
@@ -207,7 +207,7 @@ async fn test_list_instances_all() {
 
     // Create multiple instances using built-in products
     let req1 = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "battery_01".to_string(),
         product_name: "Battery".to_string(),
         parent_id: Some(ess_id),
@@ -216,7 +216,7 @@ async fn test_list_instances_all() {
     manager.create_instance(req1).await.unwrap();
 
     let req2 = CreateInstanceRequest {
-        instance_id: 1002,
+        instance_id: Some(1002),
         instance_name: "pcs_01".to_string(),
         product_name: "PCS".to_string(),
         parent_id: Some(ess_id),
@@ -225,7 +225,11 @@ async fn test_list_instances_all() {
     manager.create_instance(req2).await.unwrap();
 
     // List all instances (includes Station + ESS from hierarchy + Battery + PCS)
-    let instances = manager.list_instances(None).await.unwrap();
+    let instances = manager
+        .list_instances_paginated(None, 1, 1000)
+        .await
+        .unwrap()
+        .1;
 
     assert_eq!(instances.len(), 4);
 }
@@ -243,7 +247,7 @@ async fn test_list_instances_by_product() {
     // Create instances for different products
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "battery_instance_01".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -254,7 +258,7 @@ async fn test_list_instances_by_product() {
 
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1002,
+            instance_id: Some(1002),
             instance_name: "battery_instance_02".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -265,7 +269,7 @@ async fn test_list_instances_by_product() {
 
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 2001,
+            instance_id: Some(2001),
             instance_name: "pcs_instance_01".to_string(),
             product_name: "PCS".to_string(),
             parent_id: Some(ess_id),
@@ -275,7 +279,11 @@ async fn test_list_instances_by_product() {
         .unwrap();
 
     // List instances for Battery only
-    let instances = manager.list_instances(Some("Battery")).await.unwrap();
+    let instances = manager
+        .list_instances_paginated(Some("Battery"), 1, 1000)
+        .await
+        .unwrap()
+        .1;
 
     assert_eq!(instances.len(), 2);
     assert!(instances.iter().all(|i| i.product_name() == "Battery"));
@@ -293,7 +301,7 @@ async fn test_get_instance_success() {
     // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "get_test_instance".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -341,7 +349,7 @@ async fn test_delete_instance() {
     // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "delete_test".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -410,7 +418,7 @@ async fn test_execute_action_no_route_stores_locally() {
     // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "action_test_instance".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -461,7 +469,7 @@ async fn test_execute_action_with_route_triggers_downstream() {
     // Create instance using built-in product
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "routed_action_instance".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -518,7 +526,7 @@ async fn test_execute_action_multiple_points() {
 
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "multi_action_instance".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -557,7 +565,7 @@ async fn test_execute_action_value_overwrite() {
 
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "overwrite_test".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),
@@ -591,7 +599,7 @@ async fn test_execute_action_negative_values() {
 
     manager
         .create_instance(CreateInstanceRequest {
-            instance_id: 1001,
+            instance_id: Some(1001),
             instance_name: "negative_test".to_string(),
             product_name: "Battery".to_string(),
             parent_id: Some(ess_id),

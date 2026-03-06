@@ -40,7 +40,7 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
 
     // 4. Setup hierarchy: Station -> ESS (required for Battery)
     let station_req = CreateInstanceRequest {
-        instance_id: 9901,
+        instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
         product_name: "Station".to_string(),
         parent_id: None,
@@ -49,7 +49,7 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
     instance_manager.create_instance(station_req).await?;
 
     let ess_req = CreateInstanceRequest {
-        instance_id: 9902,
+        instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
         product_name: "ESS".to_string(),
         parent_id: Some(9901),
@@ -59,7 +59,7 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
 
     // 5. Create Battery instance (child of ESS)
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
         parent_id: Some(9902),
@@ -133,7 +133,7 @@ async fn test_action_routing_load_from_db() -> Result<()> {
 
     // Setup hierarchy: Station -> ESS (required for Battery)
     let station_req = CreateInstanceRequest {
-        instance_id: 9901,
+        instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
         product_name: "Station".to_string(),
         parent_id: None,
@@ -142,7 +142,7 @@ async fn test_action_routing_load_from_db() -> Result<()> {
     instance_manager.create_instance(station_req).await?;
 
     let ess_req = CreateInstanceRequest {
-        instance_id: 9902,
+        instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
         product_name: "ESS".to_string(),
         parent_id: Some(9901),
@@ -151,7 +151,7 @@ async fn test_action_routing_load_from_db() -> Result<()> {
     instance_manager.create_instance(ess_req).await?;
 
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
         parent_id: Some(9902),
@@ -225,7 +225,7 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
 
     // Setup hierarchy: Station -> ESS (required for Battery)
     let station_req = CreateInstanceRequest {
-        instance_id: 9901,
+        instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
         product_name: "Station".to_string(),
         parent_id: None,
@@ -234,7 +234,7 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
     instance_manager.create_instance(station_req).await?;
 
     let ess_req = CreateInstanceRequest {
-        instance_id: 9902,
+        instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
         product_name: "ESS".to_string(),
         parent_id: Some(9901),
@@ -243,7 +243,7 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
     instance_manager.create_instance(ess_req).await?;
 
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
         parent_id: Some(9902),

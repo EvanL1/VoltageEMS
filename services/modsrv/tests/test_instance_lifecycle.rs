@@ -41,7 +41,7 @@ async fn test_create_instance_full_flow() -> Result<()> {
 
     // 4. Setup hierarchy: Station -> ESS (required for Battery)
     let station_req = CreateInstanceRequest {
-        instance_id: 9901,
+        instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
         product_name: "Station".to_string(),
         parent_id: None,
@@ -50,7 +50,7 @@ async fn test_create_instance_full_flow() -> Result<()> {
     instance_manager.create_instance(station_req).await?;
 
     let ess_req = CreateInstanceRequest {
-        instance_id: 9902,
+        instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
         product_name: "ESS".to_string(),
         parent_id: Some(9901),
@@ -60,7 +60,7 @@ async fn test_create_instance_full_flow() -> Result<()> {
 
     // 5. Create Battery instance under ESS
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
         parent_id: Some(9902),
@@ -105,7 +105,7 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
 
     // Setup hierarchy: Station -> ESS (required for Battery)
     let station_req = CreateInstanceRequest {
-        instance_id: 9901,
+        instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
         product_name: "Station".to_string(),
         parent_id: None,
@@ -114,7 +114,7 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
     instance_manager.create_instance(station_req).await?;
 
     let ess_req = CreateInstanceRequest {
-        instance_id: 9902,
+        instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
         product_name: "ESS".to_string(),
         parent_id: Some(9901),
@@ -124,7 +124,7 @@ async fn test_create_instance_duplicate_error() -> Result<()> {
 
     // Create first Battery instance under ESS
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
         parent_id: Some(9902),
@@ -168,7 +168,7 @@ async fn test_get_instance_data() -> Result<()> {
 
     // Setup hierarchy: Station -> ESS (required for Battery)
     let station_req = CreateInstanceRequest {
-        instance_id: 9901,
+        instance_id: Some(9901),
         instance_name: "test_station_root".to_string(),
         product_name: "Station".to_string(),
         parent_id: None,
@@ -177,7 +177,7 @@ async fn test_get_instance_data() -> Result<()> {
     instance_manager.create_instance(station_req).await?;
 
     let ess_req = CreateInstanceRequest {
-        instance_id: 9902,
+        instance_id: Some(9902),
         instance_name: "test_ess_parent".to_string(),
         product_name: "ESS".to_string(),
         parent_id: Some(9901),
@@ -187,7 +187,7 @@ async fn test_get_instance_data() -> Result<()> {
 
     // Create Battery instance under ESS
     let req = CreateInstanceRequest {
-        instance_id: 1001,
+        instance_id: Some(1001),
         instance_name: "battery_001".to_string(),
         product_name: product_name.to_string(),
         parent_id: Some(9902),

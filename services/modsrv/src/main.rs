@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     // ============================================================================
     // Initialize Rule Engine (integrated on port 6002)
     // ============================================================================
-    let sqlite_pool = state.instance_manager.pool.clone();
+    let sqlite_pool = state.instance_manager.pool().clone();
     let rtdb = state.instance_manager.rtdb.clone();
     let routing_cache = state.instance_manager.routing_cache().clone();
 

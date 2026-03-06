@@ -38,7 +38,7 @@ impl<R: Rtdb + 'static> ReloadableService for InstanceManager<R> {
         debug!("Reloading instances");
 
         // 1. Load all instances from SQLite
-        let db_instances = self.list_instances(None).await?;
+        let (_, db_instances) = self.list_instances_paginated(None, 1, 10_000).await?;
 
         let db_ids: std::collections::HashSet<u32> =
             db_instances.iter().map(|inst| inst.instance_id()).collect();

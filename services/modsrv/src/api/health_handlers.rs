@@ -64,13 +64,17 @@ pub async fn health_check(
 
     // Check instance manager
     let instance_start = Instant::now();
-    match state.instance_manager.list_instances(None).await {
-        Ok(instances) => {
+    match state
+        .instance_manager
+        .list_instances_paginated(None, 1, 1)
+        .await
+    {
+        Ok((count, _)) => {
             checks.insert(
                 "instances".to_string(),
                 json!({
                     "status": "healthy",
-                    "count": instances.len(),
+                    "count": count,
                     "duration_ms": instance_start.elapsed().as_millis()
                 }),
             );

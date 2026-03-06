@@ -18,6 +18,7 @@ use voltage_rtdb::Rtdb;
 use voltage_rtdb_shm::{InstanceIndex, SlotBitmap};
 
 use crate::config::TopologyNode;
+use crate::error::ModSrvError;
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 
 /// Row type returned by SQLite instance queries
@@ -71,9 +72,16 @@ fn build_instance_from_row(
     })
 }
 
+/// Escape SQL LIKE metacharacters (`%`, `_`, `\`) so user input is treated as literal text.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 /// Instance Manager handles runtime instance lifecycle
 pub struct InstanceManager<R: Rtdb> {
-    pub pool: SqlitePool,
+    pub(crate) pool: SqlitePool,
     pub rtdb: Arc<R>,
     pub(crate) routing_cache: Arc<voltage_routing::RoutingCache>,
     pub(crate) product_loader: Arc<ProductLoader>,
@@ -100,6 +108,9 @@ pub struct InstanceManager<R: Rtdb> {
     /// Protected by tokio Mutex for async &mut access
     pub(crate) shm_notifier:
         std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>>,
+    // ========== HTTP Client ==========
+    /// Reusable reqwest client for comsrv communication (avoids per-request TLS/pool overhead)
+    http_client: reqwest::Client,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
@@ -109,6 +120,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         routing_cache: Arc<voltage_routing::RoutingCache>,
         product_loader: Arc<ProductLoader>,
     ) -> Self {
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("Failed to build reqwest client");
+
         Self {
             pool,
             rtdb,
@@ -120,6 +136,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             shm_action_writer: arc_swap::ArcSwapOption::empty(),
             shm_config: std::sync::OnceLock::new(),
             shm_notifier: std::sync::OnceLock::new(),
+            http_client,
         }
     }
 
@@ -205,6 +222,11 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         self.slot_bitmap.as_ref().map(|b| b.read().stats())
     }
 
+    /// Get the SQLite pool reference
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
     /// Get the routing cache reference
     ///
     /// Returns a reference to the shared routing cache for use in API handlers
@@ -230,12 +252,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             .unwrap_or_else(|_| common::DEFAULT_COMSRV_URL.to_string());
         let url = format!("{}/api/routing/reload", base_url.trim_end_matches('/'));
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .map_err(|e| anyhow!("Failed to build comsrv reload client: {}", e))?;
-
-        let response = client
+        let response = self
+            .http_client
             .post(&url)
             .send()
             .await
@@ -345,24 +363,30 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// @throws anyhow::Error - Instance exists, product not found, database error
     /// @side-effects Creates instance in SQLite, initializes Redis keys
     /// @transaction Full creation is atomic
-    pub async fn create_instance(&self, req: CreateInstanceRequest) -> Result<Instance> {
-        // Use user-provided instance ID and name
-        let instance_id = req.instance_id;
-
+    pub async fn create_instance(
+        &self,
+        req: CreateInstanceRequest,
+    ) -> Result<Instance, ModSrvError> {
         info!(
-            "Creating instance: {} (id: {}) for product: {}",
-            req.instance_name, instance_id, req.product_name
+            "Creating instance: {} (id: {:?}) for product: {}",
+            req.instance_name, req.instance_id, req.product_name
         );
 
         // 1. Validate instance name format
         if let Err(e) = validate_instance_name(&req.instance_name) {
-            return Err(anyhow!("Invalid instance name: {}", e));
+            return Err(ModSrvError::InvalidData(format!(
+                "Invalid instance name: {}",
+                e
+            )));
         }
 
         // 2. Verify product exists (products are compile-time constants)
         // Note: Name uniqueness is enforced by database UNIQUE constraint.
         // We rely on the constraint rather than check-then-act to avoid race conditions.
-        let product = self.product_loader.get_product(&req.product_name)?;
+        let product = self
+            .product_loader
+            .get_product(&req.product_name)
+            .map_err(|e| ModSrvError::InvalidData(format!("Unknown product: {}", e)))?;
 
         // 3. Hierarchy validation: soft check on pName (warn only, never block)
         //    Product JSON defines pName for documentation, but we don't enforce it
@@ -392,8 +416,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                         .fetch_optional(&self.pool)
                         .await?;
 
-                let parent_product =
-                    parent_product.ok_or_else(|| anyhow!("Parent instance {} not found", pid))?;
+                let parent_product = parent_product.ok_or_else(|| {
+                    ModSrvError::InstanceNotFound(format!("Parent instance {}", pid))
+                })?;
 
                 if parent_product != *expected_parent {
                     warn!(
@@ -412,33 +437,49 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     "Failed to begin transaction for instance {}: {}",
                     req.instance_name, e
                 );
-                return Err(anyhow!("Database transaction failed: {}", e));
+                return Err(ModSrvError::DatabaseError(format!(
+                    "Transaction failed: {}",
+                    e
+                )));
             },
         };
 
         // 4. Create instance in SQLite within transaction
+        // Bind instance_id as Option: NULL lets SQLite auto-assign via INTEGER PRIMARY KEY.
         let properties_json = serde_json::to_string(&req.properties)?;
 
-        if let Err(e) = sqlx::query(
+        let insert_result = sqlx::query(
             r#"
             INSERT INTO instances (instance_id, instance_name, product_name, parent_id, properties)
             VALUES (?, ?, ?, ?, ?)
             "#,
         )
-        .bind(instance_id as i64)
+        .bind(req.instance_id.map(|id| id as i64))
         .bind(&req.instance_name)
         .bind(&req.product_name)
         .bind(req.parent_id.map(|id| id as i64))
         .bind(&properties_json)
         .execute(&mut *tx)
-        .await
-        {
-            error!("Failed to insert instance {}: {}", req.instance_name, e);
-            if let Err(rb_err) = tx.rollback().await {
-                error!("Transaction rollback failed: {}", rb_err);
-            }
-            return Err(anyhow!("Failed to create instance: {}", e));
-        }
+        .await;
+
+        let instance_id = match insert_result {
+            Ok(r) => r.last_insert_rowid() as u32,
+            Err(e) => {
+                error!("Failed to insert instance {}: {}", req.instance_name, e);
+                if let Err(rb_err) = tx.rollback().await {
+                    error!("Transaction rollback failed: {}", rb_err);
+                }
+                // Classify UNIQUE constraint violation as InstanceExists
+                let err_str = e.to_string();
+                if err_str.contains("UNIQUE constraint") {
+                    return Err(ModSrvError::InstanceExists(req.instance_name));
+                }
+                return Err(ModSrvError::DatabaseError(format!(
+                    "Failed to create instance: {}",
+                    e
+                )));
+            },
+        };
 
         // 5. Create point routings for measurement and action points within transaction
         // Measurement point routing - maps point IDs to Redis keys
@@ -467,14 +508,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 "Failed to commit transaction for instance {}: {}",
                 req.instance_name, e
             );
-            return Err(anyhow!("Database transaction commit failed: {}", e));
+            return Err(ModSrvError::DatabaseError(format!(
+                "Transaction commit failed: {}",
+                e
+            )));
         }
 
         // 7. Best effort register instance in Redis (after commit, allow failure)
         info!("Registering instance {} in Redis", req.instance_name);
         if let Err(e) = self
             .register_instance_in_redis(
-                req.instance_id,
+                instance_id,
                 &req.instance_name,
                 &req.product_name,
                 &req.properties,
@@ -538,14 +582,6 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         })
     }
 
-    /// List all instances, optionally filtered by product_name
-    pub async fn list_instances(&self, product_name: Option<&str>) -> Result<Vec<Instance>> {
-        let (_, instances) = self
-            .list_instances_paginated(product_name, 1, u32::MAX)
-            .await?;
-        Ok(instances)
-    }
-
     /// List instances with pagination
     ///
     /// Uses SQL `? IS NULL OR product_name = ?` pattern to handle optional filter
@@ -599,10 +635,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         page_size: u32,
     ) -> Result<(u32, Vec<Instance>)> {
         let offset = (page - 1) * page_size;
-        let like_pattern = format!("%{}%", keyword);
+        let like_pattern = format!("%{}%", escape_like(keyword));
 
         let (total,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM instances WHERE instance_name LIKE ? AND (? IS NULL OR product_name = ?)",
+            "SELECT COUNT(*) FROM instances WHERE instance_name LIKE ? ESCAPE '\\' AND (? IS NULL OR product_name = ?)",
         )
         .bind(&like_pattern)
         .bind(product_name)
@@ -613,7 +649,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let rows: Vec<InstanceRow> = sqlx::query_as(
             r#"SELECT instance_id, instance_name, product_name, parent_id, properties, created_at
                FROM instances
-               WHERE instance_name LIKE ? AND (? IS NULL OR product_name = ?)
+               WHERE instance_name LIKE ? ESCAPE '\' AND (? IS NULL OR product_name = ?)
                ORDER BY instance_id ASC
                LIMIT ? OFFSET ?"#,
         )
@@ -634,10 +670,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     }
 
     /// Rename an instance
-    pub async fn rename_instance(&self, instance_id: u32, new_name: &str) -> Result<()> {
+    pub async fn rename_instance(
+        &self,
+        instance_id: u32,
+        new_name: &str,
+    ) -> Result<(), ModSrvError> {
         // Validate instance name format before checking uniqueness
         if let Err(e) = validate_instance_name(new_name) {
-            anyhow::bail!("Invalid instance name: {}", e);
+            return Err(ModSrvError::InvalidData(format!(
+                "Invalid instance name: {}",
+                e
+            )));
         }
 
         // Check if new name already exists
@@ -650,7 +693,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         if count > 0 {
-            anyhow::bail!("Instance name '{}' already exists, cannot rename", new_name);
+            return Err(ModSrvError::InstanceExists(new_name.to_string()));
         }
 
         // Start transaction
@@ -686,24 +729,6 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             instance_id, new_name
         );
         Ok(())
-    }
-
-    /// Get next available instance ID
-    pub async fn get_next_instance_id(&self) -> Result<u32> {
-        let row = sqlx::query_as::<_, (Option<i32>,)>("SELECT MAX(instance_id) FROM instances")
-            .fetch_one(&self.pool)
-            .await?;
-
-        match row.0 {
-            Some(max_id) => {
-                let next_id = max_id + 1;
-                if next_id < 0 {
-                    anyhow::bail!("Instance ID overflow: negative value");
-                }
-                Ok(next_id as u32)
-            },
-            None => Ok(1), // First instance
-        }
     }
 
     /// Get instance by ID
@@ -856,14 +881,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Delete a single instance by ID (internal — no cascade)
     ///
     /// Handles SQLite deletion, Redis cleanup, and dynamic slot deallocation.
-    async fn delete_single_instance(&self, instance_id: u32) -> Result<()> {
+    async fn delete_single_instance(&self, instance_id: u32) -> Result<(), ModSrvError> {
         // 1. Query instance_name before deletion (needed for Redis cleanup and logging)
         let instance_name: String =
             sqlx::query_scalar("SELECT instance_name FROM instances WHERE instance_id = ?")
                 .bind(instance_id as i64)
                 .fetch_one(&self.pool)
                 .await
-                .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
+                .map_err(|_| ModSrvError::InstanceNotFound(instance_id.to_string()))?;
 
         // 2. Begin transaction for atomic deletion
         let mut tx = match self.pool.begin().await {
@@ -873,7 +898,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     "Failed to begin transaction for deleting instance {} ({}): {}",
                     instance_id, instance_name, e
                 );
-                return Err(anyhow!("Database transaction failed: {}", e));
+                return Err(ModSrvError::DatabaseError(format!(
+                    "Transaction failed: {}",
+                    e
+                )));
             },
         };
 
@@ -890,7 +918,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     if let Err(rb_err) = tx.rollback().await {
                         error!("Transaction rollback failed: {}", rb_err);
                     }
-                    return Err(anyhow!("Instance not found: {}", instance_id));
+                    return Err(ModSrvError::InstanceNotFound(instance_id.to_string()));
                 }
             },
             Err(e) => {
@@ -901,7 +929,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 if let Err(rb_err) = tx.rollback().await {
                     error!("Transaction rollback failed: {}", rb_err);
                 }
-                return Err(anyhow!("Failed to delete instance: {}", e));
+                return Err(ModSrvError::DatabaseError(format!(
+                    "Failed to delete instance: {}",
+                    e
+                )));
             },
         }
 
@@ -911,7 +942,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 "Failed to commit transaction for deleting instance {} ({}): {}",
                 instance_id, instance_name, e
             );
-            return Err(anyhow!("Database transaction commit failed: {}", e));
+            return Err(ModSrvError::DatabaseError(format!(
+                "Transaction commit failed: {}",
+                e
+            )));
         }
 
         // 5. Best effort remove from Redis (after commit, allow failure)
@@ -962,9 +996,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Collects all descendant instances (children, grandchildren, etc.),
     /// deletes them leaf-first to ensure proper Redis cleanup for each,
     /// then deletes the target instance itself.
-    pub async fn delete_instance(&self, instance_id: u32) -> Result<()> {
+    pub async fn delete_instance(&self, instance_id: u32) -> Result<(), ModSrvError> {
         // 1. Collect all descendants (leaf-first order)
-        let descendants = self.collect_descendants(instance_id).await?;
+        let descendants = self
+            .collect_descendants(instance_id)
+            .await
+            .map_err(|e| ModSrvError::DatabaseError(e.to_string()))?;
 
         if !descendants.is_empty() {
             info!(
