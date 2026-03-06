@@ -14,7 +14,6 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use voltage_model::{validate_instance_name, KeySpaceConfig};
 use voltage_rtdb::Rtdb;
-use voltage_rtdb_shm::{InstanceIndex, SlotBitmap};
 
 use crate::config::TopologyNode;
 use crate::error::ModSrvError;
@@ -77,11 +76,8 @@ pub struct InstanceManager<R: Rtdb> {
     /// Instance name → instance_id cache (for fast API lookups)
     pub(crate) name_cache: DashMap<String, u16>,
     // ========== Dynamic Slot Allocation ==========
-    /// Dynamic instance index for unified pool architecture (optional)
-    /// Supports hot add/remove with ArcSwap for lock-free reads
-    dynamic_instance_index: Option<Arc<InstanceIndex>>,
-    /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
-    slot_bitmap: Option<Arc<parking_lot::RwLock<SlotBitmap>>>,
+    /// Dynamic SHM slot management (optional, graceful no-ops when disabled)
+    slot_runtime: crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime,
     // ========== Action Dispatch (SHM/UDS or Noop) ==========
     /// Dispatches M2C action commands via SHM+UDS (production) or noop (tests)
     pub(crate) dispatch: Arc<dyn ActionDispatch>,
@@ -104,8 +100,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             routing_cache,
             product_loader,
             name_cache: DashMap::new(),
-            dynamic_instance_index: None,
-            slot_bitmap: None,
+            slot_runtime: crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime::new(),
             dispatch,
             comsrv: crate::infra::comsrv_coordinator::ComsrvCoordinator::new(),
         }
@@ -115,28 +110,27 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ///
     /// Call this after construction to enable unified pool architecture.
     /// If not called, dynamic features are disabled (backward compatible).
-    ///
-    /// # Arguments
-    /// * `dynamic_index` - InstanceIndex for dynamic instance management
-    /// * `slot_bitmap` - SlotBitmap for slot allocation (wrapped in RwLock)
     pub fn with_dynamic_allocation(
         mut self,
-        dynamic_index: Arc<InstanceIndex>,
-        slot_bitmap: Arc<parking_lot::RwLock<SlotBitmap>>,
+        dynamic_index: Arc<voltage_rtdb_shm::InstanceIndex>,
+        slot_bitmap: Arc<parking_lot::RwLock<voltage_rtdb_shm::SlotBitmap>>,
     ) -> Self {
-        self.dynamic_instance_index = Some(dynamic_index);
-        self.slot_bitmap = Some(slot_bitmap);
+        self.slot_runtime =
+            crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime::with_allocation(
+                dynamic_index,
+                slot_bitmap,
+            );
         self
     }
 
     /// Get dynamic InstanceIndex (for external access, e.g., API stats)
-    pub fn dynamic_instance_index(&self) -> Option<&Arc<InstanceIndex>> {
-        self.dynamic_instance_index.as_ref()
+    pub fn dynamic_instance_index(&self) -> Option<&Arc<voltage_rtdb_shm::InstanceIndex>> {
+        self.slot_runtime.instance_index()
     }
 
     /// Get SlotBitmap stats (for monitoring)
     pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
-        self.slot_bitmap.as_ref().map(|b| b.read().stats())
+        self.slot_runtime.bitmap_stats()
     }
 
     /// Get the SQLite pool reference
@@ -420,29 +414,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         info!("Successfully created instance {}", req.instance_name);
 
         // 8. Dynamic Slot Allocation: Add instance to InstanceIndex
-        if let (Some(index), Some(bitmap)) = (&self.dynamic_instance_index, &self.slot_bitmap) {
-            // Instance has M (Measurement) and A (Action) own_counts
-            let own_counts = [
+        self.slot_runtime.add_instance(
+            instance_id,
+            [
                 product.measurements.len() as u32,
                 product.actions.len() as u32,
-            ];
-            let total: u32 = own_counts.iter().sum();
-            if total > 0 {
-                let mut bitmap_guard = bitmap.write();
-                match index.add_instance(instance_id, own_counts, Some(&mut bitmap_guard)) {
-                    Ok(layout) => {
-                        debug!(
-                            "Inst{} slot allocated: base={}, total={}",
-                            instance_id, layout.own_base, layout.own_total
-                        );
-                    },
-                    Err(e) => {
-                        // Log warning but don't fail - dynamic allocation is optional
-                        warn!("Inst{} slot allocation failed: {}", instance_id, e);
-                    },
-                }
-            }
-        }
+            ],
+        );
 
         // 9. Return created instance - move req fields into result (avoid clone)
         Ok(Instance {
@@ -842,21 +820,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         }
 
         // 6. Dynamic Slot Deallocation: Remove instance from InstanceIndex and free slots
-        if let (Some(index), Some(bitmap)) = (&self.dynamic_instance_index, &self.slot_bitmap) {
-            let mut bitmap_guard = bitmap.write();
-            match index.remove_instance(instance_id, Some(&mut bitmap_guard)) {
-                Ok(layout) => {
-                    debug!(
-                        "Inst{} slot freed: base={}, count={}",
-                        instance_id, layout.own_base, layout.own_total
-                    );
-                },
-                Err(e) => {
-                    // Log warning but don't fail - dynamic allocation is optional
-                    warn!("Inst{} slot deallocation failed: {}", instance_id, e);
-                },
-            }
-        }
+        self.slot_runtime.remove_instance(instance_id);
 
         // 7. Remove from name cache
         self.remove_from_name_cache(&instance_name);
