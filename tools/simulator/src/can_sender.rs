@@ -5,7 +5,7 @@ use crate::state_machine::{DeviceState, StateMachineStore};
 #[cfg(target_os = "linux")]
 use anyhow::Result;
 #[cfg(target_os = "linux")]
-use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Frame, Socket, StandardId};
+use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Socket, StandardId};
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]

@@ -5,7 +5,7 @@ use crate::state_machine::{DeviceState, StateMachineStore};
 #[cfg(target_os = "linux")]
 use anyhow::Result;
 #[cfg(target_os = "linux")]
-use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Frame, Socket};
+use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Socket};
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
@@ -26,7 +26,7 @@ fn build_eec1_frame(source_address: u8, state: &DeviceState) -> CanFrame {
     data[3] = lo;
     data[4] = hi;
 
-    let can_id = build_can_id(J1939Id {
+    let can_id = build_can_id(&J1939Id {
         priority: 3,
         pgn: 61444,
         source_address,
@@ -47,7 +47,7 @@ fn build_et1_frame(source_address: u8, state: &DeviceState) -> CanFrame {
     let mut data = [0xFF_u8; 8];
     data[0] = raw_temp;
 
-    let can_id = build_can_id(J1939Id {
+    let can_id = build_can_id(&J1939Id {
         priority: 6,
         pgn: 65262,
         source_address,
