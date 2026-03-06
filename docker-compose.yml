@@ -3,6 +3,7 @@ services:
   voltage-redis:
     image: redis:8-alpine
     container_name: voltage-redis
+    user: "0:0"  # Root to ensure socket directory permissions
     network_mode: host
     labels:
       - "voltageems.role=infrastructure"
