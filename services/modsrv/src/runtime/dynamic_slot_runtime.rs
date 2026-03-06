@@ -40,7 +40,7 @@ impl DynamicSlotRuntime {
 
     /// Check if dynamic allocation is configured
     pub fn is_enabled(&self) -> bool {
-        self.instance_index.is_some()
+        self.instance_index.is_some() && self.slot_bitmap.is_some()
     }
 
     /// Get the InstanceIndex (for external access, e.g., API stats)

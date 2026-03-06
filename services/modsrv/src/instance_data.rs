@@ -7,7 +7,7 @@
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::redis_state;
 
@@ -314,7 +314,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Dispatch action to comsrv via SHM+UDS (production) or noop (tests)
         if let Some(ctx) = &outcome.route_context {
-            self.dispatch.dispatch(ctx, value).await;
+            let dispatch_result = self.dispatch.dispatch(ctx, value).await;
+            if !dispatch_result.shm_written && !dispatch_result.fallback_used {
+                warn!(
+                    "Action dispatch: SHM not written and no fallback for instance {} action {}",
+                    instance_id, action_id
+                );
+            }
         }
 
         if outcome.routed {

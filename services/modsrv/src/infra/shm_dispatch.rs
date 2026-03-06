@@ -12,6 +12,7 @@ use voltage_routing::RouteContext;
 
 /// Outcome of an action dispatch operation
 #[derive(Debug)]
+#[must_use]
 pub struct DispatchOutcome {
     /// Whether the value was written to SHM
     pub shm_written: bool,

@@ -155,8 +155,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     pub async fn refresh_routing_and_shm(&self) -> anyhow::Result<usize> {
         let count =
             crate::bootstrap::refresh_routing_cache(&self.pool, &self.routing_cache).await?;
-        self.comsrv.reload_routing().await?;
+        // Always rebuild local SHM writer first to keep routing_cache ↔ writer consistent
         self.dispatch.rebuild_writer(&self.routing_cache);
+        // Comsrv reload is best-effort — network failure should not block local state
+        if let Err(e) = self.comsrv.reload_routing().await {
+            warn!("comsrv routing reload failed (local state updated): {e}");
+        }
         Ok(count)
     }
 
