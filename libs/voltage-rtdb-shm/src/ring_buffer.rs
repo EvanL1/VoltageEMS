@@ -5,9 +5,7 @@
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 use std::ptr::NonNull;
-#[cfg(debug_assertions)]
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
 
 use memmap2::MmapMut;
 
@@ -179,14 +177,11 @@ impl RingBufferHeader {
 ///
 /// # Safety Contract
 ///
-/// **The write side (`push`/`push_batch`) must be restricted to a single thread.**
-/// While `fetch_add` guarantees a unique slot per write, `write_volatile`
-/// is not atomic for 32-byte `DataPoint`. Concurrent pushes from multiple threads
-/// may cause readers to observe torn reads.
+/// **The write side (`push`/`push_batch`) requires `&mut self`, enforcing
+/// single-producer at compile time.** `write_volatile` is not atomic for
+/// 32-byte `DataPoint`, so exclusive access is mandatory.
 ///
 /// Read methods (`read_range`/`read_latest` etc.) can be safely called from any thread.
-///
-/// In debug builds, `push()` detects concurrent call violations via an `AtomicBool` guard.
 pub struct HighFreqRingBuffer {
     /// Memory start pointer (retained for Debug and future expansion)
     #[allow(dead_code)]
@@ -200,9 +195,6 @@ pub struct HighFreqRingBuffer {
     /// Whether memory is owned (retained for future standalone memory allocation scenarios)
     #[allow(dead_code)]
     owned: bool,
-    /// Detects concurrent push() calls in debug mode
-    #[cfg(debug_assertions)]
-    push_guard: AtomicBool,
 }
 
 // SAFETY: HighFreqRingBuffer can be safely sent across threads because:
@@ -211,14 +203,6 @@ pub struct HighFreqRingBuffer {
 //   for the lifetime of the buffer
 // - No thread-local state is used
 unsafe impl Send for HighFreqRingBuffer {}
-
-// SAFETY: HighFreqRingBuffer can be safely shared between threads (&self) because:
-// - Read methods only use atomic load + read_volatile, safe for multiple readers
-// - push() slot allocation is guaranteed unique via atomic fetch_add
-// - **Precondition**: push() must be restricted to a single producer thread.
-//   write_volatile is not atomic for 32-byte DataPoint; multiple producers cause torn reads.
-//   Debug builds detect violations via AtomicBool guard.
-unsafe impl Sync for HighFreqRingBuffer {}
 
 impl HighFreqRingBuffer {
     /// Create from raw memory (internal use)
@@ -246,57 +230,36 @@ impl HighFreqRingBuffer {
             points,
             capacity,
             owned: false,
-            #[cfg(debug_assertions)]
-            push_guard: AtomicBool::new(false),
         }
     }
 
     /// Write a single data point (lock-free, single producer)
     ///
     /// Uses atomic `fetch_add` to obtain a unique write position, then `write_volatile` to write data.
-    ///
-    /// # Safety Contract
-    ///
-    /// **This method must be restricted to a single thread.** `write_volatile` is not atomic
-    /// for 32-byte `DataPoint`; concurrent calls from multiple threads cause torn reads.
-    ///
-    /// In debug builds, an `AtomicBool` guard detects concurrent call violations at runtime.
+    /// A `Release` fence after the write ensures readers see complete data.
     #[inline]
-    pub fn push(&self, point: DataPoint) {
-        // Debug mode: detect if another thread is currently pushing
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(
-                !self.push_guard.swap(true, Ordering::Acquire),
-                "HighFreqRingBuffer::push() called concurrently from multiple threads! \
-                 This is a single-producer buffer — concurrent push causes torn reads."
-            );
-        }
-
+    pub fn push(&mut self, point: DataPoint) {
         // SAFETY: self.header was set in from_raw() from a valid NonNull pointer.
         // fetch_add is atomic and returns a unique position per call.
         let pos =
             unsafe { (*self.header).head.fetch_add(1, Ordering::Relaxed) as usize % self.capacity };
         // SAFETY: pos = head % capacity, so pos < capacity, meaning self.points.add(pos)
         // is within the data region. write_volatile ensures the write is not elided.
-        // Single-producer contract guarantees no concurrent write to the same slot.
+        // &mut self guarantees no concurrent write to the same slot.
         unsafe {
             std::ptr::write_volatile(self.points.add(pos), point);
         }
+        // Ensure the DataPoint write is visible to readers before total_writes is updated
+        fence(Ordering::Release);
         // SAFETY: self.header is valid (set in from_raw()). Atomic operation is safe.
         unsafe {
             (*self.header).total_writes.fetch_add(1, Ordering::Relaxed);
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            self.push_guard.store(false, Ordering::Release);
         }
     }
 
     /// Batch write
     #[inline]
-    pub fn push_batch(&self, points: &[DataPoint]) {
+    pub fn push_batch(&mut self, points: &[DataPoint]) {
         for point in points {
             self.push(*point);
         }
@@ -329,6 +292,9 @@ impl HighFreqRingBuffer {
         let mut result = Vec::new();
         let head = self.head() as usize;
         let cap = self.capacity;
+
+        // Ensure we see complete DataPoint writes that preceded the Release fence in push()
+        fence(Ordering::Acquire);
 
         // Traverse backwards from the newest position
         for i in 0..cap {
@@ -366,6 +332,9 @@ impl HighFreqRingBuffer {
         let mut result = Vec::with_capacity(count.min(self.capacity));
         let head = self.head() as usize;
         let cap = self.capacity;
+
+        // Ensure we see complete DataPoint writes that preceded the Release fence in push()
+        fence(Ordering::Acquire);
 
         for i in 0..cap {
             if result.len() >= count {
@@ -535,12 +504,12 @@ impl SharedRingBuffer {
 
     // Proxy methods
     #[inline]
-    pub fn push(&self, point: DataPoint) {
+    pub fn push(&mut self, point: DataPoint) {
         self.inner.push(point);
     }
 
     #[inline]
-    pub fn push_batch(&self, points: &[DataPoint]) {
+    pub fn push_batch(&mut self, points: &[DataPoint]) {
         self.inner.push_batch(points);
     }
 
@@ -667,8 +636,6 @@ pub fn current_timestamp_us() -> u64 {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::thread;
 
     #[test]
     fn test_data_point_size() {
@@ -688,7 +655,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test_ring.bin");
 
-        let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
+        let mut buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
 
         // Write test data
         for i in 0..100 {
@@ -709,7 +676,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wrap_ring.bin");
 
-        let buffer = SharedRingBuffer::create_or_open(&path, 100, 60_000_000).unwrap();
+        let mut buffer = SharedRingBuffer::create_or_open(&path, 100, 60_000_000).unwrap();
 
         // Write data exceeding capacity
         for i in 0..250 {
@@ -731,7 +698,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("channel_ring.bin");
 
-        let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
+        let mut buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
 
         // Write data for multiple channels
         for i in 0u32..100 {
@@ -747,35 +714,33 @@ mod tests {
         }
     }
 
-    /// Test atomic counter correctness under multi-threaded writes.
+    /// Sequential multi-batch write correctness test.
     ///
-    /// Note: HighFreqRingBuffer is designed as single-producer; debug builds' push() guard
-    /// detects concurrent calls. This test only runs in release builds, verifying fetch_add
-    /// counter correctness under extreme conditions.
+    /// Verifies that writing multiple batches sequentially produces the correct
+    /// total_writes count and data integrity. This replaces the previous concurrent
+    /// test since push() now requires &mut self.
     #[test]
-    #[cfg_attr(debug_assertions, ignore)]
-    fn test_concurrent_writes() {
+    fn test_sequential_multi_batch_writes() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("concurrent_ring.bin");
+        let path = dir.path().join("sequential_ring.bin");
 
-        let buffer = Arc::new(SharedRingBuffer::create_or_open(&path, 10000, 60_000_000).unwrap());
+        let mut buffer = SharedRingBuffer::create_or_open(&path, 10000, 60_000_000).unwrap();
 
-        let handles: Vec<_> = (0..4)
-            .map(|t| {
-                let buf = Arc::clone(&buffer);
-                thread::spawn(move || {
-                    for i in 0..1000 {
-                        buf.push(DataPoint::new(t, 0, i, i as f64, 0));
-                    }
-                })
-            })
-            .collect();
-
-        for h in handles {
-            h.join().unwrap();
+        // Simulate 4 batches of 1000 writes each
+        for batch in 0u32..4 {
+            for i in 0..1000 {
+                buffer.push(DataPoint::new(batch, 0, i, i as f64, 0));
+            }
         }
 
         assert_eq!(buffer.total_writes(), 4000);
+
+        // Verify last batch is readable
+        let latest = buffer.read_latest(1000);
+        assert_eq!(latest.len(), 1000);
+        for p in &latest {
+            assert_eq!(p.channel_id, 3); // Last batch
+        }
     }
 
     #[test]
@@ -785,7 +750,7 @@ mod tests {
 
         // Create and write
         {
-            let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
+            let mut buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
             for i in 0..50 {
                 buffer.push(DataPoint::new(1, 0, i, i as f64, 0));
             }
@@ -805,7 +770,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("instance_ring.bin");
 
-        let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
+        let mut buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
 
         // Write data for multiple instances (using new_full to include instance_id)
         for i in 0..100u32 {
@@ -837,20 +802,17 @@ mod tests {
 
     // ========== Type Safety & Layout Tests (test-expert, task #2) ==========
 
-    /// Compile-time verification that HighFreqRingBuffer implements Send + Sync.
+    /// Compile-time verification that HighFreqRingBuffer implements Send.
     ///
-    /// These bounds are required because comsrv shares the buffer across
-    /// tokio tasks (Send) and reads from multiple poll cycles (Sync).
-    /// If the unsafe impls are removed, this test will fail to compile.
+    /// Send is required because comsrv transfers the buffer across tokio tasks.
+    /// Sync is intentionally NOT implemented: push() requires &mut self,
+    /// so shared immutable references cannot write (preventing torn reads).
     #[test]
-    fn test_ring_buffer_send_sync_bounds() {
+    fn test_ring_buffer_send_bounds() {
         fn assert_send<T: Send>() {}
-        fn assert_sync<T: Sync>() {}
 
         assert_send::<HighFreqRingBuffer>();
-        assert_sync::<HighFreqRingBuffer>();
         assert_send::<SharedRingBuffer>();
-        assert_sync::<SharedRingBuffer>();
     }
 
     /// Verify struct layout sizes for SHM binary compatibility.
@@ -879,7 +841,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("order_ring.bin");
 
-        let buffer = SharedRingBuffer::create_or_open(&path, 100, 60_000_000).unwrap();
+        let mut buffer = SharedRingBuffer::create_or_open(&path, 100, 60_000_000).unwrap();
 
         // Push 50 items with distinct values
         for i in 0u32..50 {
@@ -915,88 +877,13 @@ mod tests {
         }
     }
 
-    /// Debug-mode push guard detects concurrent push calls via panic.
-    ///
-    /// This test is only meaningful in debug builds where the AtomicBool
-    /// guard is compiled in. In release builds the guard is absent.
-    ///
-    /// Uses 200,000 iterations per thread and multiple retry rounds to
-    /// maximise the chance of overlapping push() calls.
-    #[test]
-    #[cfg(debug_assertions)]
-    fn test_push_guard_detects_concurrent_push() {
-        use std::panic;
-        use std::sync::atomic::{AtomicBool, Ordering as AO};
-
-        let dir = tempfile::tempdir().unwrap();
-
-        // Try multiple rounds — contention is probabilistic on fast CPUs
-        let mut detected = false;
-        for round in 0..5 {
-            let buffer = Arc::new(
-                SharedRingBuffer::create_or_open(
-                    dir.path().join(format!("guard_ring_{round}.bin")),
-                    100_000,
-                    60_000_000,
-                )
-                .unwrap(),
-            );
-
-            let go = Arc::new(AtomicBool::new(false));
-            let b1 = Arc::clone(&buffer);
-            let b2 = Arc::clone(&buffer);
-            let go1 = Arc::clone(&go);
-            let go2 = Arc::clone(&go);
-
-            let h1 = thread::spawn(move || {
-                while !go1.load(AO::Acquire) {
-                    std::hint::spin_loop();
-                }
-                panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                    for i in 0..200_000u32 {
-                        b1.push(DataPoint::new(1, 0, i, i as f64, 0));
-                    }
-                }))
-                .is_err()
-            });
-
-            let h2 = thread::spawn(move || {
-                while !go2.load(AO::Acquire) {
-                    std::hint::spin_loop();
-                }
-                panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                    for i in 0..200_000u32 {
-                        b2.push(DataPoint::new(2, 0, i, i as f64, 0));
-                    }
-                }))
-                .is_err()
-            });
-
-            // Tight spin-start to maximise overlap
-            go.store(true, AO::Release);
-
-            let p1 = h1.join().unwrap();
-            let p2 = h2.join().unwrap();
-
-            if p1 || p2 {
-                detected = true;
-                break;
-            }
-        }
-
-        assert!(
-            detected,
-            "Push guard did not detect concurrent push after 5 rounds"
-        );
-    }
-
     /// Export snapshot returns events within the specified time window.
     #[test]
     fn test_export_snapshot() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("snapshot_ring.bin");
 
-        let buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
+        let mut buffer = SharedRingBuffer::create_or_open(&path, 1000, 60_000_000).unwrap();
 
         // Write 100 points, timestamps 1000..100000 (step 1000)
         for i in 1u64..=100 {

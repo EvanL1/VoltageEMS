@@ -741,8 +741,10 @@ impl UnifiedWriter {
         }
 
         // SAFETY: snapshot_data.len() >= size_of::<UnifiedHeader>() (checked above).
-        // UnifiedHeader is #[repr(C)] with no padding invariants.
-        let snapshot_header = unsafe { &*(snapshot_data.as_ptr() as *const UnifiedHeader) };
+        // We use read_unaligned because Vec<u8> only guarantees 1-byte alignment,
+        // while UnifiedHeader requires 64-byte alignment (#[repr(C, align(64))]).
+        let snapshot_header =
+            unsafe { std::ptr::read_unaligned(snapshot_data.as_ptr() as *const UnifiedHeader) };
 
         if snapshot_header.magic != UNIFIED_MAGIC {
             bail!(
@@ -801,9 +803,13 @@ impl UnifiedWriter {
             let slot_offset_in_file = header_size + i * slot_size;
             // SAFETY: slot_offset_in_file + size_of::<PointSlot>() <= snapshot_data_end,
             // which was bounds-checked against snapshot_data.len() above.
-            // PointSlot is #[repr(C, align(32))].
-            let snapshot_slot =
-                unsafe { &*(snapshot_data.as_ptr().add(slot_offset_in_file) as *const PointSlot) };
+            // We use read_unaligned because Vec<u8> only guarantees 1-byte alignment,
+            // while PointSlot requires 32-byte alignment (#[repr(C, align(32))]).
+            let snapshot_slot = unsafe {
+                std::ptr::read_unaligned(
+                    snapshot_data.as_ptr().add(slot_offset_in_file) as *const PointSlot
+                )
+            };
 
             // Read slot data using public accessors
             let value = snapshot_slot.get_value();
