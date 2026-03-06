@@ -1,21 +1,13 @@
 //! J1939 diesel generator frame sender for vcan simulation.
 
-#[cfg(target_os = "linux")]
 use crate::state_machine::{DeviceState, StateMachineStore};
-#[cfg(target_os = "linux")]
 use anyhow::Result;
-#[cfg(target_os = "linux")]
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Socket};
-#[cfg(target_os = "linux")]
 use std::sync::Arc;
-#[cfg(target_os = "linux")]
 use std::time::Duration;
-#[cfg(target_os = "linux")]
 use tracing::info;
-#[cfg(target_os = "linux")]
 use voltage_j1939::{build_can_id, J1939Id};
 
-#[cfg(target_os = "linux")]
 fn build_eec1_frame(source_address: u8, state: &DeviceState) -> CanFrame {
     let raw_speed: u16 = match state {
         DeviceState::Running => 12000, // 1500 RPM / 0.125
@@ -36,7 +28,6 @@ fn build_eec1_frame(source_address: u8, state: &DeviceState) -> CanFrame {
     CanFrame::new(id, &data).unwrap()
 }
 
-#[cfg(target_os = "linux")]
 fn build_et1_frame(source_address: u8, state: &DeviceState) -> CanFrame {
     let raw_temp: u8 = match state {
         DeviceState::Running => 125, // 85°C + 40
@@ -57,7 +48,6 @@ fn build_et1_frame(source_address: u8, state: &DeviceState) -> CanFrame {
     CanFrame::new(id, &data).unwrap()
 }
 
-#[cfg(target_os = "linux")]
 pub async fn run_j1939_sender(
     interface: &str,
     interval_ms: u64,

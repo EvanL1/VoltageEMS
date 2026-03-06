@@ -13,12 +13,12 @@
 //! simulator --scenario scenarios/network_fault.yaml --port 5020
 //! ```
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "can"))]
 mod can_sender;
 mod coils;
 mod devices;
 mod http_api;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "j1939"))]
 mod j1939_sender;
 mod rtu_server;
 mod scenarios;
@@ -158,11 +158,11 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Start CAN/J1939 senders (Linux only)
-    #[cfg(target_os = "linux")]
+    // Start CAN LYNK senders (Linux + can feature)
+    #[cfg(all(target_os = "linux", feature = "can"))]
     for device in &scenario.devices {
-        let sm_clone = Arc::clone(&sm_store);
         if let Some(ref can_cfg) = device.can_lynk {
+            let sm_clone = Arc::clone(&sm_store);
             let iface = can_cfg.interface.clone();
             let interval = can_cfg.interval_ms;
             let uid = device.unit_id;
@@ -172,15 +172,20 @@ async fn main() -> Result<()> {
                 }
             });
         }
+    }
+
+    // Start J1939 senders (Linux + j1939 feature)
+    #[cfg(all(target_os = "linux", feature = "j1939"))]
+    for device in &scenario.devices {
         if let Some(ref j1939_cfg) = device.j1939 {
+            let sm_clone = Arc::clone(&sm_store);
             let iface = j1939_cfg.interface.clone();
             let interval = j1939_cfg.interval_ms;
             let sa = j1939_cfg.source_address;
             let uid = device.unit_id;
-            let sm_clone2 = Arc::clone(&sm_store);
             tokio::spawn(async move {
                 if let Err(e) =
-                    j1939_sender::run_j1939_sender(&iface, interval, sa, sm_clone2, uid).await
+                    j1939_sender::run_j1939_sender(&iface, interval, sa, sm_clone, uid).await
                 {
                     tracing::error!("J1939 sender error (unit {}): {}", uid, e);
                 }

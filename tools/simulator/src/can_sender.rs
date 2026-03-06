@@ -1,19 +1,12 @@
 //! CAN LYNK battery frame sender for vcan simulation.
 
-#[cfg(target_os = "linux")]
 use crate::state_machine::{DeviceState, StateMachineStore};
-#[cfg(target_os = "linux")]
 use anyhow::Result;
-#[cfg(target_os = "linux")]
 use socketcan::{CanFrame, CanSocket, EmbeddedFrame, Socket, StandardId};
-#[cfg(target_os = "linux")]
 use std::sync::Arc;
-#[cfg(target_os = "linux")]
 use std::time::Duration;
-#[cfg(target_os = "linux")]
 use tracing::info;
 
-#[cfg(target_os = "linux")]
 fn build_limits_frame() -> CanFrame {
     let mut data = [0u8; 8];
     let charge_v: i16 = 560;
@@ -28,7 +21,6 @@ fn build_limits_frame() -> CanFrame {
     CanFrame::new(id, &data).unwrap()
 }
 
-#[cfg(target_os = "linux")]
 fn build_status_frame(state: &DeviceState) -> CanFrame {
     let soc: u16 = match state {
         DeviceState::Running => 75,
@@ -43,7 +35,6 @@ fn build_status_frame(state: &DeviceState) -> CanFrame {
     CanFrame::new(id, &data).unwrap()
 }
 
-#[cfg(target_os = "linux")]
 fn build_measurements_frame(state: &DeviceState) -> CanFrame {
     let voltage: i16 = 520;
     let current: i16 = match state {
@@ -59,7 +50,6 @@ fn build_measurements_frame(state: &DeviceState) -> CanFrame {
     CanFrame::new(id, &data).unwrap()
 }
 
-#[cfg(target_os = "linux")]
 pub async fn run_can_sender(
     interface: &str,
     interval_ms: u64,
