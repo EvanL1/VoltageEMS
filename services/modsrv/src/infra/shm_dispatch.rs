@@ -18,7 +18,7 @@ pub struct DispatchOutcome {
     pub shm_written: bool,
     /// Whether UDS notification was sent successfully
     pub uds_notified: bool,
-    /// Whether fallback (Redis TODO queue) was used
+    /// Whether UDS failed and comsrv must detect via SHM polling
     pub fallback_used: bool,
 }
 
@@ -143,7 +143,7 @@ impl ActionDispatch for ShmDispatch {
                     }
                 },
                 Err(_) => {
-                    warn!("ShmNotifier lock timeout, relying on TODO queue");
+                    warn!("ShmNotifier lock timeout, comsrv will detect via SHM poll");
                     outcome.fallback_used = true;
                 },
             }
@@ -177,7 +177,7 @@ impl ActionDispatch for NoopDispatch {
         DispatchOutcome {
             shm_written: false,
             uds_notified: false,
-            fallback_used: true,
+            fallback_used: false,
         }
     }
 

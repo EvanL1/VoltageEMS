@@ -146,21 +146,19 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         &self.routing_cache
     }
 
-    /// Refresh routing cache from database, notify comsrv, and rebuild SHM writer
+    /// Refresh routing cache from database, rebuild SHM writer, and notify comsrv
     ///
     /// Delegates to:
     /// 1. `bootstrap::refresh_routing_cache` — reload routing from SQLite
-    /// 2. `ComsrvCoordinator::reload_routing` — ask comsrv to reload its routing/SHM view
-    /// 3. `ActionDispatch::rebuild_writer` — re-open SHM action writer against updated header
+    /// 2. `ActionDispatch::rebuild_writer` — re-open SHM action writer against updated header
+    /// 3. `ComsrvCoordinator::reload_routing` — ask comsrv to reload its routing/SHM view
     pub async fn refresh_routing_and_shm(&self) -> anyhow::Result<usize> {
         let count =
             crate::bootstrap::refresh_routing_cache(&self.pool, &self.routing_cache).await?;
-        // Always rebuild local SHM writer first to keep routing_cache ↔ writer consistent
+        // Rebuild local SHM writer first to keep routing_cache ↔ writer consistent
         self.dispatch.rebuild_writer(&self.routing_cache);
-        // Comsrv reload is best-effort — network failure should not block local state
-        if let Err(e) = self.comsrv.reload_routing().await {
-            warn!("comsrv routing reload failed (local state updated): {e}");
-        }
+        // Propagate comsrv reload failure — API handlers use this as success gate
+        self.comsrv.reload_routing().await?;
         Ok(count)
     }
 

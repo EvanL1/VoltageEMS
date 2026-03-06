@@ -298,10 +298,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         action_id: &str,
         value: f64,
     ) -> Result<()> {
-        // Use application-layer routing with cache
-        // SHM writer enables direct M2C via shared memory (primary path)
-        // Redis TODO queue remains as fallback
-        // UDS notifier enables event-driven dispatch (~1-2ms latency)
+        // Route via application-layer cache, dispatch via SHM+UDS to comsrv
 
         let outcome = voltage_routing::set_action_point(
             self.rtdb.as_ref(),
