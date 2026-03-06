@@ -13,8 +13,13 @@
 //! simulator --scenario scenarios/network_fault.yaml --port 5020
 //! ```
 
+#[cfg(target_os = "linux")]
+mod can_sender;
 mod coils;
 mod devices;
+mod http_api;
+#[cfg(target_os = "linux")]
+mod j1939_sender;
 mod rtu_server;
 mod scenarios;
 mod server;
@@ -56,6 +61,10 @@ struct Args {
     /// RTU baud rate (only used with --rtu)
     #[arg(long, default_value = "9600")]
     baud: u32,
+
+    /// HTTP API port for state observability (0 to disable)
+    #[arg(long, default_value = "0")]
+    http_port: u16,
 
     /// Log level (trace, debug, info, warn, error)
     #[arg(short, long, default_value = "info")]
@@ -133,16 +142,57 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Start server based on mode
+    let sm_store = Arc::new(sm_store);
+
+    // Start HTTP API for state observability (if enabled)
+    if args.http_port > 0 {
+        let http_addr = format!("{}:{}", args.bind, args.http_port);
+        let sm_clone = Arc::clone(&sm_store);
+        tokio::spawn(async move {
+            if let Err(e) = http_api::run_http_server(&http_addr, sm_clone).await {
+                tracing::error!("HTTP API error: {}", e);
+            }
+        });
+    }
+
+    // Start CAN/J1939 senders (Linux only)
+    #[cfg(target_os = "linux")]
+    for device in &scenario.devices {
+        let sm_clone = Arc::clone(&sm_store);
+        if let Some(ref can_cfg) = device.can_lynk {
+            let iface = can_cfg.interface.clone();
+            let interval = can_cfg.interval_ms;
+            let uid = device.unit_id;
+            tokio::spawn(async move {
+                if let Err(e) = can_sender::run_can_sender(&iface, interval, sm_clone, uid).await {
+                    tracing::error!("CAN sender error (unit {}): {}", uid, e);
+                }
+            });
+        }
+        if let Some(ref j1939_cfg) = device.j1939 {
+            let iface = j1939_cfg.interface.clone();
+            let interval = j1939_cfg.interval_ms;
+            let sa = j1939_cfg.source_address;
+            let uid = device.unit_id;
+            let sm_clone2 = Arc::clone(&sm_store);
+            tokio::spawn(async move {
+                if let Err(e) =
+                    j1939_sender::run_j1939_sender(&iface, interval, sa, sm_clone2, uid).await
+                {
+                    tracing::error!("J1939 sender error (unit {}): {}", uid, e);
+                }
+            });
+        }
+    }
+
+    // Start Modbus server based on mode
     if let Some(rtu_port) = args.rtu {
-        // RTU mode
         info!(
             "Starting Modbus RTU server on {} @ {} baud",
             rtu_port, args.baud
         );
         rtu_server::run_rtu_server(&rtu_port, args.baud, device_map, &scenario.devices).await?;
     } else {
-        // TCP mode (default)
         let addr = format!("{}:{}", args.bind, args.port);
         info!("Starting Modbus TCP server on {}", addr);
         server::run_server(
@@ -150,7 +200,7 @@ async fn main() -> Result<()> {
             device_map,
             scenario.faults,
             &scenario.devices,
-            sm_store,
+            StateMachineStore::clone(&sm_store),
         )
         .await?;
     }
