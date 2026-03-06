@@ -16,7 +16,7 @@ use crate::runtime::reconnect::{AutoRecoveryPolicy, ReconnectPolicy};
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
-use super::channel_task::run_unified_channel_task;
+use super::channel_task::{run_unified_channel_task, ChannelPollContext};
 
 /// Maximum number of channel slots (pre-allocated for O(1) access)
 /// Channel IDs must be < MAX_CHANNELS
@@ -180,23 +180,25 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         let failed_clone = Arc::clone(&reconnect_failed);
 
         // Spawn the unified channel task
-        let store_clone = Arc::clone(&store);
+        let ctx = ChannelPollContext {
+            store: Arc::clone(&store),
+            channel_id,
+            poll_interval_ms,
+            cached_state: cached_state_clone,
+            cached_diagnostics: cached_diagnostics_clone,
+            log_handler,
+            watchdog_heartbeat_ms: heartbeat_clone,
+            reconnect_total_attempts: attempts_clone,
+            reconnect_failed: failed_clone,
+        };
         let task_handle = tokio::spawn(async move {
             run_unified_channel_task(
+                ctx,
                 protocol,
                 protocol_rx,
                 business_rx,
-                store_clone,
-                channel_id,
-                poll_interval_ms,
-                cached_state_clone,
-                cached_diagnostics_clone,
-                log_handler,
                 reconnect_policy,
                 auto_recovery_policy,
-                heartbeat_clone,
-                attempts_clone,
-                failed_clone,
             )
             .await;
         });

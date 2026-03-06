@@ -22,6 +22,22 @@ use crate::runtime::reconnect::{
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
+/// Shared immutable context for channel polling operations.
+///
+/// Groups the Arc/Atomic fields that are threaded unchanged through the poll loop,
+/// reducing function signatures from 14+ params to ≤ 6.
+pub(super) struct ChannelPollContext<R: Rtdb> {
+    pub store: Arc<RedisDataStore<R>>,
+    pub channel_id: u32,
+    pub poll_interval_ms: u64,
+    pub cached_state: Arc<AtomicU8>,
+    pub cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
+    pub log_handler: Arc<dyn ChannelLogHandler>,
+    pub watchdog_heartbeat_ms: Arc<AtomicI64>,
+    pub reconnect_total_attempts: Arc<AtomicU64>,
+    pub reconnect_failed: Arc<AtomicBool>,
+}
+
 /// Update cached connection state from protocol runtime.
 fn update_cached_state(state: &dyn ChannelRuntime, cache: &AtomicU8) {
     let channel_state: crate::core::channels::types::ConnectionState =
@@ -90,26 +106,18 @@ fn apply_log_level(
 ///
 /// This design eliminates lock contention between polling and command execution,
 /// reducing command latency from 300ms to <10ms.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_unified_channel_task<R: Rtdb>(
+    ctx: ChannelPollContext<R>,
     mut protocol: Box<dyn ChannelRuntime>,
     mut protocol_rx: tokio::sync::mpsc::Receiver<ProtocolCommand>,
     mut business_rx: tokio::sync::mpsc::Receiver<ChannelCommand>,
-    store: Arc<RedisDataStore<R>>,
-    channel_id: u32,
-    poll_interval_ms: u64,
-    cached_state: Arc<AtomicU8>,
-    cached_diagnostics: Arc<ArcSwapOption<crate::protocols::core::traits::Diagnostics>>,
-    log_handler: Arc<dyn ChannelLogHandler>,
     reconnect_policy: ReconnectPolicy,
     auto_recovery_policy: Option<AutoRecoveryPolicy>,
-    watchdog_heartbeat_ms: Arc<AtomicI64>,
-    reconnect_total_attempts: Arc<AtomicU64>,
-    reconnect_failed: Arc<AtomicBool>,
 ) {
     info!(
         "Ch{} unified task started (interval: {}ms, reconnect: max_attempts={}, initial_delay={:?})",
-        channel_id, poll_interval_ms, reconnect_policy.max_attempts, reconnect_policy.initial_delay
+        ctx.channel_id, ctx.poll_interval_ms,
+        reconnect_policy.max_attempts, reconnect_policy.initial_delay
     );
 
     // Create reconnection helper for auto-reconnect functionality
@@ -125,11 +133,18 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Update initial connection state
-    update_cached_state(protocol.as_ref(), &cached_state);
-    check_online_change(protocol.as_ref(), &mut prev_online, &store, channel_id).await;
+    update_cached_state(protocol.as_ref(), &ctx.cached_state);
+    check_online_change(
+        protocol.as_ref(),
+        &mut prev_online,
+        &ctx.store,
+        ctx.channel_id,
+    )
+    .await;
 
     // Use configured poll interval
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(poll_interval_ms));
+    let mut interval =
+        tokio::time::interval(tokio::time::Duration::from_millis(ctx.poll_interval_ms));
 
     // Track previous error count to detect new errors
     let mut prev_error_count: u64 = 0;
@@ -146,23 +161,21 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
             // Priority 1: Protocol commands (connect/disconnect/diagnostics)
             Some(cmd) = protocol_rx.recv() => {
                 handle_protocol_command(
-                    cmd, &mut protocol, &log_handler, channel_id,
+                    cmd, &mut protocol, &ctx.log_handler, ctx.channel_id,
                 ).await;
             }
 
             // Priority 2: Business commands (control/adjustment from M2C SHM)
             Some(cmd) = business_rx.recv() => {
-                handle_business_command(cmd, &mut protocol, channel_id).await;
+                handle_business_command(cmd, &mut protocol, ctx.channel_id).await;
             }
 
             // Priority 3: Periodic polling
             _ = interval.tick() => {
                 let action = handle_poll_tick(
-                    &mut protocol, &mut protocol_rx, &mut reconnect_helper,
-                    &mut failed_log_tick_counter, &cached_state, &cached_diagnostics,
+                    &ctx, &mut protocol, &mut protocol_rx,
+                    &mut reconnect_helper, &mut failed_log_tick_counter,
                     &mut prev_online, &mut prev_error_count,
-                    &store, &log_handler, channel_id,
-                    &watchdog_heartbeat_ms, &reconnect_total_attempts, &reconnect_failed,
                 ).await;
                 match action {
                     TickAction::Continue => continue,
@@ -174,13 +187,15 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
     }
 
     // Mark as disconnected on shutdown
-    cached_state.store(
+    ctx.cached_state.store(
         crate::core::channels::types::ConnectionState::Disconnected.as_u8(),
         Ordering::Relaxed,
     );
     // Publish offline status to Redis on shutdown
-    store.publish_channel_online(channel_id, false).await;
-    info!("Ch{} unified task stopped", channel_id);
+    ctx.store
+        .publish_channel_online(ctx.channel_id, false)
+        .await;
+    info!("Ch{} unified task stopped", ctx.channel_id);
 }
 
 /// Action returned by poll tick handler
@@ -290,42 +305,30 @@ async fn handle_business_command(
 }
 
 /// Handle a periodic poll tick — reconnection logic + data polling.
-#[allow(clippy::too_many_arguments)]
 async fn handle_poll_tick<R: Rtdb>(
+    ctx: &ChannelPollContext<R>,
     protocol: &mut Box<dyn ChannelRuntime>,
     protocol_rx: &mut tokio::sync::mpsc::Receiver<ProtocolCommand>,
     reconnect_helper: &mut ReconnectHelper,
     failed_log_tick_counter: &mut u32,
-    cached_state: &AtomicU8,
-    cached_diagnostics: &ArcSwapOption<crate::protocols::core::traits::Diagnostics>,
     prev_online: &mut Option<bool>,
     prev_error_count: &mut u64,
-    store: &Arc<RedisDataStore<R>>,
-    log_handler: &Arc<dyn ChannelLogHandler>,
-    channel_id: u32,
-    watchdog_heartbeat_ms: &AtomicI64,
-    reconnect_total_attempts: &AtomicU64,
-    reconnect_failed: &AtomicBool,
 ) -> TickAction {
     // Update watchdog heartbeat on every tick (proves task is alive)
-    watchdog_heartbeat_ms.store(super::channel_entry::unix_timestamp_ms(), Ordering::Relaxed);
+    ctx.watchdog_heartbeat_ms
+        .store(super::channel_entry::unix_timestamp_ms(), Ordering::Relaxed);
 
     // Step 1: Check connection state before polling
     let conn_state = protocol.connection_state();
 
     if !conn_state.is_connected() {
         return handle_disconnected(
+            ctx,
             protocol,
             protocol_rx,
             reconnect_helper,
             failed_log_tick_counter,
-            cached_state,
             prev_online,
-            store,
-            log_handler,
-            channel_id,
-            reconnect_total_attempts,
-            reconnect_failed,
         )
         .await;
     }
@@ -335,7 +338,7 @@ async fn handle_poll_tick<R: Rtdb>(
         reconnect_helper.mark_connected();
         *failed_log_tick_counter = 0;
         // Sync reconnect stats
-        reconnect_failed.store(false, Ordering::Relaxed);
+        ctx.reconnect_failed.store(false, Ordering::Relaxed);
     }
 
     // Step 3: Poll data using ChannelRuntime interface
@@ -352,7 +355,7 @@ async fn handle_poll_tick<R: Rtdb>(
             .collect();
         warn!(
             "Ch{} partial read: {} failed, samples: [{}]",
-            channel_id,
+            ctx.channel_id,
             failure_count,
             sample_errors.join(", ")
         );
@@ -360,9 +363,9 @@ async fn handle_poll_tick<R: Rtdb>(
 
     let count = result.data.len();
     if count > 0 {
-        tracing::trace!("Ch{} poll ok: {} pts", channel_id, count);
-        if let Err(e) = store.write_batch(channel_id, result.data).await {
-            error!("Ch{} failed to write to Redis: {}", channel_id, e);
+        tracing::trace!("Ch{} poll ok: {} pts", ctx.channel_id, count);
+        if let Err(e) = ctx.store.write_batch(ctx.channel_id, result.data).await {
+            error!("Ch{} failed to write to Redis: {}", ctx.channel_id, e);
         }
     }
 
@@ -372,52 +375,48 @@ async fn handle_poll_tick<R: Rtdb>(
             let new_errors = diag.error_count - *prev_error_count;
             warn!(
                 "Ch{} accumulated errors: {} new errors, last error: {:?}",
-                channel_id, new_errors, diag.last_error
+                ctx.channel_id, new_errors, diag.last_error
             );
             *prev_error_count = diag.error_count;
         }
-        cached_diagnostics.store(Some(Arc::new(diag)));
+        ctx.cached_diagnostics.store(Some(Arc::new(diag)));
     }
 
     // Update cached connection state after each poll cycle
-    update_cached_state(protocol.as_ref(), cached_state);
-    check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+    update_cached_state(protocol.as_ref(), &ctx.cached_state);
+    check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
 
     TickAction::Proceed
 }
 
 /// Handle disconnected state — reconnection logic with backoff.
-#[allow(clippy::too_many_arguments)]
 async fn handle_disconnected<R: Rtdb>(
+    ctx: &ChannelPollContext<R>,
     protocol: &mut Box<dyn ChannelRuntime>,
     protocol_rx: &mut tokio::sync::mpsc::Receiver<ProtocolCommand>,
     reconnect_helper: &mut ReconnectHelper,
     failed_log_tick_counter: &mut u32,
-    cached_state: &AtomicU8,
     prev_online: &mut Option<bool>,
-    store: &Arc<RedisDataStore<R>>,
-    log_handler: &Arc<dyn ChannelLogHandler>,
-    channel_id: u32,
-    reconnect_total_attempts: &AtomicU64,
-    reconnect_failed: &AtomicBool,
 ) -> TickAction {
     // Sync reconnect stats to shared atomics on every disconnected tick
-    reconnect_total_attempts.store(reconnect_helper.stats().total_attempts, Ordering::Relaxed);
+    ctx.reconnect_total_attempts
+        .store(reconnect_helper.stats().total_attempts, Ordering::Relaxed);
 
     match reconnect_helper.connection_state() {
         ReconnectState::Failed => {
-            reconnect_failed.store(true, Ordering::Relaxed);
+            ctx.reconnect_failed.store(true, Ordering::Relaxed);
 
             // Check auto-recovery before giving up
             if reconnect_helper.check_auto_recovery() {
                 info!(
                     "Ch{} auto-recovery triggered, returning to Disconnected state",
-                    channel_id
+                    ctx.channel_id
                 );
-                reconnect_failed.store(false, Ordering::Relaxed);
+                ctx.reconnect_failed.store(false, Ordering::Relaxed);
                 *failed_log_tick_counter = 0;
-                update_cached_state(protocol.as_ref(), cached_state);
-                check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+                update_cached_state(protocol.as_ref(), &ctx.cached_state);
+                check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id)
+                    .await;
                 return TickAction::Continue;
             }
 
@@ -428,7 +427,7 @@ async fn handle_disconnected<R: Rtdb>(
                     warn!(
                         "Ch{} reconnection failed (max attempts reached), \
                          auto-recovery in {:?} (round {}/{})",
-                        channel_id,
+                        ctx.channel_id,
                         remaining,
                         reconnect_helper.recovery_rounds() + 1,
                         3 // max_recovery_rounds default
@@ -437,23 +436,24 @@ async fn handle_disconnected<R: Rtdb>(
                     warn!(
                         "Ch{} reconnection permanently failed, \
                          manual intervention required (disable/enable)",
-                        channel_id
+                        ctx.channel_id
                     );
                 }
             }
-            update_cached_state(protocol.as_ref(), cached_state);
-            check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+            update_cached_state(protocol.as_ref(), &ctx.cached_state);
+            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
             TickAction::Continue
         },
         ReconnectState::Reconnecting => TickAction::Continue,
         ReconnectState::Connected | ReconnectState::Disconnected => {
             if reconnect_helper.connection_state() == ReconnectState::Connected {
-                warn!("Ch{} connection lost unexpectedly", channel_id);
+                warn!("Ch{} connection lost unexpectedly", ctx.channel_id);
                 reconnect_helper.mark_disconnected();
             }
             if !reconnect_helper.record_attempt() {
-                update_cached_state(protocol.as_ref(), cached_state);
-                check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+                update_cached_state(protocol.as_ref(), &ctx.cached_state);
+                check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id)
+                    .await;
                 return TickAction::Continue;
             }
 
@@ -463,7 +463,7 @@ async fn handle_disconnected<R: Rtdb>(
                 let delay = reconnect_helper.calculate_next_delay();
                 info!(
                     "Ch{} waiting {:?} before reconnect attempt",
-                    channel_id, delay
+                    ctx.channel_id, delay
                 );
                 // Remain responsive to commands during backoff
                 tokio::select! {
@@ -471,40 +471,40 @@ async fn handle_disconnected<R: Rtdb>(
                     Some(cmd) = protocol_rx.recv() => {
                         let action = handle_backoff_command(
                             cmd, protocol, reconnect_helper,
-                            failed_log_tick_counter, log_handler, channel_id,
+                            failed_log_tick_counter, &ctx.log_handler, ctx.channel_id,
                         ).await;
                         if let Some(a) = action {
-                            update_cached_state(protocol.as_ref(), cached_state);
-                            check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+                            update_cached_state(protocol.as_ref(), &ctx.cached_state);
+                            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
                             return a;
                         }
-                        update_cached_state(protocol.as_ref(), cached_state);
-                        check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+                        update_cached_state(protocol.as_ref(), &ctx.cached_state);
+                        check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
                         return TickAction::Continue;
                     }
                 }
             }
 
             // Attempt reconnection with timeout to prevent hanging
-            info!("Ch{} attempting reconnect", channel_id);
+            info!("Ch{} attempting reconnect", ctx.channel_id);
             match tokio::time::timeout(Duration::from_secs(30), protocol.connect()).await {
                 Ok(Ok(())) => {
-                    info!("Ch{} reconnected successfully", channel_id);
+                    info!("Ch{} reconnected successfully", ctx.channel_id);
                     reconnect_helper.mark_connected();
-                    reconnect_failed.store(false, Ordering::Relaxed);
+                    ctx.reconnect_failed.store(false, Ordering::Relaxed);
                     *failed_log_tick_counter = 0;
                 },
                 Ok(Err(e)) => {
-                    warn!("Ch{} reconnect failed: {}", channel_id, e);
+                    warn!("Ch{} reconnect failed: {}", ctx.channel_id, e);
                     reconnect_helper.record_failure();
                 },
                 Err(_) => {
-                    warn!("Ch{} reconnect timed out (30s)", channel_id);
+                    warn!("Ch{} reconnect timed out (30s)", ctx.channel_id);
                     reconnect_helper.record_failure();
                 },
             }
-            update_cached_state(protocol.as_ref(), cached_state);
-            check_online_change(protocol.as_ref(), prev_online, store, channel_id).await;
+            update_cached_state(protocol.as_ref(), &ctx.cached_state);
+            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
             TickAction::Continue
         },
     }
