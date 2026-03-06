@@ -179,8 +179,10 @@ pub fn build_redis_candidates(
         }
     }
 
-    // Priority 3: Default value
-    candidates.push(("DEFAULT", default_url.to_string()));
+    // Priority 3: Default value (only if no higher-priority candidate exists)
+    if candidates.is_empty() {
+        candidates.push(("DEFAULT", default_url.to_string()));
+    }
 
     candidates
 }
@@ -210,5 +212,10 @@ mod tests {
 
         assert!(!candidates.is_empty());
         assert_eq!(candidates[0].0, "DB");
+        // When DB candidate exists, DEFAULT should not be appended
+        assert!(
+            !candidates.iter().any(|(src, _)| *src == "DEFAULT"),
+            "DEFAULT should not be present when higher-priority candidates exist"
+        );
     }
 }

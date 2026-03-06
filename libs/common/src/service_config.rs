@@ -780,8 +780,15 @@ impl RedisConfig {
     pub fn validate(&self, result: &mut ValidationResult) {
         if self.url.is_empty() {
             result.add_error("Redis URL cannot be empty".to_string());
-        } else if !self.url.starts_with("redis://") && !self.url.starts_with("rediss://") {
-            result.add_warning("Redis URL should start with redis:// or rediss://".to_string());
+        } else if !self.url.starts_with("redis://")
+            && !self.url.starts_with("rediss://")
+            && !self.url.starts_with("unix://")
+            && !self.url.starts_with("redis+unix://")
+        {
+            result.add_warning(
+                "Redis URL should start with redis://, rediss://, unix://, or redis+unix://"
+                    .to_string(),
+            );
         }
     }
 

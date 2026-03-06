@@ -6,9 +6,9 @@
 //! ## Architecture
 //!
 //! ```text
-//! modsrv: write SHM → send UDS notification ──►
-//!                                               │
-//! comsrv: listen UDS ← recv notification → read SHM → dispatch command
+//! modsrv: write Redis/SHM mirror → send UDS command event ──►
+//!                                                       │
+//! comsrv: listen UDS ← recv full command event → dispatch command
 //! ```
 //!
 //! ## vs ShmCommandPoller (polling)
@@ -19,39 +19,38 @@
 //! | CPU | Continuous polling | Event-triggered |
 //! | Complexity | Simple | Requires connection management |
 
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
-use uuid::Uuid;
 use voltage_model::{validate_value, PointType, ValidationConfig};
-use voltage_rtdb_shm::{ShmNotification, UnifiedReader, DEFAULT_UDS_PATH};
+use voltage_rtdb_shm::{ShmNotification, DEFAULT_UDS_PATH};
 
 use crate::core::channels::types::ChannelCommand;
 
+/// (channel_id, point_type, address) → (sequence, timestamp)
+type SequenceMap = DashMap<(u32, u8, u32), (u64, u64)>;
+
 /// Shared Memory Command Listener (Event-Driven)
 pub struct ShmCommandListener {
-    reader: Arc<UnifiedReader>,
     command_senders: Arc<DashMap<u32, mpsc::Sender<ChannelCommand>>>,
+    last_sequences: Arc<SequenceMap>,
     uds_path: String,
     shutdown: tokio::sync::watch::Receiver<bool>,
 }
 
 impl ShmCommandListener {
     /// Create a new listener
-    pub fn new(
-        reader: Arc<UnifiedReader>,
-        uds_path: Option<&str>,
-        shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> Self {
+    pub fn new(uds_path: Option<&str>, shutdown: tokio::sync::watch::Receiver<bool>) -> Self {
         let path = uds_path.unwrap_or(DEFAULT_UDS_PATH).to_string();
         info!("ShmCommandListener: UDS path = {}", path);
 
         Self {
-            reader,
             command_senders: Arc::new(DashMap::new()),
+            last_sequences: Arc::new(DashMap::new()),
             uds_path: path,
             shutdown,
         }
@@ -71,15 +70,26 @@ impl ShmCommandListener {
     /// Start the listener
     pub async fn run(&self) -> std::io::Result<()> {
         // Clean up stale socket file from previous run (e.g., after crash)
+        // Probe first: if another listener is alive, refuse to start
         let socket_path = std::path::Path::new(&self.uds_path);
         if socket_path.exists() {
+            if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+                error!(
+                    "ShmListener: another listener is active on {}",
+                    self.uds_path
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!("another listener is active on {}", self.uds_path),
+                ));
+            }
+            // Connection failed → stale socket, safe to remove
             info!("ShmListener: removing stale socket file {}", self.uds_path);
             if let Err(e) = std::fs::remove_file(socket_path) {
                 error!(
                     "ShmListener: failed to remove stale socket {}: {}",
                     self.uds_path, e
                 );
-                // Continue anyway - bind will fail with a clearer error if socket is still in use
             }
         }
 
@@ -101,12 +111,13 @@ impl ShmCommandListener {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, _)) => {
-                            let reader = Arc::clone(&self.reader);
                             let senders = Arc::clone(&self.command_senders);
+                            let last_sequences = Arc::clone(&self.last_sequences);
                             let shutdown_rx = self.shutdown.clone();
 
                             tokio::spawn(async move {
-                                Self::handle_connection(stream, reader, senders, shutdown_rx).await;
+                                Self::handle_connection(stream, senders, last_sequences, shutdown_rx)
+                                    .await;
                             });
                         }
                         Err(e) => {
@@ -130,8 +141,8 @@ impl ShmCommandListener {
 
     async fn handle_connection(
         mut stream: tokio::net::UnixStream,
-        reader: Arc<UnifiedReader>,
         senders: Arc<DashMap<u32, mpsc::Sender<ChannelCommand>>>,
+        last_sequences: Arc<SequenceMap>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) {
         debug!("ShmListener: new connection");
@@ -143,7 +154,7 @@ impl ShmCommandListener {
                     match result {
                         Ok(_) => {
                             let notif = ShmNotification::from_bytes(&buf);
-                            Self::handle_notification(&notif, &reader, &senders).await;
+                            Self::handle_notification(&notif, &senders, &last_sequences).await;
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                             debug!("ShmListener: connection closed");
@@ -166,8 +177,8 @@ impl ShmCommandListener {
 
     async fn handle_notification(
         notif: &ShmNotification,
-        reader: &UnifiedReader,
         senders: &DashMap<u32, mpsc::Sender<ChannelCommand>>,
+        last_sequences: &DashMap<(u32, u8, u32), (u64, u64)>,
     ) {
         let channel_id = notif.channel_id;
         let point_type = match notif.get_point_type() {
@@ -178,19 +189,32 @@ impl ShmCommandListener {
             },
         };
         let point_id = notif.point_id;
+        let seq_key = (channel_id, notif.point_type, point_id);
 
-        // Read actual value from SHM
-        let (value, timestamp) = match reader.get_channel(channel_id, point_type.to_u8(), point_id)
-        {
-            Some(data) => data,
-            None => {
-                warn!(
-                    "ShmListener: channel {} point {:?}:{} not found in SHM",
-                    channel_id, point_type, point_id
-                );
-                return;
+        match last_sequences.entry(seq_key) {
+            Entry::Occupied(mut entry) => {
+                let (last_producer, last_seq) = *entry.get();
+                if last_producer == notif.producer_id && notif.seq <= last_seq {
+                    trace!(
+                        "ShmListener: stale event dropped ch={} {:?}:{} producer={} seq={}<= {}",
+                        channel_id,
+                        point_type,
+                        point_id,
+                        notif.producer_id,
+                        notif.seq,
+                        last_seq
+                    );
+                    return;
+                }
+                entry.insert((notif.producer_id, notif.seq));
             },
-        };
+            Entry::Vacant(entry) => {
+                entry.insert((notif.producer_id, notif.seq));
+            },
+        }
+
+        let value = notif.value();
+        let timestamp = notif.timestamp_ms;
 
         // Validate value before sending to device (prevents NaN/Infinity from reaching hardware)
         let config = ValidationConfig::default();
@@ -206,16 +230,25 @@ impl ShmCommandListener {
         };
 
         trace!(
-            "ShmListener: ch={} {:?}:{} val={} ts={}",
+            "ShmListener: ch={} {:?}:{} val={} ts={} producer={} seq={}",
             channel_id,
             point_type,
             point_id,
             value,
-            timestamp
+            timestamp,
+            notif.producer_id,
+            notif.seq
         );
 
         // Build and send command
-        let command = Self::build_command(point_type, point_id, value, timestamp as i64);
+        let command = Self::build_command(
+            point_type,
+            point_id,
+            value,
+            timestamp as i64,
+            notif.producer_id,
+            notif.seq,
+        );
 
         if let Some(sender) = senders.get(&channel_id) {
             // Use send_timeout instead of try_send to handle transient backpressure
@@ -255,8 +288,10 @@ impl ShmCommandListener {
         point_id: u32,
         value: f64,
         timestamp: i64,
+        producer_id: u64,
+        seq: u64,
     ) -> ChannelCommand {
-        let command_id = format!("uds-{}", Uuid::new_v4());
+        let command_id = format!("uds-{producer_id:016x}-{seq}");
         match point_type {
             PointType::Control => ChannelCommand::Control {
                 command_id,
@@ -280,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_build_command_control() {
-        let cmd = ShmCommandListener::build_command(PointType::Control, 5, 123.45, 1000);
+        let cmd = ShmCommandListener::build_command(PointType::Control, 5, 123.45, 1000, 7, 9);
         match cmd {
             ChannelCommand::Control {
                 point_id, value, ..
@@ -294,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_build_command_adjustment() {
-        let cmd = ShmCommandListener::build_command(PointType::Adjustment, 10, 67.89, 2000);
+        let cmd = ShmCommandListener::build_command(PointType::Adjustment, 10, 67.89, 2000, 7, 10);
         match cmd {
             ChannelCommand::Adjustment {
                 point_id, value, ..

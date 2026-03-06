@@ -12,7 +12,13 @@ services:
       - redis-data:/data
       - redis-socket:/run/redis:rw # Unix socket directory for better performance
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    command: [
+      "redis-server",
+      "--appendonly", "yes",
+      "--save", "60", "1",
+      "--unixsocket", "/run/redis/redis.sock",
+      "--unixsocketperm", "777"
+    ]
     environment:
       - NO_PROXY="*"
       - no_proxy="*"
@@ -41,7 +47,7 @@ services:
       - SERVICE_NAME=comsrv
       - SERVICE_PORT=6001
       - RUST_LOG=${RUST_LOG:-info}
-      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
+      - REDIS_URL=unix:///run/redis/redis.sock
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - CSV_BASE_PATH=/app/config/comsrv
       - CONFIG_BASE_PATH=/app/config/comsrv
@@ -69,7 +75,7 @@ services:
       - SERVICE_NAME=modsrv
       - SERVICE_PORT=6002
       - RUST_LOG=${RUST_LOG:-info}
-      - REDIS_URL=${REDIS_URL:-redis://127.0.0.1:6379}
+      - REDIS_URL=unix:///run/redis/redis.sock
       - VOLTAGE_DB_PATH=/app/data/voltage.db
       - VOLTAGE_LOG_DIR=/app/logs
       - ENABLE_SHARED_MEMORY=${ENABLE_SHARED_MEMORY:-true}  # Round 118: zero-copy data sharing
