@@ -176,26 +176,23 @@ async fn main() -> Result<()> {
         None
     };
 
-    // Configure InstanceManager with SHM components for M2C via shared memory
-    // These use OnceLock for delayed initialization after Arc<InstanceManager> is created
-    // ShmNotifier is shared between InstanceManager and RuleScheduler for unified M2C dispatch
+    // Configure ShmDispatch with SHM components for M2C via shared memory
+    // ShmDispatch uses ArcSwapOption/OnceLock for delayed initialization
+    // ShmNotifier is shared between ShmDispatch and RuleScheduler for unified M2C dispatch
     let shm_notifier: Option<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>> =
         if let Some(ref writer) = shm_action_writer {
             // Set SHM action writer for direct M2C writes (+ store config for rebuild)
             state
-                .instance_manager
-                .set_shm_action_writer(Arc::clone(writer), shm_config.clone());
-            info!("InstanceManager: SHM action writer configured");
+                .shm_dispatch
+                .set_writer(Arc::clone(writer), shm_config.clone());
+            info!("ShmDispatch: SHM action writer configured");
 
             // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency)
             match voltage_rtdb_shm::ShmNotifier::connect_default().await {
                 Ok(notifier) => {
                     let notifier = Arc::new(tokio::sync::Mutex::new(notifier));
-                    if state
-                        .instance_manager
-                        .set_shm_notifier(Arc::clone(&notifier))
-                    {
-                        info!("InstanceManager: ShmNotifier connected for event-driven dispatch");
+                    if state.shm_dispatch.set_notifier(Arc::clone(&notifier)) {
+                        info!("ShmDispatch: ShmNotifier connected for event-driven dispatch");
                     }
                     Some(notifier)
                 },

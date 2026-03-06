@@ -4,6 +4,11 @@ use super::*;
 use std::collections::HashMap;
 use tempfile::TempDir;
 
+/// Helper: create NoopDispatch for tests
+fn noop_dispatch() -> Arc<dyn crate::infra::shm_dispatch::ActionDispatch> {
+    Arc::new(crate::infra::shm_dispatch::NoopDispatch)
+}
+
 // Helper: Create test database with all required tables
 async fn create_test_database() -> (TempDir, SqlitePool) {
     let temp_dir = TempDir::new().unwrap();
@@ -67,7 +72,7 @@ async fn test_instance_manager_new() {
     let rtdb = create_test_rtdb();
 
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let _manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let _manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
 
     // Test passes if InstanceManager::new() doesn't panic
 }
@@ -79,7 +84,7 @@ async fn test_create_instance_success() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
     let req = CreateInstanceRequest {
@@ -110,7 +115,7 @@ async fn test_create_instance_with_properties() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
     let mut properties = HashMap::new();
@@ -146,7 +151,7 @@ async fn test_create_instance_already_exists() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
     let req = CreateInstanceRequest {
@@ -180,7 +185,7 @@ async fn test_create_instance_product_not_found() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
 
     let req = CreateInstanceRequest {
         instance_id: Some(3001),
@@ -202,7 +207,7 @@ async fn test_list_instances_all() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
     // Create multiple instances using built-in products
@@ -241,7 +246,7 @@ async fn test_list_instances_by_product() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
     // Create instances for different products
@@ -295,7 +300,7 @@ async fn test_get_instance_success() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
@@ -330,7 +335,7 @@ async fn test_get_instance_not_found() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
 
     let result = manager.get_instance(9999).await;
 
@@ -343,7 +348,7 @@ async fn test_delete_instance() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
@@ -392,7 +397,7 @@ async fn test_execute_action_instance_not_found() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader);
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
 
     // Execute action on non-existent instance - this now succeeds
     // but doesn't route (no route configured for instance 9999)
@@ -412,7 +417,13 @@ async fn test_execute_action_no_route_stores_locally() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let manager = InstanceManager::new(
+        pool.clone(),
+        rtdb.clone(),
+        routing_cache,
+        product_loader,
+        noop_dispatch(),
+    );
     let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
@@ -463,7 +474,13 @@ async fn test_execute_action_with_route_triggers_downstream() {
         HashMap::new(),
     ));
 
-    let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let manager = InstanceManager::new(
+        pool.clone(),
+        rtdb.clone(),
+        routing_cache,
+        product_loader,
+        noop_dispatch(),
+    );
     let ess_id = setup_hierarchy(&manager).await;
 
     // Create instance using built-in product
@@ -521,7 +538,13 @@ async fn test_execute_action_multiple_points() {
         HashMap::new(),
     ));
 
-    let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let manager = InstanceManager::new(
+        pool.clone(),
+        rtdb.clone(),
+        routing_cache,
+        product_loader,
+        noop_dispatch(),
+    );
     let ess_id = setup_hierarchy(&manager).await;
 
     manager
@@ -560,7 +583,13 @@ async fn test_execute_action_value_overwrite() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let manager = InstanceManager::new(
+        pool.clone(),
+        rtdb.clone(),
+        routing_cache,
+        product_loader,
+        noop_dispatch(),
+    );
     let ess_id = setup_hierarchy(&manager).await;
 
     manager
@@ -594,7 +623,13 @@ async fn test_execute_action_negative_values() {
     let product_loader = create_test_product_loader(pool.clone());
     let rtdb = create_test_rtdb();
     let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
-    let manager = InstanceManager::new(pool.clone(), rtdb.clone(), routing_cache, product_loader);
+    let manager = InstanceManager::new(
+        pool.clone(),
+        rtdb.clone(),
+        routing_cache,
+        product_loader,
+        noop_dispatch(),
+    );
     let ess_id = setup_hierarchy(&manager).await;
 
     manager

@@ -7,8 +7,7 @@
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::redis_state;
 
@@ -313,52 +312,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         )
         .await?;
 
-        // SHM direct write + UDS notification (primary M2C path, low-latency)
-        // RouteContext provides numeric fields for efficient SHM writes
+        // Dispatch action to comsrv via SHM+UDS (production) or noop (tests)
         if let Some(ctx) = &outcome.route_context {
-            // Write action value to shared memory (zero-copy IPC)
-            if let Some(writer) = self.shm_action_writer.load().as_ref() {
-                let mirrored = writer.set_action(
-                    ctx.target_channel_id,
-                    ctx.target_point_type,
-                    ctx.target_point_id,
-                    value,
-                    ctx.timestamp_ms as u64,
-                );
-                if !mirrored {
-                    warn!(
-                        "SHM action mirror miss for ch={} pt={} point={}",
-                        ctx.target_channel_id, ctx.target_point_type, ctx.target_point_id
-                    );
-                }
-            }
-            // UDS notification for event-driven dispatch (~1-2ms latency)
-            if let Some(notifier_lock) = self.shm_notifier.get() {
-                match tokio::time::timeout(Duration::from_millis(100), notifier_lock.lock()).await {
-                    Ok(mut guard) => {
-                        if let Some(pt) = voltage_model::PointType::from_u8(ctx.target_point_type) {
-                            let result = guard
-                                .notify(
-                                    ctx.target_channel_id,
-                                    pt,
-                                    ctx.target_point_id,
-                                    value,
-                                    ctx.timestamp_ms as u64,
-                                )
-                                .await;
-                            if result.fallback_used {
-                                warn!(
-                                    "UDS notify degraded to fallback for ch={} pt={:?} point={}",
-                                    ctx.target_channel_id, pt, ctx.target_point_id
-                                );
-                            }
-                        }
-                    },
-                    Err(_) => {
-                        warn!("ShmNotifier lock timeout, relying on TODO queue");
-                    },
-                }
-            }
+            self.dispatch.dispatch(ctx, value).await;
         }
 
         if outcome.routed {

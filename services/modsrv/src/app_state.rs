@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::config::ModsrvConfig;
 use crate::error::ModSrvError;
+use crate::infra::shm_dispatch::ShmDispatch;
 use crate::instance_manager::InstanceManager;
 
 #[cfg(test)]
@@ -20,6 +21,9 @@ pub struct AppState {
 
     /// Instance lifecycle manager (uses Redis RTDB in production)
     pub instance_manager: Arc<InstanceManager<TestRtdb>>,
+
+    /// SHM dispatch (concrete type for delayed configuration in main.rs)
+    pub shm_dispatch: Arc<ShmDispatch>,
 }
 
 impl AppState {
@@ -27,10 +31,12 @@ impl AppState {
     pub fn new(
         config: Arc<ModsrvConfig>,
         instance_manager: Arc<InstanceManager<TestRtdb>>,
+        shm_dispatch: Arc<ShmDispatch>,
     ) -> Self {
         Self {
             config,
             instance_manager,
+            shm_dispatch,
         }
     }
 

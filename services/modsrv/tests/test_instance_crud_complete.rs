@@ -31,7 +31,15 @@ async fn create_test_instance_manager(env: &TestEnv) -> InstanceManager<MemoryRt
     let routing_cache = Arc::new(RoutingCache::new());
     let product_loader = Arc::new(ProductLoader::new(env.pool.clone()));
 
-    InstanceManager::new(env.pool.clone(), rtdb, routing_cache, product_loader)
+    let dispatch: Arc<dyn modsrv::infra::shm_dispatch::ActionDispatch> =
+        Arc::new(modsrv::infra::shm_dispatch::NoopDispatch);
+    InstanceManager::new(
+        env.pool.clone(),
+        rtdb,
+        routing_cache,
+        product_loader,
+        dispatch,
+    )
 }
 
 // Note: setup_test_product has been removed.

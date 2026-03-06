@@ -258,16 +258,18 @@ pub async fn setup_instance_manager(
     _rtdb: Arc<voltage_rtdb::RedisRtdb>,
     routing_cache: Arc<voltage_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
+    dispatch: Arc<dyn crate::infra::shm_dispatch::ActionDispatch>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::MemoryRtdb>>> {
     // Create MemoryRtdb for testing (ignore the injected RedisRtdb)
     let rtdb = Arc::new(voltage_rtdb::MemoryRtdb::new());
 
-    // Create instance manager with RTDB and routing cache
+    // Create instance manager with RTDB, routing cache, and dispatch
     let instance_manager = Arc::new(InstanceManager::new(
         sqlite_pool.clone(),
         rtdb,
         routing_cache,
         product_loader,
+        dispatch,
     ));
 
     Ok(instance_manager)
@@ -279,16 +281,18 @@ pub async fn setup_instance_manager(
     rtdb: Arc<voltage_rtdb::RedisRtdb>,
     routing_cache: Arc<voltage_routing::RoutingCache>,
     product_loader: Arc<ProductLoader>,
+    dispatch: Arc<dyn crate::infra::shm_dispatch::ActionDispatch>,
 ) -> Result<Arc<InstanceManager<voltage_rtdb::RedisRtdb>>> {
     // RTDB is a pure storage abstraction
     // M2C routing is handled externally by voltage-routing library
 
-    // Create instance manager with RTDB and routing cache
+    // Create instance manager with RTDB, routing cache, and dispatch
     let instance_manager = Arc::new(InstanceManager::new(
         sqlite_pool.clone(),
         rtdb,
         routing_cache,
         product_loader,
+        dispatch,
     ));
 
     // Instances loaded by monarch (may be empty on first startup)
@@ -520,17 +524,27 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // Load products (uses basic methods, no routing triggered)
     let product_loader = load_products(&config, &sqlite_pool, &rtdb).await?;
 
+    // Create ShmDispatch (initially unconfigured, configured later in main.rs)
+    let shm_dispatch = Arc::new(crate::infra::shm_dispatch::ShmDispatch::new());
+    let dispatch: Arc<dyn crate::infra::shm_dispatch::ActionDispatch> =
+        Arc::clone(&shm_dispatch) as Arc<dyn crate::infra::shm_dispatch::ActionDispatch>;
+
     // Setup instance manager (routing handled externally by voltage-routing library)
     let instance_manager = setup_instance_manager(
         &sqlite_pool,
         rtdb,
         routing_cache.clone(),
         Arc::clone(&product_loader),
+        dispatch,
     )
     .await?;
 
     // Create application state
-    Ok(Arc::new(AppState::new(config, instance_manager)))
+    Ok(Arc::new(AppState::new(
+        config,
+        instance_manager,
+        shm_dispatch,
+    )))
 }
 
 /// Rebuild instance name index from SQLite database

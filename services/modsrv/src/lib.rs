@@ -30,6 +30,20 @@ pub mod api {
     pub use crate::routes;
 }
 // Map dto module to api/dto.rs while keeping crate::dto path stable
+pub mod infra {
+    //! Infrastructure layer — external side effects (HTTP, SHM, Redis)
+    pub mod comsrv_coordinator;
+    pub mod instance_repository;
+    pub mod redis_sync;
+    pub mod routing_repository;
+    pub mod shm_dispatch;
+}
+pub mod runtime {
+    //! Runtime layer — in-memory caches and SHM slot management
+    pub mod dynamic_slot_runtime;
+    pub mod routing_runtime;
+}
+
 pub mod app_state;
 pub mod bootstrap;
 pub mod cleanup_provider;

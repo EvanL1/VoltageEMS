@@ -510,7 +510,9 @@ mod tests {
         let routing_cache = Arc::new(RoutingCache::new());
         let product_loader = Arc::new(ProductLoader::new(pool.clone()));
 
-        InstanceManager::new(pool, rtdb, routing_cache, product_loader)
+        let dispatch: Arc<dyn crate::infra::shm_dispatch::ActionDispatch> =
+            Arc::new(crate::infra::shm_dispatch::NoopDispatch);
+        InstanceManager::new(pool, rtdb, routing_cache, product_loader, dispatch)
     }
 
     // Helper: Create a test instance

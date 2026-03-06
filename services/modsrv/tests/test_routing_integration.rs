@@ -16,6 +16,10 @@ use modsrv::product_loader::{CreateInstanceRequest, ProductLoader};
 use std::sync::Arc;
 use voltage_routing::RoutingCache;
 
+fn noop_dispatch() -> Arc<dyn modsrv::infra::shm_dispatch::ActionDispatch> {
+    Arc::new(modsrv::infra::shm_dispatch::NoopDispatch)
+}
+
 #[tokio::test]
 #[ignore] // requires Redis
 async fn test_measurement_routing_load_from_db() -> Result<()> {
@@ -36,6 +40,7 @@ async fn test_measurement_routing_load_from_db() -> Result<()> {
         rtdb.clone(),
         routing_cache,
         product_loader,
+        noop_dispatch(),
     );
 
     // 4. Setup hierarchy: Station -> ESS (required for Battery)
@@ -129,6 +134,7 @@ async fn test_action_routing_load_from_db() -> Result<()> {
         rtdb.clone(),
         routing_cache,
         product_loader,
+        noop_dispatch(),
     );
 
     // Setup hierarchy: Station -> ESS (required for Battery)
@@ -221,6 +227,7 @@ async fn test_multiple_routing_for_instance() -> Result<()> {
         rtdb.clone(),
         routing_cache,
         product_loader,
+        noop_dispatch(),
     );
 
     // Setup hierarchy: Station -> ESS (required for Battery)
