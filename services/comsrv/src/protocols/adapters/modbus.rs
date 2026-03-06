@@ -19,6 +19,8 @@ use voltage_modbus::{ModbusTcpClient, TcpTransport};
 #[cfg(feature = "modbus")]
 use voltage_modbus::{ModbusRtuClient, RtuTransport};
 
+use voltage_model::PointType;
+
 use crate::protocols::core::data::{DataBatch, Value};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -179,7 +181,7 @@ impl ModbusChannel {
             .config
             .points
             .iter()
-            .find(|p| p.id == adj.id)
+            .find(|p| p.id == adj.id && p.point_type == PointType::Adjustment)
             .ok_or_else(|| GatewayError::InvalidAddress(format!("Point {} not found", adj.id)))?;
 
         let modbus_addr = match &point.address {
@@ -627,7 +629,12 @@ impl ProtocolClient for ModbusChannel {
         };
 
         for cmd in commands {
-            let point = match self.config.points.iter().find(|p| p.id == cmd.id) {
+            let point = match self
+                .config
+                .points
+                .iter()
+                .find(|p| p.id == cmd.id && p.point_type == PointType::Control)
+            {
                 Some(p) => p,
                 None => {
                     failures.push((cmd.id, "Point not found".into()));
@@ -724,7 +731,12 @@ impl ProtocolClient for ModbusChannel {
         };
 
         for adj in adjustments {
-            let point = match self.config.points.iter().find(|p| p.id == adj.id) {
+            let point = match self
+                .config
+                .points
+                .iter()
+                .find(|p| p.id == adj.id && p.point_type == PointType::Adjustment)
+            {
                 Some(p) => p,
                 None => {
                     failures.push((adj.id, "Point not found".into()));
