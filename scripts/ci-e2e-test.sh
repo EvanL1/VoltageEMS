@@ -33,7 +33,7 @@
 #
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 # Colors
 RED='\033[0;31m'
@@ -143,7 +143,15 @@ START_TIME=$(date +%s)
 if [ "$SKIP_BUILD" = false ]; then
     print_phase "[Phase 0] Building Binaries"
     echo -e "${LINE_V} Building simulator, comsrv, modsrv, and monarch..."
-    cargo build --release -p simulator -p comsrv -p modsrv -p monarch 2>&1 | tail -5
+    BUILD_LOG="/tmp/e2e_build.log"
+    cargo build --release -p simulator -p comsrv -p modsrv -p monarch 2>&1 | tee "$BUILD_LOG" | tail -5
+    BUILD_PIPE=("${PIPESTATUS[@]}")
+    if [ "${BUILD_PIPE[0]}" -ne 0 ]; then
+        echo -e "${LINE_V} ${RED}Build failed. Last 20 lines:${NC}"
+        tail -20 "$BUILD_LOG"
+        print_phase_end "fail"
+        exit 1
+    fi
     print_phase_end "pass"
 else
     log_warn "Skipping build (--skip-build specified)"
@@ -239,17 +247,29 @@ print_phase "[Phase 3] Database Configuration (Monarch)"
 echo -e "${LINE_V} Initializing database..."
 ./target/release/monarch init \
     --config-path config.e2e \
-    --db-path /tmp/e2e_comsrv.db 2>&1 | while read line; do
+    --db-path /tmp/e2e_comsrv.db 2>&1 | while read -r line; do
     echo -e "${LINE_V}   $line"
 done
+MONARCH_INIT_PIPE=("${PIPESTATUS[@]}")
+if [ "${MONARCH_INIT_PIPE[0]}" -ne 0 ]; then
+    echo -e "${LINE_V} ${RED}✗${NC} monarch init failed"
+    print_phase_end "fail"
+    exit 1
+fi
 
 echo -e "${LINE_V} Syncing configuration..."
 ./target/release/monarch sync \
     --config-path config.e2e \
     --db-path /tmp/e2e_comsrv.db \
-    --force 2>&1 | while read line; do
+    --force 2>&1 | while read -r line; do
     echo -e "${LINE_V}   $line"
 done
+MONARCH_SYNC_PIPE=("${PIPESTATUS[@]}")
+if [ "${MONARCH_SYNC_PIPE[0]}" -ne 0 ]; then
+    echo -e "${LINE_V} ${RED}✗${NC} monarch sync failed"
+    print_phase_end "fail"
+    exit 1
+fi
 
 echo -e "${LINE_V} ${GREEN}✓${NC} Configuration synced"
 print_phase_end "pass"
@@ -614,10 +634,25 @@ test_write 1003 "A" "1" 6000.0 "Diesel A1=6000" "Adjustment (FC06)" || CA_PASSED
 echo -e "${LINE_V}"
 
 if [ "$CA_PASSED" = true ]; then
-    echo -e "${LINE_V} ${GREEN}✓ C/A reverse write test passed (8/8)!${NC}"
+    echo -e "${LINE_V} ${GREEN}✓ C/A API write test passed (8/8)!${NC}"
+else
+    echo -e "${LINE_V} ${RED}✗ C/A API write test failed${NC}"
+fi
+
+# Modbus protocol readback: verify writes actually reached the simulators
+echo -e "${LINE_V}"
+echo -e "${LINE_V} Modbus protocol readback (verifying writes reached devices)..."
+$PYTHON_CMD scripts/e2e_modbus_readback.py --phase 7
+MODBUS_P7_RESULT=$?
+if [ $MODBUS_P7_RESULT -ne 0 ]; then
+    CA_PASSED=false
+fi
+
+if [ "$CA_PASSED" = true ]; then
+    echo -e "${LINE_V} ${GREEN}✓ C/A write + readback verified (API + Modbus)!${NC}"
     CA_RESULT=0
 else
-    echo -e "${LINE_V} ${RED}✗ C/A reverse write test failed${NC}"
+    echo -e "${LINE_V} ${RED}✗ C/A write verification failed${NC}"
     CA_RESULT=1
 fi
 
@@ -704,10 +739,25 @@ test_action 3 "2" 50.0   "Diesel A2=50.0 (freq setpoint)" || ACTION_PASSED=false
 echo -e "${LINE_V}"
 
 if [ "$ACTION_PASSED" = true ]; then
-    echo -e "${LINE_V} ${GREEN}✓ M2C Action test passed (5/5)!${NC}"
+    echo -e "${LINE_V} ${GREEN}✓ M2C API action test passed (5/5)!${NC}"
+else
+    echo -e "${LINE_V} ${RED}✗ M2C API action test failed${NC}"
+fi
+
+# Modbus protocol readback: verify M2C actions reached the simulators
+echo -e "${LINE_V}"
+echo -e "${LINE_V} Modbus protocol readback (verifying M2C actions reached devices)..."
+$PYTHON_CMD scripts/e2e_modbus_readback.py --phase 9
+MODBUS_P9_RESULT=$?
+if [ $MODBUS_P9_RESULT -ne 0 ]; then
+    ACTION_PASSED=false
+fi
+
+if [ "$ACTION_PASSED" = true ]; then
+    echo -e "${LINE_V} ${GREEN}✓ M2C action + readback verified (API + Modbus)!${NC}"
     ACTION_RESULT=0
 else
-    echo -e "${LINE_V} ${RED}✗ M2C Action test failed${NC}"
+    echo -e "${LINE_V} ${RED}✗ M2C action verification failed${NC}"
     ACTION_RESULT=1
 fi
 
