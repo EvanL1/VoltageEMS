@@ -502,7 +502,7 @@ except Exception as e:
     print(f"{LINE_V} {RED}\u2717 Cannot reach modsrv API: {e}{NC}")
     sys.exit(1)
 
-instances = inst_resp.get("data", [])
+instances = inst_resp.get("data", {}).get("list", [])
 inst_ok = len(instances) >= 4
 print(f"{LINE_V}   GET /api/instances: {len(instances)} instances {check_mark(inst_ok)}")
 if not inst_ok:
@@ -576,6 +576,65 @@ for inst_id, (name, min_count) in expected_a.items():
     ok = count >= min_count
     print(f"{LINE_V}     inst:{inst_id} ({name}): {count}/{min_count} routes {check_mark(ok)}")
     if not ok:
+        all_passed = False
+
+# ── Specific route sample verification ─────────────────────────────
+# Verify exact (instance, point) → (channel, type, point) mappings
+# to catch misrouted entries that count-only checks miss.
+print(f"{LINE_V}")
+print(f"{LINE_V}   Route sample verification (exact mapping):")
+
+def find_m_route(inst_id, m_pt_id):
+    """Find a measurement route by instance_id and measurement_point_id."""
+    for r in m_routes:
+        if r.get("instance_id") == inst_id and r.get("measurement_point_id") == m_pt_id:
+            return r
+    return None
+
+def find_a_route(inst_id, a_pt_id):
+    """Find an action route by instance_id and action_point_id."""
+    for r in a_routes:
+        if r.get("instance_id") == inst_id and r.get("action_point_id") == a_pt_id:
+            return r
+    return None
+
+# C2M samples: (inst_id, measurement_point_id, expected_channel_id, expected_channel_type, expected_channel_point_id)
+c2m_samples = [
+    (1, 1, 1001, "T", 1, "PV M:1 -> Ch1001 T:1"),
+    (2, 5, 1002, "T", 5, "Battery M:5 -> Ch1002 T:5"),
+    (3, 10, 1003, "T", 10, "Diesel M:10 -> Ch1003 T:10"),
+]
+
+for inst_id, m_pt, exp_ch, exp_type, exp_ch_pt, desc in c2m_samples:
+    r = find_m_route(inst_id, m_pt)
+    if r is None:
+        print(f"{LINE_V}     C2M {desc}: {RED}\u2717 route not found{NC}")
+        all_passed = False
+    elif r.get("channel_id") == exp_ch and r.get("channel_type") == exp_type and r.get("channel_point_id") == exp_ch_pt:
+        print(f"{LINE_V}     C2M {desc}: {check_mark(True)}")
+    else:
+        actual = f"ch={r.get('channel_id')} {r.get('channel_type')}:{r.get('channel_point_id')}"
+        print(f"{LINE_V}     C2M {desc}: {RED}\u2717 got {actual}{NC}")
+        all_passed = False
+
+# M2C samples: (inst_id, action_point_id, expected_channel_id, expected_channel_type, expected_channel_point_id)
+m2c_samples = [
+    (2, 1, 1002, "C", 1, "Battery A:1 -> Ch1002 C:1"),
+    (2, 3, 1002, "C", 3, "Battery A:3 -> Ch1002 C:3"),
+    (3, 1, 1003, "C", 1, "Diesel A:1 -> Ch1003 C:1"),
+    (3, 5, 1003, "C", 5, "Diesel A:5 -> Ch1003 C:5"),
+]
+
+for inst_id, a_pt, exp_ch, exp_type, exp_ch_pt, desc in m2c_samples:
+    r = find_a_route(inst_id, a_pt)
+    if r is None:
+        print(f"{LINE_V}     M2C {desc}: {RED}\u2717 route not found{NC}")
+        all_passed = False
+    elif r.get("channel_id") == exp_ch and r.get("channel_type") == exp_type and r.get("channel_point_id") == exp_ch_pt:
+        print(f"{LINE_V}     M2C {desc}: {check_mark(True)}")
+    else:
+        actual = f"ch={r.get('channel_id')} {r.get('channel_type')}:{r.get('channel_point_id')}"
+        print(f"{LINE_V}     M2C {desc}: {RED}\u2717 got {actual}{NC}")
         all_passed = False
 
 print(f"{LINE_V}")
@@ -717,12 +776,13 @@ echo -e "${LINE_V}"
 
 ACTION_PASSED=true
 
-# Reset Phase 7 coils to isolate M2C routing path
+# Reset Phase 7 coils to isolate M2C routing path (hard requirement)
 echo -e "${LINE_V} Resetting Phase 7 coils to isolate M2C routing..."
 $PYTHON_CMD scripts/e2e_modbus_readback.py --reset-coils
 RESET_RESULT=$?
 if [ $RESET_RESULT -ne 0 ]; then
-    log_warn "Coil reset failed — Phase 9 results may be contaminated by Phase 7"
+    echo -e "${LINE_V} ${RED}✗${NC} Coil reset failed — cannot isolate M2C path from Phase 7 contamination"
+    ACTION_PASSED=false
 fi
 
 # test_action function (reuses test_write pattern)
