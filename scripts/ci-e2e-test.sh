@@ -509,7 +509,7 @@ if not inst_ok:
     all_passed = False
 
 expected_names = {"e2e_pv", "e2e_battery", "e2e_diesel", "e2e_load"}
-actual_names = {inst.get("name", "") for inst in instances}
+actual_names = {inst.get("instance_name", "") for inst in instances}
 names_ok = expected_names.issubset(actual_names)
 missing = expected_names - actual_names
 if names_ok:
