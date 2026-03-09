@@ -198,7 +198,7 @@ async fn main() -> Result<()> {
                 },
                 Err(e) => {
                     // Not an error - comsrv may not have started UDS listener yet
-                    // M2C will fall back to polling or Redis TODO queue
+                    // M2C will use SHM polling fallback (comsrv polls SHM on interval)
                     info!("ShmNotifier unavailable (UDS listener not ready): {}", e);
                     None
                 },
