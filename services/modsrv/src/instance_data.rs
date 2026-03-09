@@ -8,7 +8,7 @@
 use crate::infra::shm_dispatch::DispatchOutcome;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 use crate::redis_state;
 
@@ -311,20 +311,28 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         .await?;
 
         // Dispatch action to comsrv via SHM+UDS (production) or noop (tests)
+        // SCADA safety: dispatch failure must propagate to the operator via API error
         if let Some(ctx) = &outcome.route_context {
             match self.dispatch.dispatch(ctx, value).await {
                 DispatchOutcome::Delivered | DispatchOutcome::Noop => {},
                 DispatchOutcome::ShmOnly { reason } => {
-                    debug!(
-                        "Action dispatch: SHM written but UDS degraded ({}) for instance {} action {}",
+                    warn!(
+                        "Action dispatch degraded: SHM written but UDS failed ({}) for instance {} action {}",
                         reason, instance_id, action_id
                     );
+                    return Err(anyhow!(
+                        "Action dispatch degraded ({}): command may not reach device",
+                        reason
+                    ));
                 },
                 DispatchOutcome::NoWriter => {
-                    warn!(
-                        "Action dispatch: no SHM writer for instance {} action {}",
+                    error!(
+                        "Action dispatch failed: no SHM writer for instance {} action {}",
                         instance_id, action_id
                     );
+                    return Err(anyhow!(
+                        "Action dispatch unavailable: no SHM writer configured"
+                    ));
                 },
             }
         }

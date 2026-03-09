@@ -192,7 +192,8 @@ impl ActionDispatch for ShmDispatch {
                 info!("SHM action writer rebuilt after routing change");
             },
             Err(e) => {
-                warn!("SHM action writer rebuild failed: {}", e);
+                self.writer.store(None); // clear stale writer to prevent wrong-slot writes
+                warn!("SHM action writer rebuild failed, dispatch disabled: {}", e);
             },
         }
     }

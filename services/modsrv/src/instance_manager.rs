@@ -84,6 +84,9 @@ pub struct InstanceManager<R: Rtdb> {
     // ========== Comsrv Coordinator ==========
     /// HTTP coordinator for cross-service communication (routing reload)
     comsrv: crate::infra::comsrv_coordinator::ComsrvCoordinator,
+    // ========== Concurrency Guard ==========
+    /// Prevents concurrent refresh_routing_and_shm calls (Steps 1-3 must be atomic)
+    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
@@ -103,6 +106,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             slot_runtime: crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime::new(),
             dispatch,
             comsrv: crate::infra::comsrv_coordinator::ComsrvCoordinator::new(),
+            refresh_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -157,6 +161,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// because `open_for_actions` validates routing_hash in the SHM header.
     /// All three steps always execute; comsrv failure is propagated but doesn't skip rebuild.
     pub async fn refresh_routing_and_shm(&self) -> anyhow::Result<usize> {
+        // Prevent concurrent refreshes — Steps 1-3 must run atomically
+        let _guard = self.refresh_lock.lock().await;
         // Step 1: refresh local routing cache from SQLite
         let count =
             crate::bootstrap::refresh_routing_cache(&self.pool, &self.routing_cache).await?;
