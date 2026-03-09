@@ -187,20 +187,30 @@ async fn main() -> Result<()> {
                 .set_writer(Arc::clone(writer), shm_config.clone());
             info!("ShmDispatch: SHM action writer configured");
 
-            // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency)
+            // Connect ShmNotifier for event-driven M2C dispatch (~1-2ms latency).
+            // connect_default() never returns Err (connect failure yields a degraded Ok),
+            // but handle the Err arm defensively: always call set_notifier so that the
+            // auto-reconnect logic inside ShmNotifier can activate on future notify() calls.
             match voltage_rtdb_shm::ShmNotifier::connect_default().await {
                 Ok(notifier) => {
                     let notifier = Arc::new(tokio::sync::Mutex::new(notifier));
                     if state.shm_dispatch.set_notifier(Arc::clone(&notifier)) {
-                        info!("ShmDispatch: ShmNotifier connected for event-driven dispatch");
+                        info!("ShmDispatch: ShmNotifier configured for event-driven dispatch");
                     }
                     Some(notifier)
                 },
                 Err(e) => {
-                    // Not an error - comsrv may not have started UDS listener yet
-                    // ShmNotifier will auto-reconnect with exponential backoff (1-30s)
-                    info!("ShmNotifier unavailable (UDS listener not ready): {}", e);
-                    None
+                    // Defensive path: create a degraded notifier so set_notifier is always
+                    // called and auto-reconnect can activate when comsrv UDS becomes ready.
+                    info!(
+                        "ShmNotifier unavailable (UDS listener not ready), will auto-reconnect: {}",
+                        e
+                    );
+                    let notifier = Arc::new(tokio::sync::Mutex::new(
+                        voltage_rtdb_shm::ShmNotifier::disabled(),
+                    ));
+                    state.shm_dispatch.set_notifier(Arc::clone(&notifier));
+                    Some(notifier)
                 },
             }
         } else {

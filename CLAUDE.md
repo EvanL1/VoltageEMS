@@ -41,5 +41,6 @@ sqlx::query_as::<_, Row>("SELECT * FROM t WHERE id = ?").bind(id)     // SQLx (�
 
 ```
 上行: Device → comsrv → Redis → route:c2m → inst:{id}:M
-下行: modsrv → route:m2c → SHM+UDS → comsrv ShmListener → Device
+下行: modsrv → SHM write + UDS notify → comsrv ShmListener → Device
+     (路由配置来自 route:m2c 表，但运行时数据不经过 Redis)
 ```

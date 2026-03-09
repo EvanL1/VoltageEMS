@@ -11,13 +11,8 @@
 //! comsrv: listen UDS ← recv full command event → dispatch command
 //! ```
 //!
-//! ## vs ShmCommandPoller (polling)
-//!
-//! | Aspect | Poller | Listener |
-//! |--------|--------|----------|
-//! | Latency | 10-20ms avg | ~1-2ms |
-//! | CPU | Continuous polling | Event-triggered |
-//! | Complexity | Simple | Requires connection management |
+//! Replaced the former ShmCommandPoller (polling-based) with lower latency (~1-2ms vs 10-20ms avg)
+//! and event-triggered CPU usage instead of continuous polling.
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;

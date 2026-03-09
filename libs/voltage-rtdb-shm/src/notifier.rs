@@ -1,7 +1,9 @@
 //! UDS Notification Sender
 //!
 //! Used by modsrv to send M2C command notifications to comsrv.
-//! Supports graceful degradation: does not block on connection failure, only disables notifications.
+//! Supports graceful degradation: on connection loss the notifier does not block,
+//! and automatically reconnects using exponential backoff (1s–30s). Once the UDS
+//! listener becomes available again, notifications resume transparently.
 //!
 //! ## Reliability Enhancements
 //!
@@ -106,6 +108,8 @@ pub struct ShmNotifier {
     last_connect_attempt: Option<Instant>,
     /// Current backoff duration (milliseconds)
     backoff_ms: u64,
+    /// Consecutive reconnect failure count (reset to 0 on success)
+    reconnect_attempts: u32,
 }
 
 impl ShmNotifier {
@@ -143,6 +147,7 @@ impl ShmNotifier {
                     next_seq: 1,
                     last_connect_attempt: None,
                     backoff_ms: Self::MIN_BACKOFF_MS,
+                    reconnect_attempts: 0,
                 })
             },
             Err(e) => {
@@ -157,6 +162,7 @@ impl ShmNotifier {
                     next_seq: 1,
                     last_connect_attempt: Some(Instant::now()),
                     backoff_ms: Self::MIN_BACKOFF_MS,
+                    reconnect_attempts: 0,
                 })
             },
         }
@@ -176,6 +182,7 @@ impl ShmNotifier {
             next_seq: 1,
             last_connect_attempt: None,
             backoff_ms: Self::MIN_BACKOFF_MS,
+            reconnect_attempts: 0,
         }
     }
 
@@ -295,12 +302,25 @@ impl ShmNotifier {
                 self.stream = Some(stream);
                 self.backoff_ms = Self::MIN_BACKOFF_MS;
                 self.last_connect_attempt = None;
+                self.reconnect_attempts = 0;
                 info!("ShmNotifier: reconnected to {}", self.path);
             },
-            Err(_) => {
+            Err(e) => {
                 // Increase backoff duration (exponential backoff)
+                self.reconnect_attempts += 1;
                 self.backoff_ms = (self.backoff_ms * 2).min(Self::MAX_BACKOFF_MS);
                 self.last_connect_attempt = Some(Instant::now());
+                if self.reconnect_attempts.is_multiple_of(10) {
+                    warn!(
+                        "ShmNotifier: {} consecutive reconnect failures, UDS notifications degraded (backoff {}ms): {}",
+                        self.reconnect_attempts, self.backoff_ms, e
+                    );
+                } else {
+                    debug!(
+                        "ShmNotifier: reconnect failed (attempt {}, backoff {}ms): {}",
+                        self.reconnect_attempts, self.backoff_ms, e
+                    );
+                }
             },
         }
     }

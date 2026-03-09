@@ -41,7 +41,8 @@ pub trait ActionDispatch: Send + Sync {
 /// SHM + UDS dispatch implementation (production path)
 ///
 /// Writes action values directly to shared memory, then sends a UDS notification
-/// to comsrv for immediate processing. Degrades gracefully if UDS notification fails (SHM write still persists).
+/// to comsrv for immediate processing. Degrades gracefully if UDS notification fails
+/// (SHM value is written but comsrv delivery is not guaranteed without UDS).
 pub struct ShmDispatch {
     writer: arc_swap::ArcSwapOption<voltage_rtdb_shm::UnifiedWriter>,
     config: std::sync::OnceLock<voltage_rtdb_shm::SharedConfig>,
@@ -122,24 +123,33 @@ impl ActionDispatch for ShmDispatch {
         if let Some(notifier_lock) = self.notifier.get() {
             match tokio::time::timeout(Duration::from_millis(100), notifier_lock.lock()).await {
                 Ok(mut guard) => {
-                    if let Some(pt) = voltage_model::PointType::from_u8(ctx.target_point_type) {
-                        let result = guard
-                            .notify(
-                                ctx.target_channel_id,
-                                pt,
-                                ctx.target_point_id,
-                                value,
-                                ctx.timestamp_ms as u64,
-                            )
-                            .await;
-                        outcome.uds_notified = !result.fallback_used;
-                        outcome.fallback_used = result.fallback_used;
-                        if result.fallback_used {
+                    let pt = match voltage_model::PointType::from_u8(ctx.target_point_type) {
+                        Some(pt) => pt,
+                        None => {
                             warn!(
-                                "UDS notify degraded to fallback for ch={} pt={:?} point={}",
-                                ctx.target_channel_id, pt, ctx.target_point_id
+                                "Ch{} point_type {} invalid, UDS notification skipped",
+                                ctx.target_channel_id, ctx.target_point_type
                             );
-                        }
+                            outcome.fallback_used = true;
+                            return outcome;
+                        },
+                    };
+                    let result = guard
+                        .notify(
+                            ctx.target_channel_id,
+                            pt,
+                            ctx.target_point_id,
+                            value,
+                            ctx.timestamp_ms as u64,
+                        )
+                        .await;
+                    outcome.uds_notified = result.uds_sent;
+                    outcome.fallback_used = result.fallback_used || result.disabled;
+                    if result.fallback_used {
+                        warn!(
+                            "UDS notify degraded to fallback for ch={} pt={:?} point={}",
+                            ctx.target_channel_id, pt, ctx.target_point_id
+                        );
                     }
                 },
                 Err(_) => {
