@@ -267,13 +267,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             }
         }
 
-        // 6. SHM Poller Registration
-        if let (Some(ref poller), Some(ref tx)) = (&self.shm_poller, &entry.command_tx) {
-            poller.register_channel(channel_id, tx.clone());
-            debug!("Ch{} registered with SHM poller", channel_id);
-        }
-
-        // 7. Write channel name to Redis hash (fire-and-forget via spawn)
+        // 6. Write channel name to Redis hash (fire-and-forget via spawn)
         let rtdb = Arc::clone(&self.rtdb);
         let channel_name = entry.channel_config.name().to_string();
         tokio::spawn(async move {

@@ -18,7 +18,7 @@ pub struct DispatchOutcome {
     pub shm_written: bool,
     /// Whether UDS notification was sent successfully
     pub uds_notified: bool,
-    /// Whether UDS failed and comsrv must detect via SHM polling
+    /// Whether UDS failed; SHM value persists and comsrv will read on next UDS reconnect cycle
     pub fallback_used: bool,
 }
 
@@ -143,7 +143,7 @@ impl ActionDispatch for ShmDispatch {
                     }
                 },
                 Err(_) => {
-                    warn!("ShmNotifier lock timeout, comsrv will detect via SHM poll");
+                    warn!("ShmNotifier lock timeout; SHM value persists, comsrv will read on next UDS reconnect cycle");
                     outcome.fallback_used = true;
                 },
             }
@@ -177,7 +177,9 @@ impl ActionDispatch for NoopDispatch {
         DispatchOutcome {
             shm_written: false,
             uds_notified: false,
-            fallback_used: false,
+            // Set true so callers don't warn about "no SHM and no fallback";
+            // noop dispatch intentionally skips all transport paths.
+            fallback_used: true,
         }
     }
 

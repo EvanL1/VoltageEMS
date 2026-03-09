@@ -11,10 +11,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::core::channels::channel_entry::{ChannelEntry, ChannelStats, MAX_CHANNELS};
 use crate::core::channels::shm_listener::ShmCommandListener;
-use crate::core::channels::shm_poller::ShmCommandPoller;
 use crate::error::{ComSrvError, Result};
 use voltage_rtdb::Rtdb;
-use voltage_rtdb_shm::{ChannelIndex, ShmHandle, SlotBitmap, UnifiedReader};
+use voltage_rtdb_shm::{ChannelIndex, ShmHandle, SlotBitmap};
 
 // Re-export types for backwards compatibility
 pub use crate::core::channels::channel_entry::{unix_timestamp_ms, ChannelMetadata};
@@ -55,16 +54,8 @@ pub struct ChannelManager<R: Rtdb> {
     /// Slot bitmap for dynamic allocation (optional, requires RwLock for &mut access)
     pub(super) slot_bitmap: Option<Arc<parking_lot::RwLock<SlotBitmap>>>,
 
-    // ========== SHM Command Polling (M2C via SHM) ==========
-    /// Shared memory reader for polling C/A timestamps (optional)
-    pub(super) unified_reader: Option<Arc<UnifiedReader>>,
-    /// SHM command poller for detecting M2C commands (optional, replaces TODO queue)
-    pub(super) shm_poller: Option<Arc<ShmCommandPoller>>,
-    /// Shutdown signal for SHM poller
-    pub(super) shm_poller_shutdown: Option<tokio::sync::watch::Sender<bool>>,
-
-    // ========== SHM Command Listener (Event-driven M2C) ==========
-    /// SHM command listener for event-driven M2C command dispatch (optional)
+    // ========== SHM Command Listener (Event-driven M2C via UDS) ==========
+    /// SHM command listener for event-driven M2C command dispatch (UDS path, self-healing)
     pub(super) shm_listener: Option<Arc<ShmCommandListener>>,
 }
 
@@ -95,9 +86,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             command_tx_cache: None,
             dynamic_channel_index: None,
             slot_bitmap: None,
-            unified_reader: None,
-            shm_poller: None,
-            shm_poller_shutdown: None,
             shm_listener: None,
         }
     }
@@ -118,9 +106,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             command_tx_cache: None,
             dynamic_channel_index: None,
             slot_bitmap: None,
-            unified_reader: None,
-            shm_poller: None,
-            shm_poller_shutdown: None,
             shm_listener: None,
         }
     }
@@ -143,9 +128,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             command_tx_cache,
             dynamic_channel_index: None,
             slot_bitmap: None,
-            unified_reader: None,
-            shm_poller: None,
-            shm_poller_shutdown: None,
             shm_listener: None,
         }
     }
@@ -159,40 +141,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         self.dynamic_channel_index = Some(dynamic_index);
         self.slot_bitmap = Some(slot_bitmap);
         self
-    }
-
-    /// Configure SHM command poller for M2C commands via shared memory
-    pub fn with_shm_poller(
-        mut self,
-        unified_reader: Arc<UnifiedReader>,
-        poll_interval: std::time::Duration,
-    ) -> Self {
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        let poller = ShmCommandPoller::new(
-            unified_reader.clone(),
-            &self.routing_cache,
-            poll_interval,
-            shutdown_rx,
-        );
-
-        self.unified_reader = Some(unified_reader);
-        self.shm_poller = Some(Arc::new(poller));
-        self.shm_poller_shutdown = Some(shutdown_tx);
-        self
-    }
-
-    /// Start the SHM command poller background task
-    pub fn start_shm_poller(&self) -> Option<tokio::task::JoinHandle<()>> {
-        let poller = self.shm_poller.clone()?;
-        Some(tokio::spawn(async move {
-            poller.run().await;
-        }))
-    }
-
-    /// Get SHM poller for channel registration (internal use)
-    pub fn shm_poller(&self) -> Option<&Arc<ShmCommandPoller>> {
-        self.shm_poller.as_ref()
     }
 
     /// Configure SHM command listener for event-driven M2C dispatch
@@ -239,12 +187,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             cache.unregister(channel_id);
         }
 
-        // Unregister from SHM poller
-        if let Some(ref poller) = self.shm_poller {
-            poller.unregister_channel(channel_id);
-        }
-
-        // Unregister from SHM listener (event-driven M2C)
+        // Unregister from SHM listener (event-driven M2C via UDS)
         if let Some(ref listener) = self.shm_listener {
             listener.unregister_channel(channel_id);
         }
@@ -467,12 +410,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Cleanup all resources
     pub async fn cleanup(&self) -> Result<()> {
         info!("Cleanup started");
-
-        // Stop SHM poller first
-        if let Some(ref shutdown_tx) = self.shm_poller_shutdown {
-            let _ = shutdown_tx.send(true);
-            debug!("SHM poller shutdown signal sent");
-        }
 
         // Remove all channels
         let channel_ids: Vec<u32> = self.get_channel_ids();

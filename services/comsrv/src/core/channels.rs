@@ -8,8 +8,7 @@ mod channel_creation; // Channel creation/factory methods (private, impl on Chan
 pub mod channel_entry; // Channel entry types: ChannelEntry, ChannelMetadata, ChannelStats
 pub mod channel_manager; // Channel lifecycle manager: ChannelManager struct + query/lifecycle
 pub mod channel_task; // Unified channel task: async event loop (select! polling + commands)
-pub mod shm_listener; // UDS event-driven command listener (lower latency than polling)
-pub mod shm_poller; // SHM-based command polling (fallback, higher latency)
+pub mod shm_listener; // UDS event-driven command listener (self-healing via ShmNotifier backoff)
 pub mod traits; // Core traits and type definitions (re-exports from types)
 
 pub mod types; // Channel communication types (owned by comsrv)
@@ -26,7 +25,6 @@ pub use crate::core::config::FourRemote;
 pub use channel_entry::{ChannelEntry, ChannelMetadata, ChannelStats};
 pub use channel_manager::ChannelManager;
 pub use shm_listener::ShmCommandListener;
-pub use shm_poller::ShmCommandPoller;
 
 // Re-export converters
 #[cfg(feature = "modbus")]
