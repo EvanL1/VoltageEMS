@@ -12,12 +12,17 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// Generate a random port for testing to avoid conflicts
+/// Get an available port by asking the OS to assign one
+///
+/// Binds to port 0 (OS picks a free port), reads the assigned port, then
+/// drops the listener. The port may theoretically be reused before the
+/// service binds it, but this is far more reliable than pure random.
 fn random_test_port() -> u16 {
-    let mut rng = rand::thread_rng();
-    // Use range 10000-60000 (50000 ports) to minimize collision probability
-    // Avoids well-known ports (<10000) and ephemeral ports (>60000)
-    10000 + rng.gen_range(0..50000)
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("failed to bind ephemeral port")
+        .local_addr()
+        .expect("failed to get local addr")
+        .port()
 }
 
 /// Test environment for service integration testing
