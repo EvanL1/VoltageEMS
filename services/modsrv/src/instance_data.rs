@@ -5,6 +5,7 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use crate::infra::shm_dispatch::DispatchOutcome;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use tracing::{debug, warn};
@@ -311,12 +312,20 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Dispatch action to comsrv via SHM+UDS (production) or noop (tests)
         if let Some(ctx) = &outcome.route_context {
-            let dispatch_result = self.dispatch.dispatch(ctx, value).await;
-            if !dispatch_result.shm_written && !dispatch_result.fallback_used {
-                warn!(
-                    "Action dispatch: SHM not written and no fallback for instance {} action {}",
-                    instance_id, action_id
-                );
+            match self.dispatch.dispatch(ctx, value).await {
+                DispatchOutcome::Delivered | DispatchOutcome::Noop => {},
+                DispatchOutcome::ShmOnly { reason } => {
+                    debug!(
+                        "Action dispatch: SHM written but UDS degraded ({}) for instance {} action {}",
+                        reason, instance_id, action_id
+                    );
+                },
+                DispatchOutcome::NoWriter => {
+                    warn!(
+                        "Action dispatch: no SHM writer for instance {} action {}",
+                        instance_id, action_id
+                    );
+                },
             }
         }
 

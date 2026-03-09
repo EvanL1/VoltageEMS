@@ -155,13 +155,14 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ///
     /// Order matters: comsrv must update the SHM header before modsrv reopens its writer,
     /// because `open_for_actions` validates routing_hash in the SHM header.
-    /// Both steps always execute; comsrv failure is propagated but doesn't skip rebuild.
+    /// All three steps always execute; comsrv failure is propagated but doesn't skip rebuild.
     pub async fn refresh_routing_and_shm(&self) -> anyhow::Result<usize> {
+        // Step 1: refresh local routing cache from SQLite
         let count =
             crate::bootstrap::refresh_routing_cache(&self.pool, &self.routing_cache).await?;
-        // Step 1: comsrv updates SHM file header with new routing layout
+        // Step 2: comsrv updates SHM file header with new routing layout
         let comsrv_result = self.comsrv.reload_routing().await;
-        // Step 2: always attempt rebuild — even if comsrv failed, old header may still be valid
+        // Step 3: rebuild modsrv writer (validates hash vs SHM header, may fail if comsrv did)
         self.dispatch.rebuild_writer(&self.routing_cache);
         // Propagate comsrv failure after rebuild — API handlers need to know
         comsrv_result?;

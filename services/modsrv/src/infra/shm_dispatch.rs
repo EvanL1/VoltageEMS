@@ -11,15 +11,21 @@ use tracing::{info, warn};
 use voltage_routing::RouteContext;
 
 /// Outcome of an action dispatch operation
+///
+/// Each variant represents a mutually exclusive dispatch result.
+/// Using an enum instead of multiple bools prevents invalid state combinations.
 #[derive(Debug)]
 #[must_use]
-pub struct DispatchOutcome {
-    /// Whether the value was written to SHM
-    pub shm_written: bool,
-    /// Whether UDS notification was sent successfully
-    pub uds_notified: bool,
-    /// Whether UDS notification failed; SHM value persists but delivery to comsrv is not guaranteed without retry
-    pub fallback_used: bool,
+pub enum DispatchOutcome {
+    /// SHM written + UDS notification sent (happy path, ~1-2ms)
+    Delivered,
+    /// SHM written but UDS notification failed or skipped.
+    /// comsrv delivery is not guaranteed without UDS.
+    ShmOnly { reason: &'static str },
+    /// Dispatch failed — no SHM writer configured
+    NoWriter,
+    /// No-op dispatch (test environment, intentionally skips all transport)
+    Noop,
 }
 
 /// Trait for dispatching action commands to comsrv
@@ -95,71 +101,85 @@ impl ShmDispatch {
 #[async_trait]
 impl ActionDispatch for ShmDispatch {
     async fn dispatch(&self, ctx: &RouteContext, value: f64) -> DispatchOutcome {
-        let mut outcome = DispatchOutcome {
-            shm_written: false,
-            uds_notified: false,
-            fallback_used: false,
+        // Step 1: Write action value to shared memory (zero-copy IPC)
+        let writer_guard = self.writer.load();
+        let Some(writer) = writer_guard.as_ref() else {
+            return DispatchOutcome::NoWriter;
         };
 
-        // Step 1: Write action value to shared memory (zero-copy IPC)
-        if let Some(writer) = self.writer.load().as_ref() {
-            let mirrored = writer.set_action(
-                ctx.target_channel_id,
-                ctx.target_point_type,
-                ctx.target_point_id,
-                value,
-                ctx.timestamp_ms as u64,
+        let mirrored = writer.set_action(
+            ctx.target_channel_id,
+            ctx.target_point_type,
+            ctx.target_point_id,
+            value,
+            ctx.timestamp_ms as u64,
+        );
+        if !mirrored {
+            warn!(
+                "SHM action mirror miss for ch={} pt={} point={}",
+                ctx.target_channel_id, ctx.target_point_type, ctx.target_point_id
             );
-            outcome.shm_written = mirrored;
-            if !mirrored {
-                warn!(
-                    "SHM action mirror miss for ch={} pt={} point={}",
-                    ctx.target_channel_id, ctx.target_point_type, ctx.target_point_id
-                );
-            }
         }
 
         // Step 2: UDS notification for event-driven dispatch (~1-2ms latency)
-        if let Some(notifier_lock) = self.notifier.get() {
-            match tokio::time::timeout(Duration::from_millis(100), notifier_lock.lock()).await {
-                Ok(mut guard) => {
-                    let pt = match voltage_model::PointType::from_u8(ctx.target_point_type) {
-                        Some(pt) => pt,
-                        None => {
-                            warn!(
-                                "Ch{} point_type {} invalid, UDS notification skipped",
-                                ctx.target_channel_id, ctx.target_point_type
-                            );
-                            outcome.fallback_used = true;
-                            return outcome;
-                        },
-                    };
-                    let result = guard
-                        .notify(
-                            ctx.target_channel_id,
-                            pt,
-                            ctx.target_point_id,
-                            value,
-                            ctx.timestamp_ms as u64,
-                        )
-                        .await;
-                    outcome.uds_notified = result.uds_sent;
-                    outcome.fallback_used = result.fallback_used || result.disabled;
-                    if result.fallback_used {
-                        warn!(
-                            "UDS notify degraded to fallback for ch={} pt={:?} point={}",
-                            ctx.target_channel_id, pt, ctx.target_point_id
-                        );
-                    }
-                },
-                Err(_) => {
-                    warn!("ShmNotifier lock timeout; SHM value written but UDS notification skipped — action may not reach comsrv");
-                    outcome.fallback_used = true;
+        let Some(notifier_lock) = self.notifier.get() else {
+            return DispatchOutcome::ShmOnly {
+                reason: "notifier not configured",
+            };
+        };
+
+        let mut guard = match tokio::time::timeout(Duration::from_millis(100), notifier_lock.lock())
+            .await
+        {
+            Ok(guard) => guard,
+            Err(_) => {
+                warn!("ShmNotifier lock timeout; SHM value written but UDS notification skipped — action may not reach comsrv");
+                return DispatchOutcome::ShmOnly {
+                    reason: "notifier lock timeout",
+                };
+            },
+        };
+
+        let pt = match voltage_model::PointType::from_u8(ctx.target_point_type) {
+            Some(pt) => pt,
+            None => {
+                warn!(
+                    "Ch{} point_type {} invalid, UDS notification skipped",
+                    ctx.target_channel_id, ctx.target_point_type
+                );
+                return DispatchOutcome::ShmOnly {
+                    reason: "invalid point_type",
+                };
+            },
+        };
+
+        let result = guard
+            .notify(
+                ctx.target_channel_id,
+                pt,
+                ctx.target_point_id,
+                value,
+                ctx.timestamp_ms as u64,
+            )
+            .await;
+
+        if result.uds_sent {
+            DispatchOutcome::Delivered
+        } else {
+            if result.fallback_used {
+                warn!(
+                    "UDS notify degraded for ch={} pt={:?} point={}",
+                    ctx.target_channel_id, pt, ctx.target_point_id
+                );
+            }
+            DispatchOutcome::ShmOnly {
+                reason: if result.fallback_used {
+                    "UDS degraded"
+                } else {
+                    "UDS disabled"
                 },
             }
         }
-
-        outcome
     }
 
     fn rebuild_writer(&self, routing_cache: &voltage_routing::RoutingCache) {
@@ -184,13 +204,7 @@ pub struct NoopDispatch;
 #[async_trait]
 impl ActionDispatch for NoopDispatch {
     async fn dispatch(&self, _ctx: &RouteContext, _value: f64) -> DispatchOutcome {
-        DispatchOutcome {
-            shm_written: false,
-            uds_notified: false,
-            // Set true so callers don't warn about "no SHM and no fallback";
-            // noop dispatch intentionally skips all transport paths.
-            fallback_used: true,
-        }
+        DispatchOutcome::Noop
     }
 
     fn rebuild_writer(&self, _routing_cache: &voltage_routing::RoutingCache) {
