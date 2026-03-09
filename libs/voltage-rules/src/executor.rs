@@ -335,7 +335,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     /// Enable UnifiedWriter for M2C via shared memory
     ///
     /// When enabled, action outputs are written to SHM in addition to Redis.
-    /// SHM serves as the primary path for comsrv's ShmCommandPoller.
+    /// SHM serves as the source for comsrv's ShmCommandListener (UDS event-driven dispatch).
     pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> Self {
         self.shm_action_writer = Some(writer);
         self

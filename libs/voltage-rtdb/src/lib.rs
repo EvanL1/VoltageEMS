@@ -190,7 +190,7 @@ pub mod helpers {
         Ok(timestamp_ms)
     }
 
-    /// Write channel point to Hash only (no TODO queue trigger)
+    /// Write channel point to Hash only (no M2C notification trigger)
     pub async fn write_channel_hash_only<R>(
         rtdb: &R,
         config: &KeySpaceConfig,

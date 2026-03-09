@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 /// # Cache Coherence
 /// - `register()` called in `create_channel()` after channel is ready
 /// - `unregister()` called in `remove_channel()` before cleanup
-/// - On cache miss, fallback to Redis TODO queue path
+/// - On cache miss, command is sent directly via the channel task
 pub struct CommandTxCache {
     cache: DashMap<u32, mpsc::Sender<ChannelCommand>>,
 }

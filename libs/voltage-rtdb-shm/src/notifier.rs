@@ -69,9 +69,9 @@ impl NotifyResult {
         self.uds_sent
     }
 
-    /// Check if the slower fallback path is in use
+    /// Check if UDS notification failed and delivery is degraded
     #[inline]
-    pub fn needs_immediate_poll(&self) -> bool {
+    pub fn is_degraded(&self) -> bool {
         self.fallback_used
     }
 }
@@ -206,8 +206,8 @@ impl ShmNotifier {
     ///
     /// ```rust,ignore
     /// let result = notifier.notify(channel_id, point_type, point_id, value, timestamp_ms).await;
-    /// if result.needs_immediate_poll() {
-    ///     // UDS failed, rely on the slower fallback path
+    /// if result.is_degraded() {
+    ///     // UDS failed, delivery to comsrv is not guaranteed
     /// }
     /// ```
     pub async fn notify(
@@ -355,15 +355,15 @@ mod tests {
     async fn test_notify_result_helpers() {
         let success = NotifyResult::sent();
         assert!(success.is_success());
-        assert!(!success.needs_immediate_poll());
+        assert!(!success.is_degraded());
 
         let fallback = NotifyResult::degraded();
         assert!(!fallback.is_success());
-        assert!(fallback.needs_immediate_poll());
+        assert!(fallback.is_degraded());
 
         let disabled = NotifyResult::off();
         assert!(!disabled.is_success());
-        assert!(!disabled.needs_immediate_poll());
+        assert!(!disabled.is_degraded());
     }
 
     #[tokio::test]

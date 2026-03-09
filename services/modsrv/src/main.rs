@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
                 retry_count += 1;
             } else {
                 warn!(
-                    "SharedMemory path not found after {} retries, using Redis fallback",
+                    "SharedMemory unavailable after {} retries; M2C dispatch will be unavailable (SHM writer not configured)",
                     MAX_RETRIES
                 );
                 break None;

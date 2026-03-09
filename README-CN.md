@@ -151,11 +151,10 @@ VoltageEMS/
 ### 下行（云端 → 设备）
 
 ```
-主路径：modsrv → Redis (route:m2c) → SHM 写入 + UDS 通知 → comsrv → 设备
-备份路径：modsrv → Redis (inst:{id}:A + TODO) → comsrv ShmPoller → 设备
+主路径：modsrv → SHM + UDS 通知 → comsrv ShmCommandListener → 设备
 ```
 
-主路径通过共享内存（`/dev/shm/voltage-rtdb.shm`）配合 Unix Domain Socket 通知实现最低延迟。备份路径通过 Redis 轮询保障可靠性。
+主路径通过共享内存（`/dev/shm/voltage-rtdb.shm`）配合 Unix Domain Socket 通知实现最低延迟。UDS 断线后自动重连，使用指数退避策略（1-30 秒）。
 
 ## Monarch CLI
 

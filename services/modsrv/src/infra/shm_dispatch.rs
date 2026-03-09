@@ -18,14 +18,14 @@ pub struct DispatchOutcome {
     pub shm_written: bool,
     /// Whether UDS notification was sent successfully
     pub uds_notified: bool,
-    /// Whether UDS failed; SHM value persists and comsrv will read on next UDS reconnect cycle
+    /// Whether UDS notification failed; SHM value persists but delivery to comsrv is not guaranteed without retry
     pub fallback_used: bool,
 }
 
 /// Trait for dispatching action commands to comsrv
 ///
 /// The primary implementation uses SHM + UDS for ~1-2ms latency.
-/// Test/fallback implementations can use NoopDispatch.
+/// Test implementations use NoopDispatch (no-op, skips all transport).
 #[async_trait]
 pub trait ActionDispatch: Send + Sync {
     /// Dispatch an action value to the target channel via the fastest available path
@@ -41,7 +41,7 @@ pub trait ActionDispatch: Send + Sync {
 /// SHM + UDS dispatch implementation (production path)
 ///
 /// Writes action values directly to shared memory, then sends a UDS notification
-/// to comsrv for immediate processing. Falls back gracefully if either path fails.
+/// to comsrv for immediate processing. Degrades gracefully if UDS notification fails (SHM write still persists).
 pub struct ShmDispatch {
     writer: arc_swap::ArcSwapOption<voltage_rtdb_shm::UnifiedWriter>,
     config: std::sync::OnceLock<voltage_rtdb_shm::SharedConfig>,
@@ -143,7 +143,7 @@ impl ActionDispatch for ShmDispatch {
                     }
                 },
                 Err(_) => {
-                    warn!("ShmNotifier lock timeout; SHM value persists, comsrv will read on next UDS reconnect cycle");
+                    warn!("ShmNotifier lock timeout; SHM value written but UDS notification skipped — action may not reach comsrv");
                     outcome.fallback_used = true;
                 },
             }

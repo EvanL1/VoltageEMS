@@ -151,11 +151,10 @@ Device → comsrv → Redis (route:c2m) → modsrv
 ### Downstream (Cloud → Device)
 
 ```
-Primary:  modsrv → Redis (route:m2c) → SHM write + UDS notify → comsrv → Device
-Fallback: modsrv → Redis (inst:{id}:A + TODO) → comsrv ShmPoller → Device
+Primary: modsrv → SHM + UDS notify → comsrv ShmCommandListener → Device
 ```
 
-The primary path uses shared memory (`/dev/shm/voltage-rtdb.shm`) with Unix Domain Socket notifications for minimal latency. The fallback path polls Redis for resilience.
+The primary path uses shared memory (`/dev/shm/voltage-rtdb.shm`) with Unix Domain Socket notifications for minimal latency. UDS reconnects automatically with exponential backoff (1-30s) if comsrv restarts.
 
 ## Monarch CLI
 
