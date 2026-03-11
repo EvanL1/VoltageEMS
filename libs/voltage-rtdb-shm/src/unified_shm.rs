@@ -34,7 +34,7 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
 use voltage_model::PointType;
 use voltage_routing::routing_cache::RoutingCache;
 
@@ -447,6 +447,12 @@ impl UnifiedWriter {
         header.routing_hash = AtomicU64::new(routing_cache.content_hash());
         header._reserved = [0; 16];
 
+        // Flush header to backing file for cross-process visibility.
+        // Without this, a reader on ARM64 mmap'ing the same file could see
+        // partially-written header fields.
+        mmap.flush()
+            .with_context(|| "Failed to flush mmap after create")?;
+
         tracing::info!(
             "Created unified shared memory: {:?}, slots={}/{}, size={}KB, channels={}",
             path,
@@ -657,7 +663,14 @@ impl UnifiedWriter {
             bail!("Too many slots: {} (max={})", slot_count, max_slots);
         }
 
+        // Zero all slot data to prevent stale values
         mmap[slot_offset()..].fill(0);
+
+        // FULL BARRIER: ensure all zero-fills are globally visible
+        // before the new routing_hash/slot_count are published.
+        // Without this fence, a reader on ARM64 could see the new
+        // routing_hash but read stale (non-zero) slot data.
+        fence(Ordering::SeqCst);
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -673,6 +686,11 @@ impl UnifiedWriter {
         header
             .routing_hash
             .store(routing_cache.content_hash(), Ordering::Release);
+
+        // Flush mmap to backing file — ensures cross-process visibility
+        // on systems where mmap coherency isn't guaranteed (H3).
+        mmap.flush()
+            .with_context(|| "Failed to flush mmap after reconfigure")?;
 
         tracing::info!(
             "Reconfigured unified shared memory in place: {:?}, slots={}, channels={}",
@@ -740,39 +758,53 @@ impl UnifiedWriter {
             bail!("Snapshot file too small: {} bytes", snapshot_data.len());
         }
 
-        // SAFETY: snapshot_data.len() >= size_of::<UnifiedHeader>() (checked above).
-        // We use read_unaligned because Vec<u8> only guarantees 1-byte alignment,
-        // while UnifiedHeader requires 64-byte alignment (#[repr(C, align(64))]).
-        let snapshot_header =
-            unsafe { std::ptr::read_unaligned(snapshot_data.as_ptr() as *const UnifiedHeader) };
+        // Read header fields individually from unaligned buffer.
+        // Cannot use read_unaligned on UnifiedHeader because it contains
+        // AtomicU32/AtomicU64 fields — creating Atomics from unaligned
+        // memory is UB (hardware atomic instructions require alignment).
+        //
+        // UnifiedHeader layout (#[repr(C, align(64))]):
+        //   offset 0:  magic (u64)
+        //   offset 8:  version (u32)
+        //   offset 12: max_slots (u32)
+        //   offset 16: slot_count (AtomicU32 → read as u32)
+        //   offset 20: _pad (4 bytes)
+        //   offset 24: last_update_ts (AtomicU64)
+        //   offset 32: writer_heartbeat (AtomicU64)
+        //   offset 40: routing_hash (AtomicU64 → read as u64)
+        //   offset 48: _reserved (16 bytes)
+        let snap = &snapshot_data;
+        let snap_magic = u64::from_ne_bytes(snap[0..8].try_into().unwrap());
+        let snap_version = u32::from_ne_bytes(snap[8..12].try_into().unwrap());
+        let snap_slot_count_val = u32::from_ne_bytes(snap[16..20].try_into().unwrap());
+        let snap_routing_hash = u64::from_ne_bytes(snap[40..48].try_into().unwrap());
 
-        if snapshot_header.magic != UNIFIED_MAGIC {
+        if snap_magic != UNIFIED_MAGIC {
             bail!(
                 "Invalid snapshot magic: expected 0x{:X}, got 0x{:X}",
                 UNIFIED_MAGIC,
-                snapshot_header.magic
+                snap_magic
             );
         }
-        if snapshot_header.version != UNIFIED_VERSION {
+        if snap_version != UNIFIED_VERSION {
             bail!(
                 "Snapshot version mismatch: expected {}, got {}",
                 UNIFIED_VERSION,
-                snapshot_header.version
+                snap_version
             );
         }
 
         // Check routing hash (warn but don't fail — routing may have changed since snapshot)
         let current_hash = routing_cache.content_hash();
-        let snapshot_hash = snapshot_header.routing_hash.load(Ordering::Relaxed);
-        if current_hash != snapshot_hash {
+        if current_hash != snap_routing_hash {
             tracing::warn!(
                 "Snapshot routing hash differs: snapshot=0x{:016X}, current=0x{:016X}",
-                snapshot_hash,
+                snap_routing_hash,
                 current_hash
             );
         }
 
-        let snapshot_slot_count = snapshot_header.slot_count.load(Ordering::Relaxed) as usize;
+        let snapshot_slot_count = snap_slot_count_val as usize;
 
         // Determine how many slots to restore (min of snapshot and current allocation)
         let slots_to_restore = snapshot_slot_count.min(writer.slot_count);
@@ -801,20 +833,19 @@ impl UnifiedWriter {
 
         for i in 0..slots_to_restore {
             let slot_offset_in_file = header_size + i * slot_size;
-            // SAFETY: slot_offset_in_file + size_of::<PointSlot>() <= snapshot_data_end,
-            // which was bounds-checked against snapshot_data.len() above.
-            // We use read_unaligned because Vec<u8> only guarantees 1-byte alignment,
-            // while PointSlot requires 32-byte alignment (#[repr(C, align(32))]).
-            let snapshot_slot = unsafe {
-                std::ptr::read_unaligned(
-                    snapshot_data.as_ptr().add(slot_offset_in_file) as *const PointSlot
-                )
-            };
-
-            // Read slot data using public accessors
-            let value = snapshot_slot.get_value();
-            let raw = snapshot_slot.get_raw();
-            let timestamp = snapshot_slot.get_timestamp();
+            // Read PointSlot fields individually from unaligned buffer.
+            // Cannot use read_unaligned on PointSlot because it contains
+            // AtomicU64 fields — atomics require alignment for correctness.
+            //
+            // PointSlot layout (#[repr(C, align(32))]):
+            //   offset 0:  value_bits (AtomicU64 → read as u64)
+            //   offset 8:  timestamp  (AtomicU64 → read as u64)
+            //   offset 16: raw_bits   (AtomicU64 → read as u64)
+            //   offset 24: flags      (AtomicU64 → not needed for restore)
+            let sb = &snapshot_data[slot_offset_in_file..slot_offset_in_file + slot_size];
+            let value = f64::from_bits(u64::from_ne_bytes(sb[0..8].try_into().unwrap()));
+            let timestamp = u64::from_ne_bytes(sb[8..16].try_into().unwrap());
+            let raw = f64::from_bits(u64::from_ne_bytes(sb[16..24].try_into().unwrap()));
 
             // Validate data: skip NaN and Infinity
             if value.is_nan() || value.is_infinite() || raw.is_nan() || raw.is_infinite() {

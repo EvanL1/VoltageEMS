@@ -169,7 +169,9 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         // Step 2: comsrv updates SHM file header with new routing layout
         let comsrv_result = self.comsrv.reload_routing().await;
         // Step 3: rebuild modsrv writer (validates hash vs SHM header, may fail if comsrv did)
-        self.dispatch.rebuild_writer(&self.routing_cache);
+        if let Err(e) = self.dispatch.rebuild_writer(&self.routing_cache) {
+            tracing::warn!("Dispatch writer rebuild failed, writer cleared: {e}");
+        }
         // Propagate comsrv failure after rebuild — API handlers need to know
         comsrv_result?;
         Ok(count)

@@ -83,6 +83,8 @@ pub struct PointSlot {
 const SEQ_INCREMENT: u64 = 1u64 << 32;
 
 const _: () = assert!(std::mem::size_of::<PointSlot>() == 32);
+// Ensure seq counter lives entirely in bits 32-63, away from dirty flag in bit 0
+const _: () = assert!(SEQ_INCREMENT > u32::MAX as u64);
 
 impl Default for PointSlot {
     fn default() -> Self {
@@ -259,17 +261,19 @@ impl PointSlot {
         self.raw_bits.store(raw.to_bits(), Ordering::Relaxed);
         self.timestamp.store(timestamp, Ordering::Relaxed);
 
+        // Dirty flag — INSIDE the fence envelope so it's part of the
+        // atomic write group, not a separate operation after seqlock close.
+        // Bit 0 only; upper 32 bits (seq counter) are untouched by fetch_or.
+        self.flags.fetch_or(1, Ordering::Relaxed);
+
         // FULL BARRIER:
-        // Ensures ALL data stores are globally visible before the
-        // even sequence is published. Readers that see the even seq
-        // after their own fence(SeqCst) will see all data values.
+        // Ensures ALL data stores + dirty flag are globally visible before
+        // the even sequence is published. Readers that see the even seq
+        // after their own fence(SeqCst) will see all written values.
         fence(Ordering::SeqCst);
 
         // End write: sequence → even (signals write-complete)
         self.flags.fetch_add(SEQ_INCREMENT, Ordering::Relaxed);
-
-        // Dirty flag (advisory, not part of seqlock protocol)
-        self.flags.fetch_or(1, Ordering::Relaxed);
     }
 
     /// Check if dirty flag is set
@@ -282,6 +286,12 @@ impl PointSlot {
     #[inline]
     pub fn clear_dirty(&self) {
         self.flags.fetch_and(!1, Ordering::Relaxed);
+    }
+
+    /// Get raw flags value (for testing/debugging seqlock state)
+    #[inline]
+    pub fn flags_raw(&self) -> u64 {
+        self.flags.load(Ordering::Relaxed)
     }
 }
 

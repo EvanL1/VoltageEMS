@@ -7,7 +7,7 @@ use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::atomic::{fence, AtomicU64, Ordering};
 
-use memmap2::MmapMut;
+use memmap2::{Mmap, MmapMut};
 
 /// Magic number identifier "VOLTRING"
 const MAGIC: u64 = 0x564F4C54_52494E47;
@@ -125,7 +125,7 @@ impl DataPoint {
 /// Ring buffer header
 ///
 /// Located at the beginning of the shared memory file, contains metadata and atomic write pointer.
-#[repr(C)]
+#[repr(C, align(64))]
 pub struct RingBufferHeader {
     /// Magic number "VOLTRING" (0x564F4C54_52494E47)
     pub magic: u64,
@@ -249,19 +249,51 @@ impl HighFreqRingBuffer {
         unsafe {
             std::ptr::write_volatile(self.points.add(pos), point);
         }
-        // Ensure the DataPoint write is visible to readers before total_writes is updated
-        fence(Ordering::Release);
-        // SAFETY: self.header is valid (set in from_raw()). Atomic operation is safe.
+        // SAFETY: self.header is valid (set in from_raw()). Release ordering
+        // ensures the write_volatile above is visible to readers before
+        // total_writes is incremented. Pairs with Acquire fence in read_range.
         unsafe {
-            (*self.header).total_writes.fetch_add(1, Ordering::Relaxed);
+            (*self.header).total_writes.fetch_add(1, Ordering::Release);
         }
     }
 
-    /// Batch write
+    /// Batch write with single head reservation
+    ///
+    /// Reserves N consecutive slots with one atomic fetch_add, then writes
+    /// all points without per-item atomic overhead. Single Release fence
+    /// after all writes ensures batch visibility.
     #[inline]
     pub fn push_batch(&mut self, points: &[DataPoint]) {
-        for point in points {
-            self.push(*point);
+        if points.is_empty() {
+            return;
+        }
+
+        let count = points.len();
+        // Reserve `count` consecutive slots with a single atomic operation
+        let start_pos = unsafe {
+            (*self.header)
+                .head
+                .fetch_add(count as u64, Ordering::Relaxed) as usize
+        };
+
+        // Write all points to reserved slots.
+        // NOTE: between fetch_add above and the Release below, concurrent readers
+        // may observe slots in [start_pos, start_pos+count) with stale data from
+        // a previous wrap-around cycle. Readers must tolerate this (pre-existing
+        // ring buffer limitation, not a regression from batch optimization).
+        for (i, point) in points.iter().enumerate() {
+            let pos = (start_pos + i) % self.capacity;
+            unsafe {
+                std::ptr::write_volatile(self.points.add(pos), *point);
+            }
+        }
+
+        // Update total_writes by batch count. Release ordering ensures all
+        // write_volatile calls above are visible before total_writes increments.
+        unsafe {
+            (*self.header)
+                .total_writes
+                .fetch_add(count as u64, Ordering::Release);
         }
     }
 
@@ -393,12 +425,20 @@ impl HighFreqRingBuffer {
 // SharedRingBuffer - Shared Memory Wrapper
 // ============================================================================
 
+/// Backing mmap — either read-write (writer) or read-only (reader).
+/// Fields are held for Drop (unmapping the memory region).
+#[allow(dead_code)]
+enum SharedRingBufferMmap {
+    ReadWrite(MmapMut),
+    ReadOnly(Mmap),
+}
+
 /// Shared memory ring buffer
 ///
 /// Uses mmap file mapping, supports cross-process access.
 pub struct SharedRingBuffer {
     inner: HighFreqRingBuffer,
-    _mmap: MmapMut,
+    _mmap: SharedRingBufferMmap,
     _file: File,
 }
 
@@ -453,19 +493,21 @@ impl SharedRingBuffer {
 
         Ok(Self {
             inner,
-            _mmap: mmap,
+            _mmap: SharedRingBufferMmap::ReadWrite(mmap),
             _file: file,
         })
     }
 
     /// Open read-only (for the reader side)
+    ///
+    /// Uses read-only `Mmap` to enforce no-write at the OS level.
     pub fn open_readonly(path: impl AsRef<Path>) -> std::io::Result<Self> {
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let file = OpenOptions::new().read(true).open(path)?;
 
-        // SAFETY: File is opened with read+write. The file was previously created by
+        // SAFETY: File is opened read-only. The file was previously created by
         // create_or_open() with a valid layout.
-        let mut mmap = unsafe { MmapMut::map_mut(&file)? };
-        let data = NonNull::new(mmap.as_mut_ptr())
+        let mmap = unsafe { Mmap::map(&file)? };
+        let data = NonNull::new(mmap.as_ptr() as *mut u8)
             .ok_or_else(|| std::io::Error::other("mmap returned null pointer"))?;
 
         // Validate header
@@ -486,7 +528,7 @@ impl SharedRingBuffer {
 
         Ok(Self {
             inner,
-            _mmap: mmap,
+            _mmap: SharedRingBufferMmap::ReadOnly(mmap),
             _file: file,
         })
     }
