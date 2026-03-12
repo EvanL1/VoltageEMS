@@ -276,6 +276,22 @@ impl PointSlot {
     pub fn seq_raw(&self) -> u32 {
         self.seq.load(Ordering::Relaxed)
     }
+
+    /// Force-set the sequence counter to an arbitrary value.
+    ///
+    /// **Test-only helper** — never call this in production code.
+    /// Used to seed the seqlock counter near u32::MAX in integration tests so
+    /// that wrapping arithmetic can be exercised without performing billions of
+    /// writes.  Concurrent readers will see an inconsistent state until the
+    /// next completed `set()` call.
+    ///
+    /// `#[doc(hidden)]` keeps this out of rustdoc while remaining callable from
+    /// the integration-test binary (where `cfg(test)` is NOT active for
+    /// dependencies, so a bare `#[cfg(test)]` would hide the symbol).
+    #[doc(hidden)]
+    pub fn set_seq_for_testing(&self, val: u32) {
+        self.seq.store(val, Ordering::Relaxed);
+    }
 }
 
 // ========== ChannelVecStore ==========

@@ -1,0 +1,288 @@
+//! ShmDispatch integration tests
+//!
+//! Exercises the production M2C dispatch path (SHM + UDS) with real files and sockets.
+//!
+//! ## Test Coverage
+//!
+//! 1. Happy path: SHM write + UDS notification → `Delivered`
+//! 2. No writer configured → `NoWriter`
+//! 3. Writer configured, no notifier → `ShmOnly { reason: "notifier not configured" }`
+//! 4. rebuild_writer with valid routing → new writer installed
+//! 5. rebuild_writer with invalid SHM path → writer cleared (next dispatch returns `NoWriter`)
+
+#![allow(clippy::disallowed_methods)] // Integration tests — unwrap is acceptable
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+
+use modsrv::infra::shm_dispatch::{ActionDispatch, DispatchOutcome, ShmDispatch};
+use tokio::io::AsyncReadExt;
+use tokio::net::UnixListener;
+use tokio::sync::Mutex;
+use voltage_model::PointType;
+use voltage_routing::{RouteContext, RoutingCache};
+use voltage_rtdb_shm::{SharedConfig, ShmNotification, ShmNotifier, UnifiedWriter};
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// Build a minimal RoutingCache with one M2C entry:
+///   instance 1:C:0  →  channel 1001:C:0
+///
+/// The SHM layout is driven by this entry, so the writer will have a
+/// valid slot for channel_id=1001, point_type=Control, point_id=0.
+fn make_routing_cache() -> RoutingCache {
+    let mut m2c_data = HashMap::new();
+    // M2C key format: "instance_id:point_type:point_id"
+    // M2C value format: "channel_id:point_type:point_id"
+    m2c_data.insert("1:C:0".to_string(), "1001:C:0".to_string());
+    RoutingCache::from_maps(HashMap::new(), m2c_data, HashMap::new())
+}
+
+/// Build a RouteContext that targets the M2C entry created by `make_routing_cache`.
+fn make_route_ctx() -> RouteContext {
+    RouteContext {
+        channel_id: "1001".to_string(),
+        point_type: "C".to_string(),
+        comsrv_point_id: "0".to_string(),
+        target_channel_id: 1001,
+        target_point_type: PointType::Control.to_u8(), // 2
+        target_point_id: 0,
+        timestamp_ms: 1_700_000_000,
+    }
+}
+
+/// Create a minimal SharedConfig whose SHM file lives inside `dir`.
+fn make_shm_config(dir: &tempfile::TempDir) -> SharedConfig {
+    SharedConfig {
+        path: dir.path().join("test.shm"),
+        max_instances: 16,
+        max_points_per_instance: 64,
+        // max_channels * max_points_per_channel must cover channel_id 1001 and point_id 0.
+        // We use with_max_slots() logic: stores total into max_channels×max_points_per_channel.
+        // Here we just set enough capacity directly.
+        max_channels: 2048,
+        max_points_per_channel: 64,
+        snapshot_path: None,
+        snapshot_interval: None,
+        restore_on_start: false,
+    }
+}
+
+/// Spawn a minimal UDS listener that accepts one connection and reads notifications
+/// until the connection closes. Returns the socket path.
+///
+/// The listener is spawned as a background task; the caller is responsible for
+/// `.abort()`-ing the handle when done.
+async fn spawn_uds_listener(sock_path: &str) -> tokio::task::JoinHandle<()> {
+    let _ = std::fs::remove_file(sock_path);
+    let listener = UnixListener::bind(sock_path).unwrap();
+
+    tokio::spawn(async move {
+        // Accept the first connection then drain it until EOF
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; ShmNotification::SIZE];
+            while stream.read_exact(&mut buf).await.is_ok() {
+                // consume and discard — we only care that the notifier can send
+            }
+        }
+    })
+}
+
+// ============================================================================
+// Test 1: Happy path — Delivered
+// ============================================================================
+
+/// Verifies the full M2C dispatch path:
+///   set_writer + set_notifier → dispatch → Delivered
+///   SHM contains the written value after dispatch.
+#[tokio::test]
+async fn test_dispatch_delivered() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let routing_cache = make_routing_cache();
+    let config = make_shm_config(&temp_dir);
+
+    // Create the SHM file with the correct routing layout
+    let writer = UnifiedWriter::create(&config, &routing_cache).unwrap();
+    let writer = Arc::new(writer);
+
+    // Set up UDS notifier
+    let sock_path = temp_dir.path().join("dispatch_delivered.sock");
+    let sock_str = sock_path.to_str().unwrap().to_string();
+    let _listener = spawn_uds_listener(&sock_str).await;
+    // Give the listener a moment to bind
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let notifier = ShmNotifier::connect(&sock_str).await.unwrap();
+    assert!(notifier.is_connected(), "Notifier must be connected");
+    let notifier = Arc::new(Mutex::new(notifier));
+
+    // Wire up ShmDispatch
+    let dispatch = ShmDispatch::new();
+    dispatch.set_writer(writer, config.clone());
+    dispatch.set_notifier(notifier);
+
+    // Dispatch an action value
+    let ctx = make_route_ctx();
+    let outcome = dispatch.dispatch(&ctx, 42.0).await;
+
+    assert!(
+        matches!(outcome, DispatchOutcome::Delivered),
+        "Expected Delivered, got {:?}",
+        outcome
+    );
+
+    // Verify SHM contains the written value via UnifiedReader
+    let reader =
+        voltage_rtdb_shm::UnifiedReader::open(&config, &routing_cache).expect("open reader");
+    let (val, _ts) = reader
+        .get_channel(1001, PointType::Control.to_u8(), 0)
+        .expect("slot must exist for channel 1001:C:0");
+    assert!(
+        (val - 42.0).abs() < f64::EPSILON,
+        "SHM value should be 42.0, got {}",
+        val
+    );
+}
+
+// ============================================================================
+// Test 2: No writer → NoWriter
+// ============================================================================
+
+/// Verifies that dispatching without calling `set_writer` returns `NoWriter`.
+#[tokio::test]
+async fn test_dispatch_no_writer() {
+    let dispatch = ShmDispatch::new();
+    let ctx = make_route_ctx();
+    let outcome = dispatch.dispatch(&ctx, 1.0).await;
+
+    assert!(
+        matches!(outcome, DispatchOutcome::NoWriter),
+        "Expected NoWriter, got {:?}",
+        outcome
+    );
+}
+
+// ============================================================================
+// Test 3: Writer set, no notifier → ShmOnly
+// ============================================================================
+
+/// Verifies that when only the writer is set (no notifier), dispatch writes SHM
+/// but returns `ShmOnly { reason: "notifier not configured" }`.
+#[tokio::test]
+async fn test_dispatch_shm_only_no_notifier() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let routing_cache = make_routing_cache();
+    let config = make_shm_config(&temp_dir);
+
+    let writer = Arc::new(UnifiedWriter::create(&config, &routing_cache).unwrap());
+
+    let dispatch = ShmDispatch::new();
+    dispatch.set_writer(writer, config.clone());
+    // Intentionally NOT calling set_notifier
+
+    let ctx = make_route_ctx();
+    let outcome = dispatch.dispatch(&ctx, 7.0).await;
+
+    assert!(
+        matches!(
+            outcome,
+            DispatchOutcome::ShmOnly {
+                reason: "notifier not configured"
+            }
+        ),
+        "Expected ShmOnly(notifier not configured), got {:?}",
+        outcome
+    );
+
+    // SHM value should still have been written
+    let reader = voltage_rtdb_shm::UnifiedReader::open(&config, &routing_cache).unwrap();
+    let (val, _ts) = reader
+        .get_channel(1001, PointType::Control.to_u8(), 0)
+        .expect("slot must exist");
+    assert!(
+        (val - 7.0).abs() < f64::EPSILON,
+        "SHM value should be 7.0, got {}",
+        val
+    );
+}
+
+// ============================================================================
+// Test 4: rebuild_writer success
+// ============================================================================
+
+/// Verifies that after calling `rebuild_writer` with a valid routing cache,
+/// a new writer is installed and subsequent dispatches still work.
+#[tokio::test]
+async fn test_rebuild_writer_success() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let routing_cache = make_routing_cache();
+    let config = make_shm_config(&temp_dir);
+
+    // Create SHM with initial routing
+    let initial_writer = Arc::new(UnifiedWriter::create(&config, &routing_cache).unwrap());
+
+    let dispatch = ShmDispatch::new();
+    dispatch.set_writer(initial_writer, config);
+
+    // rebuild_writer opens the existing SHM file with the same routing hash
+    let result = dispatch.rebuild_writer(&routing_cache);
+    assert!(
+        result.is_ok(),
+        "rebuild_writer should succeed: {:?}",
+        result
+    );
+
+    // Writer should be active: dispatch without notifier returns ShmOnly (not NoWriter)
+    let ctx = make_route_ctx();
+    let outcome = dispatch.dispatch(&ctx, 5.5).await;
+    assert!(
+        matches!(outcome, DispatchOutcome::ShmOnly { .. }),
+        "After rebuild, dispatch should write SHM (ShmOnly, no notifier), got {:?}",
+        outcome
+    );
+}
+
+// ============================================================================
+// Test 5: rebuild_writer failure clears writer
+// ============================================================================
+
+/// Verifies that when `rebuild_writer` fails (e.g., SHM file does not exist),
+/// the writer is cleared so the next dispatch returns `NoWriter`.
+#[tokio::test]
+async fn test_rebuild_writer_failure_clears_writer() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let routing_cache = make_routing_cache();
+    let config = make_shm_config(&temp_dir);
+
+    // Create SHM and install a valid writer
+    let initial_writer = Arc::new(UnifiedWriter::create(&config, &routing_cache).unwrap());
+    let dispatch = ShmDispatch::new();
+    dispatch.set_writer(initial_writer, config.clone());
+
+    // Confirm writer is active
+    let ctx = make_route_ctx();
+    let first = dispatch.dispatch(&ctx, 1.0).await;
+    assert!(
+        !matches!(first, DispatchOutcome::NoWriter),
+        "Writer should be active before failure"
+    );
+
+    // Now delete the SHM file so open_for_actions fails, then rebuild
+    std::fs::remove_file(config.path()).expect("should be able to delete shm file");
+    let rebuild_result = dispatch.rebuild_writer(&routing_cache);
+    assert!(
+        rebuild_result.is_err(),
+        "rebuild_writer should fail when SHM file is missing"
+    );
+
+    // After failure, dispatch must return NoWriter
+    let after = dispatch.dispatch(&ctx, 2.0).await;
+    assert!(
+        matches!(after, DispatchOutcome::NoWriter),
+        "After rebuild failure, writer should be cleared → NoWriter, got {:?}",
+        after
+    );
+}
