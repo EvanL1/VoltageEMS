@@ -122,7 +122,6 @@ async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
             description TEXT,
             enabled BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (product_name) REFERENCES products(product_name)
         )
         "#,
     )
@@ -161,23 +160,6 @@ pub mod fixtures {
     use super::*;
     use serde_json::json;
 
-    /// Create a test product record
-    pub async fn create_test_product(pool: &SqlitePool, product_name: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO products (product_name, parent_name)
-            VALUES (?, NULL)
-            "#,
-        )
-        .bind(product_name)
-        .execute(pool)
-        .await?;
-
-        Ok(())
-    }
-
-    // Note: create_test_product_points() removed - product points are now compile-time constants
-
     /// Create test instance properties
     pub fn create_test_instance_properties() -> HashMap<String, serde_json::Value> {
         let mut props = HashMap::new();
@@ -185,10 +167,6 @@ pub mod fixtures {
         props.insert("location".to_string(), json!("test_location"));
         props
     }
-
-    // Note: create_complete_test_product() removed - product definitions are now
-    // compile-time constants from voltage-model crate. Tests should use built-in
-    // products (Battery, PCS, etc.) instead of inserting into ghost tables.
 }
 
 /// Test helper functions

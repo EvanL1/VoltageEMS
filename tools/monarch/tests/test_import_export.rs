@@ -443,7 +443,3 @@ channels:
 
     Ok(())
 }
-
-// Removed low-value TODO tests:
-// - test_export_preserves_enum_formats (redundant with other export tests)
-// - test_backward_compatibility (not needed at this stage)

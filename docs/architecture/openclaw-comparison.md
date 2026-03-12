@@ -205,8 +205,7 @@ pub async fn set_action_point(
     // 1. 验证数据
     // 2. M2C 路由查询
     // 3. 写入实例 Action Hash
-    // 4. 写入通道 Hash + 自动触发 TODO 队列  ← 原子操作
-    // 5. 可选：SHM + UDS 通知
+    // 4. SHM 写入 + UDS 通知 → comsrv 实时响应
 }
 ```
 
