@@ -84,58 +84,6 @@ fn default_scale() -> f64 {
     1.0
 }
 
-// ============================================================================
-// Strongly-typed mapping configs for JSON deserialization
-// ============================================================================
-
-/// CAN point mapping configuration (deserialized from protocol_mappings JSON).
-///
-/// # Required Fields
-/// - `can_id`: The CAN frame ID. This field is **required** and
-///   deserialization will fail if missing.
-///
-/// # Optional Fields
-/// - `byte_offset`: Byte offset in CAN data field (default: 0)
-/// - `bit_position`: Bit position within byte (default: 0)
-/// - `bit_length`: Number of bits to read (default: 16)
-/// - `data_type`: Data type interpretation (default: "uint16")
-///
-/// # Example JSON
-/// ```json
-/// {
-///     "can_id": 849,
-///     "byte_offset": 0,
-///     "bit_position": 0,
-///     "bit_length": 16,
-///     "data_type": "uint16"
-/// }
-/// ```
-#[derive(Debug, Clone, Deserialize)]
-pub struct CanMappingConfig {
-    /// CAN frame ID (e.g., 0x351 or 849). **Required field**.
-    pub can_id: u32,
-
-    /// Byte offset in CAN data field (0-7).
-    #[serde(default)]
-    pub byte_offset: u8,
-
-    /// Bit starting position within byte (0-7, LSB=0).
-    #[serde(default)]
-    pub bit_position: u8,
-
-    /// Bit length (1/2/8/16/32/64).
-    #[serde(default = "default_bit_length")]
-    pub bit_length: u8,
-
-    /// Data type for interpretation.
-    #[serde(default)]
-    pub data_type: CanDataType,
-}
-
-fn default_bit_length() -> u8 {
-    16
-}
-
 /// CAN channel parameters configuration (deserialized from parameters_json).
 ///
 /// # Example JSON
