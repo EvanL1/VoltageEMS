@@ -78,22 +78,6 @@ impl NotifyResult {
     }
 }
 
-/// UDS connection health status
-#[derive(Debug, Clone)]
-pub enum UdsHealth {
-    /// Connected
-    Connected,
-    /// Disconnected
-    Disconnected {
-        /// Time since disconnection
-        since: Option<Instant>,
-        /// Current backoff duration (milliseconds)
-        backoff_ms: u64,
-    },
-    /// Disabled (path is empty)
-    Disabled,
-}
-
 /// SHM command notification sender
 ///
 /// Sends M2C command notifications to comsrv via Unix Domain Socket.
@@ -324,24 +308,6 @@ impl ShmNotifier {
             },
         }
     }
-
-    /// Check UDS connection health status
-    ///
-    /// Used for monitoring and diagnostics.
-    pub fn health_check(&self) -> UdsHealth {
-        if self.path.is_empty() {
-            return UdsHealth::Disabled;
-        }
-
-        if self.stream.is_some() {
-            UdsHealth::Connected
-        } else {
-            UdsHealth::Disconnected {
-                since: self.last_connect_attempt,
-                backoff_ms: self.backoff_ms,
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -384,21 +350,5 @@ mod tests {
         let disabled = NotifyResult::off();
         assert!(!disabled.is_success());
         assert!(!disabled.is_degraded());
-    }
-
-    #[tokio::test]
-    async fn test_health_check() {
-        // Disabled state
-        let notifier = ShmNotifier::disabled();
-        assert!(matches!(notifier.health_check(), UdsHealth::Disabled));
-
-        // Disconnected state
-        let notifier = ShmNotifier::connect("/tmp/nonexistent-test-socket.sock")
-            .await
-            .unwrap();
-        assert!(matches!(
-            notifier.health_check(),
-            UdsHealth::Disconnected { .. }
-        ));
     }
 }

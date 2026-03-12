@@ -183,42 +183,6 @@ pub fn snapshot_exists(path: &std::path::Path) -> bool {
     path.exists() && path.is_file()
 }
 
-/// Helper function to get snapshot file info
-pub fn snapshot_info(path: &std::path::Path) -> Option<SnapshotInfo> {
-    let metadata = std::fs::metadata(path).ok()?;
-    let modified = metadata.modified().ok()?;
-    let size = metadata.len();
-
-    Some(SnapshotInfo {
-        path: path.to_path_buf(),
-        size,
-        modified,
-    })
-}
-
-/// Information about a snapshot file
-#[derive(Debug, Clone)]
-pub struct SnapshotInfo {
-    /// Path to the snapshot file
-    pub path: PathBuf,
-    /// Size in bytes
-    pub size: u64,
-    /// Last modified time
-    pub modified: std::time::SystemTime,
-}
-
-impl SnapshotInfo {
-    /// Get age of the snapshot
-    pub fn age(&self) -> Duration {
-        self.modified.elapsed().unwrap_or(Duration::from_secs(0))
-    }
-
-    /// Check if snapshot is stale (older than given duration)
-    pub fn is_stale(&self, max_age: Duration) -> bool {
-        self.age() > max_age
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
