@@ -23,7 +23,7 @@
 
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
-use std::sync::atomic::{fence, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
 
 // ========== Instance Point Type Constants ==========
 
@@ -48,7 +48,7 @@ pub mod instance_point_type {
 ///
 /// # Seqlock Protocol
 ///
-/// Uses the upper 32 bits of `flags` as a seqlock sequence counter to guarantee
+/// Uses `seq: AtomicU32` as a seqlock sequence counter to guarantee
 /// consistent reads across all fields. This prevents torn reads when the same
 /// slot is written multiple times within the same millisecond (where timestamp
 /// alone cannot distinguish writes).
@@ -71,20 +71,13 @@ pub struct PointSlot {
     timestamp: AtomicU64,
     /// Raw value (as bits)
     raw_bits: AtomicU64,
-    /// Flags layout:
-    /// - bits 0:    dirty flag (1 = modified since last flush)
-    /// - bits 1-7:  quality code (reserved)
-    /// - bits 32-63: seqlock sequence counter (odd = write in progress)
-    flags: AtomicU64,
+    /// Seqlock sequence counter (odd = write in progress, even = idle)
+    seq: AtomicU32,
+    /// Dirty flag (1 = modified since last flush)
+    dirty: AtomicU32,
 }
 
-/// Seqlock sequence counter occupies the upper 32 bits of `flags`.
-/// Each write cycle increments it twice: once before (odd) and once after (even).
-const SEQ_INCREMENT: u64 = 1u64 << 32;
-
 const _: () = assert!(std::mem::size_of::<PointSlot>() == 32);
-// Ensure seq counter lives entirely in bits 32-63, away from dirty flag in bit 0
-const _: () = assert!(SEQ_INCREMENT > u32::MAX as u64);
 
 impl Default for PointSlot {
     fn default() -> Self {
@@ -99,7 +92,8 @@ impl PointSlot {
             value_bits: AtomicU64::new(0),
             timestamp: AtomicU64::new(0),
             raw_bits: AtomicU64::new(0),
-            flags: AtomicU64::new(0),
+            seq: AtomicU32::new(0),
+            dirty: AtomicU32::new(0),
         }
     }
 
@@ -154,7 +148,7 @@ impl PointSlot {
         }
 
         tracing::warn!(
-            "load_consistent exceeded {} retries, returning possibly stale data",
+            "load_consistent exceeded {} retries, returning possibly inconsistent data",
             Self::MAX_CONSISTENCY_RETRIES
         );
         self.load_relaxed()
@@ -167,43 +161,40 @@ impl PointSlot {
     ///
     /// ## Algorithm
     ///
-    /// 1. Read flags (Relaxed) to get sequence counter
+    /// 1. Read seq (Relaxed) to get sequence counter
     /// 2. If sequence is odd (write in progress), return None
-    /// 3. **fence(SeqCst)** — full memory barrier (`dmb ish` on ARM)
+    /// 3. **fence(Acquire)** — prevents data loads from being speculated
+    ///    before seq1. x86: compiler barrier only. ARM64: `dmb ishld`.
     /// 4. Read value, raw, timestamp (Relaxed)
-    /// 5. **fence(SeqCst)** — full memory barrier
-    /// 6. Re-read flags (Relaxed)
-    /// 7. If sequence unchanged → `Some(data)`; otherwise `None`
+    /// 5. Re-read seq with **load(Acquire)** — pairs with writer's
+    ///    `store(Release)`, ensures data loads complete before seq2.
+    /// 6. If seq unchanged → `Some(data)`; otherwise `None`
     ///
-    /// ## Memory Ordering (pure fence-based, AArch64-safe)
+    /// ## Memory Ordering (Acquire/Release, AArch64-safe)
     ///
-    /// All individual atomic operations use `Relaxed` ordering. Cross-address
-    /// ordering is enforced entirely by explicit `fence(SeqCst)` barriers,
-    /// which compile to `dmb ish` (full barrier) on AArch64. This follows
-    /// the Linux kernel seqlock pattern (`smp_rmb()`/`smp_wmb()` between
-    /// sequence counter operations and data access).
-    ///
-    /// On x86 (TSO), `fence(SeqCst)` compiles to `mfence` and Relaxed
-    /// loads/stores compile to plain `mov`.
+    /// Reader uses `fence(Acquire)` + `load(Acquire)` to pair with
+    /// writer's `store(Release)`. On x86 (TSO), both are compiler
+    /// barriers only (0 instructions). On ARM64, `fence(Acquire)`
+    /// emits `dmb ishld` (load barrier) and `load(Acquire)` emits `ldar`.
     #[inline]
     pub fn try_load_consistent(&self) -> Option<(f64, f64, u64)> {
-        let flags1 = self.flags.load(Ordering::Relaxed);
-        let seq1 = flags1 >> 32;
+        let seq1 = self.seq.load(Ordering::Relaxed);
 
         if seq1 & 1 != 0 {
-            return None;
+            return None; // write in progress
         }
 
-        fence(Ordering::SeqCst);
+        // ACQUIRE fence: prevents data loads from being speculated before seq1.
+        // x86: compiler barrier only. ARM64: dmb ishld.
+        fence(Ordering::Acquire);
 
         let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
         let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
         let ts = self.timestamp.load(Ordering::Relaxed);
 
-        fence(Ordering::SeqCst);
-
-        let flags2 = self.flags.load(Ordering::Relaxed);
-        let seq2 = flags2 >> 32;
+        // Acquire load: ensures data loads above complete before reading seq2,
+        // and pairs with writer's store(Release) for cross-thread visibility.
+        let seq2 = self.seq.load(Ordering::Acquire);
 
         if seq1 == seq2 {
             Some((value, raw, ts))
@@ -215,10 +206,10 @@ impl PointSlot {
     /// Unprotected read of all fields (no seqlock guarantee).
     ///
     /// Used only as a last-resort fallback after retries are exhausted.
-    /// A leading `fence(SeqCst)` provides best-effort freshness.
+    /// A leading `fence(Acquire)` provides best-effort freshness.
     #[inline]
     fn load_relaxed(&self) -> (f64, f64, u64) {
-        fence(Ordering::SeqCst);
+        fence(Ordering::Acquire);
         let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
         let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
         let ts = self.timestamp.load(Ordering::Relaxed);
@@ -227,71 +218,63 @@ impl PointSlot {
 
     /// Set all point data with seqlock write protocol.
     ///
-    /// Increments the sequence counter to odd (write-in-progress), writes all
-    /// data fields, then increments to even (write-complete). Readers that
+    /// Stores the sequence counter to odd (write-in-progress), writes all
+    /// data fields, then stores to even (write-complete). Readers that
     /// observe an odd sequence or a changed sequence will retry.
     ///
-    /// # Memory Ordering (fence-based, AArch64-safe)
+    /// # Memory Ordering (store-release, AArch64-safe)
     ///
-    /// Uses explicit `fence(SeqCst)` barriers between the sequence counter
-    /// and data stores, following the Linux kernel seqlock pattern (`smp_wmb`).
-    /// This guarantees cross-address ordering on weakly-ordered architectures:
+    /// Both seq stores use `Release` ordering:
+    /// - Opening `store(odd, Release)` prevents data stores from being
+    ///   reordered before it. x86: plain `mov`; ARM64: `stlr`.
+    /// - Closing `store(even, Release)` prevents data stores from being
+    ///   reordered after it. x86: plain `mov`; ARM64: `stlr`.
     ///
-    /// - **After odd increment**: fence ensures the odd sequence is globally
-    ///   visible before any data store. Readers will see "write in progress".
-    /// - **Before even increment**: fence ensures ALL data stores are globally
-    ///   visible before the even sequence is published.
+    /// # Single-writer assumption
     ///
-    /// On x86 (TSO), `fence(SeqCst)` compiles to `mfence` and stores compile
-    /// to plain `mov`, so overhead is minimal on server hardware.
+    /// Uses `load` + `store` instead of `fetch_add` for the seq counter.
+    /// Correct ONLY when a single thread writes to each slot. Guaranteed
+    /// by SCADA architecture: comsrv owns telemetry slots, modsrv owns
+    /// control slots. Concurrent `set()` on the same slot is UB.
     #[inline]
     pub fn set(&self, value: f64, raw: f64, timestamp: u64) {
-        // Begin write: sequence → odd (signals write-in-progress)
-        // Relaxed: ordering enforced by the fence below, not by this RMW.
-        self.flags.fetch_add(SEQ_INCREMENT, Ordering::Relaxed);
+        let s = self.seq.load(Ordering::Relaxed);
 
-        // FULL BARRIER (dmb ish on ARM, mfence on x86):
-        // Ensures the odd sequence is globally visible to ALL cores
-        // before any data store. Prevents Store→Store reordering across
-        // different addresses (flags vs value_bits/raw_bits/timestamp).
-        fence(Ordering::SeqCst);
+        // Begin write: seq → odd (signals write-in-progress).
+        // Release: prevents subsequent data stores from being reordered
+        // before this store. x86: plain mov. ARM64: stlr.
+        self.seq.store(s.wrapping_add(1), Ordering::Release);
 
-        // Data stores — Relaxed because ordering is fence-enclosed.
+        // Data stores — Relaxed; ordering enforced by surrounding Release stores.
         self.value_bits.store(value.to_bits(), Ordering::Relaxed);
         self.raw_bits.store(raw.to_bits(), Ordering::Relaxed);
         self.timestamp.store(timestamp, Ordering::Relaxed);
 
-        // Dirty flag — INSIDE the fence envelope so it's part of the
-        // atomic write group, not a separate operation after seqlock close.
-        // Bit 0 only; upper 32 bits (seq counter) are untouched by fetch_or.
-        self.flags.fetch_or(1, Ordering::Relaxed);
+        // End write: seq → even (signals write-complete).
+        // Release: prevents prior data stores from being reordered after
+        // this store. Pairs with reader's load(Acquire). x86: mov. ARM64: stlr.
+        self.seq.store(s.wrapping_add(2), Ordering::Release);
 
-        // FULL BARRIER:
-        // Ensures ALL data stores + dirty flag are globally visible before
-        // the even sequence is published. Readers that see the even seq
-        // after their own fence(SeqCst) will see all written values.
-        fence(Ordering::SeqCst);
-
-        // End write: sequence → even (signals write-complete)
-        self.flags.fetch_add(SEQ_INCREMENT, Ordering::Relaxed);
+        // Dirty flag — outside seqlock envelope (advisory, not consistency-critical).
+        self.dirty.store(1, Ordering::Relaxed);
     }
 
     /// Check if dirty flag is set
     #[inline]
     pub fn is_dirty(&self) -> bool {
-        self.flags.load(Ordering::Relaxed) & 1 != 0
+        self.dirty.load(Ordering::Relaxed) != 0
     }
 
     /// Clear the dirty flag
     #[inline]
     pub fn clear_dirty(&self) {
-        self.flags.fetch_and(!1, Ordering::Relaxed);
+        self.dirty.store(0, Ordering::Relaxed);
     }
 
-    /// Get raw flags value (for testing/debugging seqlock state)
+    /// Get raw seq counter value (for testing/debugging)
     #[inline]
-    pub fn flags_raw(&self) -> u64 {
-        self.flags.load(Ordering::Relaxed)
+    pub fn seq_raw(&self) -> u32 {
+        self.seq.load(Ordering::Relaxed)
     }
 }
 
@@ -974,22 +957,20 @@ mod tests {
 
     #[test]
     fn test_seqlock_sequence_counter_values() {
-        // Verify the sequence counter in flags[32:63] increments by 2 per write
+        // Verify the sequence counter increments by 2 per write
         let slot = PointSlot::new();
 
-        let get_seq = || slot.flags.load(Ordering::Relaxed) >> 32;
-
-        assert_eq!(get_seq(), 0, "initial sequence should be 0");
-        assert_eq!(get_seq() & 1, 0, "initial sequence should be even");
+        assert_eq!(slot.seq_raw(), 0, "initial sequence should be 0");
+        assert_eq!(slot.seq_raw() & 1, 0, "initial sequence should be even");
 
         slot.set(1.0, 1.0, 100);
-        assert_eq!(get_seq(), 2, "after 1 write, sequence should be 2");
+        assert_eq!(slot.seq_raw(), 2, "after 1 write, sequence should be 2");
 
         slot.set(2.0, 2.0, 200);
-        assert_eq!(get_seq(), 4, "after 2 writes, sequence should be 4");
+        assert_eq!(slot.seq_raw(), 4, "after 2 writes, sequence should be 4");
 
         slot.set(3.0, 3.0, 300);
-        assert_eq!(get_seq(), 6, "after 3 writes, sequence should be 6");
+        assert_eq!(slot.seq_raw(), 6, "after 3 writes, sequence should be 6");
     }
 
     #[test]

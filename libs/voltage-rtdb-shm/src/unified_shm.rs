@@ -841,7 +841,8 @@ impl UnifiedWriter {
             //   offset 0:  value_bits (AtomicU64 → read as u64)
             //   offset 8:  timestamp  (AtomicU64 → read as u64)
             //   offset 16: raw_bits   (AtomicU64 → read as u64)
-            //   offset 24: flags      (AtomicU64 → not needed for restore)
+            //   offset 24: seq        (AtomicU32 → not needed for restore)
+            //   offset 28: dirty      (AtomicU32 → not needed for restore)
             let sb = &snapshot_data[slot_offset_in_file..slot_offset_in_file + slot_size];
             let value = f64::from_bits(u64::from_ne_bytes(sb[0..8].try_into().unwrap()));
             let timestamp = u64::from_ne_bytes(sb[8..16].try_into().unwrap());
