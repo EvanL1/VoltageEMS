@@ -103,7 +103,7 @@ async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
             expression TEXT NOT NULL,
             description TEXT,
             enabled BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         "#,
     )
