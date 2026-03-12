@@ -24,8 +24,6 @@ pub fn create_test_routing_cache() -> Arc<RoutingCache> {
     Arc::new(RoutingCache::new())
 }
 
-// create_test_redis_client() removed - use create_test_rtdb() instead
-
 // ==================== Routing Test Setup Functions ====================
 
 /// Create test environment with C2M routing configuration

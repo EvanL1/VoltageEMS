@@ -157,7 +157,7 @@ async fn create_test_app() -> Result<axum::Router> {
     // Create command TX cache
     let command_tx_cache = Arc::new(comsrv::api::command_cache::CommandTxCache::new());
 
-    // Create router (removed VecRtdb parameter)
+    // Create router
     let router = comsrv::api::routes::create_api_routes(
         channel_manager,
         redis_client,

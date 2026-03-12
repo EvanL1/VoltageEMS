@@ -245,7 +245,6 @@ pub struct PaginatedResponse<T> {
     pub has_previous: bool,
 }
 
-// Note: Removed T: Clone constraint - these methods don't require cloning
 impl<T> PaginatedResponse<T> {
     /// Create a new paginated response
     pub fn new(items: Vec<T>, total: usize, page: usize, page_size: usize) -> Self {

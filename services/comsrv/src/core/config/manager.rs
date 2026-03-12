@@ -156,8 +156,6 @@ impl ConfigManager {
         info!("All configuration files validated successfully");
         Ok(())
     }
-
-    // Under the four-telemetry separated architecture, unified mapping method is no longer needed
 }
 
 // ============================================================================

@@ -1175,7 +1175,6 @@ fn test_api_routes_compile() {
 
     // This unit test ensures the API structure is valid
     // by verifying the create_api_routes function exists and has the correct type signature
-    // Removed VecRtdb parameter
     use super::*;
     use crate::api::command_cache::CommandTxCache;
     use voltage_rtdb::RedisRtdb;
@@ -1754,10 +1753,6 @@ async fn test_delete_channel_closed_loop() {
         "Deleted channel should return 404"
     );
 }
-
-// Note: test_batch_mappings_update_closed_loop removed
-// Reason: Mappings API is deprecated (use Monarch instead)
-//         and requires complex point table setup
 
 // ========================================================================
 // Point Mapping with Type Tests (New API)

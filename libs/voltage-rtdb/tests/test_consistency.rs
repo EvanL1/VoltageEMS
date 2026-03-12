@@ -1,7 +1,6 @@
 //! MemoryRtdb behavior tests
 //!
 //! Tests for in-memory RTDB implementation.
-//! Redis tests removed - core data flow now uses SharedMemory (mmap).
 
 #![allow(clippy::disallowed_methods)]
 

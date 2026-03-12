@@ -6,8 +6,6 @@ use crate::core::channels::ChannelManager;
 use crate::core::config::{ChannelCore, ChannelLoggingConfig};
 use crate::dto::{AppError, SuccessResponse};
 use axum::{extract::State, response::Json};
-#[allow(unused_imports)] // Used in utoipa examples
-use serde_json::json;
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 

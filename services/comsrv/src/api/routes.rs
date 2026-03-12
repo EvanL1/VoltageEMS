@@ -48,8 +48,7 @@ pub fn get_service_start_time() -> DateTime<Utc> {
 /// - Read latency: ~5ns (was ~50μs with RwLock)
 ///
 /// # Two-tier Architecture
-/// - Removed VecRtdb (L2 cache)
-/// - Now using SharedMemory (L1) + Redis (L2) architecture
+/// - SharedMemory (L1) + Redis (L2) architecture
 /// - API reads go directly to Redis (suitable for debugging/monitoring)
 pub struct AppState<R: voltage_rtdb::Rtdb> {
     /// Channel manager with O(1) lock-free access
@@ -78,7 +77,6 @@ impl<R: voltage_rtdb::Rtdb> AppState<R> {
     /// Create AppState with RTDB backend and SQLite pool
     ///
     /// # Lock-free channel_manager
-    /// # Removed VecRtdb
     pub fn new(
         channel_manager: Arc<ChannelManager<R>>,
         rtdb: Arc<R>,
@@ -98,7 +96,6 @@ impl AppState<voltage_rtdb::RedisRtdb> {
     /// Create AppState with Redis client (production use)
     ///
     /// # Lock-free channel_manager
-    /// # Removed VecRtdb
     pub fn with_redis_client(
         channel_manager: Arc<ChannelManager<voltage_rtdb::RedisRtdb>>,
         redis_client: Arc<common::redis::RedisClient>,
@@ -260,7 +257,6 @@ pub struct ComsrvApiDoc;
 /// Create the API router with all routes (production version with Redis)
 ///
 /// # Lock-free channel_manager
-/// # Removed VecRtdb
 pub fn create_api_routes(
     channel_manager: Arc<ChannelManager<voltage_rtdb::RedisRtdb>>,
     redis_client: Arc<common::redis::RedisClient>,
@@ -275,7 +271,6 @@ pub fn create_api_routes(
 /// Used by tests with MemoryRtdb.
 ///
 /// # Lock-free channel_manager
-/// # Removed VecRtdb
 pub fn create_api_routes_generic<R: Rtdb>(
     channel_manager: Arc<ChannelManager<R>>,
     rtdb: Arc<R>,

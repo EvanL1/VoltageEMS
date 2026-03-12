@@ -300,7 +300,6 @@ async fn main() -> VoltageResult<()> {
 
     // Create channel manager with optional shared memory and CommandTxCache support
     // Lock-free architecture - no RwLock wrapper needed
-    // Removed VecRtdb - SharedMemory + Redis two-tier architecture
     let channel_manager = ChannelManager::with_shared_memory(
         rtdb,
         routing_cache,

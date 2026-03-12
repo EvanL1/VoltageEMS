@@ -8,8 +8,6 @@ use axum::{
     extract::{Path, State},
     response::Json,
 };
-#[allow(unused_imports)] // Used in utoipa examples
-use serde_json::json;
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 

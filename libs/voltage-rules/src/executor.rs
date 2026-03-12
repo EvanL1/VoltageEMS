@@ -326,7 +326,6 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     /// 2. Redis (~1ms) - remote fallback
     ///
     /// SharedMemory is populated by comsrv and works on any filesystem.
-    /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub fn with_shared_reader(mut self, reader: Arc<UnifiedReader>) -> Self {
         self.shared_reader = Some(reader);
         self
@@ -698,8 +697,6 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
     /// Priority order:
     /// 1. SharedMemory (~5μs) - cross-process mmap, highest priority
     /// 2. Redis (~1ms) - remote fallback
-    ///
-    /// Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     ///
     /// Reads variable values from Redis Hash `inst:{id}:M` or `inst:{id}:A`
     async fn read_rule_variables(

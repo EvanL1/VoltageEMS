@@ -41,14 +41,6 @@ impl ConnectionState {
         matches!(self, ConnectionState::Connected)
     }
 
-    /// Check if state allows retry
-    pub fn can_retry(&self) -> bool {
-        matches!(
-            self,
-            ConnectionState::Disconnected | ConnectionState::Retrying
-        )
-    }
-
     /// Convert to u8 for atomic storage
     pub const fn as_u8(self) -> u8 {
         match self {
@@ -442,8 +434,6 @@ mod tests {
     fn test_connection_state() {
         assert!(ConnectionState::Connected.is_connected());
         assert!(!ConnectionState::Disconnected.is_connected());
-        assert!(ConnectionState::Disconnected.can_retry());
-        assert!(!ConnectionState::Failed.can_retry());
     }
 
     #[test]

@@ -136,10 +136,6 @@ pub const CHANNEL_TEMPLATES_TABLE: &str = r#"
 // Modsrv Table DDL (matches modsrv::config schemas)
 // ============================================================================
 
-// Note: Products table has been removed.
-// Products are now compile-time built-in constants from voltage-model crate.
-// Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
-
 /// Instances table DDL (matches modsrv::config::InstanceRecord)
 /// Note: No foreign key to products table - products are compile-time constants
 pub const INSTANCES_TABLE: &str = r#"
@@ -347,7 +343,6 @@ mod tests {
 
         // Should have 6 tables: service_config, sync_metadata, channels, instances,
         // measurement_routing, action_routing
-        // Note: Products and point definition tables removed (products are compile-time constants)
         assert!(
             result.0 >= 6,
             "Expected at least 6 tables, found {}",

@@ -77,8 +77,6 @@ impl<R: Rtdb> RedisDataStore<R> {
     ///
     /// * `rtdb` - Redis connection
     /// * `routing_cache` - C2M/M2C routing cache
-    ///
-    /// Note: Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         // Create single broadcast channel - all subscribers share this sender
         let (event_sender, _) = tokio::sync::broadcast::channel(1024);
@@ -246,8 +244,6 @@ impl<R: Rtdb> RedisDataStore<R> {
     /// 1. **Shared Memory Path** (fastest): If `shared_writer` and `channel_index` are configured,
     ///    uses `write_channel_batch_direct()` for O(1) direct slot writes (~10ns per point).
     /// 2. **Buffered Path** (fallback): Uses `write_channel_batch_buffered()` for Redis writes.
-    ///
-    /// Note: Removed VecRtdb - using SharedMemory + Redis two-tier architecture
     pub async fn write_batch(&self, channel_id: u32, batch: DataBatch) -> ProtocolResult<()> {
         if batch.is_empty() {
             return Ok(());

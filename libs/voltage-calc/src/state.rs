@@ -232,6 +232,3 @@ pub struct PeriodDeltaState {
 pub fn state_key(context: &str, func: &str, var: &str) -> String {
     format!("calc:state:{}:{}:{}", context, func, var)
 }
-
-// Note: SharedStateStore type alias removed for native AFIT compatibility.
-// Use Arc<S> where S: StateStore instead.

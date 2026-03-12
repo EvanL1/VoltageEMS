@@ -15,9 +15,6 @@
 //! All routing tables use structured tuple keys for zero-allocation lookups:
 //! - C2M/C2C: `(channel_id, point_type, point_id)`
 //! - M2C: `(instance_id, point_type, point_id)`
-//!
-//! String-based lookups (`lookup_c2c("1001:T:1")`) parse the key first, then query the tuple index.
-//! Prefix queries (`get_c2c_by_prefix("1001:")`) iterate and filter the tuple index.
 
 use arc_swap::ArcSwap;
 use rustc_hash::FxHashMap;
@@ -183,44 +180,6 @@ fn parse_route_key(s: &str) -> Option<StructuredRouteKey> {
     let point_type = parse_point_type(parts[1])?;
     let point_id = parts[2].parse().ok()?;
     Some((id, point_type, point_id))
-}
-
-/// Parse prefix string "id:" or "id:type:" into filter components
-/// Returns (id, Option<point_type>)
-#[inline]
-fn parse_prefix(prefix: &str) -> Option<(u32, Option<PointType>)> {
-    let trimmed = prefix.trim_end_matches(':');
-    let parts: Vec<&str> = trimmed.split(':').collect();
-    match parts.len() {
-        1 => Some((parts[0].parse().ok()?, None)),
-        2 => Some((parts[0].parse().ok()?, Some(parse_point_type(parts[1])?))),
-        _ => None,
-    }
-}
-
-/// Format structured key back to string
-#[inline]
-fn format_route_key(key: &StructuredRouteKey) -> String {
-    format!("{}:{}:{}", key.0, key.1.as_str(), key.2)
-}
-
-// ============================================================================
-// Shared Helpers
-// ============================================================================
-
-/// Filter a routing table by prefix, formatting keys for output (cold path)
-fn filter_by_prefix<T: Copy>(
-    table: &FxHashMap<StructuredRouteKey, T>,
-    prefix: &str,
-) -> Vec<(Arc<str>, T)> {
-    let Some((id, point_type_filter)) = parse_prefix(prefix) else {
-        return vec![];
-    };
-    table
-        .iter()
-        .filter(|(k, _)| k.0 == id && point_type_filter.is_none_or(|pt| k.1 == pt))
-        .map(|(k, v)| (Arc::from(format_route_key(k)), *v))
-        .collect()
 }
 
 // ============================================================================
@@ -449,31 +408,6 @@ impl RoutingCache {
             .copied()
     }
 
-    /// Lookup C2C routing by string key (parses key first)
-    ///
-    /// For hot paths, prefer `lookup_c2c_by_parts()` to avoid string parsing.
-    ///
-    /// ## Example
-    /// ```rust
-    /// use voltage_routing::RoutingCache;
-    /// use voltage_model::PointType;
-    /// use std::collections::HashMap;
-    ///
-    /// let mut c2c = HashMap::new();
-    /// c2c.insert("1001:T:1".to_string(), "1002:T:5".to_string());
-    /// let cache = RoutingCache::from_maps(HashMap::new(), HashMap::new(), c2c);
-    ///
-    /// if let Some(target) = cache.lookup_c2c("1001:T:1") {
-    ///     assert_eq!(target.channel_id, 1002);
-    ///     assert_eq!(target.point_type, PointType::Telemetry);
-    ///     assert_eq!(target.point_id, 5);
-    /// }
-    /// ```
-    pub fn lookup_c2c(&self, key: &str) -> Option<C2CTarget> {
-        let structured_key = parse_route_key(key)?;
-        self.c2c.load().get(&structured_key).copied()
-    }
-
     /// Lookup C2C routing by structured key (zero-allocation)
     ///
     /// Use this method in hot paths to avoid string parsing overhead.
@@ -505,88 +439,6 @@ impl RoutingCache {
             .load()
             .get(&(channel_id, point_type, point_id))
             .copied()
-    }
-
-    /// Insert C2C routing entry from string keys (copy-on-write)
-    ///
-    /// Note: This is a cold-path operation. For bulk updates, use `update()`.
-    pub fn insert_c2c(&self, source_key: impl AsRef<str>, target_key: &str) {
-        let source_key = source_key.as_ref();
-        if let (Some(key), Some(parts)) =
-            (parse_route_key(source_key), parse_channel_point(target_key))
-        {
-            self.insert_c2c_by_parts(key.0, key.1, key.2, c2c_from_parts(parts));
-        }
-    }
-
-    /// Insert C2C routing entry from structured key (copy-on-write)
-    ///
-    /// **Optimized COW**: Only clones the C2C table, not C2M or M2C.
-    /// This reduces HashMap cloning overhead by 2/3 compared to single-ArcSwap design.
-    ///
-    /// Note: This is a cold-path operation. For bulk updates, use `update()`.
-    pub fn insert_c2c_by_parts(
-        &self,
-        channel_id: u32,
-        point_type: PointType,
-        point_id: u32,
-        target: C2CTarget,
-    ) {
-        // Optimized COW: only clone the C2C table (not C2M or M2C)
-        // Double deref: Guard<Arc<HashMap>> -> Arc<HashMap> -> HashMap
-        let old = self.c2c.load();
-        let mut new_c2c = (**old).clone();
-        new_c2c.insert((channel_id, point_type, point_id), target);
-        self.c2c.store(Arc::new(new_c2c));
-    }
-
-    /// Remove C2C routing entry by string key (copy-on-write)
-    ///
-    /// Returns the removed entry as (formatted_key, target) for compatibility.
-    /// Note: This is a cold-path operation.
-    pub fn remove_c2c(&self, source_key: &str) -> Option<(Arc<str>, C2CTarget)> {
-        let structured_key = parse_route_key(source_key)?;
-        let result =
-            self.remove_c2c_by_parts(structured_key.0, structured_key.1, structured_key.2)?;
-        Some((Arc::from(format_route_key(&structured_key)), result))
-    }
-
-    /// Remove C2C routing entry by structured key (copy-on-write)
-    ///
-    /// **Optimized COW**: Only clones the C2C table, not C2M or M2C.
-    /// This reduces HashMap cloning overhead by 2/3 compared to single-ArcSwap design.
-    ///
-    /// Note: This is a cold-path operation. For bulk updates, use `update()`.
-    pub fn remove_c2c_by_parts(
-        &self,
-        channel_id: u32,
-        point_type: PointType,
-        point_id: u32,
-    ) -> Option<C2CTarget> {
-        // Optimized COW: only clone the C2C table (not C2M or M2C)
-        // Double deref: Guard<Arc<HashMap>> -> Arc<HashMap> -> HashMap
-        let old = self.c2c.load();
-        let target = old.get(&(channel_id, point_type, point_id)).copied()?;
-
-        let mut new_c2c = (**old).clone();
-        new_c2c.remove(&(channel_id, point_type, point_id));
-        self.c2c.store(Arc::new(new_c2c));
-        Some(target)
-    }
-
-    /// Get all C2C routing entries matching a prefix (cold path, CLI tools)
-    pub fn get_c2c_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, C2CTarget)> {
-        filter_by_prefix(&self.c2c.load(), prefix)
-    }
-
-    /// Get all C2M routing entries matching a prefix (cold path, CLI tools)
-    pub fn get_c2m_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, C2MTarget)> {
-        filter_by_prefix(&self.c2m.load(), prefix)
-    }
-
-    /// Get all M2C routing entries matching a prefix (cold path, CLI tools)
-    pub fn get_m2c_by_prefix(&self, prefix: &str) -> Vec<(Arc<str>, M2CTarget)> {
-        filter_by_prefix(&self.m2c.load(), prefix)
     }
 
     /// Get cache statistics
@@ -738,7 +590,9 @@ mod tests {
         assert_eq!(m2c.point_id, 1);
 
         // Verify C2C lookup returns structured type
-        let c2c = cache.lookup_c2c("1001:T:1").unwrap();
+        let c2c = cache
+            .lookup_c2c_by_parts(1001, PointType::Telemetry, 1)
+            .unwrap();
         assert_eq!(c2c.channel_id, 1002);
         assert_eq!(c2c.point_type, PointType::Telemetry);
         assert_eq!(c2c.point_id, 5);
@@ -807,95 +661,12 @@ mod tests {
         assert_eq!(m2c.point_type, PointType::Adjustment);
         assert_eq!(m2c.point_id, 1);
 
-        let c2c = cache.lookup_c2c("1001:S:2").unwrap();
-        assert_eq!(c2c.channel_id, 1002);
-        assert_eq!(c2c.point_type, PointType::Signal);
-        assert_eq!(c2c.point_id, 3);
-    }
-
-    #[test]
-    fn test_prefix_filtering() {
-        let mut c2m_data = HashMap::new();
-        c2m_data.insert("2:T:1".to_string(), "23:M:1".to_string());
-        c2m_data.insert("2:T:2".to_string(), "23:M:2".to_string());
-        c2m_data.insert("3:T:1".to_string(), "24:M:1".to_string());
-
-        let mut c2c_data = HashMap::new();
-        c2c_data.insert("1001:T:1".to_string(), "1002:T:1".to_string());
-        c2c_data.insert("1001:T:2".to_string(), "1002:T:2".to_string());
-        c2c_data.insert("2001:S:1".to_string(), "2002:S:1".to_string());
-
-        let cache = RoutingCache::from_maps(c2m_data, HashMap::new(), c2c_data);
-
-        let routes = cache.get_c2m_by_prefix("2:T:");
-        assert_eq!(routes.len(), 2);
-
-        let routes = cache.get_c2m_by_prefix("3:");
-        assert_eq!(routes.len(), 1);
-
-        // Test C2C prefix filtering
-        let routes = cache.get_c2c_by_prefix("1001:T:");
-        assert_eq!(routes.len(), 2);
-
-        let routes = cache.get_c2c_by_prefix("2001:");
-        assert_eq!(routes.len(), 1);
-    }
-
-    #[test]
-    fn test_c2c_operations() {
-        let cache = RoutingCache::new();
-
-        // Test insert and lookup
-        cache.insert_c2c("1001:T:1", "1002:T:5");
-        let c2c = cache.lookup_c2c("1001:T:1").unwrap();
-        assert_eq!(c2c.channel_id, 1002);
-        assert_eq!(c2c.point_type, PointType::Telemetry);
-        assert_eq!(c2c.point_id, 5);
-
-        // Test by_parts lookup after string insert
         let c2c = cache
-            .lookup_c2c_by_parts(1001, PointType::Telemetry, 1)
+            .lookup_c2c_by_parts(1001, PointType::Signal, 2)
             .unwrap();
         assert_eq!(c2c.channel_id, 1002);
-
-        // Test multiple inserts
-        cache.insert_c2c("1001:S:2", "1003:S:1");
-        cache.insert_c2c("2001:A:1", "2002:C:3");
-
-        // Verify lookups
-        let c2c = cache.lookup_c2c("1001:S:2").unwrap();
-        assert_eq!(c2c.channel_id, 1003);
         assert_eq!(c2c.point_type, PointType::Signal);
-        assert_eq!(c2c.point_id, 1);
-
-        let c2c = cache.lookup_c2c("2001:A:1").unwrap();
-        assert_eq!(c2c.channel_id, 2002);
-        assert_eq!(c2c.point_type, PointType::Control);
         assert_eq!(c2c.point_id, 3);
-
-        assert!(cache.lookup_c2c("nonexistent").is_none());
-
-        // Test remove
-        let removed = cache.remove_c2c("1001:T:1");
-        assert!(removed.is_some());
-        let (key, target) = removed.unwrap();
-        assert_eq!(&*key, "1001:T:1");
-        assert_eq!(target.channel_id, 1002);
-        assert_eq!(target.point_id, 5);
-        assert!(cache.lookup_c2c("1001:T:1").is_none());
-        assert!(cache
-            .lookup_c2c_by_parts(1001, PointType::Telemetry, 1)
-            .is_none());
-
-        // Test prefix filtering
-        cache.insert_c2c("3001:T:1", "3002:T:1");
-        cache.insert_c2c("3001:T:2", "3002:T:2");
-
-        let routes = cache.get_c2c_by_prefix("3001:T:");
-        assert_eq!(routes.len(), 2);
-
-        let routes = cache.get_c2c_by_prefix("1001:");
-        assert_eq!(routes.len(), 1); // Only 1001:S:2 remains
     }
 
     #[test]
