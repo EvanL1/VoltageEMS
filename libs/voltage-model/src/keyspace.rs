@@ -259,26 +259,6 @@ impl KeySpaceConfig {
         format!("{}:online", self.data_prefix)
     }
 
-    /// Build instance status key: inst:{instance_id}:status
-    pub fn instance_status_key(&self, instance_id: u32) -> String {
-        format!("{}:{}:status", self.inst_prefix, instance_id)
-    }
-
-    /// Build instance config key: inst:{instance_id}:config
-    pub fn instance_config_key(&self, instance_id: u32) -> String {
-        format!("{}:{}:config", self.inst_prefix, instance_id)
-    }
-
-    /// Build instance measurement points key: inst:{instance_id}:measurement_points
-    pub fn instance_measurement_points_key(&self, instance_id: u32) -> String {
-        format!("{}:{}:measurement_points", self.inst_prefix, instance_id)
-    }
-
-    /// Build instance action points key: inst:{instance_id}:action_points
-    pub fn instance_action_points_key(&self, instance_id: u32) -> String {
-        format!("{}:{}:action_points", self.inst_prefix, instance_id)
-    }
-
     /// Build instance measurement point key: inst:{instance_id}:M:{point_id}
     ///
     /// # Examples
@@ -332,13 +312,6 @@ impl KeySpaceConfig {
     /// Used as hash field in route:c2m routing table
     pub fn c2m_route_key(&self, channel_id: u32, point_type: PointType, point_id: &str) -> String {
         format!("{}:{}:{}", channel_id, point_type.as_str(), point_id)
-    }
-
-    /// Build M2C route key: {instance_id}:{type}:{point_id}
-    ///
-    /// Used as hash field in route:m2c routing table
-    pub fn m2c_route_key(&self, instance_id: u32, point_type: PointType, point_id: &str) -> String {
-        format!("{}:{}:{}", instance_id, point_type.as_str(), point_id)
     }
 
     // ============================================================
@@ -436,11 +409,6 @@ impl KeySpaceConfig {
     /// Product index set key: modsrv:products (or test:modsrv:products)
     pub fn product_index_key(&self) -> String {
         format!("{}modsrv:products", self.env_prefix())
-    }
-
-    /// Instance index set key: instance:index (or test:instance:index)
-    pub fn instance_index_key(&self) -> String {
-        format!("{}instance:index", self.env_prefix())
     }
 
     // ============================================================
@@ -558,13 +526,6 @@ mod tests {
         assert_eq!(config.instance_measurement_key(1), "inst:1:M");
         assert_eq!(config.instance_action_key(1), "inst:1:A");
         assert_eq!(config.instance_name_key(1), "inst:1:name");
-        assert_eq!(config.instance_status_key(1), "inst:1:status");
-        assert_eq!(config.instance_config_key(1), "inst:1:config");
-        assert_eq!(
-            config.instance_measurement_points_key(1),
-            "inst:1:measurement_points"
-        );
-        assert_eq!(config.instance_action_points_key(1), "inst:1:action_points");
         assert_eq!(config.instance_pattern(1), "inst:1:*");
         assert_eq!(config.instance_name_index_key(), "inst:name:index");
 
@@ -627,12 +588,6 @@ mod tests {
             config.c2m_route_key(1001, PointType::Telemetry, "T1"),
             "1001:T:T1"
         );
-
-        // M2C route key
-        assert_eq!(
-            config.m2c_route_key(1, PointType::Adjustment, "A1"),
-            "1:A:A1"
-        );
     }
 
     #[test]
@@ -680,13 +635,11 @@ mod tests {
     fn test_product_and_index_keys_respect_env_prefix() {
         let prod = KeySpaceConfig::production();
         assert_eq!(prod.product_index_key(), "modsrv:products");
-        assert_eq!(prod.instance_index_key(), "instance:index");
         assert_eq!(prod.product_key("sensor"), "modsrv:product:sensor");
         assert_eq!(prod.rule_exec_key(42), "rule:42:exec");
 
         let test = KeySpaceConfig::test();
         assert_eq!(test.product_index_key(), "test:modsrv:products");
-        assert_eq!(test.instance_index_key(), "test:instance:index");
         assert_eq!(test.product_key("sensor"), "test:modsrv:product:sensor");
         assert_eq!(test.rule_exec_key(42), "test:rule:42:exec");
     }

@@ -385,8 +385,6 @@ fn print_info(reader: &UnifiedReader, routing_cache: &RoutingCache) {
     println!("Channels:      {}", reader.channel_ids().len());
     println!("Total Slots:   {}", reader.slot_count());
     println!("Max Slots:     {}", reader.max_slots());
-    // Note: meta_epoch removed in simplified design (Version 2)
-
     // Writer heartbeat
     let heartbeat = reader.writer_heartbeat();
     let heartbeat_age = voltage_rtdb_shm::timestamp_ms().saturating_sub(heartbeat);

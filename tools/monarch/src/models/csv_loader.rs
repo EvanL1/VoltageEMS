@@ -1,7 +1,6 @@
 //! CSV loader for product definitions
 //!
-//! Note: Products are now compile-time built-in constants from voltage-model crate.
-//! The load_product_from_csv function has been removed.
+//! Products are compile-time built-in constants from voltage-model crate.
 //! Only list_available_products is retained for development/debugging purposes.
 
 use anyhow::Result;

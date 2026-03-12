@@ -706,8 +706,6 @@ impl ConfigSyncer {
         Ok(count)
     }
 
-    // insert_comsrv_points() removed - all points are channel-specific
-
     /// Insert channels
     async fn insert_channels(
         &self,
@@ -927,10 +925,6 @@ impl ConfigSyncer {
 
         Ok(total_count)
     }
-
-    // Note: sync_modsrv_products has been removed.
-    // Products are now compile-time built-in constants from voltage-model crate.
-    // They are embedded in the binary and don't need to be synced from CSV files.
 
     /// Sync instances and their mappings
     async fn sync_instances(

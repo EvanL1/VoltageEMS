@@ -53,9 +53,6 @@ impl ModelClient {
         }
     }
 
-    // Note: import_product and delete_product methods have been removed.
-    // Products are now compile-time built-in constants from voltage-model crate.
-
     // Instance operations
     pub async fn list_instances(&self, product: Option<&str>) -> Result<Value> {
         let url = if let Some(p) = product {

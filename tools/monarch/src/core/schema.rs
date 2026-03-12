@@ -358,8 +358,6 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     sqlx::query(CHANNEL_TEMPLATES_TABLE).execute(&pool).await?;
 
     // === Instance tables ===
-    // Note: Product tables have been removed.
-    // Products are now compile-time built-in constants from voltage-model crate.
     sqlx::query(INSTANCES_TABLE).execute(&pool).await?;
     sqlx::query(MEASUREMENT_ROUTING_TABLE)
         .execute(&pool)
@@ -412,7 +410,6 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
     .await?;
 
     // Instance routing indexes
-    // Note: Product indexes removed - products are compile-time constants
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_measurement_routing_instance ON measurement_routing(instance_id)",
     )

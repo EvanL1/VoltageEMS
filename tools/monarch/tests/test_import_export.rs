@@ -7,8 +7,6 @@
 //! 4. Handles invalid enum values during import
 
 use anyhow::Result;
-#[allow(unused_imports)]
-use common::InstanceStatus;
 use common::{ComparisonOperator, FourRemote, PointRole};
 use std::fs;
 use std::path::PathBuf;
