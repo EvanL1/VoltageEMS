@@ -37,15 +37,11 @@ futures = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-appender = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
 serde_yml = { workspace = true }
 serde_json = { workspace = true }
-csv = { workspace = true }
-
 # JSONPath for MQTT/HTTP protocol JSON mapping
 serde_json_path = { workspace = true, optional = true }
 
@@ -67,7 +63,6 @@ axum = { workspace = true }
 utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true, optional = true }
 tower = { workspace = true }
-tower-http = { workspace = true }
 
 # Data structures
 dashmap = { workspace = true }

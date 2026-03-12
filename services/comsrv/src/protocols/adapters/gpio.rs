@@ -777,21 +777,9 @@ impl GpioPinConfig {
         }
     }
 
-    /// Set GPIO number (for sysfs driver or dual-mode configuration).
-    pub fn with_gpio_number(mut self, gpio_number: u32) -> Self {
-        self.gpio_number = Some(gpio_number);
-        self
-    }
-
     /// Set active low mode.
     pub fn with_active_low(mut self, active_low: bool) -> Self {
         self.active_low = active_low;
-        self
-    }
-
-    /// Set debounce time.
-    pub fn with_debounce(mut self, debounce_us: u64) -> Self {
-        self.debounce_us = Some(debounce_us);
         self
     }
 }
@@ -928,16 +916,6 @@ impl GpioChannel {
             output_states: AtomicBoolStore::from_pins(&output_pin_ids),
             log_ctx: LogContext::new(channel_id),
         }
-    }
-
-    /// Get the driver name.
-    pub fn driver_name(&self) -> &'static str {
-        self.driver.name()
-    }
-
-    /// Get the configured poll interval.
-    pub fn poll_interval(&self) -> Duration {
-        self.config.poll_interval
     }
 
     fn set_state(&self, state: ConnectionState) {

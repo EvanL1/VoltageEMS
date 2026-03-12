@@ -49,10 +49,6 @@ pub enum ModbusException {
     IllegalDataAddress = 0x02,
     /// Illegal data value
     IllegalDataValue = 0x03,
-    /// Server device failure
-    ServerDeviceFailure = 0x04,
-    /// Acknowledge (long operation in progress)
-    Acknowledge = 0x05,
     /// Server device busy
     ServerDeviceBusy = 0x06,
 }

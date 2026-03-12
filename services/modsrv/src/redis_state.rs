@@ -237,23 +237,6 @@ where
     Ok(removed)
 }
 
-/// Clear routing entries associated with a channel.
-///
-/// Optimized with batch deletion using `hash_del_many` to reduce Redis round-trips.
-pub async fn clear_routing_for_channel<R>(redis: &R, channel_id: &str) -> Result<usize>
-where
-    R: Rtdb,
-{
-    let prefix = format!("{}:", channel_id);
-    delete_routing_by_prefix(
-        redis,
-        RedisRoutingKeys::CHANNEL_TO_MODEL,
-        RedisRoutingKeys::MODEL_TO_CHANNEL,
-        &prefix,
-    )
-    .await
-}
-
 /// Retrieve routing table entries.
 pub async fn get_routing<R>(
     redis: &R,

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::protocols::core::point::{ByteOrder, DataFormat, ModbusAddress, PointConfig};
+use crate::protocols::core::point::{ByteOrder, DataFormat, PointConfig};
 
 // ============================================================================
 // Constants
@@ -143,20 +143,6 @@ fn default_function_code() -> u8 {
     3
 }
 
-impl ModbusMappingConfig {
-    /// Convert to ModbusAddress.
-    pub fn to_modbus_address(&self) -> ModbusAddress {
-        ModbusAddress {
-            slave_id: self.slave_id,
-            function_code: self.function_code,
-            register: self.register_address,
-            format: self.data_type,
-            byte_order: self.byte_order,
-            bit_position: self.bit_position,
-        }
-    }
-}
-
 // ============================================================================
 // ModbusChannelParamsConfig (JSON deserialization)
 // ============================================================================
@@ -216,10 +202,6 @@ fn default_max_gap_config() -> u16 {
 impl ModbusChannelParamsConfig {
     pub fn is_tcp(&self) -> bool {
         self.host.is_some()
-    }
-
-    pub fn is_rtu(&self) -> bool {
-        self.device.is_some()
     }
 
     pub fn tcp_address(&self) -> Option<String> {

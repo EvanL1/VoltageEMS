@@ -65,23 +65,6 @@ impl StateStore for MemoryStateStore {
     }
 }
 
-/// Null state store - no persistence (stateful functions will fail)
-pub struct NullStateStore;
-
-impl StateStore for NullStateStore {
-    async fn get(&self, _key: &str) -> Result<Option<Vec<u8>>> {
-        Ok(None)
-    }
-
-    async fn set(&self, _key: &str, _value: &[u8]) -> Result<()> {
-        Ok(())
-    }
-
-    async fn delete(&self, _key: &str) -> Result<()> {
-        Ok(())
-    }
-}
-
 // === Redis-backed state store for production ===
 
 use bytes::Bytes;

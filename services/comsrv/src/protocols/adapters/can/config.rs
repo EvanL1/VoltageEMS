@@ -136,29 +136,6 @@ fn default_bit_length() -> u8 {
     16
 }
 
-impl CanMappingConfig {
-    /// Convert to CanPoint.
-    pub fn to_can_point(
-        &self,
-        point_id: u32,
-        point_type: PointType,
-        scale: f64,
-        offset: f64,
-    ) -> CanPoint {
-        CanPoint {
-            point_id,
-            point_type,
-            can_id: self.can_id,
-            byte_offset: self.byte_offset,
-            bit_position: self.bit_position,
-            bit_length: self.bit_length,
-            data_type: self.data_type, // Copy, no clone needed
-            scale,
-            offset,
-        }
-    }
-}
-
 /// CAN channel parameters configuration (deserialized from parameters_json).
 ///
 /// # Example JSON
@@ -308,11 +285,6 @@ pub enum LynkCanId {
 }
 
 impl LynkCanId {
-    /// Convert to u32
-    pub fn as_u32(self) -> u32 {
-        self as u32
-    }
-
     /// Try to create from u32
     pub fn from_u32(id: u32) -> Option<Self> {
         match id {
@@ -333,21 +305,5 @@ impl LynkCanId {
     /// Check if this is a LYNK protocol CAN-ID
     pub fn is_lynk_id(id: u32) -> bool {
         Self::from_u32(id).is_some()
-    }
-
-    /// Get description
-    pub fn description(self) -> &'static str {
-        match self {
-            Self::BatteryLimits => "Battery Limits",
-            Self::BatteryCapacity => "Battery Capacity Information",
-            Self::BatteryStatus => "Battery Status",
-            Self::BatteryMeasurements => "Battery Measurements",
-            Self::BatteryAlarms => "Battery Alarms & Warnings",
-            Self::ManufacturerName => "Manufacturer Name",
-            Self::ModelNameUpper => "Model Name Upper",
-            Self::ModelNameLower => "Model Name Lower",
-            Self::FirmwareVersion => "Firmware Version",
-            Self::ProtocolVersion => "Protocol Version",
-        }
     }
 }

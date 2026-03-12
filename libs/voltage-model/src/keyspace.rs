@@ -370,42 +370,6 @@ impl KeySpaceConfig {
         format!("{}modsrv:product:{}", self.env_prefix(), product_name)
     }
 
-    /// Build product children set key: modsrv:product:{product_name}:children
-    pub fn product_children_key(&self, product_name: &str) -> String {
-        format!(
-            "{}modsrv:product:{}:children",
-            self.env_prefix(),
-            product_name
-        )
-    }
-
-    /// Build product measurements key: modsrv:product:{product_name}:measurements
-    pub fn product_measurements_key(&self, product_name: &str) -> String {
-        format!(
-            "{}modsrv:product:{}:measurements",
-            self.env_prefix(),
-            product_name
-        )
-    }
-
-    /// Build product actions key: modsrv:product:{product_name}:actions
-    pub fn product_actions_key(&self, product_name: &str) -> String {
-        format!(
-            "{}modsrv:product:{}:actions",
-            self.env_prefix(),
-            product_name
-        )
-    }
-
-    /// Build product properties key: modsrv:product:{product_name}:properties
-    pub fn product_properties_key(&self, product_name: &str) -> String {
-        format!(
-            "{}modsrv:product:{}:properties",
-            self.env_prefix(),
-            product_name
-        )
-    }
-
     /// Product index set key: modsrv:products (or test:modsrv:products)
     pub fn product_index_key(&self) -> String {
         format!("{}modsrv:products", self.env_prefix())

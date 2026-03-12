@@ -219,18 +219,6 @@ impl MqttChannel {
         }
     }
 
-    /// Set database pool for loading JSON mappings
-    pub fn with_db_pool(mut self, pool: SqlitePool) -> Self {
-        self.db_pool = Some(pool);
-        self
-    }
-
-    /// Set pre-loaded JSON mapper
-    pub fn with_mapper(mut self, mapper: Arc<JsonMapper>) -> Self {
-        self.mapper = Some(mapper);
-        self
-    }
-
     /// Load JSON mappings from database
     async fn load_mapper(&mut self) -> Result<()> {
         if self.mapper.is_some() {

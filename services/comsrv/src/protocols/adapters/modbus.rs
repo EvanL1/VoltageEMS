@@ -175,56 +175,6 @@ impl ModbusChannel {
 // ============================================================================
 
 impl ModbusChannel {
-    /// Queue an adjustment command for batched execution.
-    pub fn queue_adjustment(&mut self, adj: &AdjustmentCommand) -> Result<()> {
-        let point = self
-            .config
-            .points
-            .iter()
-            .find(|p| p.id == adj.id && p.point_type == PointType::Adjustment)
-            .ok_or_else(|| GatewayError::InvalidAddress(format!("Point {} not found", adj.id)))?;
-
-        let modbus_addr = match &point.address {
-            ProtocolAddress::Modbus(addr) => addr,
-            _ => {
-                return Err(GatewayError::InvalidAddress(
-                    "Non-Modbus address type".into(),
-                ))
-            },
-        };
-
-        let raw_value = reverse_transform(adj.value, &point.transform)?;
-
-        let batch_cmd = BatchCommand {
-            point_id: adj.id,
-            value: Value::Float(raw_value),
-            slave_id: modbus_addr.slave_id,
-            function_code: if modbus_addr.format.register_count() > 1 {
-                16
-            } else {
-                6
-            },
-            register_address: modbus_addr.register,
-            data_format: modbus_addr.format,
-            byte_order: modbus_addr.byte_order,
-        };
-
-        self.command_batcher.add_command(batch_cmd);
-        Ok(())
-    }
-
-    /// Check if pending commands should be executed, and execute if so.
-    pub async fn check_and_execute_batch(&mut self) -> Result<Option<WriteResult>> {
-        let should_execute =
-            self.command_batcher.should_execute() && self.command_batcher.pending_count() > 0;
-
-        if should_execute {
-            Ok(Some(self.execute_batched_commands().await?))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Execute all pending batched commands with FC16 optimization.
     pub async fn execute_batched_commands(&mut self) -> Result<WriteResult> {
         let batches = self.command_batcher.take_commands();

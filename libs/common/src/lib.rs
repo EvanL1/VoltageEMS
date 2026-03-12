@@ -35,7 +35,6 @@ pub use csv::{Reader, ReaderBuilder, StringRecord, Writer, WriterBuilder};
 pub use service_config::{
     // Helpers
     helpers,
-    parse_four_remote,
     // Config types
     ApiConfig,
     BaseServiceConfig,
@@ -48,7 +47,6 @@ pub use service_config::{
     FourRemote,
     GenericValidator,
     InstanceReloadResult,
-    InstanceStatus,
     LogRotationConfig,
     LoggingConfig,
     PointType,
@@ -57,7 +55,6 @@ pub use service_config::{
     RedisRoutingKeys,
     ReloadResult,
     ReloadableService,
-    ResponseStatus,
     RuleReloadResult,
     // Database types
     ServiceConfigRecord,
@@ -83,11 +80,7 @@ pub use service_config::{
 // Re-export commonly used API types
 pub use api_types::{
     // Response types
-    BatchRequest,
-    BatchResponse,
-    BatchResult,
     ComponentHealth,
-    ControlAction,
     ErrorInfo,
     ErrorResponse,
     HealthStatus,
@@ -97,7 +90,6 @@ pub use api_types::{
     SortOrder,
     SuccessResponse,
     TimeRange,
-    WebSocketMessage,
 };
 
 // Re-export AppError when axum feature is enabled

@@ -99,12 +99,6 @@ impl From<sqlx::Error> for ModelError {
     }
 }
 
-impl From<csv::Error> for ModelError {
-    fn from(err: csv::Error) -> Self {
-        ModelError::ProductParsing(err.to_string())
-    }
-}
-
 // Helper methods
 impl ModelError {
     pub fn expression(msg: impl Into<String>) -> Self {

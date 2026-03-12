@@ -20,8 +20,6 @@ voltage-model = { path = "../voltage-model" }
 voltage-schema-macro = { path = "../voltage-schema-macro" }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
-async-trait = { workspace = true }
-thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yml = { workspace = true }
@@ -55,7 +53,6 @@ sqlx = { workspace = true, optional = true }
 schemars = { version = "0.8", optional = true }
 
 [dev-dependencies]
-rand = { workspace = true }
 
 [lints]
 workspace = true

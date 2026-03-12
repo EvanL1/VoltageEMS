@@ -14,9 +14,6 @@ serde = ["dep:serde", "std"]
 schema = ["dep:schemars", "std"]
 
 [dependencies]
-# no_std compatible dependencies
-heapless.workspace = true
-
 # Optional std dependencies
 serde = { version = "1.0", features = ["derive"], optional = true }
 schemars = { version = "0.8", optional = true }

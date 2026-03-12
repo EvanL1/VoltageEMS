@@ -4,19 +4,12 @@
 //! from Redis Lua functions (queue overflow, unmapped points, etc.)
 
 use futures::StreamExt;
-use redis::{Client, Cmd, RedisResult};
+use redis::{Client, RedisResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
-
-/// Statistics Redis keys used across services
-/// Note: These are duplicated from modsrv::config::InstanceRedisKeys to avoid circular dependency
-mod stats_keys {
-    /// Warning statistics hash: `modsrv:stats:warnings`
-    pub const STATS_WARNINGS: &str = "modsrv:stats:warnings";
-}
 
 /// Queue overflow warning data
 #[derive(Debug, Serialize, Deserialize)]
@@ -163,67 +156,6 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
         "WarnMonitor stats: overflow={} high={} unmapped={}",
         s.queue_overflow_count, s.queue_high_count, s.unmapped_points_count
     );
-
-    Ok(())
-}
-
-/// Alternative: Polling-based monitor for warning statistics
-pub async fn start_stats_poller(
-    redis_url: String,
-    interval_ms: u64,
-    token: CancellationToken,
-) -> RedisResult<()> {
-    let client = Client::open(redis_url.as_str())?;
-    let mut con = client.get_multiplexed_tokio_connection().await?;
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));
-
-    info!("StatsPoller: {}ms interval", interval_ms);
-
-    let mut last_values = std::collections::HashMap::new();
-
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                // Check modsrv warnings
-                let modsrv_warnings: RedisResult<Vec<(String, i64)>> = Cmd::hgetall(stats_keys::STATS_WARNINGS)
-                    .query_async(&mut con)
-                    .await;
-
-                if let Ok(warnings) = modsrv_warnings {
-                    for (key, count) in warnings {
-                        let last = last_values.get(&key).copied().unwrap_or(0);
-                        if count > last {
-                            warn!("ModSrv {}: {} -> {}", key, last, count);
-                            last_values.insert(key, count);
-                        }
-                    }
-                }
-
-                // Check comsrv unmapped points
-                let unmapped: RedisResult<Vec<(String, i64)>> = Cmd::hgetall("comsrv:stats:unmapped_total")
-                    .query_async(&mut con)
-                    .await;
-
-                if let Ok(unmapped_points) = unmapped {
-                    for (key, count) in unmapped_points {
-                        if count > 0 {
-                            let last_key = format!("unmapped_{}", key);
-                            let last = last_values.get(&last_key).copied().unwrap_or(0);
-
-                            if count != last {
-                                debug!("Unmapped {}: {}", key, count);
-                                last_values.insert(last_key, count);
-                            }
-                        }
-                    }
-                }
-            }
-            _ = token.cancelled() => {
-                debug!("StatsPoller stopping");
-                break;
-            }
-        }
-    }
 
     Ok(())
 }

@@ -10,7 +10,6 @@ use common::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_model::PointType;
 use voltage_schema_macro::Schema;
 
 use utoipa::ToSchema;
@@ -793,19 +792,6 @@ impl RuntimeChannelConfig {
             .iter()
             .find(|p| p.base.point_id == point_id)
     }
-
-    /// Get a point's base info by type and ID
-    ///
-    /// This is the type-safe way to query a point when you have the type information.
-    /// The caller must provide the point_type to avoid cross-type search bugs.
-    pub fn get_point_by_type(&self, point_type: PointType, point_id: u32) -> Option<&Point> {
-        match point_type {
-            PointType::Telemetry => self.get_telemetry_point(point_id).map(|p| &p.base),
-            PointType::Signal => self.get_signal_point(point_id).map(|p| &p.base),
-            PointType::Control => self.get_control_point(point_id).map(|p| &p.base),
-            PointType::Adjustment => self.get_adjustment_point(point_id).map(|p| &p.base),
-        }
-    }
 }
 
 // Default value functions
@@ -1102,16 +1088,6 @@ macro_rules! impl_csv_fields {
     ($($t:ty),+) => { $(impl CsvFields for $t { fn field_names() -> Vec<String> { point_csv_fields() } })+ };
 }
 impl_csv_fields!(TelemetryPoint, SignalPoint, ControlPoint, AdjustmentPoint);
-
-impl RuntimeChannelConfig {
-    /// Get parameters as JSON string.
-    ///
-    /// This method serializes the parameters HashMap to a JSON string.
-    /// Returns None if serialization fails.
-    pub fn get_parameters_json(&self) -> Option<String> {
-        serde_json::to_string(&self.base.parameters).ok()
-    }
-}
 
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable

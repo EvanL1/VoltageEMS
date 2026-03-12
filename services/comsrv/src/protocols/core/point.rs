@@ -65,12 +65,6 @@ impl PointConfig {
         self.transform = transform;
         self
     }
-
-    #[must_use]
-    pub fn with_poll_group(mut self, group: impl Into<String>) -> Self {
-        self.poll_group = Some(group.into());
-        self
-    }
 }
 
 /// Protocol-specific address configuration.
@@ -80,7 +74,6 @@ pub enum ProtocolAddress {
     Modbus(ModbusAddress),
     Iec104(Iec104Address),
     OpcUa(OpcUaAddress),
-    Dnp3(Dnp3Address),
     Virtual(VirtualAddress),
     #[cfg(feature = "gpio")]
     Gpio(GpioAddress),
@@ -477,32 +470,10 @@ impl ModbusAddress {
         }
     }
 
-    pub fn input_register(slave_id: u8, register: u16, format: DataFormat) -> Self {
-        Self {
-            slave_id,
-            function_code: 4,
-            register,
-            format,
-            byte_order: ByteOrder::default(),
-            bit_position: None,
-        }
-    }
-
     pub fn coil(slave_id: u8, register: u16) -> Self {
         Self {
             slave_id,
             function_code: 1,
-            register,
-            format: DataFormat::Bool,
-            byte_order: ByteOrder::default(),
-            bit_position: None,
-        }
-    }
-
-    pub fn discrete_input(slave_id: u8, register: u16) -> Self {
-        Self {
-            slave_id,
-            function_code: 2,
             register,
             format: DataFormat::Bool,
             byte_order: ByteOrder::default(),
@@ -550,23 +521,6 @@ impl OpcUaAddress {
     }
 }
 
-/// DNP3 address.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Dnp3Address {
-    pub point_type: Dnp3PointType,
-    pub index: u16,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Dnp3PointType {
-    BinaryInput,
-    BinaryOutput,
-    AnalogInput,
-    AnalogOutput,
-    Counter,
-}
-
 /// Data format for protocol values (case-insensitive deserialization).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum DataFormat {
@@ -590,16 +544,6 @@ impl DataFormat {
             Self::UInt32 | Self::Int32 | Self::Float32 => 2,
             Self::UInt64 | Self::Int64 | Self::Float64 => 4,
             Self::String => 8, // Default 16 characters
-        }
-    }
-
-    pub fn byte_size(&self) -> usize {
-        match self {
-            Self::Bool => 1,
-            Self::UInt16 | Self::Int16 => 2,
-            Self::UInt32 | Self::Int32 | Self::Float32 => 4,
-            Self::UInt64 | Self::Int64 | Self::Float64 => 8,
-            Self::String => 16, // Default
         }
     }
 }

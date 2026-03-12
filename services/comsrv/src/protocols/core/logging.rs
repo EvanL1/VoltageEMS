@@ -377,20 +377,10 @@ impl LogEventType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LogVerbosity {
-    Minimal,
-    #[default]
-    Standard,
-    Verbose,
-}
-
 /// Channel logging configuration — controls which events are logged.
 #[derive(Debug, Clone)]
 pub struct ChannelLogConfig {
     enabled_events: HashSet<LogEventType>,
-    verbosity: LogVerbosity,
     log_successful_reads: bool,
     log_successful_writes: bool,
     poll_cycle_sample_rate: u32,
@@ -402,7 +392,6 @@ impl Default for ChannelLogConfig {
     fn default() -> Self {
         Self {
             enabled_events: LogEventType::default_set(),
-            verbosity: LogVerbosity::Standard,
             log_successful_reads: false,
             log_successful_writes: true,
             poll_cycle_sample_rate: 1,
@@ -420,7 +409,6 @@ impl ChannelLogConfig {
     pub fn all() -> Self {
         Self {
             enabled_events: LogEventType::all(),
-            verbosity: LogVerbosity::Verbose,
             log_successful_reads: true,
             log_successful_writes: true,
             poll_cycle_sample_rate: 1,
@@ -432,7 +420,6 @@ impl ChannelLogConfig {
     pub fn errors_only() -> Self {
         Self {
             enabled_events: LogEventType::errors_and_connections(),
-            verbosity: LogVerbosity::Standard,
             log_successful_reads: false,
             log_successful_writes: false,
             poll_cycle_sample_rate: 0,
@@ -444,7 +431,6 @@ impl ChannelLogConfig {
     pub fn disabled() -> Self {
         Self {
             enabled_events: HashSet::new(),
-            verbosity: LogVerbosity::Standard,
             log_successful_reads: false,
             log_successful_writes: false,
             poll_cycle_sample_rate: 0,
@@ -460,42 +446,6 @@ impl ChannelLogConfig {
     }
 
     #[must_use]
-    pub fn disable_event(mut self, event_type: LogEventType) -> Self {
-        self.enabled_events.remove(&event_type);
-        self
-    }
-
-    #[must_use]
-    pub fn with_events(mut self, events: HashSet<LogEventType>) -> Self {
-        self.enabled_events = events;
-        self
-    }
-
-    #[must_use]
-    pub fn with_verbosity(mut self, verbosity: LogVerbosity) -> Self {
-        self.verbosity = verbosity;
-        self
-    }
-
-    #[must_use]
-    pub fn with_successful_reads(mut self, enable: bool) -> Self {
-        self.log_successful_reads = enable;
-        self
-    }
-
-    #[must_use]
-    pub fn with_successful_writes(mut self, enable: bool) -> Self {
-        self.log_successful_writes = enable;
-        self
-    }
-
-    #[must_use]
-    pub fn with_poll_sample_rate(mut self, rate: u32) -> Self {
-        self.poll_cycle_sample_rate = rate;
-        self
-    }
-
-    #[must_use]
     pub fn with_raw_packets(mut self, enable: bool) -> Self {
         self.log_raw_packets = enable;
         if enable && !self.enabled_events.contains(&LogEventType::RawPacket) {
@@ -504,18 +454,8 @@ impl ChannelLogConfig {
         self
     }
 
-    #[must_use]
-    pub fn with_max_packet_size(mut self, size: usize) -> Self {
-        self.max_packet_size = size;
-        self
-    }
-
     pub fn is_enabled(&self, event_type: LogEventType) -> bool {
         self.enabled_events.contains(&event_type)
-    }
-
-    pub fn verbosity(&self) -> LogVerbosity {
-        self.verbosity
     }
 
     pub fn should_log_raw_packets(&self) -> bool {
@@ -743,30 +683,6 @@ impl LogContext {
             })
             .await;
         }
-    }
-
-    pub async fn log_reconnect_attempt(
-        &self,
-        attempt: u32,
-        max_attempts: Option<u32>,
-        next_retry_ms: Option<u64>,
-    ) {
-        self.log(ChannelLogEvent::ReconnectAttempt {
-            timestamp: SystemTime::now(),
-            attempt,
-            max_attempts,
-            next_retry_ms,
-        })
-        .await;
-    }
-
-    pub async fn log_reconnect_success(&self, total_attempts: u32, total_duration_ms: u64) {
-        self.log(ChannelLogEvent::ReconnectSuccess {
-            timestamp: SystemTime::now(),
-            total_attempts,
-            total_duration_ms,
-        })
-        .await;
     }
 
     /// Log a raw packet event with optional group ID for correlation.

@@ -92,26 +92,6 @@ impl<R: voltage_rtdb::Rtdb> AppState<R> {
     }
 }
 
-impl AppState<voltage_rtdb::RedisRtdb> {
-    /// Create AppState with Redis client (production use)
-    ///
-    /// # Lock-free channel_manager
-    pub fn with_redis_client(
-        channel_manager: Arc<ChannelManager<voltage_rtdb::RedisRtdb>>,
-        redis_client: Arc<common::redis::RedisClient>,
-        sqlite_pool: sqlx::SqlitePool,
-        command_tx_cache: Arc<CommandTxCache>,
-    ) -> Self {
-        let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client));
-        Self {
-            channel_manager,
-            rtdb,
-            sqlite_pool,
-            command_tx_cache,
-        }
-    }
-}
-
 /// Type alias for production AppState (uses RedisRtdb)
 pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
 

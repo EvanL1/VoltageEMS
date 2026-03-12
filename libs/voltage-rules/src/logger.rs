@@ -222,20 +222,6 @@ impl RuleLoggerManager {
         loggers.insert(rule_id_str, Arc::clone(&logger));
         logger
     }
-
-    /// Remove a logger (e.g., when rule is deleted)
-    pub fn remove_logger(&self, rule_id: i64) {
-        if let Ok(mut loggers) = self.loggers.lock() {
-            loggers.remove(&rule_id.to_string());
-        }
-    }
-
-    /// Clear all loggers
-    pub fn clear(&self) {
-        if let Ok(mut loggers) = self.loggers.lock() {
-            loggers.clear();
-        }
-    }
 }
 
 #[cfg(test)]

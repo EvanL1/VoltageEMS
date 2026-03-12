@@ -70,51 +70,6 @@ impl Quality {
         !self.is_good()
     }
 
-    /// Check if the quality indicates a connection problem.
-    #[inline]
-    pub fn is_connection_problem(&self) -> bool {
-        matches!(
-            self,
-            Self::NotConnected | Self::CommFailure | Self::LastKnown
-        )
-    }
-
-    /// Check if the quality indicates a device problem.
-    #[inline]
-    pub fn is_device_problem(&self) -> bool {
-        matches!(self, Self::DeviceFailure | Self::SensorFailure)
-    }
-
-    /// Convert to OPC UA status code (subset).
-    pub fn to_opc_status(&self) -> u32 {
-        match self {
-            Self::Good => 0x00000000,          // Good
-            Self::Bad => 0x80000000,           // Bad
-            Self::Uncertain => 0x40000000,     // Uncertain
-            Self::Invalid => 0x80010000,       // BadInvalidState
-            Self::NotConnected => 0x80080000,  // BadNotConnected
-            Self::DeviceFailure => 0x80100000, // BadDeviceFailure
-            Self::SensorFailure => 0x80110000, // BadSensorFailure
-            Self::CommFailure => 0x80130000,   // BadCommunicationError
-            Self::OutOfService => 0x80870000,  // BadOutOfService
-            Self::Substituted => 0x40920000,   // UncertainSubstituteValue
-            Self::Overflow => 0x80780000,      // BadDataEncodingInvalid (approx)
-            Self::Underflow => 0x80780000,     // BadDataEncodingInvalid (approx)
-            Self::ConfigError => 0x80890000,   // BadConfigurationError
-            Self::LastKnown => 0x408F0000,     // UncertainLastUsableValue
-        }
-    }
-
-    /// Create from OPC UA status code (simplified).
-    pub fn from_opc_status(status: u32) -> Self {
-        let severity = status & 0xC0000000;
-        match severity {
-            0x00000000 => Self::Good,
-            0x40000000 => Self::Uncertain,
-            _ => Self::Bad,
-        }
-    }
-
     /// Get a short description of this quality.
     pub fn description(&self) -> &'static str {
         match self {
@@ -156,14 +111,5 @@ mod tests {
         assert!(Quality::Good.is_good());
         assert!(!Quality::Bad.is_good());
         assert!(Quality::Bad.is_bad());
-        assert!(Quality::NotConnected.is_connection_problem());
-        assert!(Quality::DeviceFailure.is_device_problem());
-    }
-
-    #[test]
-    fn test_opc_status_conversion() {
-        assert_eq!(Quality::from_opc_status(0x00000000), Quality::Good);
-        assert_eq!(Quality::from_opc_status(0x40000000), Quality::Uncertain);
-        assert_eq!(Quality::from_opc_status(0x80000000), Quality::Bad);
     }
 }

@@ -96,12 +96,6 @@ impl ConnectionState {
     pub const fn is_connected(&self) -> bool {
         matches!(self, Self::Connected)
     }
-
-    /// Check if retry is possible.
-    #[inline]
-    pub const fn can_retry(&self) -> bool {
-        matches!(self, Self::Disconnected | Self::Error)
-    }
 }
 
 impl std::fmt::Display for ConnectionState {
@@ -142,12 +136,6 @@ pub struct ReadResponse {
 
     /// Number of points that failed to read.
     pub failed_count: usize,
-
-    /// Detailed partial read failures: (point_id, error_message).
-    ///
-    /// This allows callers to know exactly which points failed and why,
-    /// rather than just a count.
-    pub partial_errors: Vec<(u32, String)>,
 }
 
 // ReadResponse constructors are added as needed by protocol adapters.
@@ -567,8 +555,6 @@ mod tests {
     fn test_connection_state() {
         assert!(!ConnectionState::Disconnected.is_connected());
         assert!(ConnectionState::Connected.is_connected());
-        assert!(ConnectionState::Disconnected.can_retry());
-        assert!(!ConnectionState::Connecting.can_retry());
     }
 
     #[test]

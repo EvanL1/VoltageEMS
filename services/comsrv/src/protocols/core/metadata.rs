@@ -130,32 +130,6 @@ impl ProtocolRegistry {
     pub fn protocols(&self) -> &[ProtocolMetadata] {
         &self.protocols
     }
-
-    /// Get a protocol by name.
-    pub fn get_protocol(&self, name: &str) -> Option<&ProtocolMetadata> {
-        self.protocols.iter().find(|p| p.name == name)
-    }
-
-    /// Get all example configurations as (protocol_type, label, config) tuples.
-    ///
-    /// Returns owned `String` for label to avoid memory leaks from `Box::leak`.
-    pub fn get_examples(&self) -> Vec<(&'static str, String, Value)> {
-        let mut examples = Vec::new();
-        for protocol in &self.protocols {
-            for driver in &protocol.drivers {
-                let label = if driver.is_recommended {
-                    format!(
-                        "{} - {} (Recommended)",
-                        protocol.display_name, driver.display_name
-                    )
-                } else {
-                    format!("{} - {}", protocol.display_name, driver.display_name)
-                };
-                examples.push((protocol.protocol_type, label, driver.example_config.clone()));
-            }
-        }
-        examples
-    }
 }
 
 impl Default for ProtocolRegistry {
@@ -327,13 +301,5 @@ mod tests {
         let registry = get_protocol_registry();
         // Should have at least one protocol (virtual is always available)
         assert!(!registry.protocols().is_empty());
-    }
-
-    #[test]
-    fn test_get_examples() {
-        let registry = get_protocol_registry();
-        let examples = registry.get_examples();
-        // Should have at least one example
-        assert!(!examples.is_empty());
     }
 }

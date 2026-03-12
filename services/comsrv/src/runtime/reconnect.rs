@@ -3,7 +3,6 @@
 //! Provides a generic reconnection helper with exponential backoff and jitter support
 
 use rand::Rng;
-use std::future::Future;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -382,107 +381,6 @@ impl ReconnectHelper {
 
         delay
     }
-
-    /// Execute a reconnection attempt
-    pub async fn execute_reconnect<F, Fut, E>(
-        &mut self,
-        mut connect_fn: F,
-    ) -> Result<(), ReconnectError>
-    where
-        F: FnMut() -> Fut,
-        Fut: Future<Output = Result<(), E>>,
-        E: std::fmt::Display,
-    {
-        // Check if maximum retry attempts reached
-        if self.policy.max_attempts > 0 && self.context.current_attempt >= self.policy.max_attempts
-        {
-            self.context.connection_state = ReconnectState::Failed;
-            self.failed_at.get_or_insert_with(Instant::now);
-            warn!(
-                "Maximum reconnection attempts ({}) exceeded",
-                self.policy.max_attempts
-            );
-            return Err(ReconnectError::MaxAttemptsExceeded);
-        }
-
-        // Update connection state
-        self.context.connection_state = ReconnectState::Reconnecting;
-        self.context.current_attempt += 1;
-        self.stats.total_attempts += 1;
-
-        info!(
-            "Starting reconnection attempt {}/{}",
-            self.context.current_attempt,
-            if self.policy.max_attempts == 0 {
-                "∞".to_string()
-            } else {
-                self.policy.max_attempts.to_string()
-            }
-        );
-
-        // If not the first attempt, calculate and wait for delay
-        if self.context.current_attempt > 1 {
-            let delay = self.calculate_next_delay();
-            info!("Waiting {:?} before reconnection attempt", delay);
-            tokio::time::sleep(delay).await;
-        }
-
-        // Record attempt time
-        let start_time = Instant::now();
-        self.context.last_attempt = Some(start_time);
-
-        // Attempt connection
-        match connect_fn().await {
-            Ok(()) => {
-                // Connection successful
-                let reconnect_time = start_time.elapsed();
-                info!(
-                    "Reconnection successful after {:?} (attempt {})",
-                    reconnect_time, self.context.current_attempt
-                );
-
-                self.mark_connected();
-                self.stats.successful_reconnects += 1;
-
-                Ok(())
-            },
-            Err(e) => {
-                // Connection failed
-                warn!(
-                    "Reconnection attempt {} failed: {}",
-                    self.context.current_attempt, e
-                );
-
-                self.stats.failed_reconnects += 1;
-
-                // If more retry attempts available, maintain reconnecting state
-                if self.policy.max_attempts == 0
-                    || self.context.current_attempt < self.policy.max_attempts
-                {
-                    self.context.connection_state = ReconnectState::Disconnected;
-                } else {
-                    self.context.connection_state = ReconnectState::Failed;
-                    self.failed_at.get_or_insert_with(Instant::now);
-                }
-
-                Err(ReconnectError::ConnectionFailed(e.to_string()))
-            },
-        }
-    }
-
-    /// Get the next retry delay (for display purposes)
-    pub fn next_delay(&self) -> Option<Duration> {
-        if self.context.connection_state == ReconnectState::Failed {
-            return None;
-        }
-
-        if self.policy.max_attempts > 0 && self.context.current_attempt >= self.policy.max_attempts
-        {
-            return None;
-        }
-
-        Some(self.calculate_next_delay())
-    }
 }
 
 #[cfg(test)]
@@ -535,52 +433,6 @@ mod tests {
         helper.context.current_attempt = 10;
         let delay = helper.calculate_next_delay();
         assert!(delay <= Duration::from_secs(5));
-    }
-
-    #[tokio::test]
-    async fn test_max_attempts() {
-        let policy = ReconnectPolicy {
-            max_attempts: 2,
-            initial_delay: Duration::from_millis(10),
-            max_delay: Duration::from_secs(1),
-            backoff_multiplier: 2.0,
-            jitter: false,
-        };
-
-        let mut helper = ReconnectHelper::new(policy);
-
-        // Simulate a failing connection function
-        let connect_fn = || async { Err::<(), _>("Connection failed") };
-
-        // First attempt
-        let result = helper.execute_reconnect(connect_fn).await;
-        assert!(result.is_err());
-        assert_eq!(helper.context.current_attempt, 1);
-
-        // Second attempt
-        let result = helper.execute_reconnect(connect_fn).await;
-        assert!(result.is_err());
-        assert_eq!(helper.context.current_attempt, 2);
-
-        // Third attempt should fail immediately
-        let result = helper.execute_reconnect(connect_fn).await;
-        assert!(matches!(result, Err(ReconnectError::MaxAttemptsExceeded)));
-        assert_eq!(helper.context.connection_state, ReconnectState::Failed);
-    }
-
-    #[tokio::test]
-    async fn test_successful_reconnect() {
-        let policy = ReconnectPolicy::default();
-        let mut helper = ReconnectHelper::new(policy);
-
-        // Simulate a successful connection function
-        let connect_fn = || async { Ok::<(), &str>(()) };
-
-        let result = helper.execute_reconnect(connect_fn).await;
-        assert!(result.is_ok());
-        assert_eq!(helper.context.connection_state, ReconnectState::Connected);
-        assert_eq!(helper.context.current_attempt, 0);
-        assert_eq!(helper.stats.successful_reconnects, 1);
     }
 
     #[tokio::test]

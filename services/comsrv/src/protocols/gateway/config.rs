@@ -165,13 +165,6 @@ fn default_point_type() -> PointType {
     PointType::Telemetry
 }
 
-impl GatewayConfig {
-    /// Get enabled channels only.
-    pub fn enabled_channels(&self) -> impl Iterator<Item = &ChannelConfig> {
-        self.channels.iter().filter(|c| c.enabled)
-    }
-}
-
 /// Configuration error.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

@@ -912,73 +912,6 @@ impl Default for InstanceStatus {
     }
 }
 
-/// API Response status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-pub enum ResponseStatus {
-    /// Request succeeded
-    Success,
-    /// Request failed with error
-    Error,
-    /// Request is pending/processing
-    Pending,
-    /// Request partially succeeded
-    Partial,
-    /// Request timed out
-    Timeout,
-}
-
-impl ResponseStatus {
-    /// Convert to string representation
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Success => "success",
-            Self::Error => "error",
-            Self::Pending => "pending",
-            Self::Partial => "partial",
-            Self::Timeout => "timeout",
-        }
-    }
-
-    /// Check if response indicates success (success or partial)
-    pub fn is_ok(&self) -> bool {
-        matches!(self, Self::Success | Self::Partial)
-    }
-
-    /// Check if response indicates failure (error or timeout)
-    pub fn is_err(&self) -> bool {
-        matches!(self, Self::Error | Self::Timeout)
-    }
-}
-
-impl FromStr for ResponseStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "success" | "ok" | "succeeded" => Ok(Self::Success),
-            "error" | "err" | "failed" => Ok(Self::Error),
-            "pending" | "processing" | "running" => Ok(Self::Pending),
-            "partial" | "incomplete" => Ok(Self::Partial),
-            "timeout" | "timed_out" => Ok(Self::Timeout),
-            _ => Err(format!("Unknown response status: {}", s)),
-        }
-    }
-}
-
-impl fmt::Display for ResponseStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for ResponseStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
-}
-
 /// Comparison operator for rules engine
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
@@ -1114,11 +1047,6 @@ impl Default for ComparisonOperator {
 ///
 /// **Prefer using `PointType` for new code.**
 pub type FourRemote = PointType;
-
-/// Helper to convert database string to FourRemote/PointType
-pub fn parse_four_remote(s: &str) -> Result<PointType, String> {
-    s.parse().map_err(|e| format!("{e}"))
-}
 
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable

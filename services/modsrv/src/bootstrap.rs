@@ -3,8 +3,7 @@
 //! Handles all service initialization including logging, configuration,
 //! database connections, and component setup.
 
-#[allow(unused_imports)] // Used at runtime but not in tests
-use crate::config::{ModsrvConfig, ModsrvQueries};
+use crate::config::ModsrvConfig;
 use common::bootstrap_args::ServiceArgs;
 use common::bootstrap_database::{setup_redis_connection, setup_sqlite_pool};
 use common::bootstrap_system::{check_system_requirements_with, SystemRequirements};
@@ -296,7 +295,7 @@ pub async fn setup_instance_manager(
     ));
 
     // Instances loaded by monarch (may be empty on first startup)
-    let instance_count: i64 = sqlx::query_scalar(ModsrvQueries::COUNT_INSTANCES)
+    let instance_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM instances")
         .fetch_one(sqlite_pool)
         .await
         .unwrap_or(0);

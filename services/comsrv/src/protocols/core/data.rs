@@ -226,13 +226,6 @@ impl DataPoint {
         self.quality = quality;
         self
     }
-
-    /// Set the source timestamp.
-    #[must_use]
-    pub fn with_source_timestamp(mut self, ts: DateTime<Utc>) -> Self {
-        self.source_timestamp = Some(ts);
-        self
-    }
 }
 
 /// A batch of data points.
@@ -295,11 +288,6 @@ impl DataBatch {
     /// Get mutable iterator over all points.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut DataPoint> {
         self.points.iter_mut()
-    }
-
-    /// Consume the batch and return the underlying vector.
-    pub fn into_vec(self) -> Vec<DataPoint> {
-        self.points
     }
 }
 

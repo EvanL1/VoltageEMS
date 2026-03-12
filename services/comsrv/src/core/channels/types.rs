@@ -230,17 +230,6 @@ impl ProtocolValue {
             }
         })
     }
-
-    /// Convert to u32 with bounds checking
-    pub fn as_u32(&self) -> Option<u32> {
-        self.as_i64().and_then(|i| {
-            if i >= 0 && i <= u32::MAX as i64 {
-                Some(i as u32)
-            } else {
-                None
-            }
-        })
-    }
 }
 
 // ============================================================================
@@ -537,9 +526,5 @@ mod tests {
 
         let v = ProtocolValue::from(-1i64);
         assert_eq!(v.as_u16(), None); // negative
-        assert_eq!(v.as_u32(), None); // negative
-
-        let v = ProtocolValue::from(u32::MAX as i64);
-        assert_eq!(v.as_u32(), Some(u32::MAX));
     }
 }

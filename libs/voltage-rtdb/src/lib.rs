@@ -156,40 +156,6 @@ pub mod helpers {
         count
     }
 
-    /// Write a single point to channel Hash (all point types unified)
-    pub async fn write_point_auto_trigger<R>(
-        rtdb: &R,
-        config: &KeySpaceConfig,
-        channel_id: u32,
-        point_type: PointType,
-        point_id: u32,
-        value: f64,
-        timestamp_ms: Option<i64>,
-    ) -> Result<i64>
-    where
-        R: Rtdb,
-    {
-        let timestamp_ms = timestamp_ms.unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(0)
-        });
-
-        write_channel_hash_only(
-            rtdb,
-            config,
-            channel_id,
-            point_type,
-            point_id,
-            value,
-            timestamp_ms,
-        )
-        .await?;
-
-        Ok(timestamp_ms)
-    }
-
     /// Write channel point to Hash only (no M2C notification trigger)
     pub async fn write_channel_hash_only<R>(
         rtdb: &R,

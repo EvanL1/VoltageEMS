@@ -31,15 +31,11 @@ thiserror = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
-# Parsing (for error conversion compatibility)
-csv = { workspace = true }
-
 # Database
 sqlx = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true

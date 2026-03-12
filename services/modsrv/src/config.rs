@@ -467,59 +467,6 @@ pub type ModsrvValidator = common::GenericValidator<ModsrvConfig>;
 // Note: Redis keys are now managed by voltage_model::KeySpaceConfig
 // See libs/voltage-model/src/keyspace.rs for all Redis key generation methods
 
-/// Centralized SQL queries for modsrv
-///
-/// Provides all SQL queries used by the model service for managing
-/// products, instances, and point mappings.
-pub struct ModsrvQueries;
-
-impl ModsrvQueries {
-    /// Check if an instance exists by ID
-    pub const CHECK_INSTANCE_EXISTS: &'static str =
-        "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_id = ?)";
-
-    /// Check if an instance exists by name
-    pub const CHECK_INSTANCE_NAME_EXISTS: &'static str =
-        "SELECT EXISTS(SELECT 1 FROM instances WHERE instance_name = ?)";
-
-    /// Count all instances
-    pub const COUNT_INSTANCES: &'static str = "SELECT COUNT(*) FROM instances";
-
-    /// Load all instances
-    pub const LOAD_ALL_INSTANCES: &'static str = r#"
-        SELECT
-            instance_id,
-            instance_name,
-            product_name,
-            parent_id,
-            properties
-        FROM instances
-    "#;
-
-    /// Load instance by ID
-    pub const LOAD_INSTANCE_BY_ID: &'static str = r#"
-        SELECT
-            instance_id,
-            instance_name,
-            product_name,
-            parent_id,
-            properties
-        FROM instances
-        WHERE instance_id = ?
-    "#;
-}
-
-/// Database table names for modsrv
-pub struct TableNames;
-
-impl TableNames {
-    pub const INSTANCES: &'static str = "instances";
-    pub const MEASUREMENT_ROUTING: &'static str = "measurement_routing";
-    pub const ACTION_ROUTING: &'static str = "action_routing";
-    pub const SERVICE_CONFIG: &'static str = "service_config";
-    pub const SYNC_METADATA: &'static str = "sync_metadata";
-}
-
 // ============================================================================
 // Rules Configuration Types (for YAML config export/import)
 // ============================================================================

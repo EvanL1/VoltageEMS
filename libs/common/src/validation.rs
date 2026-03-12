@@ -118,31 +118,4 @@ impl CsvHeaderValidator {
             warnings,
         })
     }
-
-    /// Validate multiple CSV files at once
-    ///
-    /// Returns aggregated validation result
-    pub fn validate_multiple<T>(csv_paths: &[&Path]) -> anyhow::Result<ValidationResult>
-    where
-        T: CsvFields,
-    {
-        let mut aggregated = ValidationResult {
-            is_valid: true,
-            level: ValidationLevel::Schema,
-            errors: Vec::new(),
-            warnings: Vec::new(),
-        };
-
-        for path in csv_paths {
-            let result = Self::validate_csv_header::<T>(path)?;
-            aggregated.errors.extend(result.errors);
-            aggregated.warnings.extend(result.warnings);
-
-            if !result.is_valid {
-                aggregated.is_valid = false;
-            }
-        }
-
-        Ok(aggregated)
-    }
 }

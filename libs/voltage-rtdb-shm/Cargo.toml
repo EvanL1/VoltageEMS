@@ -12,7 +12,6 @@ voltage-model = { path = "../voltage-model" }
 voltage-rtdb = { path = "../voltage-rtdb" }
 voltage-routing = { path = "../voltage-routing" }
 bytes = { workspace = true }
-parking_lot = { workspace = true }
 bytemuck = { workspace = true }
 rustc-hash = { workspace = true }
 anyhow = { workspace = true }

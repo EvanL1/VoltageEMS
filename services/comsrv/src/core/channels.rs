@@ -41,8 +41,3 @@ pub use factory::create_gpio_channel;
 pub use factory::create_virtual_channel;
 #[cfg(feature = "modbus")]
 pub use factory::{create_modbus_channel, create_modbus_rtu_channel};
-
-/// Initialize channels module
-pub fn init_channels() {
-    tracing::info!("Channels module initialized");
-}

@@ -90,26 +90,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         }
     }
 
-    /// Create channel manager with SQLite pool
-    pub fn with_sqlite_pool(
-        rtdb: Arc<R>,
-        routing_cache: Arc<voltage_routing::RoutingCache>,
-        sqlite_pool: sqlx::SqlitePool,
-    ) -> Self {
-        Self {
-            channels: Self::create_channel_slots(),
-            active_channel_ids: DashSet::new(),
-            rtdb,
-            routing_cache,
-            sqlite_pool: Some(sqlite_pool),
-            shm_handle: None,
-            command_tx_cache: None,
-            dynamic_channel_index: None,
-            slot_bitmap: None,
-            shm_listener: None,
-        }
-    }
-
     /// Create channel manager with shared memory support
     pub fn with_shared_memory(
         rtdb: Arc<R>,
@@ -169,11 +149,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     /// Get dynamic ChannelIndex (for external access, e.g., API stats)
     pub fn dynamic_channel_index(&self) -> Option<&Arc<ChannelIndex>> {
         self.dynamic_channel_index.as_ref()
-    }
-
-    /// Get SlotBitmap stats (for monitoring)
-    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
-        self.slot_bitmap.as_ref().map(|b| b.read().stats())
     }
 
     // ========================================================================
@@ -294,12 +269,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         self.channels.get(channel_id as usize)?.load_full()
     }
 
-    /// Alias for get_channel (for backwards compatibility)
-    #[inline]
-    pub fn get_channel_entry(&self, channel_id: u32) -> Option<Arc<ChannelEntry<R>>> {
-        self.get_channel(channel_id)
-    }
-
     /// Get channel IDs (O(n) where n = active channels)
     pub fn get_channel_ids(&self) -> Vec<u32> {
         self.active_channel_ids.iter().map(|id| *id).collect()
@@ -338,12 +307,6 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                     format!("{:?}", entry.metadata.protocol_type),
                 )
             })
-    }
-
-    /// Get channel stats
-    pub async fn get_channel_stats(&self, channel_id: u32) -> Option<ChannelStats> {
-        let entry = self.channels.get(channel_id as usize)?.load_full()?;
-        Some(entry.get_stats(channel_id).await)
     }
 
     /// Get all channel stats (O(n) where n = active channels)

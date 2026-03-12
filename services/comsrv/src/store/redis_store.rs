@@ -25,12 +25,12 @@ use dashmap::DashMap;
 use tokio::sync::{Notify, RwLock};
 use tracing::{debug, trace, warn};
 
-use crate::protocols::core::data::{DataBatch, DataPoint};
+use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::error::Result as ProtocolResult;
 use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{DataEvent, DataEventReceiver, DataEventSender};
 
-use voltage_model::{KeySpaceConfig, PointType};
+use voltage_model::KeySpaceConfig;
 use voltage_routing::{ChannelPointUpdate, RoutingCache};
 use voltage_rtdb::{Bytes, Rtdb, WriteBuffer, WriteBufferConfig};
 use voltage_rtdb_shm::ShmHandle;
@@ -288,82 +288,6 @@ impl<R: Rtdb> RedisDataStore<R> {
         Ok(())
     }
 
-    /// Read a single point from Redis.
-    ///
-    /// Tries all point types until a value is found.
-    pub async fn read_point(
-        &self,
-        channel_id: u32,
-        point_id: u32,
-    ) -> ProtocolResult<Option<DataPoint>> {
-        // Convert point_id on the stack (zero heap allocation)
-        let mut ibuf = itoa::Buffer::new();
-        let point_id_str = ibuf.format(point_id);
-
-        // Try to read from each point type
-        for point_type in [
-            PointType::Telemetry,
-            PointType::Signal,
-            PointType::Control,
-            PointType::Adjustment,
-        ] {
-            let key = self.key_config.channel_key(channel_id, point_type);
-
-            if let Ok(Some(value_bytes)) = self.rtdb.hash_get(&key, point_id_str).await {
-                let value_str = String::from_utf8_lossy(&value_bytes);
-                if let Ok(value) = value_str.parse::<f64>() {
-                    return Ok(Some(DataPoint::new(point_id, point_type, value)));
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Read all points for a channel from Redis.
-    ///
-    /// Uses `tokio::join!` to parallelize 4 hash_get_all calls (one per PointType),
-    /// reducing latency from 4 sequential RTTs to 1 concurrent RTT.
-    pub async fn read_all(&self, channel_id: u32) -> ProtocolResult<DataBatch> {
-        let mut batch = DataBatch::default();
-
-        let key_t = self
-            .key_config
-            .channel_key(channel_id, PointType::Telemetry);
-        let key_s = self.key_config.channel_key(channel_id, PointType::Signal);
-        let key_c = self.key_config.channel_key(channel_id, PointType::Control);
-        let key_a = self
-            .key_config
-            .channel_key(channel_id, PointType::Adjustment);
-
-        let (r_t, r_s, r_c, r_a) = tokio::join!(
-            self.rtdb.hash_get_all(&key_t),
-            self.rtdb.hash_get_all(&key_s),
-            self.rtdb.hash_get_all(&key_c),
-            self.rtdb.hash_get_all(&key_a),
-        );
-
-        for (point_type, result) in [
-            (PointType::Telemetry, r_t),
-            (PointType::Signal, r_s),
-            (PointType::Control, r_c),
-            (PointType::Adjustment, r_a),
-        ] {
-            if let Ok(values) = result {
-                for (point_id_str, value_bytes) in values {
-                    let value_str = String::from_utf8_lossy(&value_bytes);
-                    if let (Ok(point_id), Ok(value)) =
-                        (point_id_str.parse::<u32>(), value_str.parse::<f64>())
-                    {
-                        batch.add(DataPoint::new(point_id, point_type, value));
-                    }
-                }
-            }
-        }
-
-        Ok(batch)
-    }
-
     /// Subscribe to data events.
     ///
     /// Returns a new receiver from the shared broadcast channel.
@@ -373,44 +297,9 @@ impl<R: Rtdb> RedisDataStore<R> {
         self.event_sender.subscribe()
     }
 
-    /// Get a specific point configuration.
-    pub fn get_point_config(&self, channel_id: u32, point_id: u32) -> Option<PointConfig> {
-        self.point_configs
-            .get(&channel_id)
-            .and_then(|configs| configs.value().iter().find(|c| c.id == point_id).cloned())
-    }
-
     /// Set point configurations for a channel.
     pub fn set_point_configs(&self, channel_id: u32, configs: Vec<PointConfig>) {
         self.point_configs.insert(channel_id, Arc::new(configs));
-    }
-
-    /// Get all point configurations for a channel (O(1) Arc clone instead of Vec clone).
-    pub fn get_all_point_configs(&self, channel_id: u32) -> Arc<Vec<PointConfig>> {
-        self.point_configs
-            .get(&channel_id)
-            .map(|c| Arc::clone(c.value()))
-            .unwrap_or_default()
-    }
-
-    /// Clear all data for a channel.
-    pub async fn clear_channel(&self, channel_id: u32) -> ProtocolResult<()> {
-        // Clear all point types for this channel
-        for point_type in [
-            PointType::Telemetry,
-            PointType::Signal,
-            PointType::Control,
-            PointType::Adjustment,
-        ] {
-            let key = self.key_config.channel_key(channel_id, point_type);
-            // Ignore: best-effort cleanup — channel is being removed, stale keys are harmless
-            let _ = self.rtdb.del(&key).await;
-        }
-
-        // Clear configs
-        self.point_configs.remove(&channel_id);
-
-        Ok(())
     }
 
     /// Publish channel online status to Redis hash.
@@ -424,14 +313,6 @@ impl<R: Rtdb> RedisDataStore<R> {
             .await
         {
             warn!("Ch{} failed to publish online status: {}", channel_id, e);
-        }
-    }
-
-    /// Remove channel online status from Redis hash (cleanup on channel removal).
-    pub async fn clear_channel_online(&self, channel_id: u32) {
-        let key = self.key_config.channel_online_key();
-        if let Err(e) = self.rtdb.hash_del(&key, &channel_id.to_string()).await {
-            warn!("Ch{} failed to clear online status: {}", channel_id, e);
         }
     }
 }
@@ -464,6 +345,8 @@ impl<R: Rtdb> Drop for RedisDataStore<R> {
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
+    use crate::protocols::core::data::DataPoint;
+    use voltage_model::PointType;
     use voltage_rtdb::helpers::create_test_rtdb;
 
     #[tokio::test]
@@ -511,31 +394,5 @@ mod tests {
         assert_eq!(updates[1].point_type, PointType::Control);
         assert_eq!(updates[1].point_id, 1);
         assert_eq!(updates[1].value, 0.0);
-    }
-
-    #[tokio::test]
-    async fn test_point_configs() {
-        let rtdb = create_test_rtdb();
-        let routing_cache = Arc::new(RoutingCache::new());
-
-        let store = RedisDataStore::new(rtdb, routing_cache);
-
-        // Set configs using explicit point_type
-        let configs = vec![PointConfig::telemetry(
-            1,
-            crate::protocols::core::point::ProtocolAddress::Generic("test".to_string()),
-        )];
-        store.set_point_configs(9902, configs);
-
-        // Get config by point_id
-        let config = store.get_point_config(9902, 1);
-        assert!(config.is_some());
-        let cfg = config.unwrap();
-        assert_eq!(cfg.id, 1);
-        assert_eq!(cfg.point_type, PointType::Telemetry);
-
-        // Get all configs
-        let all = store.get_all_point_configs(9902);
-        assert_eq!(all.len(), 1);
     }
 }

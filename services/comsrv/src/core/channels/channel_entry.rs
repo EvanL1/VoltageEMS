@@ -257,12 +257,6 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         super::types::ConnectionState::from_u8(state_u8).is_connected()
     }
 
-    /// Get cached connection state (non-blocking).
-    pub fn get_cached_connection_state(&self) -> super::types::ConnectionState {
-        let state_u8 = self.cached_connection_state.load(Ordering::Relaxed);
-        super::types::ConnectionState::from_u8(state_u8)
-    }
-
     /// Get channel status.
     pub async fn get_status(&self) -> super::types::ChannelStatus {
         super::types::ChannelStatus {

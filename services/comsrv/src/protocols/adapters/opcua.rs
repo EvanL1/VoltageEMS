@@ -303,12 +303,6 @@ impl OpcUaChannelConfig {
         self
     }
 
-    /// Set application URI.
-    pub fn with_application_uri(mut self, uri: impl Into<String>) -> Self {
-        self.application_uri = uri.into();
-        self
-    }
-
     /// Set security policy and message security mode.
     pub fn with_security(
         mut self,
@@ -317,12 +311,6 @@ impl OpcUaChannelConfig {
     ) -> Self {
         self.security_policy = policy;
         self.message_security_mode = mode;
-        self
-    }
-
-    /// Set anonymous identity.
-    pub fn with_anonymous_identity(mut self) -> Self {
-        self.identity = OpcUaIdentity::Anonymous;
         self
     }
 
@@ -351,12 +339,6 @@ impl OpcUaChannelConfig {
         self
     }
 
-    /// Set request timeout.
-    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
-        self.request_timeout = timeout;
-        self
-    }
-
     /// Set subscription configuration.
     pub fn with_subscription(mut self, config: SubscriptionConfig) -> Self {
         self.subscription = config;
@@ -372,12 +354,6 @@ impl OpcUaChannelConfig {
     /// Set whether to trust server certificates.
     pub fn with_trust_server_certs(mut self, trust: bool) -> Self {
         self.trust_server_certs = trust;
-        self
-    }
-
-    /// Set PKI directory.
-    pub fn with_pki_dir(mut self, dir: impl Into<String>) -> Self {
-        self.pki_dir = Some(dir.into());
         self
     }
 
@@ -408,24 +384,6 @@ impl OpcUaChannelConfig {
         }
         self.points = points;
         self
-    }
-
-    /// Find point_id by NodeID string.
-    pub fn find_point_id(&self, namespace_index: u16, identifier: &str) -> Option<u32> {
-        // Parse identifier type and lookup in appropriate map
-        if let Some(num_str) = identifier.strip_prefix("i=") {
-            if let Ok(num) = num_str.parse::<u32>() {
-                return self.numeric_mapping.get(&(namespace_index, num)).copied();
-            }
-        } else if let Some(s) = identifier.strip_prefix("s=") {
-            return self
-                .string_mapping
-                .get(&(namespace_index, s.to_string()))
-                .copied();
-        }
-        // Fallback to other_mapping for guid/bytestring
-        let key = make_node_id_key(namespace_index, identifier);
-        self.other_mapping.get(&key).copied()
     }
 
     /// Find point config by ID (O(1) lookup).

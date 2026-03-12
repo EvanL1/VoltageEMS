@@ -188,20 +188,6 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         Ok(())
     }
 
-    /// Sync a single instance to Redis using pending transaction data.
-    ///
-    /// Reads instance metadata and point routings using the provided transaction
-    /// so the uncommitted state becomes visible to Redis when we upsert.
-    pub async fn sync_instance_to_redis_with_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        instance_name: &str,
-        properties: &HashMap<String, serde_json::Value>,
-    ) -> Result<()> {
-        self.load_and_sync_instance(tx.as_mut(), instance_name, properties)
-            .await
-    }
-
     /// Sync instance to Redis without transaction (for error recovery)
     ///
     /// Reads from committed database data and syncs to Redis.

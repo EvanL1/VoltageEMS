@@ -69,9 +69,4 @@ impl AppState {
         self.instance_manager
             .update_name_cache(instance_name, instance_id);
     }
-
-    /// Remove entry from cache (called on instance delete)
-    pub fn remove_from_cache(&self, instance_name: &str) {
-        self.instance_manager.remove_from_name_cache(instance_name);
-    }
 }

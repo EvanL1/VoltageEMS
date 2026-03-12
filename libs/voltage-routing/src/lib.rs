@@ -21,10 +21,7 @@ pub use batch::{
 pub use loader::{load_routing_maps, RoutingMaps};
 
 // Re-export RoutingCache types (canonical location: voltage-routing)
-pub use routing_cache::{
-    C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats, StructuredM2CKey,
-    StructuredRouteKey,
-};
+pub use routing_cache::{C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats};
 
 use anyhow::{Context, Result};
 use voltage_model::{validate_value, PointType, ValidationConfig};
