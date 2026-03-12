@@ -313,18 +313,6 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Start warning monitor for real-time alerts
-    let warning_redis_url = state.config.redis.url.clone();
-    let warning_token = shutdown_token.clone();
-    let warning_handle = tokio::spawn(async move {
-        if let Err(e) =
-            common::warning_monitor::start_warning_monitor(warning_redis_url, warning_token).await
-        {
-            error!("Warning monitor error: {}", e);
-        }
-    });
-    info!("Warning monitor started");
-
     // Spawn server task
     let server_handle = tokio::spawn(server_task);
     info!("Server started (port {})", state.config.api.port);
@@ -368,10 +356,6 @@ async fn main() -> Result<()> {
             error!("Scheduler shutdown timed out");
         },
     }
-
-    // Abort warning monitor if still running
-    warning_handle.abort();
-    let _ = warning_handle.await; // Ignore abort error
 
     info!("Model Service (with Rule Engine) shutdown complete");
     Ok(())

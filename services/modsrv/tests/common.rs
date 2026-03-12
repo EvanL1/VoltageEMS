@@ -92,24 +92,6 @@ impl TestEnv {
 async fn init_test_schema(pool: &SqlitePool) -> Result<()> {
     common::test_utils::schema::init_modsrv_schema(pool).await?;
 
-    // Test-specific tables (not in standard schema)
-    // Instance point routings table (deprecated, may be removed in future)
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS instance_point_routings (
-            routing_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            instance_id INTEGER NOT NULL,
-            point_type TEXT NOT NULL CHECK(point_type IN ('M', 'V', 'A')),
-            point_id INTEGER NOT NULL,
-            redis_key TEXT NOT NULL,
-            FOREIGN KEY (instance_id) REFERENCES instances(instance_id),
-            UNIQUE(instance_id, point_type, point_id)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await?;
-
     // Calculations table (test-specific feature)
     sqlx::query(
         r#"
@@ -196,9 +178,6 @@ pub mod helpers {
 
     /// Clean up test data
     pub async fn cleanup_test_data(pool: &SqlitePool) -> Result<()> {
-        sqlx::query("DELETE FROM instance_point_routings")
-            .execute(pool)
-            .await?;
         sqlx::query("DELETE FROM measurement_routing")
             .execute(pool)
             .await?;
@@ -206,8 +185,6 @@ pub mod helpers {
             .execute(pool)
             .await?;
         sqlx::query("DELETE FROM instances").execute(pool).await?;
-        // Note: measurement_points, action_points, property_templates, products
-        // tables no longer exist - product definitions are compile-time constants
         Ok(())
     }
 }

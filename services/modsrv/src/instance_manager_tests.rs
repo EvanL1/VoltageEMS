@@ -25,10 +25,6 @@ async fn create_test_database() -> (TempDir, SqlitePool) {
     (temp_dir, pool)
 }
 
-// Note: create_test_product has been removed.
-// Products are now compile-time built-in constants from voltage-model crate.
-// Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
-
 // Helper: Create test ProductLoader
 fn create_test_product_loader(pool: SqlitePool) -> Arc<ProductLoader> {
     Arc::new(crate::product_loader::ProductLoader::new(pool))

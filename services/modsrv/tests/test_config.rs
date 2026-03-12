@@ -342,9 +342,6 @@ fn test_action_routing_table_sql_not_empty() {
     assert!(sql.contains("action_routing"));
 }
 
-// Note: measurement_points, action_points, property_templates table tests removed.
-// These tables are no longer defined - product definitions are compile-time constants.
-
 // ============================================================================
 // Edge Cases and Error Handling
 // ============================================================================

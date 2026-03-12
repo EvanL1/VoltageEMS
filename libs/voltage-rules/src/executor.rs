@@ -271,10 +271,7 @@ pub struct ConditionResult {
 
 /// Rule executor
 ///
-/// # Two-tier Architecture
-/// Removed VecRtdb (L2 cache). Now using:
-/// 1. SharedMemory (~5μs) - cross-process mmap
-/// 2. Redis (~1ms) - remote fallback
+/// Uses SharedMemory (~5μs, cross-process mmap) with Redis (~1ms) as remote fallback.
 pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     rtdb: Arc<R>,
     routing_cache: Arc<RoutingCache>,

@@ -130,6 +130,3 @@ pub async fn get_product_points(
         ))),
     }
 }
-
-// Note: create_product() has been removed.
-// Products are compile-time constants and cannot be created via API.

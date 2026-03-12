@@ -638,8 +638,3 @@ pub async fn validate_instance_routing(
         "validations": results
     }))))
 }
-
-// NOTE: The following handlers have been removed as they are now replaced by global routing APIs:
-// - clear_routing_handler → use delete_all_routing_handler in global_routing_handlers.rs
-// - clear_routing_for_instance_handler → use delete_instance_routing_handler in global_routing_handlers.rs
-// - clear_routing_for_channel_handler → use delete_channel_routing_handler in global_routing_handlers.rs

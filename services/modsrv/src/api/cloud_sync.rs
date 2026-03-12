@@ -2,9 +2,6 @@
 //!
 //! Endpoints for cloud-edge synchronization:
 //! - GET /api/instances/export - Export instance topology to cloud
-//!
-//! Note: POST /api/products/sync has been removed.
-//! Products are now compile-time constants.
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
@@ -106,6 +103,3 @@ pub async fn export_instances(
         instances,
     })))
 }
-
-// Note: sync_products() has been removed.
-// Products are now compile-time constants and cannot be synced from cloud.

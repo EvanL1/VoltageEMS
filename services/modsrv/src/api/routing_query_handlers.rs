@@ -188,6 +188,3 @@ pub async fn get_routing_table_handler(
         ))),
     }
 }
-
-// NOTE: get_channel_routing_handler has been removed as it is now replaced by:
-// - get_routing_by_channel_handler in global_routing_handlers.rs

@@ -42,10 +42,6 @@ async fn create_test_instance_manager(env: &TestEnv) -> InstanceManager<MemoryRt
     )
 }
 
-// Note: setup_test_product has been removed.
-// Products are now compile-time built-in constants from voltage-model crate.
-// Use built-in product names like "Battery", "PCS", "ESS", "Station", etc.
-
 /// Setup standard hierarchy for tests: Station(9901) -> ESS(9902)
 /// Returns ESS instance_id (9902) as parent for Battery/PCS instances
 async fn setup_hierarchy(manager: &InstanceManager<MemoryRtdb>) -> u32 {
@@ -604,8 +600,6 @@ async fn test_batch_delete_instances() {
 // ============================================================================
 // Edge Cases Tests
 // ============================================================================
-
-// get_next_instance_id tests removed — TOCTOU fix: DB auto-assigns IDs via last_insert_rowid()
 
 #[tokio::test]
 #[ignore] // requires Redis

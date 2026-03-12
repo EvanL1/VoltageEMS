@@ -243,7 +243,6 @@ where
 /// Write channel points to buffer (Redis only)
 ///
 /// Uses precomputed point ID pool and ryu for zero-allocation formatting.
-/// Removed VecRtdb - using SharedMemory + Redis two-tier architecture.
 /// Includes C2C cycle detection to prevent A→B→A routing loops.
 ///
 /// # Arguments
@@ -361,7 +360,6 @@ fn write_channel_batch_buffered_impl(
             }
         }
 
-        // Removed VecRtdb - write directly to WriteBuffer for Redis
         let channel_key = config.channel_key(channel_id, point_type);
 
         // Buffer 3-layer channel data to WriteBuffer (for Redis)

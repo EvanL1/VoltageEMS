@@ -4,7 +4,7 @@
 //! control-plane read/write for instances/products, keeping business
 //! logic and type safety directly in Rust.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use common::RedisRoutingKeys;
 use serde_json::{Map, Value};
@@ -13,7 +13,7 @@ use std::fmt;
 use voltage_model::KeySpaceConfig;
 use voltage_rtdb::{Rtdb, SystemTimeProvider, TimeProvider};
 
-use crate::product_loader::{ActionPoint, MeasurementPoint, Product};
+use crate::product_loader::{ActionPoint, MeasurementPoint};
 
 /// Routing map entries used to populate Redis hashes.
 #[derive(Debug, Clone)]
@@ -275,96 +275,6 @@ where
     }
 
     Ok(mappings)
-}
-
-/// Write product metadata to Redis, replacing the previous
-/// Lua `modsrv_upsert_product` implementation.
-#[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
-pub async fn upsert_product<R>(redis: &R, product: &Product) -> Result<()>
-where
-    R: Rtdb,
-{
-    let keyspace = KeySpaceConfig::production_cached();
-    let product_key = keyspace.product_key(&product.product_name);
-    let now_ms = SystemTimeProvider.now_millis();
-    let product_json = serde_json::to_string(product)?;
-
-    let fields: Vec<(String, Bytes)> = vec![
-        ("definition".to_string(), Bytes::from(product_json)),
-        ("updated_at".to_string(), Bytes::from(now_ms.to_string())),
-    ];
-    redis.hash_mset(&product_key, fields).await?;
-
-    let product_index = keyspace.product_index_key();
-    redis.sadd(&product_index, &product.product_name).await?;
-
-    if let Some(parent) = &product.parent_name {
-        let parent_key = keyspace.product_children_key(parent);
-        redis.sadd(&parent_key, &product.product_name).await?;
-    }
-
-    write_definitions(
-        redis,
-        &keyspace.product_measurements_key(&product.product_name),
-        &product.measurements,
-        |p| {
-            (
-                p.measurement_id.to_string(),
-                format!("measurement point {}", p.measurement_id),
-            )
-        },
-    )
-    .await?;
-
-    write_definitions(
-        redis,
-        &keyspace.product_actions_key(&product.product_name),
-        &product.actions,
-        |a| {
-            (
-                a.action_id.to_string(),
-                format!("action point {}", a.action_id),
-            )
-        },
-    )
-    .await?;
-
-    write_definitions(
-        redis,
-        &keyspace.product_properties_key(&product.product_name),
-        &product.properties,
-        |p| (p.name.clone(), format!("property template {}", p.name)),
-    )
-    .await?;
-
-    Ok(())
-}
-
-/// Write serializable items to a Redis hash, replacing existing entries.
-///
-/// Unified helper for writing measurement/action/property definitions.
-async fn write_definitions<R, T, F>(redis: &R, key: &str, items: &[T], entry_fn: F) -> Result<()>
-where
-    R: Rtdb,
-    T: serde::Serialize,
-    F: Fn(&T) -> (String, String), // (hash_field, error_context)
-{
-    if items.is_empty() {
-        redis.del(key).await?;
-        return Ok(());
-    }
-
-    let fields: Vec<(String, Bytes)> = items
-        .iter()
-        .map(|item| {
-            let (field, label) = entry_fn(item);
-            let payload = serde_json::to_string(item)
-                .with_context(|| format!("Failed to serialise {}", label))?;
-            Ok((field, Bytes::from(payload)))
-        })
-        .collect::<Result<_>>()?;
-
-    redis.hash_mset(key, fields).await
 }
 
 /// Register instance metadata.
