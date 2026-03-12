@@ -145,7 +145,7 @@ VoltageEMS/
 ```
 Device → comsrv → Redis (route:c2m) → modsrv
                    channel data         rule execution
-                   "comsrv:{id}:T"      instance calc
+                   "comsrv:{ch_id}:T"   instance calc
 ```
 
 ### Downstream (Cloud → Device)

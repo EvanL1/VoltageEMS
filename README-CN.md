@@ -145,7 +145,7 @@ VoltageEMS/
 ```
 设备 → comsrv → Redis (route:c2m) → modsrv
                  通道数据              规则执行
-                 "comsrv:{id}:T"      实例计算
+                 "comsrv:{ch_id}:T"   实例计算
 ```
 
 ### 下行（云端 → 设备）
