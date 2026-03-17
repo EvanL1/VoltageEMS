@@ -25,7 +25,7 @@ jobs:
             archive: tar.gz
             name: monarch-linux-aarch64
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-latest
             archive: tar.gz
             name: monarch-darwin-x86_64
           - target: aarch64-apple-darwin
