@@ -46,13 +46,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross (Linux aarch64)
+      - name: Build (cross - Linux aarch64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      - name: Build (cross)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: cross build --release --target ${{ matrix.target }} -p monarch
+        uses: cross-rs/cross-action@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }} -p monarch
 
       - name: Build (native)
         if: matrix.target != 'aarch64-unknown-linux-gnu'
