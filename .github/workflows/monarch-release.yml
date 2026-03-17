@@ -106,7 +106,7 @@ jobs:
 
   npm-publish:
     needs: build
-    if: always() && !cancelled()
+    if: always() && !cancelled() && secrets.NPM_TOKEN != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
