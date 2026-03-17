@@ -25,10 +25,8 @@ jobs:
             os: ubuntu-latest
             archive: tar.gz
             name: monarch-linux-aarch64
-          - target: x86_64-apple-darwin
-            os: macos-13
-            archive: tar.gz
-            name: monarch-darwin-x86_64
+          # macOS x86_64 skipped: macos-13 (Intel) runners deprecated
+          # macOS x86_64 users can run the ARM binary via Rosetta 2
           - target: aarch64-apple-darwin
             os: macos-14
             archive: tar.gz
@@ -86,6 +84,7 @@ jobs:
 
   release:
     needs: build
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,6 +106,7 @@ jobs:
 
   npm-publish:
     needs: build
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
