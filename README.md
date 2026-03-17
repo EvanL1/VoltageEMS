@@ -158,32 +158,90 @@ The primary path uses shared memory (`/dev/shm/voltage-rtdb.shm`) with Unix Doma
 
 ## Monarch CLI
 
-Monarch is the configuration management tool for VoltageEMS.
+Monarch is the unified management tool for VoltageEMS — configuration, monitoring, and remote operations across all services.
+
+### Installation
 
 ```bash
-# Initialize database
-monarch init
+# From source
+cargo install --path tools/monarch
 
-# Sync YAML/CSV config to SQLite
-monarch sync
-monarch sync comsrv    # Sync specific service
-monarch sync --dry-run # Preview changes
+# Via Bun/npm (cross-platform)
+bun install -g @voltage/monarch
 
-# Service management
-monarch services start
-monarch services stop
-monarch services status
+# Or download from GitHub Releases
+# https://github.com/EvanL1/VoltageEMS/releases
+```
 
-# System health check
-monarch doctor
+### Configuration Management
 
-# Channel management
-monarch channels list
-monarch channels status 1001
+```bash
+monarch init                   # Initialize database
+monarch sync                   # Sync YAML/CSV config to SQLite
+monarch sync --dry-run         # Preview changes
+monarch export                 # Export config from database
+monarch status                 # Show config status
+```
 
-# Help
-monarch --help
-monarch <command> --help
+### Service Operations
+
+```bash
+monarch channels list          # List all channels
+monarch channels status 1      # Channel runtime status
+monarch models instances list  # List device instances
+monarch rules list             # List business rules
+monarch templates list         # List channel templates
+monarch templates snapshot 1   # Snapshot channel as template
+monarch templates apply 1 2    # Apply template to channel
+```
+
+### Remote Management
+
+```bash
+# Target a remote machine (all service ports auto-resolved)
+monarch --host 192.168.30.21 channels list
+monarch --host 192.168.30.21 models instances list
+monarch --host 192.168.30.21 rules list
+monarch --host 192.168.30.21 logs level all debug
+```
+
+### Interactive TUI Dashboard
+
+```bash
+monarch top                              # Local monitoring
+monarch --host 192.168.30.21 top         # Remote monitoring
+
+# Navigation:
+#   ←→ / Tab    Switch views (Channels / Instances / Rules)
+#   ↑↓ / j/k    Navigate within list
+#   Enter        Drill into detail (points, live data, routing)
+#   Esc          Back to parent view
+#   z            Toggle hide zero values
+#   r            Force refresh
+#   q            Quit
+```
+
+### JSON Output (for AI Agents & Scripts)
+
+```bash
+# All commands support --json for structured output
+monarch --json channels list
+monarch --json --host 192.168.30.21 rtdb scan "inst:*"
+
+# Or set environment variable
+export MONARCH_JSON=1
+monarch channels list          # Outputs JSON automatically
+```
+
+### Infrastructure
+
+```bash
+monarch services start         # Start Docker services
+monarch services status        # Check service status
+monarch doctor                 # Full system health check
+monarch logs level all debug   # Dynamic log level adjustment
+monarch rtdb scan "inst:*"     # Direct Redis operations
+monarch shm top                # Local shared memory TUI
 ```
 
 ### Environment Variables
@@ -195,6 +253,7 @@ monarch <command> --help
 | `VOLTAGE_MODSRV_URL` | Modsrv URL | `http://localhost:6002` |
 | `VOLTAGE_CONFIG_PATH` | Config directory | Auto-detect |
 | `VOLTAGE_DATA_PATH` | Data directory | Auto-detect |
+| `MONARCH_JSON` | Force JSON output | — |
 
 ## Development
 

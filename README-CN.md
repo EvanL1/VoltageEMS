@@ -158,32 +158,90 @@ VoltageEMS/
 
 ## Monarch CLI
 
-Monarch 是 VoltageEMS 的配置管理工具。
+Monarch 是 VoltageEMS 的统一管理工具 — 配置管理、实时监控、远程运维。
+
+### 安装
 
 ```bash
-# 初始化数据库
-monarch init
+# 源码编译
+cargo install --path tools/monarch
 
-# 同步 YAML/CSV 配置到 SQLite
-monarch sync
-monarch sync comsrv    # 同步特定服务
-monarch sync --dry-run # 预览变更
+# 通过 Bun/npm 跨平台安装
+bun install -g @voltage/monarch
 
-# 服务管理
-monarch services start
-monarch services stop
-monarch services status
+# 或从 GitHub Releases 下载
+# https://github.com/EvanL1/VoltageEMS/releases
+```
 
-# 系统健康检查
-monarch doctor
+### 配置管理
 
-# 通道管理
-monarch channels list
-monarch channels status 1001
+```bash
+monarch init                   # 初始化数据库
+monarch sync                   # 同步 YAML/CSV 配置到 SQLite
+monarch sync --dry-run         # 预览变更
+monarch export                 # 从数据库导出配置
+monarch status                 # 查看配置状态
+```
 
-# 帮助
-monarch --help
-monarch <command> --help
+### 服务操作
+
+```bash
+monarch channels list          # 列出所有通道
+monarch channels status 1      # 通道运行状态
+monarch models instances list  # 列出设备实例
+monarch rules list             # 列出业务规则
+monarch templates list         # 列出通道模板
+monarch templates snapshot 1   # 从通道快照创建模板
+monarch templates apply 1 2    # 将模板应用到通道
+```
+
+### 远程管理
+
+```bash
+# 指定远端机器（所有服务端口自动解析）
+monarch --host 192.168.30.21 channels list
+monarch --host 192.168.30.21 models instances list
+monarch --host 192.168.30.21 rules list
+monarch --host 192.168.30.21 logs level all debug
+```
+
+### 交互式 TUI 仪表盘
+
+```bash
+monarch top                              # 本地监控
+monarch --host 192.168.30.21 top         # 远端监控
+
+# 导航:
+#   ←→ / Tab    切换视图 (Channels / Instances / Rules)
+#   ↑↓ / j/k    在列表内导航
+#   Enter        钻入详情（点位数据、实时值、路由信息）
+#   Esc          返回上级
+#   z            切换隐藏零值
+#   r            强制刷新
+#   q            退出
+```
+
+### JSON 输出（AI Agent 和脚本集成）
+
+```bash
+# 所有命令支持 --json 结构化输出
+monarch --json channels list
+monarch --json --host 192.168.30.21 rtdb scan "inst:*"
+
+# 或设置环境变量
+export MONARCH_JSON=1
+monarch channels list          # 自动输出 JSON
+```
+
+### 基础设施
+
+```bash
+monarch services start         # 启动 Docker 服务
+monarch services status        # 检查服务状态
+monarch doctor                 # 全链路健康检查
+monarch logs level all debug   # 动态调整日志级别
+monarch rtdb scan "inst:*"     # 直接 Redis 操作
+monarch shm top                # 本地共享内存 TUI
 ```
 
 ### 环境变量
@@ -195,6 +253,7 @@ monarch <command> --help
 | `VOLTAGE_MODSRV_URL` | Modsrv 地址 | `http://localhost:6002` |
 | `VOLTAGE_CONFIG_PATH` | 配置目录 | 自动检测 |
 | `VOLTAGE_DATA_PATH` | 数据目录 | 自动检测 |
+| `MONARCH_JSON` | 强制 JSON 输出 | — |
 
 ## 开发
 
