@@ -68,130 +68,151 @@ pub enum RtdbCommands {
     Patterns,
 }
 
-pub async fn handle_command(cmd: RtdbCommands, redis_url: &str) -> Result<()> {
-    // Connect to Redis directly
+pub async fn handle_command(cmd: RtdbCommands, redis_url: &str, json: bool) -> Result<()> {
     let redis_client = Arc::new(RedisClient::new(redis_url).await?);
     let rtdb = RedisRtdb::from_client(redis_client);
 
     match cmd {
-        RtdbCommands::Get { key, field } => {
-            handle_get(&rtdb, &key, field.as_deref()).await?;
-        },
+        RtdbCommands::Get { key, field } => handle_get(&rtdb, &key, field.as_deref(), json).await,
         RtdbCommands::Set { key, value, field } => {
-            handle_set(&rtdb, &key, &value, field.as_deref()).await?;
+            handle_set(&rtdb, &key, &value, field.as_deref(), json).await
         },
-        RtdbCommands::Scan { pattern, limit } => {
-            handle_scan(&rtdb, &pattern, limit).await?;
-        },
-        RtdbCommands::Del { keys, force } => {
-            handle_del(&rtdb, &keys, force).await?;
-        },
-        RtdbCommands::Inspect { key, full } => {
-            handle_inspect(&rtdb, &key, full).await?;
-        },
+        RtdbCommands::Scan { pattern, limit } => handle_scan(&rtdb, &pattern, limit, json).await,
+        RtdbCommands::Del { keys, force } => handle_del(&rtdb, &keys, force, json).await,
+        RtdbCommands::Inspect { key, full } => handle_inspect(&rtdb, &key, full, json).await,
         RtdbCommands::Patterns => {
+            if json {
+                eprintln!("warning: --json is not supported for 'patterns'");
+            }
             show_patterns();
+            Ok(())
         },
     }
-
-    Ok(())
 }
 
-async fn handle_get(rtdb: &impl Rtdb, key: &str, field: Option<&str>) -> Result<()> {
+async fn handle_get(rtdb: &impl Rtdb, key: &str, field: Option<&str>, json: bool) -> Result<()> {
     if let Some(field) = field {
-        // HGET operation
         let value = rtdb.hash_get(key, field).await?;
-        match value {
-            Some(bytes) => {
-                let value_str = String::from_utf8_lossy(&bytes);
-                println!("Key: {} | Field: {}", key, field);
-                println!("Value: {}", value_str);
-            },
-            None => {
-                println!("Field '{}' not found in key '{}'", field, key);
-            },
+        let value_str = value
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).into_owned());
+        if json {
+            crate::output::print_success(serde_json::json!({
+                "key": key, "field": field, "value": value_str,
+            }));
+        } else {
+            match value_str {
+                Some(v) => {
+                    println!("Key: {} | Field: {}", key, field);
+                    println!("Value: {}", v);
+                },
+                None => println!("Field '{}' not found in key '{}'", field, key),
+            }
         }
     } else {
-        // GET operation
         let value = rtdb.get(key).await?;
-        match value {
-            Some(bytes) => {
-                let value_str = String::from_utf8_lossy(&bytes);
-                println!("Key: {}", key);
-                println!("Value: {}", value_str);
-            },
-            None => {
-                println!("Key '{}' not found", key);
-            },
+        let value_str = value
+            .as_ref()
+            .map(|b| String::from_utf8_lossy(b).into_owned());
+        if json {
+            crate::output::print_success(serde_json::json!({
+                "key": key, "value": value_str,
+            }));
+        } else {
+            match value_str {
+                Some(v) => {
+                    println!("Key: {}", key);
+                    println!("Value: {}", v);
+                },
+                None => println!("Key '{}' not found", key),
+            }
         }
     }
     Ok(())
 }
 
-async fn handle_set(rtdb: &impl Rtdb, key: &str, value: &str, field: Option<&str>) -> Result<()> {
+async fn handle_set(
+    rtdb: &impl Rtdb,
+    key: &str,
+    value: &str,
+    field: Option<&str>,
+    json: bool,
+) -> Result<()> {
     let value_bytes = Bytes::from(value.to_string());
 
     if let Some(field) = field {
-        // HSET operation
         rtdb.hash_set(key, field, value_bytes).await?;
         info!("Set Hash: {} | Field: {} = {}", key, field, value);
     } else {
-        // SET operation
         rtdb.set(key, value_bytes).await?;
         info!("Set String: {} = {}", key, value);
     }
 
-    println!("✓ Value set successfully");
+    if json {
+        crate::output::print_ok();
+    } else {
+        println!("✓ Value set successfully");
+    }
     Ok(())
 }
 
-async fn handle_scan(rtdb: &impl Rtdb, pattern: &str, limit: usize) -> Result<()> {
+async fn handle_scan(rtdb: &impl Rtdb, pattern: &str, limit: usize, json: bool) -> Result<()> {
     let keys = rtdb.scan_match(pattern).await?;
-
     let total = keys.len();
     let displayed = if limit > 0 && total > limit {
         limit
     } else {
         total
     };
+    let visible_keys: Vec<&str> = keys.iter().take(displayed).map(|s| s.as_str()).collect();
 
-    println!("=== Scan Results ===");
-    println!("Pattern: {}", pattern);
-    println!("Found: {} keys", total);
-
-    if displayed > 0 {
-        println!("\nKeys:");
-        for (i, key) in keys.iter().take(displayed).enumerate() {
-            println!("  {}. {}", i + 1, key);
-        }
-
-        if total > displayed {
-            println!(
-                "\n... and {} more keys (use --limit 0 to show all)",
-                total - displayed
-            );
-        }
+    if json {
+        crate::output::print_success(serde_json::json!({
+            "pattern": pattern,
+            "total": total,
+            "keys": visible_keys,
+        }));
     } else {
-        println!("\n⚠ No keys found matching pattern");
+        println!("=== Scan Results ===");
+        println!("Pattern: {}", pattern);
+        println!("Found: {} keys", total);
+
+        if displayed > 0 {
+            println!("\nKeys:");
+            for (i, key) in visible_keys.iter().enumerate() {
+                println!("  {}. {}", i + 1, key);
+            }
+            if total > displayed {
+                println!(
+                    "\n... and {} more keys (use --limit 0 to show all)",
+                    total - displayed
+                );
+            }
+        } else {
+            println!("\n⚠ No keys found matching pattern");
+        }
     }
 
     Ok(())
 }
 
-async fn handle_del(rtdb: &impl Rtdb, keys: &[String], force: bool) -> Result<()> {
+async fn handle_del(rtdb: &impl Rtdb, keys: &[String], force: bool, json: bool) -> Result<()> {
     if keys.is_empty() {
-        println!("⚠ No keys specified");
+        if json {
+            crate::output::print_success(serde_json::json!({"deleted": 0, "total": 0}));
+        } else {
+            println!("⚠ No keys specified");
+        }
         return Ok(());
     }
 
-    // Show keys to be deleted
-    println!("=== Delete Confirmation ===");
-    println!("Keys to delete:");
-    for key in keys {
-        println!("  - {}", key);
-    }
-
-    if !force {
+    // In json mode, skip interactive confirmation (agents can't prompt)
+    if !force && !json {
+        println!("=== Delete Confirmation ===");
+        println!("Keys to delete:");
+        for key in keys {
+            println!("  - {}", key);
+        }
         println!(
             "\nAre you sure you want to delete {} key(s)? [y/N]",
             keys.len()
@@ -204,7 +225,6 @@ async fn handle_del(rtdb: &impl Rtdb, keys: &[String], force: bool) -> Result<()
         }
     }
 
-    // Delete keys
     let mut deleted = 0;
     for key in keys {
         if rtdb.del(key).await? {
@@ -213,45 +233,65 @@ async fn handle_del(rtdb: &impl Rtdb, keys: &[String], force: bool) -> Result<()
         }
     }
 
-    println!("✓ Deleted {} of {} keys", deleted, keys.len());
+    if json {
+        crate::output::print_success(serde_json::json!({
+            "deleted": deleted, "total": keys.len(),
+        }));
+    } else {
+        println!("✓ Deleted {} of {} keys", deleted, keys.len());
+    }
     Ok(())
 }
 
-async fn handle_inspect(rtdb: &impl Rtdb, key: &str, full: bool) -> Result<()> {
-    // Check if key exists
+async fn handle_inspect(rtdb: &impl Rtdb, key: &str, full: bool, json: bool) -> Result<()> {
     if !rtdb.exists(key).await? {
-        println!("⚠ Key '{}' does not exist", key);
+        if json {
+            crate::output::print_success(serde_json::json!({
+                "key": key, "exists": false,
+            }));
+        } else {
+            println!("⚠ Key '{}' does not exist", key);
+        }
         return Ok(());
     }
 
-    println!("=== Key Inspection ===");
-    println!("Key: {}", key);
-
-    // Try to detect type by attempting different operations
     // Try Hash first (most common in VoltageEMS)
     let hash_data = rtdb.hash_get_all(key).await?;
     if !hash_data.is_empty() {
-        println!("Type: Hash");
-        println!("Fields: {}", hash_data.len());
+        let mut fields: Vec<_> = hash_data.into_iter().collect();
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
 
-        if full || hash_data.len() <= 20 {
-            println!("\nContent:");
-            let mut fields: Vec<_> = hash_data.into_iter().collect();
-            fields.sort_by(|a, b| a.0.cmp(&b.0));
-
-            for (field, value) in fields {
-                let value_str = String::from_utf8_lossy(&value);
-                println!("  {:<20} = {}", field, value_str);
-            }
+        if json {
+            let field_map: serde_json::Map<String, serde_json::Value> = fields
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        serde_json::Value::String(String::from_utf8_lossy(&v).into_owned()),
+                    )
+                })
+                .collect();
+            crate::output::print_success(serde_json::json!({
+                "key": key, "exists": true, "type": "hash",
+                "field_count": field_map.len(), "fields": field_map,
+            }));
         } else {
-            println!("\n(Use --full to show all {} fields)", hash_data.len());
-            println!("Preview (first 10 fields):");
-            let mut fields: Vec<_> = hash_data.into_iter().collect();
-            fields.sort_by(|a, b| a.0.cmp(&b.0));
+            println!("=== Key Inspection ===");
+            println!("Key: {}", key);
+            println!("Type: Hash");
+            println!("Fields: {}", fields.len());
 
-            for (field, value) in fields.iter().take(10) {
-                let value_str = String::from_utf8_lossy(value);
-                println!("  {:<20} = {}", field, value_str);
+            if full || fields.len() <= 20 {
+                println!("\nContent:");
+                for (field, value) in &fields {
+                    println!("  {:<20} = {}", field, String::from_utf8_lossy(value));
+                }
+            } else {
+                println!("\n(Use --full to show all {} fields)", fields.len());
+                println!("Preview (first 10 fields):");
+                for (field, value) in fields.iter().take(10) {
+                    println!("  {:<20} = {}", field, String::from_utf8_lossy(value));
+                }
             }
         }
         return Ok(());
@@ -259,15 +299,32 @@ async fn handle_inspect(rtdb: &impl Rtdb, key: &str, full: bool) -> Result<()> {
 
     // Try String
     if let Some(value) = rtdb.get(key).await? {
-        let value_str = String::from_utf8_lossy(&value);
-        println!("Type: String");
-        println!("Length: {} bytes", value.len());
-        println!("\nValue:");
-        println!("{}", value_str);
+        let value_str = String::from_utf8_lossy(&value).into_owned();
+        if json {
+            crate::output::print_success(serde_json::json!({
+                "key": key, "exists": true, "type": "string",
+                "length": value.len(), "value": value_str,
+            }));
+        } else {
+            println!("=== Key Inspection ===");
+            println!("Key: {}", key);
+            println!("Type: String");
+            println!("Length: {} bytes", value.len());
+            println!("\nValue:");
+            println!("{}", value_str);
+        }
         return Ok(());
     }
 
-    println!("Type: Unknown (or unsupported type)");
+    if json {
+        crate::output::print_success(serde_json::json!({
+            "key": key, "exists": true, "type": "unknown",
+        }));
+    } else {
+        println!("=== Key Inspection ===");
+        println!("Key: {}", key);
+        println!("Type: Unknown (or unsupported type)");
+    }
     Ok(())
 }
 

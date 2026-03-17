@@ -1675,7 +1675,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -2227,6 +2227,7 @@ name = "monarch"
 version = "0.1.9"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "colored",
  "common",
@@ -4689,9 +4690,9 @@ checksum = "6fc1183d33494cddfff62e98bb6f1eb16fa15bf3739ceb804700433cd46a8546"
 
 [[package]]
 name = "voltage_modbus"
-version = "0.4.10"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cda7fdb15837b333018c42dd88c82297fd6b0e30dc18a506f3751bef2de65d6c"
+checksum = "ecd7e77977cf78a65bb72143be4e1eca03f04b7d9477f55bc78852d5ea904041"
 dependencies = [
  "bytes",
  "chrono",

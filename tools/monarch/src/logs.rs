@@ -56,9 +56,10 @@ fn get_service_port(service: &str) -> Result<u16> {
 }
 
 /// Set log level for a service
-async fn set_log_level(service: &str, level: &str) -> Result<()> {
+async fn set_log_level(service: &str, level: &str, host: Option<&str>) -> Result<()> {
     let port = get_service_port(service)?;
-    let url = format!("http://127.0.0.1:{}/api/admin/logs/level", port);
+    let addr = host.unwrap_or("127.0.0.1");
+    let url = format!("http://{addr}:{port}/api/admin/logs/level");
 
     let client = reqwest::Client::new();
     let resp = client
@@ -87,9 +88,10 @@ async fn set_log_level(service: &str, level: &str) -> Result<()> {
 }
 
 /// Get log level for a service
-async fn get_log_level(service: &str) -> Result<String> {
+async fn get_log_level(service: &str, host: Option<&str>) -> Result<String> {
     let port = get_service_port(service)?;
-    let url = format!("http://127.0.0.1:{}/api/admin/logs/level", port);
+    let addr = host.unwrap_or("127.0.0.1");
+    let url = format!("http://{addr}:{port}/api/admin/logs/level");
 
     let client = reqwest::Client::new();
     let resp = client
@@ -107,68 +109,83 @@ async fn get_log_level(service: &str) -> Result<String> {
 }
 
 /// Handle log commands
-pub async fn handle_command(command: LogCommands) -> Result<()> {
+pub async fn handle_command(command: LogCommands, json: bool, host: Option<&str>) -> Result<()> {
     match command {
         LogCommands::Level { service, level } => {
-            println!("{}", "Setting log level...".bright_cyan());
+            if !json {
+                println!("{}", "Setting log level...".bright_cyan());
+            }
 
             if service.to_lowercase() == "all" {
-                // Set for all services
                 let services = ["comsrv", "modsrv"];
                 let mut errors = Vec::new();
 
                 for svc in services {
-                    if let Err(e) = set_log_level(svc, &level).await {
+                    if let Err(e) = set_log_level(svc, &level, host).await {
                         errors.push(format!("{}: {}", svc, e));
                     }
                 }
 
                 if !errors.is_empty() {
-                    println!();
-                    for err in &errors {
-                        println!("  {} {}", "✗".red(), err);
+                    if !json {
+                        println!();
+                        for err in &errors {
+                            println!("  {} {}", "✗".red(), err);
+                        }
                     }
                     if errors.len() == services.len() {
                         anyhow::bail!("Failed to set log level for all services");
                     }
                 }
             } else {
-                set_log_level(&service, &level).await?;
+                set_log_level(&service, &level, host).await?;
             }
 
-            println!();
-            println!("{}", "Log level updated successfully!".green());
+            if json {
+                crate::output::print_success(serde_json::json!({
+                    "service": service,
+                    "level": level,
+                }));
+            } else {
+                println!();
+                println!("{}", "Log level updated successfully!".green());
+            }
         },
 
         LogCommands::Get { service } => {
-            println!("{}", "Current log levels:".bright_cyan());
+            let mut results = Vec::new();
 
-            if service.to_lowercase() == "all" {
-                let services = ["comsrv", "modsrv"];
-                for svc in services {
-                    match get_log_level(svc).await {
-                        Ok(level) => {
-                            println!("  {} {}", svc.bright_cyan(), level.bright_yellow());
-                        },
-                        Err(e) => {
-                            println!("  {} {} ({})", svc.bright_cyan(), "unavailable".red(), e);
-                        },
-                    }
-                }
+            let services: Vec<&str> = if service.to_lowercase() == "all" {
+                vec!["comsrv", "modsrv"]
             } else {
-                match get_log_level(&service).await {
+                vec![service.as_str()]
+            };
+
+            if !json {
+                println!("{}", "Current log levels:".bright_cyan());
+            }
+
+            for svc in &services {
+                match get_log_level(svc, host).await {
                     Ok(level) => {
-                        println!("  {} {}", service.bright_cyan(), level.bright_yellow());
+                        results.push(serde_json::json!({"service": svc, "level": level}));
+                        if !json {
+                            println!("  {} {}", svc.bright_cyan(), level.bright_yellow());
+                        }
                     },
                     Err(e) => {
-                        println!(
-                            "  {} {} ({})",
-                            service.bright_cyan(),
-                            "unavailable".red(),
-                            e
-                        );
+                        results.push(serde_json::json!({
+                            "service": svc, "level": null, "error": e.to_string()
+                        }));
+                        if !json {
+                            println!("  {} {} ({})", svc.bright_cyan(), "unavailable".red(), e);
+                        }
                     },
                 }
+            }
+
+            if json {
+                crate::output::print_success(&results);
             }
         },
     }

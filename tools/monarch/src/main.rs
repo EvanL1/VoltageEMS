@@ -8,11 +8,15 @@ mod core;
 mod doctor;
 mod logs;
 mod models;
+mod output;
 mod rtdb;
 mod rules;
 mod services;
 mod shm;
 mod shm_dashboard;
+mod templates;
+mod top;
+mod top_draw;
 mod utils;
 
 // Note: lib-mode (direct service library calls) has been removed in favor of HTTP-only mode.
@@ -66,6 +70,14 @@ struct Cli {
     /// Disable colored output
     #[arg(long, global = true)]
     no_color: bool,
+
+    /// Output as JSON (suppresses banner and color; for scripts and AI agents)
+    #[arg(long, global = true)]
+    json: bool,
+
+    /// Target host for remote operations (overrides localhost default)
+    #[arg(long, global = true)]
+    host: Option<String>,
 
     /// Configuration files path (default: auto-detect /opt/MonarchEdge/config or ./config)
     #[arg(short = 'c', long = "config-path", global = true)]
@@ -179,11 +191,18 @@ enum Commands {
         /// Show detailed information (response times, etc.)
         #[arg(short, long)]
         verbose: bool,
-
-        /// Output as JSON (for scripts)
-        #[arg(long)]
-        json: bool,
     },
+
+    /// Manage channel templates
+    #[command(about = "Manage channel configuration templates")]
+    Templates {
+        #[command(subcommand)]
+        command: templates::TemplateCommands,
+    },
+
+    /// Interactive TUI dashboard for real-time monitoring
+    #[command(about = "Interactive TUI dashboard for real-time monitoring")]
+    Top,
 }
 
 /// Auto-detect a path from environment variable, /opt/MonarchEdge fallback, or local default
@@ -201,7 +220,10 @@ fn auto_detect_path(env_var: &str, subdir: &str) -> PathBuf {
 }
 
 /// Resolve service URL from env var or default to scheme://localhost:port
-fn service_url(env_var: &str, scheme: &str, port: u16) -> String {
+fn service_url(env_var: &str, scheme: &str, port: u16, host: Option<&str>) -> String {
+    if let Some(h) = host {
+        return format!("{scheme}://{h}:{port}");
+    }
     std::env::var(env_var).unwrap_or_else(|_| format!("{scheme}://localhost:{port}"))
 }
 
@@ -219,11 +241,26 @@ fn print_banner() {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
+    let json = cli.json || std::env::var("MONARCH_JSON").is_ok();
+
+    if let Err(e) = run(cli).await {
+        if json {
+            output::print_error(&format!("{e:#}"));
+        } else {
+            eprintln!("{}: {e:#}", "Error".red());
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
+    let json = cli.json || std::env::var("MONARCH_JSON").is_ok();
+    let host = cli.host.as_deref();
 
     // Configure colored output
-    if cli.no_color {
+    if cli.no_color || json {
         colored::control::set_override(false);
     }
 
@@ -246,7 +283,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| auto_detect_path("VOLTAGE_DATA_PATH", "data"));
 
     // Print banner for interactive commands
-    if !cli.no_color {
+    if !cli.no_color && !json {
         print_banner();
         println!(
             "{} Config: {}, DB: {}",
@@ -265,31 +302,53 @@ async fn main() -> Result<()> {
             detailed,
             check,
         } => {
+            if host.is_some() {
+                eprintln!("warning: --host is ignored for 'sync' (local filesystem operation)");
+            }
             if dry_run {
-                println!(
-                    "{}",
-                    "Validating all configuration (dry run)...".bright_cyan()
-                );
-                validate_command(detailed, &config_path, &db_path, check).await?;
+                if !json {
+                    println!(
+                        "{}",
+                        "Validating all configuration (dry run)...".bright_cyan()
+                    );
+                }
+                validate_command(detailed, &config_path, &db_path, check, json).await?;
             } else {
-                println!("{}", "Syncing all configuration...".bright_cyan());
-                sync_command(force, detailed, &config_path, &db_path, check).await?;
+                if !json {
+                    println!("{}", "Syncing all configuration...".bright_cyan());
+                }
+                sync_command(force, detailed, &config_path, &db_path, check, json).await?;
             }
         },
         Commands::Status { detailed } => {
-            println!("{}", "Configuration Status".bright_cyan());
-            status_command(detailed, &db_path).await?;
+            if host.is_some() {
+                eprintln!("warning: --host is ignored for 'status' (local filesystem operation)");
+            }
+            if !json {
+                println!("{}", "Configuration Status".bright_cyan());
+            }
+            status_command(detailed, &db_path, json).await?;
         },
         Commands::Init { force } => {
-            println!("{}", "Initializing database schema...".bright_cyan());
-            init_command(&db_path, force).await?;
+            if host.is_some() {
+                eprintln!("warning: --host is ignored for 'init' (local filesystem operation)");
+            }
+            if !json {
+                println!("{}", "Initializing database schema...".bright_cyan());
+            }
+            init_command(&db_path, force, json).await?;
         },
         Commands::Export { output, detailed } => {
-            println!(
-                "{}",
-                "Exporting configuration from database...".bright_cyan()
-            );
-            export_command(output, detailed, &config_path, &db_path).await?;
+            if host.is_some() {
+                eprintln!("warning: --host is ignored for 'export' (local filesystem operation)");
+            }
+            if !json {
+                println!(
+                    "{}",
+                    "Exporting configuration from database...".bright_cyan()
+                );
+            }
+            export_command(output, detailed, &config_path, &db_path, json).await?;
         },
 
         // Service management commands (all use HTTP API)
@@ -298,45 +357,87 @@ async fn main() -> Result<()> {
                 "VOLTAGE_COMSRV_URL",
                 "http",
                 voltage_model::service_ports::COMSRV_PORT,
+                host,
             );
-            channels::handle_command(command, &url).await?;
+            channels::handle_command(command, &url, json).await?;
         },
         Commands::Models { command } => {
             let url = service_url(
                 "VOLTAGE_MODSRV_URL",
                 "http",
                 voltage_model::service_ports::MODSRV_PORT,
+                host,
             );
-            models::handle_command(command, &url).await?;
+            models::handle_command(command, &url, json).await?;
         },
         Commands::Rules { command } => {
             let url = service_url(
                 "VOLTAGE_MODSRV_URL",
                 "http",
                 voltage_model::service_ports::MODSRV_PORT,
+                host,
             );
-            rules::handle_command(command, &url).await?;
+            rules::handle_command(command, &url, json).await?;
         },
         Commands::Rtdb { command } => {
             let url = service_url(
                 "VOLTAGE_REDIS_URL",
                 "redis",
                 voltage_model::service_ports::REDIS_PORT,
+                host,
             );
-            rtdb::handle_command(command, &url).await?;
+            rtdb::handle_command(command, &url, json).await?;
         },
         Commands::Services { command } => {
+            if host.is_some() {
+                eprintln!("warning: --host is ignored for 'services' (local Docker operation)");
+            }
+            if json {
+                eprintln!("warning: --json is not supported for 'services' command");
+            }
             services::handle_command(command).await?;
         },
         Commands::Logs { command } => {
-            logs::handle_command(command).await?;
+            logs::handle_command(command, json, host).await?;
         },
         Commands::Shm { command } => {
-            // Shm command doesn't need async or service context
+            if json {
+                eprintln!("warning: --json is not supported for 'shm' command");
+            }
             shm::handle_command(command)?;
         },
-        Commands::Doctor { verbose, json } => {
+        Commands::Doctor { verbose } => {
             doctor::run_doctor(config_path, db_path, verbose, json).await?;
+        },
+        Commands::Templates { command } => {
+            let url = service_url(
+                "VOLTAGE_COMSRV_URL",
+                "http",
+                voltage_model::service_ports::COMSRV_PORT,
+                host,
+            );
+            templates::handle_command(command, &url, json).await?;
+        },
+        Commands::Top => {
+            let modsrv_url = service_url(
+                "VOLTAGE_MODSRV_URL",
+                "http",
+                voltage_model::service_ports::MODSRV_PORT,
+                host,
+            );
+            let comsrv_url = service_url(
+                "VOLTAGE_COMSRV_URL",
+                "http",
+                voltage_model::service_ports::COMSRV_PORT,
+                host,
+            );
+            let redis_url = service_url(
+                "VOLTAGE_REDIS_URL",
+                "redis",
+                voltage_model::service_ports::REDIS_PORT,
+                host,
+            );
+            top::run_top(&comsrv_url, &modsrv_url, &redis_url).await?;
         },
     }
 
@@ -349,20 +450,25 @@ async fn sync_command(
     config_path: &Path,
     db_path: &Path,
     check: bool,
+    json: bool,
 ) -> Result<()> {
-    // Sync order: global config → channels/points → products/instances/rules
     let configs = ["global", "comsrv", "modsrv"];
+    let mut json_results = Vec::new();
 
-    println!();
+    if !json {
+        println!();
+    }
 
     for (idx, cfg) in configs.iter().enumerate() {
-        print!(
-            "{} [{}/{}] Syncing {}... ",
-            "-".bright_cyan(),
-            idx + 1,
-            configs.len(),
-            cfg.bright_yellow()
-        );
+        if !json {
+            print!(
+                "{} [{}/{}] Syncing {}... ",
+                "-".bright_cyan(),
+                idx + 1,
+                configs.len(),
+                cfg.bright_yellow()
+            );
+        }
 
         let core = MonarchCore::readwrite(db_path, config_path, cfg).await?;
 
@@ -370,17 +476,24 @@ async fn sync_command(
         if !force {
             match core.validate(cfg).await {
                 Ok(result) if !result.is_valid => {
-                    println!("{}", "FAIL".red());
-                    for error in &result.errors {
-                        eprintln!("   {} {}", "ERROR".red(), error);
+                    if !json {
+                        println!("{}", "FAIL".red());
+                        for error in &result.errors {
+                            eprintln!("   {} {}", "ERROR".red(), error);
+                        }
+                        eprintln!("   {} Use --force to skip validation", "HINT".bright_blue());
                     }
-                    eprintln!("   {} Use --force to skip validation", "HINT".bright_blue());
-                    std::process::exit(1);
+                    anyhow::bail!(
+                        "Validation failed for {}: {}",
+                        cfg,
+                        result.errors.join("; ")
+                    );
                 },
                 Err(e) => {
-                    println!("{}", "FAIL".red());
-                    eprintln!("   {} {}", "ERROR".red(), e);
-                    std::process::exit(1);
+                    if !json {
+                        println!("{}", "FAIL".red());
+                    }
+                    anyhow::bail!("Validation error for {}: {}", cfg, e);
                 },
                 _ => {},
             }
@@ -389,41 +502,60 @@ async fn sync_command(
         // Perform sync
         match core.sync(cfg).await {
             Ok(result) => {
-                if result.errors.is_empty() {
-                    println!("{}", "OK".green());
-                } else {
-                    println!("{} ({} errors)", "WARN".yellow(), result.errors.len());
-                }
+                let error_msgs: Vec<String> = result
+                    .errors
+                    .iter()
+                    .map(|e| format!("{}: {}", e.item, e.error))
+                    .collect();
 
-                if detailed {
-                    println!("     {} items synced", result.items_synced);
-                    if result.items_deleted > 0 {
-                        println!("     {} items deleted", result.items_deleted);
+                json_results.push(serde_json::json!({
+                    "config": cfg,
+                    "items_synced": result.items_synced,
+                    "items_deleted": result.items_deleted,
+                    "errors": error_msgs,
+                }));
+
+                if !json {
+                    if result.errors.is_empty() {
+                        println!("{}", "OK".green());
+                    } else {
+                        println!("{} ({} errors)", "WARN".yellow(), result.errors.len());
                     }
-                    for error in &result.errors {
-                        println!("     {} {}: {}", "!".red(), error.item, error.error);
+
+                    if detailed {
+                        println!("     {} items synced", result.items_synced);
+                        if result.items_deleted > 0 {
+                            println!("     {} items deleted", result.items_deleted);
+                        }
+                        for error in &result.errors {
+                            println!("     {} {}: {}", "!".red(), error.item, error.error);
+                        }
                     }
                 }
             },
             Err(e) => {
-                println!("{}", "FAIL".red());
-                eprintln!("   {} {}", "ERROR".red(), e);
-                std::process::exit(1);
+                if !json {
+                    println!("{}", "FAIL".red());
+                }
+                anyhow::bail!("Sync failed for {}: {}", cfg, e);
             },
         }
     }
 
-    // Run database consistency checks if requested
     if check {
-        println!();
-        run_db_checks(db_path).await?;
+        if !json {
+            println!();
+        }
+        run_db_checks(db_path, json).await?;
     }
 
-    println!("\n{} Configuration synced successfully!", "DONE".green());
-
-    // Auto-reload running services to pick up new config
-    println!("\n{} Reloading services...", "-".bright_cyan());
-    crate::services::try_reload_services().await;
+    if json {
+        output::print_success(&json_results);
+    } else {
+        println!("\n{} Configuration synced successfully!", "DONE".green());
+        println!("\n{} Reloading services...", "-".bright_cyan());
+        crate::services::try_reload_services().await;
+    }
 
     Ok(())
 }
@@ -433,66 +565,124 @@ async fn validate_command(
     config_path: &Path,
     db_path: &Path,
     check: bool,
+    json: bool,
 ) -> Result<()> {
     let configs = ["global", "comsrv", "modsrv"];
     let mut all_valid = true;
+    let mut json_results = Vec::new();
 
-    println!();
+    if !json {
+        println!();
+    }
 
     let core = MonarchCore::new(config_path);
 
     for cfg in configs {
-        print!(
-            "{} Validating {}... ",
-            "-".bright_cyan(),
-            cfg.bright_yellow()
-        );
+        if !json {
+            print!(
+                "{} Validating {}... ",
+                "-".bright_cyan(),
+                cfg.bright_yellow()
+            );
+        }
 
         match core.validate(cfg).await {
             Ok(result) => {
-                if result.is_valid {
-                    println!("{}", "OK".green());
-                    if detailed && !result.warnings.is_empty() {
-                        for warning in &result.warnings {
-                            println!("   {} {}", "WARN".yellow(), warning);
+                json_results.push(serde_json::json!({
+                    "config": cfg,
+                    "valid": result.is_valid,
+                    "errors": &result.errors,
+                    "warnings": &result.warnings,
+                }));
+
+                if !json {
+                    if result.is_valid {
+                        println!("{}", "OK".green());
+                        if detailed && !result.warnings.is_empty() {
+                            for warning in &result.warnings {
+                                println!("   {} {}", "WARN".yellow(), warning);
+                            }
+                        }
+                    } else {
+                        println!("{}", "FAIL".red());
+                        for error in &result.errors {
+                            eprintln!("   {} {}", "ERROR".red(), error);
                         }
                     }
-                } else {
-                    println!("{}", "FAIL".red());
-                    for error in &result.errors {
-                        eprintln!("   {} {}", "ERROR".red(), error);
-                    }
+                }
+                if !result.is_valid {
                     all_valid = false;
                 }
             },
             Err(e) => {
-                println!("{}", "FAIL".red());
-                eprintln!("   {} {}", "ERROR".red(), e);
+                json_results.push(serde_json::json!({
+                    "config": cfg,
+                    "valid": false,
+                    "errors": [e.to_string()],
+                    "warnings": [],
+                }));
+                if !json {
+                    println!("{}", "FAIL".red());
+                    eprintln!("   {} {}", "ERROR".red(), e);
+                }
                 all_valid = false;
             },
         }
     }
 
-    // Run database consistency checks if requested
     if check {
-        println!();
-        let check_failed = run_db_checks(db_path).await?;
+        if !json {
+            println!();
+        }
+        let check_failed = run_db_checks(db_path, json).await?;
         if check_failed {
             all_valid = false;
         }
     }
 
-    if !all_valid {
+    if json {
+        output::print_success(serde_json::json!({
+            "configs": json_results,
+            "all_valid": all_valid,
+        }));
+    } else if !all_valid {
         println!("\n{} Validation failed", "ERROR".red());
-        std::process::exit(1);
+        anyhow::bail!("Validation failed");
+    } else {
+        println!("\n{} All configurations valid!", "SUCCESS".green());
     }
 
-    println!("\n{} All configurations valid!", "SUCCESS".green());
     Ok(())
 }
 
-async fn status_command(detailed: bool, db_path: &Path) -> Result<()> {
+async fn status_command(detailed: bool, db_path: &Path, json: bool) -> Result<()> {
     let db_file = db_path.join("voltage.db");
+
+    if json {
+        if !db_file.exists() {
+            output::print_success(serde_json::json!({
+                "db_path": db_file.display().to_string(),
+                "exists": false,
+            }));
+            return Ok(());
+        }
+        match utils::check_database_status(&db_file).await {
+            Ok(status) => output::print_success(serde_json::json!({
+                "db_path": db_file.display().to_string(),
+                "exists": true,
+                "initialized": status.initialized,
+                "last_sync": status.last_sync,
+                "item_count": status.item_count,
+            })),
+            Err(e) => output::print_success(serde_json::json!({
+                "db_path": db_file.display().to_string(),
+                "exists": true,
+                "initialized": false,
+                "error": e.to_string(),
+            })),
+        }
+        return Ok(());
+    }
 
     println!();
     println!("{}", "=".repeat(50).bright_blue());
@@ -537,60 +727,71 @@ async fn status_command(detailed: bool, db_path: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn init_command(db_path: &Path, force: bool) -> Result<()> {
+async fn init_command(db_path: &Path, force: bool, json: bool) -> Result<()> {
     let db_file = db_path.join("voltage.db");
 
-    println!();
+    if !json {
+        println!();
+    }
 
     // --force is disabled for safety (migration-only policy)
     if force {
-        eprintln!(
-            "{} --force is disabled for safety.",
-            "WARNING".bright_yellow()
-        );
-        eprintln!("   Database can only be upgraded, not reset.");
-        eprintln!(
-            "   If you really need to reset, manually delete: {}",
-            db_file.display()
-        );
+        if !json {
+            eprintln!(
+                "{} --force is disabled for safety.",
+                "WARNING".bright_yellow()
+            );
+            eprintln!("   Database can only be upgraded, not reset.");
+            eprintln!(
+                "   If you really need to reset, manually delete: {}",
+                db_file.display()
+            );
+        }
         return Ok(());
     }
 
-    // Check if database already exists
-    if db_file.exists() {
-        println!(
-            "{} Database already exists: {}",
-            "INFO".bright_cyan(),
-            db_file.display()
+    if !json {
+        if db_file.exists() {
+            println!(
+                "{} Database already exists: {}",
+                "INFO".bright_cyan(),
+                db_file.display()
+            );
+            println!(
+                "{} Running safe schema upgrade (CREATE TABLE IF NOT EXISTS)...",
+                "INFO".bright_blue()
+            );
+        }
+        print!(
+            "{} Creating database schema in {}... ",
+            "-".bright_cyan(),
+            db_file.display().to_string().bright_white()
         );
-        println!(
-            "{} Running safe schema upgrade (CREATE TABLE IF NOT EXISTS)...",
-            "INFO".bright_blue()
-        );
-        // Continue to run schema init - it uses IF NOT EXISTS so it's safe
     }
 
-    // Initialize all tables
-    print!(
-        "{} Creating database schema in {}... ",
-        "-".bright_cyan(),
-        db_file.display().to_string().bright_white()
-    );
-
     match schema::init_database(&db_file).await {
-        Ok(_) => println!("{}", "OK".green()),
+        Ok(_) => {
+            if json {
+                output::print_success(serde_json::json!({
+                    "db_path": db_file.display().to_string(),
+                }));
+            } else {
+                println!("{}", "OK".green());
+                println!(
+                    "\n{} Database initialized: {}",
+                    "DONE".green(),
+                    db_file.display()
+                );
+            }
+        },
         Err(e) => {
-            println!("{}", "FAIL".red());
-            eprintln!("   {} Failed to initialize database: {}", "ERROR".red(), e);
-            std::process::exit(1);
+            if !json {
+                println!("{}", "FAIL".red());
+            }
+            anyhow::bail!("Failed to initialize database: {}", e);
         },
     }
 
-    println!(
-        "\n{} Database initialized: {}",
-        "DONE".green(),
-        db_file.display()
-    );
     Ok(())
 }
 
@@ -599,24 +800,29 @@ async fn export_command(
     detailed: bool,
     config_path: &Path,
     db_path: &Path,
+    json: bool,
 ) -> Result<()> {
     let configs = ["global", "comsrv", "modsrv"];
     let output_base = output
         .map(PathBuf::from)
         .unwrap_or_else(|| config_path.to_path_buf());
 
-    println!();
+    if !json {
+        println!();
+    }
 
     for cfg in configs {
-        print!(
-            "{} Exporting {}... ",
-            "-".bright_cyan(),
-            cfg.bright_yellow()
-        );
+        if !json {
+            print!(
+                "{} Exporting {}... ",
+                "-".bright_cyan(),
+                cfg.bright_yellow()
+            );
+        }
 
         let output_dir = output_base.join(cfg);
 
-        if detailed {
+        if !json && detailed {
             println!();
             println!("   {} Output: {}", "-".bright_blue(), output_dir.display());
         }
@@ -628,29 +834,43 @@ async fn export_command(
             .ok_or_else(|| anyhow::anyhow!("Invalid output path"))?;
 
         match core.export(cfg, output_path).await {
-            Ok(_) => println!("{}", "OK".green()),
+            Ok(_) => {
+                if !json {
+                    println!("{}", "OK".green());
+                }
+            },
             Err(e) => {
-                println!("{}", "FAIL".red());
-                eprintln!("   {} {}", "ERROR".red(), e);
-                std::process::exit(1);
+                if !json {
+                    println!("{}", "FAIL".red());
+                }
+                anyhow::bail!("Export failed for {}: {}", cfg, e);
             },
         }
     }
 
-    println!(
-        "\n{} Export completed: {}",
-        "DONE".green(),
-        output_base.display()
-    );
+    if json {
+        output::print_success(serde_json::json!({
+            "output_dir": output_base.display().to_string(),
+            "configs": configs,
+        }));
+    } else {
+        println!(
+            "\n{} Export completed: {}",
+            "DONE".green(),
+            output_base.display()
+        );
+    }
     Ok(())
 }
 
 /// Run database consistency checks (duplicates, references)
 /// Returns true if any errors were found
-async fn run_db_checks(db_path: &Path) -> Result<bool> {
+async fn run_db_checks(db_path: &Path, json: bool) -> Result<bool> {
     use sqlx::SqlitePool;
 
-    println!("{}", "Checking database consistency...".bright_cyan());
+    if !json {
+        println!("{}", "Checking database consistency...".bright_cyan());
+    }
 
     let db_file = db_path.join("voltage.db");
     let pool = SqlitePool::connect(&format!("sqlite:{}", db_file.display()))
@@ -659,22 +879,26 @@ async fn run_db_checks(db_path: &Path) -> Result<bool> {
 
     let mut has_errors = false;
 
-    // Check for duplicate IDs using the allowlist
     for &(table, id_col) in ALLOWED_DUPLICATE_CHECKS {
-        print!("  Checking {} {}s... ", table, id_col.replace("_id", ""));
-        has_errors |= check_duplicates(&pool, table, id_col).await?;
+        if !json {
+            print!("  Checking {} {}s... ", table, id_col.replace("_id", ""));
+        }
+        has_errors |= check_duplicates(&pool, table, id_col, json).await?;
     }
 
-    // Check point tables for (channel_id, point_id) duplicates
     for table in ALLOWED_POINT_TABLES {
-        print!("  Checking {} table... ", table.replace('_', " "));
-        has_errors |= check_point_duplicates(&pool, table).await?;
+        if !json {
+            print!("  Checking {} table... ", table.replace('_', " "));
+        }
+        has_errors |= check_point_duplicates(&pool, table, json).await?;
     }
 
-    if has_errors {
-        println!("\n{} Database consistency issues found", "ERROR".red());
-    } else {
-        println!("\n{} Database consistency OK", "OK".green());
+    if !json {
+        if has_errors {
+            println!("\n{} Database consistency issues found", "ERROR".red());
+        } else {
+            println!("\n{} Database consistency OK", "OK".green());
+        }
     }
 
     Ok(has_errors)
@@ -687,7 +911,12 @@ const ALLOWED_DUPLICATE_CHECKS: &[(&str, &str)] = &[
     ("rules", "id"),
 ];
 
-async fn check_duplicates(pool: &sqlx::SqlitePool, table: &str, id_column: &str) -> Result<bool> {
+async fn check_duplicates(
+    pool: &sqlx::SqlitePool,
+    table: &str,
+    id_column: &str,
+    json: bool,
+) -> Result<bool> {
     // Validate table/column against allowlist to prevent SQL injection
     if !ALLOWED_DUPLICATE_CHECKS
         .iter()
@@ -708,18 +937,22 @@ async fn check_duplicates(pool: &sqlx::SqlitePool, table: &str, id_column: &str)
     let rows: Vec<(String, i64)> = sqlx::query_as(&query).fetch_all(pool).await?;
 
     if rows.is_empty() {
-        println!("{}", "OK".green());
+        if !json {
+            println!("{}", "OK".green());
+        }
         Ok(false)
     } else {
-        println!("{}", "FAIL".red());
-        for (id, count) in rows {
-            eprintln!(
-                "    {} {} '{}' appears {} times",
-                "ERROR".red(),
-                id_column,
-                id,
-                count
-            );
+        if !json {
+            println!("{}", "FAIL".red());
+            for (id, count) in rows {
+                eprintln!(
+                    "    {} {} '{}' appears {} times",
+                    "ERROR".red(),
+                    id_column,
+                    id,
+                    count
+                );
+            }
         }
         Ok(true)
     }
@@ -733,7 +966,7 @@ const ALLOWED_POINT_TABLES: &[&str] = &[
     "adjustment_points",
 ];
 
-async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str) -> Result<bool> {
+async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str, json: bool) -> Result<bool> {
     // Validate table against allowlist to prevent SQL injection
     if !ALLOWED_POINT_TABLES.contains(&table) {
         anyhow::bail!("Invalid table for point duplicate check: {}", table);
@@ -747,18 +980,22 @@ async fn check_point_duplicates(pool: &sqlx::SqlitePool, table: &str) -> Result<
     let rows: Vec<(i32, i64, i64)> = sqlx::query_as(&query).fetch_all(pool).await?;
 
     if rows.is_empty() {
-        println!("{}", "OK".green());
+        if !json {
+            println!("{}", "OK".green());
+        }
         Ok(false)
     } else {
-        println!("{}", "FAIL".red());
-        for (channel_id, point_id, count) in rows {
-            eprintln!(
-                "    {} (channel_id={}, point_id={}) appears {} times",
-                "ERROR".red(),
-                channel_id,
-                point_id,
-                count
-            );
+        if !json {
+            println!("{}", "FAIL".red());
+            for (channel_id, point_id, count) in rows {
+                eprintln!(
+                    "    {} (channel_id={}, point_id={}) appears {} times",
+                    "ERROR".red(),
+                    channel_id,
+                    point_id,
+                    count
+                );
+            }
         }
         Ok(true)
     }

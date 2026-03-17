@@ -179,6 +179,14 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
         let attempts_clone = Arc::clone(&reconnect_total_attempts);
         let failed_clone = Arc::clone(&reconnect_failed);
 
+        // Parse zero-data liveness threshold (consecutive zero-data polls → disconnect)
+        let zero_data_threshold = channel_config
+            .parameters
+            .get("zero_data_threshold")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(5);
+
         // Spawn the unified channel task
         let ctx = ChannelPollContext {
             store: Arc::clone(&store),
@@ -190,6 +198,7 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             watchdog_heartbeat_ms: heartbeat_clone,
             reconnect_total_attempts: attempts_clone,
             reconnect_failed: failed_clone,
+            zero_data_threshold,
         };
         let task_handle = tokio::spawn(async move {
             run_unified_channel_task(

@@ -35,6 +35,9 @@ serde_json = { workspace = true }
 serde_yml = { workspace = true }
 csv = { workspace = true }
 
+# Time formatting
+chrono = { workspace = true }
+
 # Error handling
 anyhow = { workspace = true }
 

@@ -115,46 +115,62 @@ fn parse_property(s: &str) -> Result<(String, String), String> {
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
-pub async fn handle_command(cmd: ModelCommands, base_url: &str) -> Result<()> {
+pub async fn handle_command(cmd: ModelCommands, base_url: &str, json: bool) -> Result<()> {
     match cmd {
-        ModelCommands::Products { command } => handle_product_command(command, base_url).await,
-        ModelCommands::Instances { command } => handle_instance_command(command, base_url).await,
+        ModelCommands::Products { command } => {
+            handle_product_command(command, base_url, json).await
+        },
+        ModelCommands::Instances { command } => {
+            handle_instance_command(command, base_url, json).await
+        },
     }
 }
 
-async fn handle_product_command(cmd: ProductCommands, base_url: &str) -> Result<()> {
+async fn handle_product_command(cmd: ProductCommands, base_url: &str, json: bool) -> Result<()> {
     match cmd {
-        // Local operation (reads from filesystem)
         ProductCommands::Available => {
+            if json {
+                eprintln!("warning: --json is not fully supported for 'products available'");
+            }
             csv_loader::list_available_products()?;
         },
-
-        // Remote operations via HTTP
         ProductCommands::List => {
             let client = client::ModelClient::new(base_url)?;
             let products = client.list_products().await?;
-            println!("Products: {}", serde_json::to_string_pretty(&products)?);
+            if json {
+                crate::output::print_success(&products);
+            } else {
+                println!("Products: {}", serde_json::to_string_pretty(&products)?);
+            }
         },
         ProductCommands::Get { name } => {
             let client = client::ModelClient::new(base_url)?;
             let product = client.get_product(&name).await?;
-            println!(
-                "Product '{}': {}",
-                name,
-                serde_json::to_string_pretty(&product)?
-            );
+            if json {
+                crate::output::print_success(&product);
+            } else {
+                println!(
+                    "Product '{}': {}",
+                    name,
+                    serde_json::to_string_pretty(&product)?
+                );
+            }
         },
     }
     Ok(())
 }
 
-async fn handle_instance_command(cmd: InstanceCommands, base_url: &str) -> Result<()> {
+async fn handle_instance_command(cmd: InstanceCommands, base_url: &str, json: bool) -> Result<()> {
     let client = client::ModelClient::new(base_url)?;
 
     match cmd {
         InstanceCommands::List { product } => {
             let instances = client.list_instances(product.as_deref()).await?;
-            println!("Instances: {}", serde_json::to_string_pretty(&instances)?);
+            if json {
+                crate::output::print_success(&instances);
+            } else {
+                println!("Instances: {}", serde_json::to_string_pretty(&instances)?);
+            }
         },
         InstanceCommands::Create {
             product,
@@ -163,23 +179,36 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str) -> Resul
         } => {
             let props_map: std::collections::HashMap<String, String> = props.into_iter().collect();
             client.create_instance(&product, &name, props_map).await?;
-            info!("Instance '{}' created", name);
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!("Instance '{}' created", name);
+            }
         },
         InstanceCommands::Get { name } => {
             let instance = client.get_instance(&name).await?;
-            println!(
-                "Instance '{}': {}",
-                name,
-                serde_json::to_string_pretty(&instance)?
-            );
+            if json {
+                crate::output::print_success(&instance);
+            } else {
+                println!(
+                    "Instance '{}': {}",
+                    name,
+                    serde_json::to_string_pretty(&instance)?
+                );
+            }
         },
         InstanceCommands::Update { name, props } => {
             let props_map: std::collections::HashMap<String, String> = props.into_iter().collect();
             client.update_instance(&name, props_map).await?;
-            info!("Instance '{}' updated", name);
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!("Instance '{}' updated", name);
+            }
         },
         InstanceCommands::Delete { name, force } => {
-            if !force {
+            // In json mode, skip interactive confirmation (agents can't prompt)
+            if !force && !json {
                 println!("Delete instance '{}'? [y/N]", name);
                 let mut input = String::new();
                 std::io::stdin().read_line(&mut input)?;
@@ -190,25 +219,32 @@ async fn handle_instance_command(cmd: InstanceCommands, base_url: &str) -> Resul
             }
 
             client.delete_instance(&name).await?;
-            info!("Instance '{}' deleted", name);
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!("Instance '{}' deleted", name);
+            }
         },
         InstanceCommands::Data { name, point_type } => {
-            // Instance data requires direct RTDB access, use rtdb command instead
-            let filter_msg = match point_type.as_deref() {
-                Some("M") => " (measurements only)",
-                Some("A") => " (actions only)",
-                _ => "",
-            };
-            println!(
-                "Instance data{} for '{}' requires running services.",
-                filter_msg, name
-            );
-            println!("Use: monarch rtdb inspect inst:<id>:M --full");
-            println!("Or:  monarch rtdb inspect inst:<id>:A --full");
-            println!(
-                "\nTo find instance ID, use: monarch models instances get {}",
-                name
-            );
+            if json {
+                crate::output::print_error("Use 'monarch --json rtdb inspect inst:<id>:M' instead");
+            } else {
+                let filter_msg = match point_type.as_deref() {
+                    Some("M") => " (measurements only)",
+                    Some("A") => " (actions only)",
+                    _ => "",
+                };
+                println!(
+                    "Instance data{} for '{}' requires running services.",
+                    filter_msg, name
+                );
+                println!("Use: monarch rtdb inspect inst:<id>:M --full");
+                println!("Or:  monarch rtdb inspect inst:<id>:A --full");
+                println!(
+                    "\nTo find instance ID, use: monarch models instances get {}",
+                    name
+                );
+            }
         },
     }
     Ok(())

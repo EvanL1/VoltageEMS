@@ -36,6 +36,8 @@ pub(super) struct ChannelPollContext<R: Rtdb> {
     pub watchdog_heartbeat_ms: Arc<AtomicI64>,
     pub reconnect_total_attempts: Arc<AtomicU64>,
     pub reconnect_failed: Arc<AtomicBool>,
+    /// Consecutive zero-data poll cycles before triggering disconnect (0 = disabled)
+    pub zero_data_threshold: u32,
 }
 
 /// Update cached connection state from protocol runtime.
@@ -149,6 +151,9 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
     // Track previous error count to detect new errors
     let mut prev_error_count: u64 = 0;
 
+    // Track consecutive poll cycles with zero successful data (for liveness detection)
+    let mut consecutive_zero_data: u32 = 0;
+
     // Track failed state log frequency (per-channel, not static)
     let mut failed_log_tick_counter: u32 = 0;
 
@@ -176,6 +181,7 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
                     &ctx, &mut protocol, &mut protocol_rx,
                     &mut reconnect_helper, &mut failed_log_tick_counter,
                     &mut prev_online, &mut prev_error_count,
+                    &mut consecutive_zero_data,
                 ).await;
                 match action {
                     TickAction::Continue => continue,
@@ -313,6 +319,7 @@ async fn handle_poll_tick<R: Rtdb>(
     failed_log_tick_counter: &mut u32,
     prev_online: &mut Option<bool>,
     prev_error_count: &mut u64,
+    consecutive_zero_data: &mut u32,
 ) -> TickAction {
     // Update watchdog heartbeat on every tick (proves task is alive)
     ctx.watchdog_heartbeat_ms
@@ -363,9 +370,23 @@ async fn handle_poll_tick<R: Rtdb>(
 
     let count = result.data.len();
     if count > 0 {
+        *consecutive_zero_data = 0;
         tracing::trace!("Ch{} poll ok: {} pts", ctx.channel_id, count);
         if let Err(e) = ctx.store.write_batch(ctx.channel_id, result.data).await {
             error!("Ch{} failed to write to Redis: {}", ctx.channel_id, e);
+        }
+    } else if ctx.zero_data_threshold > 0 {
+        *consecutive_zero_data += 1;
+        if *consecutive_zero_data >= ctx.zero_data_threshold {
+            warn!(
+                "Ch{} no data for {} consecutive cycles, triggering disconnect",
+                ctx.channel_id, consecutive_zero_data
+            );
+            let _ = protocol.disconnect().await;
+            *consecutive_zero_data = 0;
+            update_cached_state(protocol.as_ref(), &ctx.cached_state);
+            check_online_change(protocol.as_ref(), prev_online, &ctx.store, ctx.channel_id).await;
+            return TickAction::Proceed;
         }
     }
 

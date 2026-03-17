@@ -52,21 +52,29 @@ pub enum ChannelCommands {
     Health,
 }
 
-pub async fn handle_command(cmd: ChannelCommands, base_url: &str) -> Result<()> {
+pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) -> Result<()> {
     let client = ChannelClient::new(base_url)?;
 
     match cmd {
         ChannelCommands::List => {
             let channels = client.list_channels().await?;
-            println!("Channels: {}", serde_json::to_string_pretty(&channels)?);
+            if json {
+                crate::output::print_success(&channels);
+            } else {
+                println!("Channels: {}", serde_json::to_string_pretty(&channels)?);
+            }
         },
         ChannelCommands::Status { channel_id } => {
             let status = client.get_channel_status(channel_id).await?;
-            println!(
-                "Channel {} status: {}",
-                channel_id,
-                serde_json::to_string_pretty(&status)?
-            );
+            if json {
+                crate::output::print_success(&status);
+            } else {
+                println!(
+                    "Channel {} status: {}",
+                    channel_id,
+                    serde_json::to_string_pretty(&status)?
+                );
+            }
         },
         ChannelCommands::Control {
             channel_id,
@@ -74,10 +82,14 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str) -> Result<()> 
             value,
         } => {
             client.send_control(channel_id, point_id, value).await?;
-            info!(
-                "Control command sent to channel {} point {}",
-                channel_id, point_id
-            );
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!(
+                    "Control command sent to channel {} point {}",
+                    channel_id, point_id
+                );
+            }
         },
         ChannelCommands::Adjust {
             channel_id,
@@ -85,18 +97,30 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str) -> Result<()> 
             value,
         } => {
             client.send_adjustment(channel_id, point_id, value).await?;
-            info!(
-                "Adjustment sent to channel {} point {}: {}",
-                channel_id, point_id, value
-            );
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!(
+                    "Adjustment sent to channel {} point {}: {}",
+                    channel_id, point_id, value
+                );
+            }
         },
         ChannelCommands::Reload => {
             client.reload_config().await?;
-            info!("Configuration reloaded");
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!("Configuration reloaded");
+            }
         },
         ChannelCommands::Health => {
             let health = client.check_health().await?;
-            println!("Service health: {}", serde_json::to_string_pretty(&health)?);
+            if json {
+                crate::output::print_success(&health);
+            } else {
+                println!("Service health: {}", serde_json::to_string_pretty(&health)?);
+            }
         },
     }
 

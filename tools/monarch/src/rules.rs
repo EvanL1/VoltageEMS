@@ -67,14 +67,13 @@ pub enum RuleCommands {
     },
 }
 
-pub async fn handle_command(cmd: RuleCommands, base_url: &str) -> Result<()> {
+pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Result<()> {
     let client = RuleClient::new(base_url)?;
 
     match cmd {
         RuleCommands::List { enabled } => {
             let rules = client.list_rules().await?;
 
-            // Filter if needed
             let rules = if enabled {
                 if let serde_json::Value::Array(arr) = rules {
                     let filtered = arr
@@ -89,43 +88,71 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str) -> Result<()> {
                 rules
             };
 
-            println!("Rules: {}", serde_json::to_string_pretty(&rules)?);
+            if json {
+                crate::output::print_success(&rules);
+            } else {
+                println!("Rules: {}", serde_json::to_string_pretty(&rules)?);
+            }
         },
         RuleCommands::Get { rule_id } => {
             let rule = client.get_rule(rule_id).await?;
-            println!(
-                "Rule '{}': {}",
-                rule_id,
-                serde_json::to_string_pretty(&rule)?
-            );
+            if json {
+                crate::output::print_success(&rule);
+            } else {
+                println!(
+                    "Rule '{}': {}",
+                    rule_id,
+                    serde_json::to_string_pretty(&rule)?
+                );
+            }
         },
         RuleCommands::Enable { rule_id } => {
             client.enable_rule(rule_id).await?;
-            info!("Rule '{}' enabled", rule_id);
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!("Rule '{}' enabled", rule_id);
+            }
         },
         RuleCommands::Disable { rule_id } => {
             client.disable_rule(rule_id).await?;
-            info!("Rule '{}' disabled", rule_id);
+            if json {
+                crate::output::print_ok();
+            } else {
+                info!("Rule '{}' disabled", rule_id);
+            }
         },
         RuleCommands::Test { rule_id } => {
             let result = client.test_rule(rule_id).await?;
-            println!(
-                "Test result for rule '{}': {}",
-                rule_id,
-                serde_json::to_string_pretty(&result)?
-            );
+            if json {
+                crate::output::print_success(&result);
+            } else {
+                println!(
+                    "Test result for rule '{}': {}",
+                    rule_id,
+                    serde_json::to_string_pretty(&result)?
+                );
+            }
         },
         RuleCommands::Execute { rule_id, force } => {
             let result = client.execute_rule(rule_id, force).await?;
-            println!(
-                "Execution result for rule '{}': {}",
-                rule_id,
-                serde_json::to_string_pretty(&result)?
-            );
+            if json {
+                crate::output::print_success(&result);
+            } else {
+                println!(
+                    "Execution result for rule '{}': {}",
+                    rule_id,
+                    serde_json::to_string_pretty(&result)?
+                );
+            }
         },
         RuleCommands::Executions { rule_id, limit } => {
             let executions = client.list_executions(rule_id, limit).await?;
-            println!("Executions: {}", serde_json::to_string_pretty(&executions)?);
+            if json {
+                crate::output::print_success(&executions);
+            } else {
+                println!("Executions: {}", serde_json::to_string_pretty(&executions)?);
+            }
         },
     }
 

@@ -103,16 +103,19 @@ pub async fn run_doctor(
     results.push(check_config_files(config_path).await);
     results.push(check_shared_memory().await);
 
+    let has_errors = results.iter().any(|r| r.status == CheckStatus::Error);
+
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&results)?);
+        crate::output::print_success(serde_json::json!({
+            "checks": &results,
+            "healthy": !has_errors,
+        }));
     } else {
         print_results(&results, verbose);
     }
 
-    // Exit with error code if any check failed
-    let has_errors = results.iter().any(|r| r.status == CheckStatus::Error);
     if has_errors {
-        std::process::exit(1);
+        anyhow::bail!("Health check failed");
     }
 
     Ok(())
