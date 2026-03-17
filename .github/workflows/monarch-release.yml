@@ -32,10 +32,13 @@ jobs:
             os: macos-14
             archive: tar.gz
             name: monarch-darwin-aarch64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            archive: zip
-            name: monarch-windows-x86_64
+          # Windows disabled: comsrv/modsrv deps use Unix-only APIs (UDS)
+          # Windows users should use WSL with the Linux binary
+          # TODO: extract config types to standalone crate to enable Windows build
+          # - target: x86_64-pc-windows-msvc
+          #   os: windows-latest
+          #   archive: zip
+          #   name: monarch-windows-x86_64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -68,13 +71,6 @@ jobs:
           tar czf ../../../${{ matrix.name }}.tar.gz monarch
           cd ../../..
           sha256sum ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
-
-      - name: Package (windows)
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/monarch.exe -DestinationPath ${{ matrix.name }}.zip
-          (Get-FileHash ${{ matrix.name }}.zip -Algorithm SHA256).Hash.ToLower() + "  ${{ matrix.name }}.zip" | Out-File -Encoding ascii ${{ matrix.name }}.zip.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

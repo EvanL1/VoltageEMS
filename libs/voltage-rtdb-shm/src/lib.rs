@@ -21,6 +21,7 @@ pub mod slot_bitmap;
 
 pub mod notification;
 
+#[cfg(unix)]
 pub mod notifier;
 
 pub mod instance_index;
@@ -40,6 +41,7 @@ pub mod batch_direct;
 // Re-exports for convenience
 pub use instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 pub use notification::ShmNotification;
+#[cfg(unix)]
 pub use notifier::{NotifyResult, ShmNotifier, DEFAULT_UDS_PATH};
 pub use slot_bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
 pub use vec_impl::PointSlot;
