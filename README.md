@@ -163,14 +163,14 @@ Monarch is the unified management tool for VoltageEMS — configuration, monitor
 ### Installation
 
 ```bash
-# From source
-cargo install --path tools/monarch
+# One-line install (Linux / macOS / WSL)
+curl -fsSL https://raw.githubusercontent.com/EvanL1/VoltageEMS/develop/tools/monarch/install.sh | bash
 
-# Via Bun/npm (cross-platform)
+# Via Bun/npm (cross-platform including Windows)
 bun install -g @voltage/monarch
 
-# Or download from GitHub Releases
-# https://github.com/EvanL1/VoltageEMS/releases
+# From source
+cargo install --path tools/monarch
 ```
 
 ### Configuration Management

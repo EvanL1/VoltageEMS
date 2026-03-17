@@ -6,25 +6,20 @@ Unified management tool for [VoltageEMS](https://github.com/EvanL1/VoltageEMS) â
 
 ## Installation
 
-### Bun / npm (recommended, cross-platform)
+### One-line install (Linux / macOS / WSL)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/EvanL1/VoltageEMS/develop/tools/monarch/install.sh | bash
+```
+
+Auto-detects platform, downloads the correct binary, installs to `~/.local/bin`.
+
+### Bun / npm (cross-platform including Windows)
 
 ```bash
 bun install -g @voltage/monarch
 # or
 npm install -g @voltage/monarch
-```
-
-### GitHub Releases
-
-Download pre-built binaries from [Releases](https://github.com/EvanL1/VoltageEMS/releases):
-
-```bash
-# Linux / macOS
-curl -fsSL https://github.com/EvanL1/VoltageEMS/releases/latest/download/monarch-$(uname -s)-$(uname -m).tar.gz | tar xz -C /usr/local/bin/
-
-# Windows (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/EvanL1/VoltageEMS/releases/latest/download/monarch-windows-x86_64.zip" -OutFile monarch.zip
-Expand-Archive monarch.zip -DestinationPath $env:USERPROFILE\.local\bin
 ```
 
 ### From Source

@@ -163,14 +163,14 @@ Monarch 是 VoltageEMS 的统一管理工具 — 配置管理、实时监控、�
 ### 安装
 
 ```bash
-# 源码编译
-cargo install --path tools/monarch
+# 一键安装 (Linux / macOS / WSL)
+curl -fsSL https://raw.githubusercontent.com/EvanL1/VoltageEMS/develop/tools/monarch/install.sh | bash
 
-# 通过 Bun/npm 跨平台安装
+# 通过 Bun/npm 跨平台安装（含 Windows）
 bun install -g @voltage/monarch
 
-# 或从 GitHub Releases 下载
-# https://github.com/EvanL1/VoltageEMS/releases
+# 源码编译
+cargo install --path tools/monarch
 ```
 
 ### 配置管理
