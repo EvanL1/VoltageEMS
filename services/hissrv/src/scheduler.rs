@@ -36,12 +36,8 @@ pub fn spawn_all(state: Arc<AppState>, shutdown: CancellationToken) {
 
 async fn collector_task(state: Arc<AppState>, shutdown: CancellationToken) {
     loop {
-        let interval = {
-            state.config.read().await.collection_interval_secs
-        };
-        let enabled = {
-            state.storage_settings.read().await.enabled
-        };
+        let interval = { state.config.read().await.collection_interval_secs };
+        let enabled = { state.storage_settings.read().await.enabled };
 
         tokio::select! {
             _ = time::sleep(Duration::from_secs(interval)) => {}
@@ -131,8 +127,10 @@ async fn cleanup_task(state: Arc<AppState>, shutdown: CancellationToken) {
 
         let (enabled, days) = {
             let cfg = state.config.read().await;
-            (cfg.cleanup_enabled && state.storage_settings.read().await.enabled,
-             cfg.cleanup_older_than_days)
+            (
+                cfg.cleanup_enabled && state.storage_settings.read().await.enabled,
+                cfg.cleanup_older_than_days,
+            )
         };
 
         if !enabled {
@@ -150,11 +148,7 @@ async fn cleanup_task(state: Arc<AppState>, shutdown: CancellationToken) {
 /// How many seconds until the next 02:00 UTC (minimum 60s to avoid tight loops).
 fn secs_until_02_utc() -> u64 {
     let now = Utc::now();
-    let today_02: chrono::DateTime<Utc> = now
-        .date_naive()
-        .and_hms_opt(2, 0, 0)
-        .unwrap()
-        .and_utc();
+    let today_02: chrono::DateTime<Utc> = now.date_naive().and_hms_opt(2, 0, 0).unwrap().and_utc();
 
     let target = if now < today_02 {
         today_02

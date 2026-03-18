@@ -71,10 +71,7 @@ pub async fn export_config() -> impl IntoResponse {
 
     match create_zip_archive(dir) {
         Ok(data) => {
-            let filename = format!(
-                "config_{}.zip",
-                chrono::Utc::now().format("%Y%m%d_%H%M%S")
-            );
+            let filename = format!("config_{}.zip", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
             Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/zip")
@@ -84,7 +81,7 @@ pub async fn export_config() -> impl IntoResponse {
                 )
                 .body(Body::from(data))
                 .unwrap()
-        }
+        },
         Err(e) => {
             error!("Export config error: {}", e);
             (
@@ -92,7 +89,7 @@ pub async fn export_config() -> impl IntoResponse {
                 Json(json!({"success": false, "message": format!("导出配置失败: {}", e)})),
             )
                 .into_response()
-        }
+        },
     }
 }
 
@@ -160,7 +157,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
                         Json(json!({"success": false, "message": "读取上传文件失败"})),
                     )
                         .into_response();
-                }
+                },
             }
         }
     }
@@ -173,7 +170,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
                 Json(json!({"success": false, "message": "未提供配置文件"})),
             )
                 .into_response();
-        }
+        },
     };
 
     let target = Path::new(CONFIG_DIR);
@@ -191,7 +188,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
                 "data": { "files_extracted": count }
             }))
             .into_response()
-        }
+        },
         Err(e) => {
             error!("Extract zip error: {}", e);
             (
@@ -199,14 +196,14 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
                 Json(json!({"success": false, "message": format!("解压配置失败: {}", e)})),
             )
                 .into_response()
-        }
+        },
     }
 }
 
 fn extract_zip(data: &[u8], target: &Path) -> io::Result<usize> {
     let cursor = io::Cursor::new(data);
-    let mut archive = zip::ZipArchive::new(cursor)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     let count = archive.len();
     for i in 0..count {
@@ -251,20 +248,22 @@ pub async fn restart_services() -> impl IntoResponse {
             Ok(o) if o.status.success() => {
                 info!("Restarted service: {}", svc);
                 results.push(json!({"service": svc, "success": true}));
-            }
+            },
             Ok(o) => {
                 let err = String::from_utf8_lossy(&o.stderr).to_string();
                 error!("Restart {} failed: {}", svc, err);
                 results.push(json!({"service": svc, "success": false, "error": err}));
-            }
+            },
             Err(e) => {
                 error!("Docker command error for {}: {}", svc, e);
                 results.push(json!({"service": svc, "success": false, "error": e.to_string()}));
-            }
+            },
         }
     }
 
-    let all_ok = results.iter().all(|r| r["success"].as_bool().unwrap_or(false));
+    let all_ok = results
+        .iter()
+        .all(|r| r["success"].as_bool().unwrap_or(false));
     Json(json!({
         "success": all_ok,
         "message": if all_ok { "服务重启成功" } else { "部分服务重启失败" },
@@ -311,7 +310,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
                 Json(json!({"success": false, "message": "未提供升级包"})),
             )
                 .into_response();
-        }
+        },
     };
 
     let upgrade_dir = Path::new(UPGRADE_DIR);
@@ -356,7 +355,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
             Ok(mut child) => {
                 *UPGRADE_PID.lock().unwrap() = Some(child.id());
                 let _ = child.wait();
-            }
+            },
             Err(e) => error!("Upgrade command error: {}", e),
         }
 
@@ -387,7 +386,7 @@ pub async fn abort_upgrade() -> impl IntoResponse {
                 .output();
             *UPGRADE_RUNNING.lock().unwrap() = false;
             Json(json!({"success": true, "message": "升级已中断"})).into_response()
-        }
+        },
         None => Json(json!({"success": false, "message": "没有正在运行的升级"})).into_response(),
     }
 }

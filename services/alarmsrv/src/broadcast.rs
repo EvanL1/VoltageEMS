@@ -127,13 +127,13 @@ impl Broadcaster {
                 {
                     Ok(resp) if resp.status().is_success() => {
                         debug!("Broadcast ok: {}", url);
-                    }
+                    },
                     Ok(resp) => {
                         warn!("Broadcast failed: {} status={}", url, resp.status());
-                    }
+                    },
                     Err(e) => {
                         warn!("Broadcast error: {} err={}", url, e);
-                    }
+                    },
                 }
             }
         });

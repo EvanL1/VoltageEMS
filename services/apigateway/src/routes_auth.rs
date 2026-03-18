@@ -11,9 +11,15 @@ use serde_json::{json, Value};
 use tracing::error;
 
 use crate::{
-    auth::{create_token_pair, hash_password, verify_access_token, verify_password, verify_refresh_token},
+    auth::{
+        create_token_pair, hash_password, verify_access_token, verify_password,
+        verify_refresh_token,
+    },
     db,
-    models::{PasswordChange, RefreshTokenRequest, TokenResponse, UserCreate, UserLogin, UserUpdate, UserWithRole},
+    models::{
+        PasswordChange, RefreshTokenRequest, TokenResponse, UserCreate, UserLogin, UserUpdate,
+        UserWithRole,
+    },
     state::AppState,
 };
 
@@ -23,7 +29,10 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
     headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
         .map(String::from)
 }
 
@@ -87,12 +96,12 @@ pub async fn register(
                 Json(json!({"success": false, "message": "用户名已存在"})),
             )
                 .into_response();
-        }
+        },
         Err(e) => {
             error!("DB error: {}", e);
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     let role_id = body.role_id.unwrap_or(3);
@@ -101,7 +110,7 @@ pub async fn register(
         Err(e) => {
             error!("bcrypt hash error: {}", e);
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+        },
     };
 
     match db::create_user(&state.db, &body.username, &hash, role_id).await {
@@ -114,7 +123,7 @@ pub async fn register(
         Err(e) => {
             error!("Create user error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -130,13 +139,12 @@ pub async fn login(
     let user = match db::get_user_with_role_by_username(&state.db, &body.username).await {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return Json(json!({"success": false, "message": "用户名或密码错误"}))
-                .into_response();
-        }
+            return Json(json!({"success": false, "message": "用户名或密码错误"})).into_response();
+        },
         Err(e) => {
             error!("DB login error: {}", e);
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+        },
     };
 
     if !user.is_active {
@@ -174,11 +182,11 @@ pub async fn login(
                 }
             }))
             .into_response()
-        }
+        },
         Err(e) => {
             error!("Token creation error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -199,7 +207,7 @@ pub async fn refresh_token(
                 Json(json!({"success": false, "message": "刷新令牌无效或已过期"})),
             )
                 .into_response();
-        }
+        },
     };
 
     let token_id = match &claims.token_id {
@@ -210,7 +218,7 @@ pub async fn refresh_token(
                 Json(json!({"success": false, "message": "令牌格式错误"})),
             )
                 .into_response();
-        }
+        },
     };
 
     // Check token_id is in our store
@@ -224,7 +232,7 @@ pub async fn refresh_token(
                     Json(json!({"success": false, "message": "刷新令牌已撤销"})),
                 )
                     .into_response();
-            }
+            },
             Some(info) if info.expires_at < now => {
                 drop(info);
                 state.refresh_tokens.remove(&token_id);
@@ -233,8 +241,8 @@ pub async fn refresh_token(
                     Json(json!({"success": false, "message": "刷新令牌已过期"})),
                 )
                     .into_response();
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -267,11 +275,11 @@ pub async fn refresh_token(
                 }
             }))
             .into_response()
-        }
+        },
         Err(e) => {
             error!("Token refresh error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -303,10 +311,7 @@ pub async fn logout(
 #[utoipa::path(get, path = "/api/v1/auth/me", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "当前用户信息", body = UserWithRole), (status = 401, description = "未认证")))]
-pub async fn get_me(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
+pub async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     let claims = match require_auth(&state, &headers) {
         Ok(c) => c,
         Err(e) => return e.into_response(),
@@ -327,7 +332,7 @@ pub async fn get_me(
         Err(e) => {
             error!("DB error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -395,7 +400,7 @@ pub async fn get_roles(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         Err(e) => {
             error!("Get roles error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -429,11 +434,11 @@ pub async fn get_all_users(State(state): State<Arc<AppState>>) -> impl IntoRespo
                 "data": { "total": list.len(), "list": list }
             }))
             .into_response()
-        }
+        },
         Err(e) => {
             error!("Get users error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -467,7 +472,7 @@ pub async fn admin_get_user(
         Err(e) => {
             error!("DB error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -524,7 +529,7 @@ pub async fn admin_delete_user(
                 .into_response(),
                 _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
-        }
+        },
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({"success": false, "message": "用户不存在"})),
@@ -533,7 +538,7 @@ pub async fn admin_delete_user(
         Err(e) => {
             error!("DB error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -633,14 +638,14 @@ async fn apply_user_update(
                     new_password: new.clone(),
                 };
                 return apply_password_change(state, user_id, &pw).await;
-            }
+            },
             _ => {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({"success": false, "message": "修改密码需同时提供old_password和new_password"})),
                 )
                     .into_response();
-            }
+            },
         }
     }
 
@@ -678,7 +683,7 @@ async fn apply_password_change(
         Err(e) => {
             error!("bcrypt error: {}", e);
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+        },
     };
 
     match db::update_user_password(&state.db, user_id, &new_hash).await {
@@ -686,6 +691,6 @@ async fn apply_password_change(
         Err(e) => {
             error!("Update password error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }

@@ -70,8 +70,7 @@ impl StorageBackend for PostgresBackend {
         let keys: Vec<&str> = points.iter().map(|p| p.redis_key.as_str()).collect();
         let pids: Vec<&str> = points.iter().map(|p| p.point_id.as_str()).collect();
         let values: Vec<Option<f64>> = points.iter().map(|p| p.value).collect();
-        let svalues: Vec<Option<&str>> =
-            points.iter().map(|p| p.string_value.as_deref()).collect();
+        let svalues: Vec<Option<&str>> = points.iter().map(|p| p.string_value.as_deref()).collect();
 
         sqlx::query(
             "INSERT INTO history (time, redis_key, point_id, value, string_value)
@@ -124,7 +123,11 @@ impl StorageBackend for PostgresBackend {
             .unwrap_or_else(|| end - Duration::hours(24));
 
         let min_allowed = end - Duration::days(max_time_range_days);
-        let start = if start < min_allowed { min_allowed } else { start };
+        let start = if start < min_allowed {
+            min_allowed
+        } else {
+            start
+        };
 
         struct Row {
             time: DateTime<Utc>,
@@ -254,7 +257,10 @@ impl StorageBackend for PostgresBackend {
             .execute(&self.pool)
             .await?;
         let deleted = result.rows_affected();
-        info!("Cleanup: deleted {} rows older than {} days", deleted, older_than_days);
+        info!(
+            "Cleanup: deleted {} rows older than {} days",
+            deleted, older_than_days
+        );
         Ok(deleted)
     }
 

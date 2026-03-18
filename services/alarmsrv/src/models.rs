@@ -41,7 +41,10 @@ impl AlertRule {
 
     /// Redis HGET key: `{service_type}:{channel_id}:{data_type}`
     pub fn redis_key(&self) -> String {
-        format!("{}:{}:{}", self.service_type, self.channel_id, self.data_type)
+        format!(
+            "{}:{}:{}",
+            self.service_type, self.channel_id, self.data_type
+        )
     }
 
     /// Redis HGET field: `{point_id}`

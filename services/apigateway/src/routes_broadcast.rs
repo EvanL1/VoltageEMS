@@ -20,9 +20,8 @@ pub async fn broadcast_message(
         Ok(s) => s,
         Err(e) => {
             error!("Serialize broadcast body error: {}", e);
-            return Json(json!({"success": false, "message": "无效的JSON数据"}))
-                .into_response();
-        }
+            return Json(json!({"success": false, "message": "无效的JSON数据"})).into_response();
+        },
     };
 
     let (count, clients) = state.ws_hub.broadcast(&msg);

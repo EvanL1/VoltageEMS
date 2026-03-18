@@ -7,7 +7,9 @@ use chrono::{TimeZone, Utc};
 use sqlx::SqlitePool;
 use tracing::{debug, info};
 
-use crate::models::{Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams, RuleQueryParams};
+use crate::models::{
+    Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams, RuleQueryParams,
+};
 
 // ============================================================================
 // Schema creation
@@ -152,7 +154,10 @@ pub async fn get_rule_by_id(pool: &SqlitePool, id: i64) -> Result<Option<AlertRu
     Ok(row)
 }
 
-pub async fn list_rules(pool: &SqlitePool, params: &RuleQueryParams) -> Result<(i64, Vec<AlertRule>)> {
+pub async fn list_rules(
+    pool: &SqlitePool,
+    params: &RuleQueryParams,
+) -> Result<(i64, Vec<AlertRule>)> {
     let mut cond_strings: Vec<String> = Vec::new();
 
     if params.service_type.is_some() {
@@ -222,22 +227,18 @@ pub async fn list_rules(pool: &SqlitePool, params: &RuleQueryParams) -> Result<(
 }
 
 pub async fn get_rules_by_channel(pool: &SqlitePool, channel_id: i64) -> Result<Vec<AlertRule>> {
-    sqlx::query_as::<_, AlertRule>(
-        "SELECT * FROM alert_rule WHERE channel_id = ? ORDER BY id DESC",
-    )
-    .bind(channel_id)
-    .fetch_all(pool)
-    .await
-    .context("get rules by channel")
+    sqlx::query_as::<_, AlertRule>("SELECT * FROM alert_rule WHERE channel_id = ? ORDER BY id DESC")
+        .bind(channel_id)
+        .fetch_all(pool)
+        .await
+        .context("get rules by channel")
 }
 
 pub async fn get_all_enabled_rules(pool: &SqlitePool) -> Result<Vec<AlertRule>> {
-    sqlx::query_as::<_, AlertRule>(
-        "SELECT * FROM alert_rule WHERE enabled = 1 ORDER BY id ASC",
-    )
-    .fetch_all(pool)
-    .await
-    .context("get enabled rules")
+    sqlx::query_as::<_, AlertRule>("SELECT * FROM alert_rule WHERE enabled = 1 ORDER BY id ASC")
+        .fetch_all(pool)
+        .await
+        .context("get enabled rules")
 }
 
 pub async fn update_rule(
@@ -257,16 +258,36 @@ pub async fn update_rule(
     let now = Utc::now().timestamp();
     let mut set_clauses: Vec<String> = Vec::new();
 
-    if service_type.is_some()  { set_clauses.push("service_type = ?".into()); }
-    if channel_id.is_some()    { set_clauses.push("channel_id = ?".into()); }
-    if data_type.is_some()     { set_clauses.push("data_type = ?".into()); }
-    if point_id.is_some()      { set_clauses.push("point_id = ?".into()); }
-    if rule_name.is_some()     { set_clauses.push("rule_name = ?".into()); }
-    if warning_level.is_some() { set_clauses.push("warning_level = ?".into()); }
-    if operator.is_some()      { set_clauses.push("operator = ?".into()); }
-    if value.is_some()         { set_clauses.push("value = ?".into()); }
-    if enabled.is_some()       { set_clauses.push("enabled = ?".into()); }
-    if description.is_some()   { set_clauses.push("description = ?".into()); }
+    if service_type.is_some() {
+        set_clauses.push("service_type = ?".into());
+    }
+    if channel_id.is_some() {
+        set_clauses.push("channel_id = ?".into());
+    }
+    if data_type.is_some() {
+        set_clauses.push("data_type = ?".into());
+    }
+    if point_id.is_some() {
+        set_clauses.push("point_id = ?".into());
+    }
+    if rule_name.is_some() {
+        set_clauses.push("rule_name = ?".into());
+    }
+    if warning_level.is_some() {
+        set_clauses.push("warning_level = ?".into());
+    }
+    if operator.is_some() {
+        set_clauses.push("operator = ?".into());
+    }
+    if value.is_some() {
+        set_clauses.push("value = ?".into());
+    }
+    if enabled.is_some() {
+        set_clauses.push("enabled = ?".into());
+    }
+    if description.is_some() {
+        set_clauses.push("description = ?".into());
+    }
 
     if set_clauses.is_empty() {
         return Ok(false);
@@ -279,16 +300,36 @@ pub async fn update_rule(
     );
 
     let mut q = sqlx::query(&sql);
-    if let Some(v) = service_type  { q = q.bind(v); }
-    if let Some(v) = channel_id    { q = q.bind(v); }
-    if let Some(v) = data_type     { q = q.bind(v); }
-    if let Some(v) = point_id      { q = q.bind(v); }
-    if let Some(v) = rule_name     { q = q.bind(v); }
-    if let Some(v) = warning_level { q = q.bind(v); }
-    if let Some(v) = operator      { q = q.bind(v); }
-    if let Some(v) = value         { q = q.bind(v); }
-    if let Some(v) = enabled       { q = q.bind(if v { 1i64 } else { 0i64 }); }
-    if let Some(v) = description   { q = q.bind(v); }
+    if let Some(v) = service_type {
+        q = q.bind(v);
+    }
+    if let Some(v) = channel_id {
+        q = q.bind(v);
+    }
+    if let Some(v) = data_type {
+        q = q.bind(v);
+    }
+    if let Some(v) = point_id {
+        q = q.bind(v);
+    }
+    if let Some(v) = rule_name {
+        q = q.bind(v);
+    }
+    if let Some(v) = warning_level {
+        q = q.bind(v);
+    }
+    if let Some(v) = operator {
+        q = q.bind(v);
+    }
+    if let Some(v) = value {
+        q = q.bind(v);
+    }
+    if let Some(v) = enabled {
+        q = q.bind(if v { 1i64 } else { 0i64 });
+    }
+    if let Some(v) = description {
+        q = q.bind(v);
+    }
     q = q.bind(now).bind(id);
 
     let result = q.execute(pool).await.context("update rule")?;
@@ -297,15 +338,13 @@ pub async fn update_rule(
 
 pub async fn set_rule_enabled(pool: &SqlitePool, id: i64, enabled: bool) -> Result<bool> {
     let now = Utc::now().timestamp();
-    let result = sqlx::query(
-        "UPDATE alert_rule SET enabled = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(if enabled { 1i64 } else { 0i64 })
-    .bind(now)
-    .bind(id)
-    .execute(pool)
-    .await
-    .context("set rule enabled")?;
+    let result = sqlx::query("UPDATE alert_rule SET enabled = ?, updated_at = ? WHERE id = ?")
+        .bind(if enabled { 1i64 } else { 0i64 })
+        .bind(now)
+        .bind(id)
+        .execute(pool)
+        .await
+        .context("set rule enabled")?;
     Ok(result.rows_affected() > 0)
 }
 
@@ -331,13 +370,11 @@ pub async fn get_alert_by_id(pool: &SqlitePool, id: i64) -> Result<Option<Alert>
 }
 
 pub async fn get_alert_by_rule_id(pool: &SqlitePool, rule_id: i64) -> Result<Option<Alert>> {
-    sqlx::query_as::<_, Alert>(
-        "SELECT * FROM alert WHERE rule_id = ? LIMIT 1",
-    )
-    .bind(rule_id)
-    .fetch_optional(pool)
-    .await
-    .context("get alert by rule_id")
+    sqlx::query_as::<_, Alert>("SELECT * FROM alert WHERE rule_id = ? LIMIT 1")
+        .bind(rule_id)
+        .fetch_optional(pool)
+        .await
+        .context("get alert by rule_id")
 }
 
 pub async fn get_all_active_alerts(pool: &SqlitePool) -> Result<Vec<Alert>> {
@@ -349,13 +386,22 @@ pub async fn get_all_active_alerts(pool: &SqlitePool) -> Result<Vec<Alert>> {
     .context("get all active alerts")
 }
 
-pub async fn list_alerts(pool: &SqlitePool, params: &AlertQueryParams) -> Result<(i64, Vec<Alert>)> {
+pub async fn list_alerts(
+    pool: &SqlitePool,
+    params: &AlertQueryParams,
+) -> Result<(i64, Vec<Alert>)> {
     let mut cond_strings: Vec<String> = Vec::new();
     cond_strings.push("status = 'active'".to_string());
 
-    if params.service_type.is_some() { cond_strings.push("service_type = ?".to_string()); }
-    if params.channel_id.is_some()   { cond_strings.push("channel_id = ?".to_string()); }
-    if params.warning_level.is_some(){ cond_strings.push("warning_level = ?".to_string()); }
+    if params.service_type.is_some() {
+        cond_strings.push("service_type = ?".to_string());
+    }
+    if params.channel_id.is_some() {
+        cond_strings.push("channel_id = ?".to_string());
+    }
+    if params.warning_level.is_some() {
+        cond_strings.push("warning_level = ?".to_string());
+    }
     if params.keyword.is_some() {
         cond_strings.push(
             "(rule_name LIKE ? OR CAST(channel_id AS TEXT) LIKE ? OR CAST(point_id AS TEXT) LIKE ?)"
@@ -373,9 +419,15 @@ pub async fn list_alerts(pool: &SqlitePool, params: &AlertQueryParams) -> Result
     macro_rules! bind_alert_params {
         ($q:expr) => {{
             let mut q = $q;
-            if let Some(ref v) = params.service_type { q = q.bind(v.clone()); }
-            if let Some(v) = params.channel_id       { q = q.bind(v); }
-            if let Some(v) = params.warning_level    { q = q.bind(v); }
+            if let Some(ref v) = params.service_type {
+                q = q.bind(v.clone());
+            }
+            if let Some(v) = params.channel_id {
+                q = q.bind(v);
+            }
+            if let Some(v) = params.warning_level {
+                q = q.bind(v);
+            }
             if let Some(ref k) = params.keyword {
                 let pat = format!("%{}%", k);
                 q = q.bind(pat.clone()).bind(pat.clone()).bind(pat);
@@ -399,11 +451,7 @@ pub async fn list_alerts(pool: &SqlitePool, params: &AlertQueryParams) -> Result
     Ok((total, rows))
 }
 
-pub async fn insert_alert(
-    pool: &SqlitePool,
-    rule: &AlertRule,
-    current_value: f64,
-) -> Result<i64> {
+pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f64) -> Result<i64> {
     let now = Utc::now().timestamp();
     let snapshot = rule.snapshot();
 
@@ -436,7 +484,11 @@ pub async fn insert_alert(
     Ok(id)
 }
 
-pub async fn update_alert_value(pool: &SqlitePool, alert_id: i64, current_value: f64) -> Result<()> {
+pub async fn update_alert_value(
+    pool: &SqlitePool,
+    alert_id: i64,
+    current_value: f64,
+) -> Result<()> {
     sqlx::query("UPDATE alert SET current_value = ? WHERE id = ?")
         .bind(current_value)
         .bind(alert_id)
@@ -496,13 +548,11 @@ pub async fn resolve_alert(pool: &SqlitePool, alert: &Alert, recovery_value: f64
 /// Resolves all alerts for a rule (used when rule is disabled or deleted).
 /// Returns the list of resolved alert IDs.
 pub async fn resolve_alerts_by_rule_id(pool: &SqlitePool, rule_id: i64) -> Result<Vec<Alert>> {
-    let alerts = sqlx::query_as::<_, Alert>(
-        "SELECT * FROM alert WHERE rule_id = ?",
-    )
-    .bind(rule_id)
-    .fetch_all(pool)
-    .await
-    .context("get alerts by rule_id")?;
+    let alerts = sqlx::query_as::<_, Alert>("SELECT * FROM alert WHERE rule_id = ?")
+        .bind(rule_id)
+        .fetch_all(pool)
+        .await
+        .context("get alerts by rule_id")?;
 
     if alerts.is_empty() {
         return Ok(Vec::new());
@@ -563,12 +613,24 @@ pub async fn list_events(
 ) -> Result<(i64, Vec<AlertEvent>)> {
     let mut cond_strings: Vec<String> = Vec::new();
 
-    if params.rule_id.is_some()       { cond_strings.push("rule_id = ?".to_string()); }
-    if params.event_type.is_some()    { cond_strings.push("event_type = ?".to_string()); }
-    if params.service_type.is_some()  { cond_strings.push("service_type = ?".to_string()); }
-    if params.warning_level.is_some() { cond_strings.push("warning_level = ?".to_string()); }
-    if params.start_time.is_some()    { cond_strings.push("triggered_at >= ?".to_string()); }
-    if params.end_time.is_some()      { cond_strings.push("triggered_at <= ?".to_string()); }
+    if params.rule_id.is_some() {
+        cond_strings.push("rule_id = ?".to_string());
+    }
+    if params.event_type.is_some() {
+        cond_strings.push("event_type = ?".to_string());
+    }
+    if params.service_type.is_some() {
+        cond_strings.push("service_type = ?".to_string());
+    }
+    if params.warning_level.is_some() {
+        cond_strings.push("warning_level = ?".to_string());
+    }
+    if params.start_time.is_some() {
+        cond_strings.push("triggered_at >= ?".to_string());
+    }
+    if params.end_time.is_some() {
+        cond_strings.push("triggered_at <= ?".to_string());
+    }
 
     let where_clause = if cond_strings.is_empty() {
         "1=1".to_string()
@@ -585,12 +647,24 @@ pub async fn list_events(
     macro_rules! bind_event_params {
         ($q:expr) => {{
             let mut q = $q;
-            if let Some(v) = params.rule_id       { q = q.bind(v); }
-            if let Some(ref v) = params.event_type  { q = q.bind(v.clone()); }
-            if let Some(ref v) = params.service_type { q = q.bind(v.clone()); }
-            if let Some(v) = params.warning_level  { q = q.bind(v); }
-            if let Some(v) = params.start_time     { q = q.bind(v); }
-            if let Some(v) = params.end_time       { q = q.bind(v); }
+            if let Some(v) = params.rule_id {
+                q = q.bind(v);
+            }
+            if let Some(ref v) = params.event_type {
+                q = q.bind(v.clone());
+            }
+            if let Some(ref v) = params.service_type {
+                q = q.bind(v.clone());
+            }
+            if let Some(v) = params.warning_level {
+                q = q.bind(v);
+            }
+            if let Some(v) = params.start_time {
+                q = q.bind(v);
+            }
+            if let Some(v) = params.end_time {
+                q = q.bind(v);
+            }
             q
         }};
     }
@@ -615,12 +689,24 @@ pub async fn get_all_events_for_export(
     params: &EventQueryParams,
 ) -> Result<Vec<AlertEvent>> {
     let mut cond_strings: Vec<String> = Vec::new();
-    if params.rule_id.is_some()       { cond_strings.push("rule_id = ?".to_string()); }
-    if params.event_type.is_some()    { cond_strings.push("event_type = ?".to_string()); }
-    if params.service_type.is_some()  { cond_strings.push("service_type = ?".to_string()); }
-    if params.warning_level.is_some() { cond_strings.push("warning_level = ?".to_string()); }
-    if params.start_time.is_some()    { cond_strings.push("triggered_at >= ?".to_string()); }
-    if params.end_time.is_some()      { cond_strings.push("triggered_at <= ?".to_string()); }
+    if params.rule_id.is_some() {
+        cond_strings.push("rule_id = ?".to_string());
+    }
+    if params.event_type.is_some() {
+        cond_strings.push("event_type = ?".to_string());
+    }
+    if params.service_type.is_some() {
+        cond_strings.push("service_type = ?".to_string());
+    }
+    if params.warning_level.is_some() {
+        cond_strings.push("warning_level = ?".to_string());
+    }
+    if params.start_time.is_some() {
+        cond_strings.push("triggered_at >= ?".to_string());
+    }
+    if params.end_time.is_some() {
+        cond_strings.push("triggered_at <= ?".to_string());
+    }
 
     let where_clause = if cond_strings.is_empty() {
         "1=1".to_string()
@@ -634,12 +720,24 @@ pub async fn get_all_events_for_export(
     );
 
     let mut q = sqlx::query_as::<_, AlertEvent>(&sql);
-    if let Some(v) = params.rule_id       { q = q.bind(v); }
-    if let Some(ref v) = params.event_type  { q = q.bind(v.clone()); }
-    if let Some(ref v) = params.service_type { q = q.bind(v.clone()); }
-    if let Some(v) = params.warning_level  { q = q.bind(v); }
-    if let Some(v) = params.start_time     { q = q.bind(v); }
-    if let Some(v) = params.end_time       { q = q.bind(v); }
+    if let Some(v) = params.rule_id {
+        q = q.bind(v);
+    }
+    if let Some(ref v) = params.event_type {
+        q = q.bind(v.clone());
+    }
+    if let Some(ref v) = params.service_type {
+        q = q.bind(v.clone());
+    }
+    if let Some(v) = params.warning_level {
+        q = q.bind(v);
+    }
+    if let Some(v) = params.start_time {
+        q = q.bind(v);
+    }
+    if let Some(v) = params.end_time {
+        q = q.bind(v);
+    }
 
     q.fetch_all(pool).await.context("export events")
 }
@@ -657,11 +755,10 @@ pub struct AlarmCounts {
 }
 
 pub async fn get_active_alarm_counts(pool: &SqlitePool) -> Result<AlarmCounts> {
-    let total: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM alert WHERE status = 'active'")
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert WHERE status = 'active'")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let rows: Vec<(i64, i64)> = sqlx::query_as(
         "SELECT warning_level, COUNT(*) FROM alert WHERE status = 'active' GROUP BY warning_level",
@@ -679,7 +776,7 @@ pub async fn get_active_alarm_counts(pool: &SqlitePool) -> Result<AlarmCounts> {
             1 => counts.low = cnt,
             2 => counts.medium = cnt,
             3 => counts.high = cnt,
-            _ => {}
+            _ => {},
         }
     }
     Ok(counts)
@@ -688,13 +785,12 @@ pub async fn get_active_alarm_counts(pool: &SqlitePool) -> Result<AlarmCounts> {
 pub async fn get_statistics(pool: &SqlitePool) -> Result<serde_json::Value> {
     let counts = get_active_alarm_counts(pool).await?;
 
-    let today_events: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM alert_event WHERE triggered_at >= ?",
-    )
-    .bind(today_start_timestamp())
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    let today_events: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM alert_event WHERE triggered_at >= ?")
+            .bind(today_start_timestamp())
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
 
     Ok(serde_json::json!({
         "active_count": counts.total,

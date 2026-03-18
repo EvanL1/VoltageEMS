@@ -73,9 +73,12 @@ async fn main() -> anyhow::Result<()> {
         if storage_cfg.enabled && !storage_cfg.url.is_empty() {
             match routes::connect_storage_backend(&storage_cfg.backend, &storage_cfg.url).await {
                 Ok(b) => {
-                    info!("Storage backend '{}' connected at startup", storage_cfg.backend);
+                    info!(
+                        "Storage backend '{}' connected at startup",
+                        storage_cfg.backend
+                    );
                     b
-                }
+                },
                 Err(e) => {
                     tracing::warn!(
                         "Failed to connect storage at startup ({}), starting as disabled: {}",
@@ -83,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
                         e
                     );
                     Arc::new(NullBackend)
-                }
+                },
             }
         } else {
             info!("Storage disabled – configure via PUT /hisApi/storage");

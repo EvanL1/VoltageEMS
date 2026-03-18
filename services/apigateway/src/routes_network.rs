@@ -99,7 +99,11 @@ fn parse_config(content: &str) -> NetworkConfig {
         let key = key.trim();
         let value = value.trim();
 
-        let target = if is_commented { &mut commented } else { &mut active };
+        let target = if is_commented {
+            &mut commented
+        } else {
+            &mut active
+        };
 
         match key {
             "DHCP" => target.dhcp = Some(value.eq_ignore_ascii_case("yes")),
@@ -114,10 +118,10 @@ fn parse_config(content: &str) -> NetworkConfig {
                 } else {
                     target.ip = value.to_string();
                 }
-            }
+            },
             "Gateway" => target.gateway = value.to_string(),
             "DNS" => target.dns.push(value.to_string()),
-            _ => {}
+            _ => {},
         }
     }
 
@@ -128,21 +132,49 @@ fn parse_config(content: &str) -> NetworkConfig {
 
     NetworkConfig {
         dhcp: active.dhcp.unwrap_or(false),
-        ip: if active.ip.is_empty() { commented.ip } else { active.ip },
+        ip: if active.ip.is_empty() {
+            commented.ip
+        } else {
+            active.ip
+        },
         subnet_mask: if active.subnet_mask.is_empty() {
             commented.subnet_mask
         } else {
             active.subnet_mask
         },
-        gateway: if active.gateway.is_empty() { commented.gateway } else { active.gateway },
-        dns1: if dns1_active.is_empty() { dns1_commented } else { dns1_active },
-        dns2: if dns2_active.is_empty() { dns2_commented } else { dns2_active },
+        gateway: if active.gateway.is_empty() {
+            commented.gateway
+        } else {
+            active.gateway
+        },
+        dns1: if dns1_active.is_empty() {
+            dns1_commented
+        } else {
+            dns1_active
+        },
+        dns2: if dns2_active.is_empty() {
+            dns2_commented
+        } else {
+            dns2_active
+        },
     }
 }
 
-fn build_config(iface: &str, dhcp: bool, ip: &str, cidr: u8, gateway: &str, dns1: &str, dns2: &str) -> String {
+fn build_config(
+    iface: &str,
+    dhcp: bool,
+    ip: &str,
+    cidr: u8,
+    gateway: &str,
+    dns1: &str,
+    dns2: &str,
+) -> String {
     let comment = |enabled: bool, line: &str| -> String {
-        if enabled { line.to_string() } else { format!("#{}", line) }
+        if enabled {
+            line.to_string()
+        } else {
+            format!("#{}", line)
+        }
     };
 
     let static_enabled = !dhcp;
@@ -151,9 +183,21 @@ fn build_config(iface: &str, dhcp: bool, ip: &str, cidr: u8, gateway: &str, dns1
     } else {
         format!("Address={}/{}", ip, cidr)
     };
-    let gateway_line = if gateway.is_empty() { "Gateway=".to_string() } else { format!("Gateway={}", gateway) };
-    let dns1_line = if dns1.is_empty() { "DNS=".to_string() } else { format!("DNS={}", dns1) };
-    let dns2_line = if dns2.is_empty() { "DNS=".to_string() } else { format!("DNS={}", dns2) };
+    let gateway_line = if gateway.is_empty() {
+        "Gateway=".to_string()
+    } else {
+        format!("Gateway={}", gateway)
+    };
+    let dns1_line = if dns1.is_empty() {
+        "DNS=".to_string()
+    } else {
+        format!("DNS={}", dns1)
+    };
+    let dns2_line = if dns2.is_empty() {
+        "DNS=".to_string()
+    } else {
+        format!("DNS={}", dns2)
+    };
 
     format!(
         "[Match]\nName={iface}\nKernelCommandLine=!root=/dev/nfs\n\n[Network]\n{dhcp_line}\n{addr_line}\n{gw_line}\n{d1_line}\n{d2_line}\n\n[DHCP]\nClientIdentifier=mac\n",
@@ -253,7 +297,9 @@ pub async fn update_network_config(
         if mask.is_empty() {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "message": "静态 IP 模式下 subnet_mask 字段不能为空"})),
+                Json(
+                    json!({"success": false, "message": "静态 IP 模式下 subnet_mask 字段不能为空"}),
+                ),
             )
                 .into_response();
         }
@@ -270,7 +316,7 @@ pub async fn update_network_config(
                     Json(json!({"success": false, "message": format!("无效的子网掩码: {}", mask)})),
                 )
                     .into_response();
-            }
+            },
         }
     };
 
@@ -291,7 +337,7 @@ pub async fn update_network_config(
         Err(e) => {
             error!("Write network config error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -318,13 +364,24 @@ pub async fn apply_network_config() -> impl IntoResponse {
 
     let result = Command::new("docker")
         .args([
-            "run", "--rm",
-            "--pid", "host",
+            "run",
+            "--rm",
+            "--pid",
+            "host",
             "--privileged",
             "alpine:latest",
-            "nsenter", "--target", "1",
-            "--mount", "--uts", "--ipc", "--net", "--pid", "--",
-            "systemctl", "restart", "systemd-networkd",
+            "nsenter",
+            "--target",
+            "1",
+            "--mount",
+            "--uts",
+            "--ipc",
+            "--net",
+            "--pid",
+            "--",
+            "systemctl",
+            "restart",
+            "systemd-networkd",
         ])
         .output();
 
@@ -342,10 +399,10 @@ pub async fn apply_network_config() -> impl IntoResponse {
                 Json(json!({"success": false, "message": format!("重启 systemd-networkd 失败: {}", err)})),
             )
                 .into_response()
-        }
+        },
         Err(e) => {
             error!("Docker command error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }

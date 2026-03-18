@@ -30,7 +30,7 @@ pub async fn collect<R: Rtdb>(rtdb: &R, cfg: &ServiceConfig) -> Vec<DataPoint> {
             Err(e) => {
                 warn!("SCAN failed for pattern '{}': {}", pattern, e);
                 continue;
-            }
+            },
         };
 
         debug!("Pattern '{}' matched {} keys", pattern, keys.len());
@@ -47,7 +47,7 @@ pub async fn collect<R: Rtdb>(rtdb: &R, cfg: &ServiceConfig) -> Vec<DataPoint> {
                 Err(e) => {
                     warn!("HGETALL failed for '{}': {}", key, e);
                     continue;
-                }
+                },
             };
 
             // Extract timestamp from the hash if present.

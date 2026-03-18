@@ -13,14 +13,30 @@ use crate::models::{ServiceConfig, StorageSettings};
 
 const DEFAULTS: &[(&str, &str, &str)] = &[
     // ── Operational ──────────────────────────────────────────────────────────
-    ("collection_interval_secs", "30",                    "How often (s) Redis is scanned"),
-    ("flush_interval_secs",      "60",                    "How often (s) buffer is flushed to storage"),
-    ("batch_size",               "1000",                  "Max rows per storage write call"),
-    ("cleanup_enabled",          "true",                  "Whether old-data cleanup runs"),
-    ("cleanup_older_than_days",  "30",                    "Retain data for this many days"),
-    ("default_page_size",        "100",                   "Default query page size"),
-    ("max_page_size",            "1000",                  "Maximum allowed page size"),
-    ("max_time_range_days",      "365",                   "Maximum query time range (days)"),
+    (
+        "collection_interval_secs",
+        "30",
+        "How often (s) Redis is scanned",
+    ),
+    (
+        "flush_interval_secs",
+        "60",
+        "How often (s) buffer is flushed to storage",
+    ),
+    ("batch_size", "1000", "Max rows per storage write call"),
+    ("cleanup_enabled", "true", "Whether old-data cleanup runs"),
+    (
+        "cleanup_older_than_days",
+        "30",
+        "Retain data for this many days",
+    ),
+    ("default_page_size", "100", "Default query page size"),
+    ("max_page_size", "1000", "Maximum allowed page size"),
+    (
+        "max_time_range_days",
+        "365",
+        "Maximum query time range (days)",
+    ),
     (
         "subscribe_patterns",
         r#"["inst:*:M","inst:*:A"]"#,
@@ -32,9 +48,17 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "JSON array of regex patterns to exclude",
     ),
     // ── Storage connection ────────────────────────────────────────────────────
-    ("storage_enabled",  "false",    "Whether the storage backend is active"),
-    ("storage_backend",  "postgres", "Backend type: postgres | timescaledb"),
-    ("storage_url",      "",         "PostgreSQL DSN (assembled internally)"),
+    (
+        "storage_enabled",
+        "false",
+        "Whether the storage backend is active",
+    ),
+    (
+        "storage_backend",
+        "postgres",
+        "Backend type: postgres | timescaledb",
+    ),
+    ("storage_url", "", "PostgreSQL DSN (assembled internally)"),
 ];
 
 pub async fn create_config_table(pool: &SqlitePool) -> anyhow::Result<()> {
@@ -68,11 +92,12 @@ pub async fn create_config_table(pool: &SqlitePool) -> anyhow::Result<()> {
 
 // ── Shared internal helper ────────────────────────────────────────────────────
 
-async fn load_all_kv(pool: &SqlitePool) -> anyhow::Result<std::collections::HashMap<String, String>> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT key, value FROM hissrv_config")
-            .fetch_all(pool)
-            .await?;
+async fn load_all_kv(
+    pool: &SqlitePool,
+) -> anyhow::Result<std::collections::HashMap<String, String>> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT key, value FROM hissrv_config")
+        .fetch_all(pool)
+        .await?;
     Ok(rows.into_iter().collect())
 }
 
@@ -122,16 +147,28 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<ServiceConfig> {
 /// Persist operational settings back to the DB.
 pub async fn save_config(pool: &SqlitePool, cfg: &ServiceConfig) -> anyhow::Result<()> {
     let pairs: Vec<(&str, String)> = vec![
-        ("collection_interval_secs", cfg.collection_interval_secs.to_string()),
+        (
+            "collection_interval_secs",
+            cfg.collection_interval_secs.to_string(),
+        ),
         ("flush_interval_secs", cfg.flush_interval_secs.to_string()),
         ("batch_size", cfg.batch_size.to_string()),
         ("cleanup_enabled", cfg.cleanup_enabled.to_string()),
-        ("cleanup_older_than_days", cfg.cleanup_older_than_days.to_string()),
+        (
+            "cleanup_older_than_days",
+            cfg.cleanup_older_than_days.to_string(),
+        ),
         ("default_page_size", cfg.default_page_size.to_string()),
         ("max_page_size", cfg.max_page_size.to_string()),
         ("max_time_range_days", cfg.max_time_range_days.to_string()),
-        ("subscribe_patterns", serde_json::to_string(&cfg.subscribe_patterns)?),
-        ("exclude_patterns", serde_json::to_string(&cfg.exclude_patterns)?),
+        (
+            "subscribe_patterns",
+            serde_json::to_string(&cfg.subscribe_patterns)?,
+        ),
+        (
+            "exclude_patterns",
+            serde_json::to_string(&cfg.exclude_patterns)?,
+        ),
     ];
     upsert_pairs(pool, &pairs).await
 }
@@ -146,7 +183,7 @@ pub async fn load_storage(pool: &SqlitePool) -> anyhow::Result<StorageSettings> 
     Ok(StorageSettings {
         enabled: get("storage_enabled", "false") == "true",
         backend: get("storage_backend", "postgres"),
-        url:     get("storage_url", ""),
+        url: get("storage_url", ""),
     })
 }
 
@@ -155,7 +192,7 @@ pub async fn save_storage(pool: &SqlitePool, s: &StorageSettings) -> anyhow::Res
     let pairs: Vec<(&str, String)> = vec![
         ("storage_enabled", s.enabled.to_string()),
         ("storage_backend", s.backend.clone()),
-        ("storage_url",     s.url.clone()),
+        ("storage_url", s.url.clone()),
     ];
     upsert_pairs(pool, &pairs).await
 }

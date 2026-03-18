@@ -37,11 +37,9 @@ impl StorageBackend for TimescaleDbBackend {
 
         // Attempt hypertable conversion.  This is a no-op if TimescaleDB is
         // not installed; we log a warning and continue.
-        match sqlx::query(
-            "SELECT create_hypertable('history', 'time', if_not_exists => TRUE)",
-        )
-        .execute(&self.inner.pool)
-        .await
+        match sqlx::query("SELECT create_hypertable('history', 'time', if_not_exists => TRUE)")
+            .execute(&self.inner.pool)
+            .await
         {
             Ok(_) => info!("TimescaleDB hypertable created (or already existed)"),
             Err(e) => {
@@ -50,7 +48,7 @@ impl StorageBackend for TimescaleDbBackend {
                      Falling back to plain PostgreSQL behaviour.",
                     e
                 );
-            }
+            },
         }
 
         Ok(())
@@ -70,7 +68,12 @@ impl StorageBackend for TimescaleDbBackend {
         max_time_range_days: i64,
     ) -> anyhow::Result<(Vec<HistoryRecord>, i64)> {
         self.inner
-            .query_range(params, default_page_size, max_page_size, max_time_range_days)
+            .query_range(
+                params,
+                default_page_size,
+                max_page_size,
+                max_time_range_days,
+            )
             .await
     }
 

@@ -37,7 +37,9 @@ async fn probe_connection(url: &str) -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("连接失败: {}", e))?;
 
-    pool.execute("SELECT 1").await.map_err(|e| anyhow::anyhow!("探测查询失败: {}", e))?;
+    pool.execute("SELECT 1")
+        .await
+        .map_err(|e| anyhow::anyhow!("探测查询失败: {}", e))?;
     pool.close().await;
     Ok(())
 }
@@ -150,13 +152,12 @@ pub async fn connect_storage_backend(
         .await
         .map_err(|e| anyhow::anyhow!("无法连接数据库服务器: {}", e))?;
 
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)",
-    )
-    .bind(&target_db)
-    .fetch_one(&maint_pool)
-    .await
-    .unwrap_or(false);
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
+            .bind(&target_db)
+            .fetch_one(&maint_pool)
+            .await
+            .unwrap_or(false);
 
     if !exists {
         // Database names cannot be parameterized in DDL; safe here because
@@ -182,17 +183,17 @@ pub async fn connect_storage_backend(
             let b = Arc::new(crate::backend_tsdb::TimescaleDbBackend::new(pg_pool));
             b.init_schema().await?;
             b
-        }
+        },
         "influxdb" => {
             let b = Arc::new(crate::backend_influx::InfluxDbBackend);
             b.init_schema().await?;
             b
-        }
+        },
         _ => {
             let b = Arc::new(crate::backend_pg::PostgresBackend::new(pg_pool));
             b.init_schema().await?;
             b
-        }
+        },
     };
 
     Ok(storage)
@@ -255,11 +256,19 @@ async fn query_range(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let (default_page, max_page, max_days) = {
         let cfg = state.config.read().await;
-        (cfg.default_page_size, cfg.max_page_size, cfg.max_time_range_days)
+        (
+            cfg.default_page_size,
+            cfg.max_page_size,
+            cfg.max_time_range_days,
+        )
     };
 
     let page = params.page.unwrap_or(1).max(1);
-    let page_size = params.page_size.unwrap_or(default_page).min(max_page).max(1);
+    let page_size = params
+        .page_size
+        .unwrap_or(default_page)
+        .min(max_page)
+        .max(1);
 
     let backend = state.storage.read().await.clone();
     match backend
@@ -277,14 +286,14 @@ async fn query_range(
                 "page_size": page_size,
                 "has_more": has_more,
             })))
-        }
+        },
         Err(e) => {
             error!("query_range error: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"status": "error", "message": e.to_string()})),
             ))
-        }
+        },
     }
 }
 
@@ -318,7 +327,7 @@ async fn query_latest(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"status": "error", "message": e.to_string()})),
             ))
-        }
+        },
     }
 }
 
@@ -345,7 +354,7 @@ async fn data_range(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"status": "error", "message": e.to_string()})),
             ))
-        }
+        },
     }
 }
 
@@ -370,7 +379,7 @@ async fn list_channels(
                 "channels": channels,
                 "count": count,
             })))
-        }
+        },
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"status": "error", "message": e.to_string()})),
@@ -429,7 +438,9 @@ async fn update_config(
 
     *state.config.write().await = new_cfg;
 
-    Ok(Json(json!({ "status": "success", "message": "配置已更新" })))
+    Ok(Json(
+        json!({ "status": "success", "message": "配置已更新" }),
+    ))
 }
 
 // ============================================================================
@@ -537,7 +548,9 @@ async fn test_storage(
     if ss.url.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"status": "error", "message": "连接参数尚未配置，请先调用 PUT /hisApi/storage"})),
+            Json(
+                json!({"status": "error", "message": "连接参数尚未配置，请先调用 PUT /hisApi/storage"}),
+            ),
         ));
     }
 
@@ -547,7 +560,13 @@ async fn test_storage(
 
     // Parse host:port for a friendly success message.
     let addr = url::Url::parse(&ss.url)
-        .map(|u| format!("{}:{}", u.host_str().unwrap_or("?"), u.port().unwrap_or(5432)))
+        .map(|u| {
+            format!(
+                "{}:{}",
+                u.host_str().unwrap_or("?"),
+                u.port().unwrap_or(5432)
+            )
+        })
         .unwrap_or_else(|_| "?".to_string());
 
     match probe_connection(&probe_dsn).await {
@@ -583,14 +602,18 @@ async fn reconnect_storage(
     if !enabled {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"status": "error", "message": "存储未启用，请先通过 PUT /hisApi/storage 将 enabled 设为 true"})),
+            Json(
+                json!({"status": "error", "message": "存储未启用，请先通过 PUT /hisApi/storage 将 enabled 设为 true"}),
+            ),
         ));
     }
 
     if dsn.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"status": "error", "message": "连接参数未配置，请先调用 PUT /hisApi/storage"})),
+            Json(
+                json!({"status": "error", "message": "连接参数未配置，请先调用 PUT /hisApi/storage"}),
+            ),
         ));
     }
 
@@ -602,14 +625,14 @@ async fn reconnect_storage(
                 "status": "success",
                 "message": format!("已成功连接至 '{}' 后端，开始采集历史数据", backend_type)
             })))
-        }
+        },
         Err(e) => {
             error!("Storage reconnect failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"status": "error", "message": e.to_string()})),
             ))
-        }
+        },
     }
 }
 

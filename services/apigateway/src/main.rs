@@ -19,8 +19,8 @@ use axum::{
 };
 use dashmap::DashMap;
 use serde::Deserialize;
-use tower_http::cors::{Any, CorsLayer};
 use tokio_util::sync::CancellationToken;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::{Config, SwaggerUi};
@@ -294,10 +294,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // ── HTTP server ───────────────────────────────────────────────────────────
-    let app = build_router(Arc::clone(&state))
-        .layer(axum::middleware::from_fn(
-            common::logging::http_request_logger,
-        ));
+    let app = build_router(Arc::clone(&state)).layer(axum::middleware::from_fn(
+        common::logging::http_request_logger,
+    ));
 
     let bind_addr: SocketAddr = format!("{}:{}", state.config.api_host, state.config.api_port)
         .parse()

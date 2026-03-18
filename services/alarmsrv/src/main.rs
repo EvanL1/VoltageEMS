@@ -104,10 +104,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // ── HTTP server ───────────────────────────────────────────────────────────
-    let app = routes::create_routes(Arc::clone(&state))
-        .layer(axum::middleware::from_fn(
-            common::logging::http_request_logger,
-        ));
+    let app = routes::create_routes(Arc::clone(&state)).layer(axum::middleware::from_fn(
+        common::logging::http_request_logger,
+    ));
 
     let addr: SocketAddr = format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
@@ -131,4 +130,3 @@ async fn main() -> anyhow::Result<()> {
     info!("alarmsrv stopped");
     Ok(())
 }
-

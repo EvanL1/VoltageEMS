@@ -20,8 +20,8 @@ impl Default for GatewayConfig {
         let redis_url = env::var("REDIS_URL")
             .unwrap_or_else(|_| format!("redis://{}:{}", redis_host, redis_port));
 
-        let db_path = env::var("VOLTAGE_DB_PATH")
-            .unwrap_or_else(|_| "/app/data/voltage.db".to_string());
+        let db_path =
+            env::var("VOLTAGE_DB_PATH").unwrap_or_else(|_| "/app/data/voltage.db".to_string());
 
         Self {
             api_host: env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),

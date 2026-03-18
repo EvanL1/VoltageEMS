@@ -35,11 +35,9 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+        .execute(pool)
+        .await?;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS calculated_points (
@@ -56,11 +54,9 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_calculated_points_name ON calculated_points(name)",
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_calculated_points_name ON calculated_points(name)")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -134,10 +130,7 @@ fn row_to_user_with_role(r: sqlx::sqlite::SqliteRow) -> UserWithRole {
     }
 }
 
-pub async fn get_user_with_role(
-    pool: &SqlitePool,
-    user_id: i64,
-) -> Result<Option<UserWithRole>> {
+pub async fn get_user_with_role(pool: &SqlitePool, user_id: i64) -> Result<Option<UserWithRole>> {
     let row = sqlx::query(
         "SELECT u.id, u.username, u.is_active, u.last_login, u.created_at, u.updated_at,
                 r.id AS role_id, r.name_en AS role_name_en, r.name_zh AS role_name_zh,
@@ -176,14 +169,13 @@ pub async fn create_user(
     password_hash: &str,
     role_id: i64,
 ) -> Result<i64> {
-    let result = sqlx::query(
-        "INSERT INTO users (username, password_hash, role_id) VALUES (?, ?, ?)",
-    )
-    .bind(username)
-    .bind(password_hash)
-    .bind(role_id)
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("INSERT INTO users (username, password_hash, role_id) VALUES (?, ?, ?)")
+            .bind(username)
+            .bind(password_hash)
+            .bind(role_id)
+            .execute(pool)
+            .await?;
 
     Ok(result.last_insert_rowid())
 }
@@ -199,28 +191,20 @@ pub async fn update_user_last_login(pool: &SqlitePool, user_id: i64) -> Result<(
 }
 
 pub async fn update_user_role(pool: &SqlitePool, user_id: i64, role_id: i64) -> Result<()> {
-    sqlx::query(
-        "UPDATE users SET role_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    )
-    .bind(role_id)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE users SET role_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(role_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
-pub async fn update_user_active(
-    pool: &SqlitePool,
-    user_id: i64,
-    is_active: bool,
-) -> Result<()> {
-    sqlx::query(
-        "UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    )
-    .bind(is_active)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+pub async fn update_user_active(pool: &SqlitePool, user_id: i64, is_active: bool) -> Result<()> {
+    sqlx::query("UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(is_active)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -229,13 +213,11 @@ pub async fn update_user_password(
     user_id: i64,
     password_hash: &str,
 ) -> Result<()> {
-    sqlx::query(
-        "UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    )
-    .bind(password_hash)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(password_hash)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -248,11 +230,9 @@ pub async fn delete_user(pool: &SqlitePool, user_id: i64) -> Result<bool> {
 }
 
 pub async fn get_all_roles(pool: &SqlitePool) -> Result<Vec<Role>> {
-    Ok(
-        sqlx::query_as::<_, Role>("SELECT * FROM roles ORDER BY id")
-            .fetch_all(pool)
-            .await?,
-    )
+    Ok(sqlx::query_as::<_, Role>("SELECT * FROM roles ORDER BY id")
+        .fetch_all(pool)
+        .await?)
 }
 
 pub async fn get_all_users_with_roles(pool: &SqlitePool) -> Result<Vec<UserWithRole>> {
@@ -296,10 +276,9 @@ pub async fn get_all_calculated_points(
 
         Ok((items, total))
     } else {
-        let total: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
-                .fetch_one(pool)
-                .await?;
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM calculated_points")
+            .fetch_one(pool)
+            .await?;
 
         let items = sqlx::query_as::<_, CalculatedPoint>(
             "SELECT * FROM calculated_points ORDER BY id LIMIT ? OFFSET ?",
@@ -318,12 +297,10 @@ pub async fn get_calculated_point_by_id(
     point_id: i64,
 ) -> Result<Option<CalculatedPoint>> {
     Ok(
-        sqlx::query_as::<_, CalculatedPoint>(
-            "SELECT * FROM calculated_points WHERE id = ?",
-        )
-        .bind(point_id)
-        .fetch_optional(pool)
-        .await?,
+        sqlx::query_as::<_, CalculatedPoint>("SELECT * FROM calculated_points WHERE id = ?")
+            .bind(point_id)
+            .fetch_optional(pool)
+            .await?,
     )
 }
 

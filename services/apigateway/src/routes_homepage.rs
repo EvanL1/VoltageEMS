@@ -10,7 +10,11 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::error;
 
-use crate::{db, models::{CalculatedPoint, CalculatedPointUpdate}, state::AppState};
+use crate::{
+    db,
+    models::{CalculatedPoint, CalculatedPointUpdate},
+    state::AppState,
+};
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub struct PointsQuery {
@@ -48,11 +52,11 @@ pub async fn list_points(
                 }
             }))
             .into_response()
-        }
+        },
         Err(e) => {
             error!("List points error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -81,7 +85,7 @@ pub async fn get_point(
         Err(e) => {
             error!("Get point error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -105,12 +109,12 @@ pub async fn update_point(
                 Json(json!({"success": false, "message": format!("计算点位 ID {} 不存在", point_id)})),
             )
                 .into_response();
-        }
+        },
         Err(e) => {
             error!("DB error: {}", e);
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
-        _ => {}
+        },
+        _ => {},
     }
 
     match db::update_calculated_point(
@@ -136,7 +140,7 @@ pub async fn update_point(
         Err(e) => {
             error!("Update point error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }
 
@@ -159,6 +163,6 @@ pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoRespon
         Err(e) => {
             error!("Reset points error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
-        }
+        },
     }
 }

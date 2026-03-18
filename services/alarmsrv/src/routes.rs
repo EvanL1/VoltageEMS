@@ -153,11 +153,11 @@ async fn list_rules(
         Ok((total, list)) => {
             let msg = format!("查询成功，共找到 {} 条规则", total);
             Json(ApiResponse::ok(msg, PagedData { total, list })).into_response()
-        }
+        },
         Err(e) => {
             error!("list_rules: {}", e);
             server_error("查询规则失败")
-        }
+        },
     }
 }
 
@@ -194,14 +194,17 @@ async fn create_rule(
             let rule = db::get_rule_by_id(&state.db, id).await.ok().flatten();
             (
                 StatusCode::CREATED,
-                Json(ApiResponse::ok("创建规则成功", json!({ "id": id, "rule": rule }))),
+                Json(ApiResponse::ok(
+                    "创建规则成功",
+                    json!({ "id": id, "rule": rule }),
+                )),
             )
                 .into_response()
-        }
+        },
         Err(e) => {
             error!("create_rule: {}", e);
             server_error("创建规则失败")
-        }
+        },
     }
 }
 
@@ -211,17 +214,16 @@ async fn create_rule(
         (status = 200, description = "规则详情", body = AlertRule),
         (status = 404, description = "规则不存在"),
     ))]
-async fn get_rule(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
+async fn get_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_rule_by_id(&state.db, id).await {
-        Ok(Some(rule)) => Json(ApiResponse::ok("获取规则成功", json!({ "rule": rule }))).into_response(),
+        Ok(Some(rule)) => {
+            Json(ApiResponse::ok("获取规则成功", json!({ "rule": rule }))).into_response()
+        },
         Ok(None) => not_found("规则不存在"),
         Err(e) => {
             error!("get_rule: {}", e);
             server_error("获取规则失败")
-        }
+        },
     }
 }
 
@@ -264,12 +266,12 @@ async fn update_rule(
             monitor::on_rule_updated(&state, id).await;
             let rule = db::get_rule_by_id(&state.db, id).await.ok().flatten();
             Json(ApiResponse::ok("更新规则成功", json!({ "rule": rule }))).into_response()
-        }
+        },
         Ok(false) => not_found("规则不存在"),
         Err(e) => {
             error!("update_rule: {}", e);
             server_error("更新规则失败")
-        }
+        },
     }
 }
 
@@ -279,17 +281,14 @@ async fn update_rule(
         (status = 200, description = "规则删除成功"),
         (status = 404, description = "规则不存在"),
     ))]
-async fn delete_rule(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
+async fn delete_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     let rule = match db::get_rule_by_id(&state.db, id).await {
         Ok(Some(r)) => r,
         Ok(None) => return not_found("规则不存在"),
         Err(e) => {
             error!("delete_rule fetch: {}", e);
             return server_error("删除规则失败");
-        }
+        },
     };
 
     monitor::on_rule_deleted(&state, &rule).await;
@@ -300,7 +299,7 @@ async fn delete_rule(
         Err(e) => {
             error!("delete_rule: {}", e);
             server_error("删除规则失败")
-        }
+        },
     }
 }
 
@@ -310,17 +309,18 @@ async fn delete_rule(
         (status = 200, description = "规则已启用"),
         (status = 404, description = "规则不存在"),
     ))]
-async fn enable_rule(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
+async fn enable_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::set_rule_enabled(&state.db, id, true).await {
-        Ok(true) => Json(ApiResponse::ok("规则已启用", json!({ "id": id, "enabled": true }))).into_response(),
+        Ok(true) => Json(ApiResponse::ok(
+            "规则已启用",
+            json!({ "id": id, "enabled": true }),
+        ))
+        .into_response(),
         Ok(false) => not_found("规则不存在"),
         Err(e) => {
             error!("enable_rule: {}", e);
             server_error("启用规则失败")
-        }
+        },
     }
 }
 
@@ -337,13 +337,17 @@ async fn disable_rule(
     match db::set_rule_enabled(&state.db, id, false).await {
         Ok(true) => {
             monitor::on_rule_updated(&state, id).await;
-            Json(ApiResponse::ok("规则已禁用", json!({ "id": id, "enabled": false }))).into_response()
-        }
+            Json(ApiResponse::ok(
+                "规则已禁用",
+                json!({ "id": id, "enabled": false }),
+            ))
+            .into_response()
+        },
         Ok(false) => not_found("规则不存在"),
         Err(e) => {
             error!("disable_rule: {}", e);
             server_error("禁用规则失败")
-        }
+        },
     }
 }
 
@@ -362,11 +366,11 @@ async fn rules_by_channel(
                 PagedData { total, list },
             ))
             .into_response()
-        }
+        },
         Err(e) => {
             error!("rules_by_channel: {}", e);
             server_error("查询规则失败")
-        }
+        },
     }
 }
 
@@ -390,7 +394,7 @@ async fn list_alerts(
         Err(e) => {
             error!("list_alerts: {}", e);
             server_error("查询告警失败")
-        }
+        },
     }
 }
 
@@ -400,17 +404,16 @@ async fn list_alerts(
         (status = 200, description = "告警详情", body = crate::models::Alert),
         (status = 404, description = "告警不存在"),
     ))]
-async fn get_alert(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
+async fn get_alert(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_alert_by_id(&state.db, id).await {
-        Ok(Some(alert)) => Json(ApiResponse::ok("获取告警成功", json!({ "alert": alert }))).into_response(),
+        Ok(Some(alert)) => {
+            Json(ApiResponse::ok("获取告警成功", json!({ "alert": alert }))).into_response()
+        },
         Ok(None) => not_found("告警不存在"),
         Err(e) => {
             error!("get_alert: {}", e);
             server_error("获取告警失败")
-        }
+        },
     }
 }
 
@@ -430,7 +433,7 @@ async fn resolve_alert(
         Err(e) => {
             error!("resolve_alert fetch: {}", e);
             return server_error("解除告警失败");
-        }
+        },
     };
 
     let recovery_value = alert.current_value;
@@ -448,11 +451,11 @@ async fn resolve_alert(
                 state.broadcaster.send_alarm_count(&counts).await;
             }
             Json(ApiResponse::ok("告警已解除", json!({ "id": id }))).into_response()
-        }
+        },
         Err(e) => {
             error!("resolve_alert: {}", e);
             server_error("解除告警失败")
-        }
+        },
     }
 }
 
@@ -476,7 +479,7 @@ async fn list_events(
         Err(e) => {
             error!("list_events: {}", e);
             server_error("查询告警事件失败")
-        }
+        },
     }
 }
 
@@ -495,7 +498,7 @@ async fn export_events_csv(
         Err(e) => {
             error!("export_events_csv: {}", e);
             return server_error("导出失败");
-        }
+        },
     };
 
     let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
@@ -529,10 +532,7 @@ async fn export_events_csv(
             .recovered_at
             .map(|ts| format_timestamp(ts))
             .unwrap_or_default();
-        let duration_str = ev
-            .duration
-            .map(|d| d.to_string())
-            .unwrap_or_default();
+        let duration_str = ev.duration.map(|d| d.to_string()).unwrap_or_default();
 
         let _ = wtr.write_record(&[
             ev.id.to_string(),
@@ -570,7 +570,7 @@ async fn export_events_csv(
         Err(e) => {
             error!("csv flush: {}", e);
             server_error("导出失败")
-        }
+        },
     }
 }
 
@@ -586,7 +586,7 @@ async fn alert_statistics(State(state): State<Arc<AppState>>) -> impl IntoRespon
         Err(e) => {
             error!("alert_statistics: {}", e);
             server_error("获取统计信息失败")
-        }
+        },
     }
 }
 
@@ -594,12 +594,15 @@ async fn alert_statistics(State(state): State<Arc<AppState>>) -> impl IntoRespon
     responses((status = 200, description = "监控循环运行状态", body = MonitorStatus)))]
 async fn monitor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let ms = state.monitor_status.read().await.clone();
-    Json(ApiResponse::ok("监控状态获取成功", json!({
-        "running": ms.running,
-        "last_check_time": ms.last_check_time,
-        "check_interval": ms.check_interval,
-        "redis_url": ms.redis_url,
-    })))
+    Json(ApiResponse::ok(
+        "监控状态获取成功",
+        json!({
+            "running": ms.running,
+            "last_check_time": ms.last_check_time,
+            "check_interval": ms.check_interval,
+            "redis_url": ms.redis_url,
+        }),
+    ))
 }
 
 #[utoipa::path(post, path = "/alarmApi/monitor/check-rule/{id}", tag = "Monitor",
@@ -622,7 +625,7 @@ async fn manual_check_rule(
                 "data": {},
             }))
             .into_response()
-        }
+        },
     }
 }
 
@@ -634,7 +637,7 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         Err(e) => {
             error!("call_data get alerts: {}", e);
             return server_error("获取告警失败");
-        }
+        },
     };
 
     if alerts.is_empty() {
@@ -658,7 +661,10 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 
     let alarm_count = alerts.len();
-    state.broadcaster.broadcast_active_alerts(&alerts, &rule_map).await;
+    state
+        .broadcaster
+        .broadcast_active_alerts(&alerts, &rule_map)
+        .await;
 
     if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
         state.broadcaster.send_alarm_count(&counts).await;

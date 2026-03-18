@@ -14,12 +14,12 @@ use voltage_rtdb::Rtdb;
 use crate::db;
 use crate::state::AppState;
 
-pub async fn run_monitor(
-    state: Arc<AppState>,
-    shutdown: CancellationToken,
-) {
+pub async fn run_monitor(state: Arc<AppState>, shutdown: CancellationToken) {
     let interval = Duration::from_secs(state.config.data_fetch_interval);
-    info!("Alarm monitor started (interval={}s)", state.config.data_fetch_interval);
+    info!(
+        "Alarm monitor started (interval={}s)",
+        state.config.data_fetch_interval
+    );
 
     // Mark as running
     {
@@ -43,10 +43,7 @@ pub async fn run_monitor(
     ms.running = false;
 }
 
-pub async fn run_alarm_count_broadcaster(
-    state: Arc<AppState>,
-    shutdown: CancellationToken,
-) {
+pub async fn run_alarm_count_broadcaster(state: Arc<AppState>, shutdown: CancellationToken) {
     info!("Alarm count broadcast task started (interval=30s)");
     loop {
         tokio::select! {
@@ -64,7 +61,7 @@ async fn check_all_rules(state: &Arc<AppState>) {
         Err(e) => {
             error!("Failed to load enabled rules: {}", e);
             return;
-        }
+        },
     };
 
     if rules.is_empty() {
@@ -76,12 +73,15 @@ async fn check_all_rules(state: &Arc<AppState>) {
     debug!("Checking {} enabled rules", rules.len());
 
     // Process all rules concurrently
-    let tasks: Vec<_> = rules.into_iter().map(|rule| {
-        let state = Arc::clone(state);
-        tokio::spawn(async move {
-            check_single_rule(state, rule).await;
+    let tasks: Vec<_> = rules
+        .into_iter()
+        .map(|rule| {
+            let state = Arc::clone(state);
+            tokio::spawn(async move {
+                check_single_rule(state, rule).await;
+            })
         })
-    }).collect();
+        .collect();
 
     futures::future::join_all(tasks).await;
 
@@ -99,19 +99,25 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
             match s.parse::<f64>() {
                 Ok(val) => val,
                 Err(_) => {
-                    warn!("Invalid value format: {}:{} = {}", redis_key, redis_field, s);
+                    warn!(
+                        "Invalid value format: {}:{} = {}",
+                        redis_key, redis_field, s
+                    );
                     return;
-                }
+                },
             }
-        }
+        },
         Ok(None) => {
-            debug!("No data for rule '{}' at {}:{}", rule.rule_name, redis_key, redis_field);
+            debug!(
+                "No data for rule '{}' at {}:{}",
+                rule.rule_name, redis_key, redis_field
+            );
             return;
-        }
+        },
         Err(e) => {
             warn!("Redis error for rule '{}': {}", rule.rule_name, e);
             return;
-        }
+        },
     };
 
     let is_triggered = rule.evaluate(current_value);
@@ -119,9 +125,12 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
     let existing_alert = match db::get_alert_by_rule_id(&state.db, rule.id).await {
         Ok(a) => a,
         Err(e) => {
-            error!("DB error checking alert for rule '{}': {}", rule.rule_name, e);
+            error!(
+                "DB error checking alert for rule '{}': {}",
+                rule.rule_name, e
+            );
             return;
-        }
+        },
     };
 
     if is_triggered {
@@ -130,7 +139,10 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
             if let Err(e) = db::update_alert_value(&state.db, alert.id, current_value).await {
                 error!("Failed to update alert value: {}", e);
             }
-            debug!("Updated alert '{}': value={}", rule.rule_name, current_value);
+            debug!(
+                "Updated alert '{}': value={}",
+                rule.rule_name, current_value
+            );
         } else {
             // New alarm triggered
             match db::insert_alert(&state.db, &rule, current_value).await {
@@ -139,12 +151,18 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
                         "ALARM TRIGGERED: rule='{}' value={} {} {}",
                         rule.rule_name, current_value, rule.operator, rule.value
                     );
-                    state.broadcaster.send_alarm_triggered(alert_id, &rule, current_value).await;
+                    state
+                        .broadcaster
+                        .send_alarm_triggered(alert_id, &rule, current_value)
+                        .await;
                     send_alarm_count_broadcast(&state).await;
-                }
+                },
                 Err(e) => {
-                    error!("Failed to insert alert for rule '{}': {}", rule.rule_name, e);
-                }
+                    error!(
+                        "Failed to insert alert for rule '{}': {}",
+                        rule.rule_name, e
+                    );
+                },
             }
         }
     } else if let Some(alert) = existing_alert {
@@ -160,10 +178,13 @@ async fn check_single_rule(state: Arc<AppState>, rule: crate::models::AlertRule)
                     .send_alarm_recovery(alert.id, &rule, Some(current_value), "条件恢复")
                     .await;
                 send_alarm_count_broadcast(&state).await;
-            }
+            },
             Err(e) => {
-                error!("Failed to resolve alert for rule '{}': {}", rule.rule_name, e);
-            }
+                error!(
+                    "Failed to resolve alert for rule '{}': {}",
+                    rule.rule_name, e
+                );
+            },
         }
     }
 }
@@ -172,10 +193,10 @@ async fn send_alarm_count_broadcast(state: &Arc<AppState>) {
     match db::get_active_alarm_counts(&state.db).await {
         Ok(counts) => {
             state.broadcaster.send_alarm_count(&counts).await;
-        }
+        },
         Err(e) => {
             error!("Failed to get alarm counts: {}", e);
-        }
+        },
     }
 }
 
@@ -196,7 +217,12 @@ pub async fn on_rule_updated(state: &Arc<AppState>, rule_id: i64) {
                 .send_alarm_recovery(alert.id, &rule, None, "规则被禁用")
                 .await;
         }
-        if db::get_alert_by_rule_id(&state.db, rule_id).await.ok().flatten().is_some() {
+        if db::get_alert_by_rule_id(&state.db, rule_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
             send_alarm_count_broadcast(state).await;
         }
     }
@@ -256,7 +282,9 @@ pub async fn manual_check_rule(
         .parse()
         .map_err(|_| anyhow::anyhow!("Invalid value: {}", raw_str))?;
     let is_triggered = rule.evaluate(current_value);
-    let has_active = db::get_alert_by_rule_id(&state.db, rule.id).await?.is_some();
+    let has_active = db::get_alert_by_rule_id(&state.db, rule.id)
+        .await?
+        .is_some();
 
     Ok(serde_json::json!({
         "success": true,

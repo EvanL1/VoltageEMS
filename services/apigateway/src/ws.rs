@@ -134,11 +134,7 @@ impl WsHub {
 
         for entry in self.clients.iter() {
             let id = entry.key();
-            let sub = entry
-                .sub
-                .read()
-                .map(|s| s.clone())
-                .unwrap_or_default();
+            let sub = entry.sub.read().map(|s| s.clone()).unwrap_or_default();
 
             connections.insert(
                 id.clone(),
@@ -208,13 +204,8 @@ pub async fn run_heartbeat(hub: Arc<WsHub>, shutdown: CancellationToken) {
 }
 
 /// Periodic data push to subscribed clients.
-pub async fn run_data_push(
-    hub: Arc<WsHub>,
-    shutdown: CancellationToken,
-    interval_secs: u64,
-) {
-    let mut interval =
-        tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+pub async fn run_data_push(hub: Arc<WsHub>, shutdown: CancellationToken, interval_secs: u64) {
+    let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
@@ -239,7 +230,11 @@ async fn push_subscribed_data(hub: &Arc<WsHub>) {
             if sub.channels.is_empty() && sub.source != "homepage" {
                 continue;
             }
-            (sub.source.clone(), sub.channels.clone(), sub.data_types.clone())
+            (
+                sub.source.clone(),
+                sub.channels.clone(),
+                sub.data_types.clone(),
+            )
         };
 
         if source == "rule" {
@@ -274,9 +269,7 @@ async fn push_subscribed_data(hub: &Arc<WsHub>) {
                                 let num = String::from_utf8_lossy(&v)
                                     .parse::<f64>()
                                     .ok()
-                                    .and_then(|f| {
-                                        serde_json::Number::from_f64(f)
-                                    })
+                                    .and_then(|f| serde_json::Number::from_f64(f))
                                     .map(Value::Number)
                                     .unwrap_or(Value::Null);
                                 (k, num)
@@ -289,9 +282,9 @@ async fn push_subscribed_data(hub: &Arc<WsHub>) {
                             "data_type": dt,
                             "values": values_obj,
                         }));
-                    }
+                    },
                     Err(e) => debug!("HGETALL {}:{} error: {}", key, dt, e),
-                    _ => {}
+                    _ => {},
                 }
             }
         }
@@ -312,13 +305,9 @@ async fn push_rule_data(hub: &Arc<WsHub>, client_id: &str, rule_id: i64) {
     let key = format!("rule:{}:exec", rule_id);
     match hub.rtdb.hash_get_all(&key).await {
         Ok(data) if !data.is_empty() => {
-        let to_str =
-            |b: &Bytes| String::from_utf8_lossy(b).to_string();
+            let to_str = |b: &Bytes| String::from_utf8_lossy(b).to_string();
 
-            let rule_name = data
-                .get("rule_name")
-                .map(to_str)
-                .unwrap_or_default();
+            let rule_name = data.get("rule_name").map(to_str).unwrap_or_default();
 
             let exec_timestamp: i64 = data
                 .get("timestamp")
@@ -367,9 +356,9 @@ async fn push_rule_data(hub: &Arc<WsHub>, client_id: &str, rule_id: i64) {
             .to_string();
 
             hub.send_to(client_id, msg);
-        }
+        },
         Err(e) => debug!("Rule data HGETALL error rule={}: {}", rule_id, e),
-        _ => {}
+        _ => {},
     }
 }
 
@@ -407,7 +396,7 @@ pub async fn handle_socket(
     let client_id_send = client_id.clone();
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-                if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+            if ws_sender.send(Message::Text(msg.into())).await.is_err() {
                 break;
             }
         }
@@ -424,14 +413,14 @@ pub async fn handle_socket(
                 Message::Text(text) => {
                     hub_recv.update_activity(&client_id_recv);
                     handle_client_message(&hub_recv, &client_id_recv, &text).await;
-                }
+                },
                 Message::Ping(data) => {
                     // Axum handles pong automatically, just update activity
                     hub_recv.update_activity(&client_id_recv);
                     let _ = data;
-                }
+                },
                 Message::Close(_) => break,
-                _ => {}
+                _ => {},
             }
         }
         client_id_recv
@@ -452,7 +441,7 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
             let err = error_msg("INVALID_JSON", "无效的JSON格式", None);
             hub.send_to(client_id, err);
             return;
-        }
+        },
     };
 
     let msg_type = data["type"].as_str().unwrap_or("");
@@ -467,17 +456,16 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
             })
             .to_string();
             hub.send_to(client_id, pong);
-        }
+        },
 
         "subscribe" => {
-            let source = data["data"]["source"].as_str().unwrap_or("inst").to_string();
+            let source = data["data"]["source"]
+                .as_str()
+                .unwrap_or("inst")
+                .to_string();
             let channels: Vec<i64> = data["data"]["channels"]
                 .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_i64())
-                        .collect()
-                })
+                .map(|a| a.iter().filter_map(|v| v.as_i64()).collect())
                 .unwrap_or_default();
             let data_types: Vec<String> = data["data"]["data_types"]
                 .as_array()
@@ -513,17 +501,11 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
                 })
             };
             hub.send_to(client_id, ack.to_string());
-        }
+        },
 
         "unsubscribe" => {
             let source = data["data"]["source"].as_str().unwrap_or("inst");
-            hub.update_subscription(
-                client_id,
-                source.to_string(),
-                Vec::new(),
-                Vec::new(),
-                1000,
-            );
+            hub.update_subscription(client_id, source.to_string(), Vec::new(), Vec::new(), 1000);
             let ack = json!({
                 "type": "unsubscribe_ack",
                 "id": format!("{}_ack", data["id"].as_str().unwrap_or("unsub")),
@@ -532,15 +514,15 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
             })
             .to_string();
             hub.send_to(client_id, ack);
-        }
+        },
 
         "control" => {
             handle_control(hub, client_id, &data).await;
-        }
+        },
 
         _ => {
             debug!("Unknown WS message type '{}' from {}", msg_type, client_id);
-        }
+        },
     }
 }
 
@@ -574,8 +556,7 @@ async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
     });
 
     let trigger_key = format!("{}:trigger:{}:C", source, channel_id.unwrap());
-    let cmd_bytes =
-        Bytes::from(serde_json::to_vec(&cmd_data).unwrap_or_default());
+    let cmd_bytes = Bytes::from(serde_json::to_vec(&cmd_data).unwrap_or_default());
 
     match hub.rtdb.list_rpush(&trigger_key, cmd_bytes).await {
         Ok(_) => {
@@ -592,12 +573,12 @@ async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
             })
             .to_string();
             hub.send_to(client_id, ack);
-        }
+        },
         Err(e) => {
             error!("Control command publish failed: {}", e);
             let err = error_msg("CONTROL_ERROR", "控制命令发布失败", data["id"].as_str());
             hub.send_to(client_id, err);
-        }
+        },
     }
 }
 

@@ -244,17 +244,32 @@ pub struct StorageConfigRequest {
 
 impl StorageConfigRequest {
     pub fn to_dsn(&self) -> String {
-        build_dsn(&self.host, self.port, &self.database, &self.username, &self.password)
+        build_dsn(
+            &self.host,
+            self.port,
+            &self.database,
+            &self.username,
+            &self.password,
+        )
     }
 }
 
 // ── Shared DSN builder ────────────────────────────────────────────────────────
 
-pub fn build_dsn(host: &str, port: Option<u16>, database: &str, username: &str, password: &str) -> String {
+pub fn build_dsn(
+    host: &str,
+    port: Option<u16>,
+    database: &str,
+    username: &str,
+    password: &str,
+) -> String {
     let port = port.unwrap_or(5432);
     let user = urlencoding::encode(username);
     let pass = urlencoding::encode(password);
-    format!("postgres://{}:{}@{}:{}/{}", user, pass, host, port, database)
+    format!(
+        "postgres://{}:{}@{}:{}/{}",
+        user, pass, host, port, database
+    )
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
