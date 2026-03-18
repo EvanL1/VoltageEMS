@@ -22,7 +22,10 @@ impl DeviceIdentity {
             raw_device_sn.to_string()
         };
 
-        info!("Device identity: product_sn={} device_sn={}", product_sn, device_sn);
+        info!(
+            "Device identity: product_sn={} device_sn={}",
+            product_sn, device_sn
+        );
         Self {
             product_sn: product_sn.to_string(),
             device_sn,

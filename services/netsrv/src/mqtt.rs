@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use chrono::Utc;
-use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, Transport, TlsConfiguration};
+use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, TlsConfiguration, Transport};
 use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -36,10 +36,10 @@ pub async fn run_mqtt_loop(state: Arc<AppState>, shutdown: CancellationToken) {
                     return;
                 }
                 info!("MQTT event loop exited, will reconnect");
-            }
+            },
             Err(e) => {
                 warn!("MQTT connection error: {}", e);
-            }
+            },
         }
 
         if shutdown.is_cancelled() {
@@ -59,10 +59,7 @@ pub async fn run_mqtt_loop(state: Arc<AppState>, shutdown: CancellationToken) {
 
 // ── Inner connect + run ───────────────────────────────────────────────────────
 
-async fn connect_and_run(
-    state: Arc<AppState>,
-    shutdown: CancellationToken,
-) -> anyhow::Result<()> {
+async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> anyhow::Result<()> {
     let cfg = state.config.read().await.clone();
 
     // Resolve client ID
@@ -81,10 +78,10 @@ async fn connect_and_run(
         match build_tls(&state.env.cert_dir) {
             Ok(tls) => {
                 options.set_transport(Transport::tls_with_config(tls));
-            }
+            },
             Err(e) => {
                 error!("TLS setup failed: {}. Falling back to plain TCP.", e);
-            }
+            },
         }
     }
 
@@ -184,7 +181,9 @@ pub async fn publish_json(
     value: &impl serde::Serialize,
 ) -> anyhow::Result<()> {
     let guard = state.mqtt_client.lock().await;
-    let client = guard.as_ref().ok_or_else(|| anyhow::anyhow!("MQTT not connected"))?;
+    let client = guard
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("MQTT not connected"))?;
     let json = serde_json::to_string(value)?;
     client.publish(topic, QoS::AtLeastOnce, false, json).await?;
     Ok(())
@@ -237,7 +236,7 @@ async fn handle_read(state: Arc<AppState>, payload: Bytes) {
         Err(e) => {
             warn!("Bad read request: {}", e);
             return;
-        }
+        },
     };
 
     let redis_key = format!("{}:{}:{}", req.source, req.device, req.data_type);
@@ -251,9 +250,9 @@ async fn handle_read(state: Arc<AppState>, payload: Bytes) {
                 Err(e) => {
                     error!("Redis HGET '{}' '{}': {}", redis_key, field, e);
                     serde_json::Value::Null
-                }
+                },
             }
-        }
+        },
         None => {
             // All fields
             match state.rtdb.hash_get_all(&redis_key).await {
@@ -264,13 +263,13 @@ async fn handle_read(state: Arc<AppState>, payload: Bytes) {
                         .map(|(k, v)| (k, parse_redis_value(&v)))
                         .collect();
                     serde_json::Value::Object(obj)
-                }
+                },
                 Err(e) => {
                     error!("Redis HGETALL '{}': {}", redis_key, e);
                     serde_json::Value::Null
-                }
+                },
             }
-        }
+        },
     };
 
     let reply = crate::models::ReadReply {
@@ -296,7 +295,7 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
         Err(e) => {
             warn!("Bad write request: {}", e);
             return;
-        }
+        },
     };
 
     let redis_key = format!("{}:{}:{}", req.source, req.device, req.data_type);
@@ -316,7 +315,7 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
         Err(e) => {
             error!("Redis HSET '{}': {}", redis_key, e);
             (false, Some(e.to_string()))
-        }
+        },
     };
 
     let reply = WriteReply {
@@ -337,7 +336,11 @@ async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
     // Parse optional request_id
     let request_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
         .ok()
-        .and_then(|v| v.get("request_id").and_then(|r| r.as_str()).map(|s| s.to_string()));
+        .and_then(|v| {
+            v.get("request_id")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+        });
 
     // First reply, then do the full data upload
     let reply = CommandReply {
@@ -357,7 +360,11 @@ async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
 async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
     let request_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
         .ok()
-        .and_then(|v| v.get("request_id").and_then(|r| r.as_str()).map(|s| s.to_string()));
+        .and_then(|v| {
+            v.get("request_id")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+        });
 
     let alarmsrv_url = state.config.read().await.alarmsrv_url.clone();
     let url = format!("{}/alarmApi/call-data", alarmsrv_url);

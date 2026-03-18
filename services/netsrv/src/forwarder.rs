@@ -87,10 +87,7 @@ pub async fn upload_once(state: Arc<AppState>) {
         )
     };
 
-    let exclude_res: Vec<Regex> = excludes
-        .iter()
-        .filter_map(|p| Regex::new(p).ok())
-        .collect();
+    let exclude_res: Vec<Regex> = excludes.iter().filter_map(|p| Regex::new(p).ok()).collect();
 
     let entries = collect_redis_data(state.rtdb.as_ref(), &patterns, &exclude_res).await;
     if entries.is_empty() {
@@ -125,7 +122,7 @@ async fn collect_redis_data<R: Rtdb>(
             Err(e) => {
                 warn!("SCAN '{}' failed: {}", pattern, e);
                 continue;
-            }
+            },
         };
 
         for key in keys {
@@ -146,7 +143,7 @@ async fn collect_redis_data<R: Rtdb>(
                 Err(e) => {
                     warn!("HGETALL '{}' failed: {}", key, e);
                     continue;
-                }
+                },
             };
 
             let value: HashMap<String, serde_json::Value> = fields

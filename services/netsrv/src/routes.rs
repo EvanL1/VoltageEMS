@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use axum::{
     extract::{Multipart, Path, State},
@@ -198,7 +198,9 @@ async fn mqtt_update_config(
     }
     *state.config.write().await = new_cfg;
     state.reconnect_signal.notify_one();
-    Ok(Json(json!({"success": true, "message": "配置已更新，正在重连"})))
+    Ok(Json(
+        json!({"success": true, "message": "配置已更新，正在重连"}),
+    ))
 }
 
 #[utoipa::path(get, path = "/netApi/mqtt/status", tag = "MQTT",
@@ -270,18 +272,24 @@ async fn cert_upload(
         match name.as_str() {
             "cert_type" => {
                 let text = field.text().await.map_err(|e| {
-                    (StatusCode::BAD_REQUEST, Json(json!({"success": false, "error": e.to_string()})))
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"success": false, "error": e.to_string()})),
+                    )
                 })?;
                 cert_type_val = Some(text);
-            }
+            },
             "file" => {
                 let orig_name = field.file_name().unwrap_or("").to_string();
                 let data = field.bytes().await.map_err(|e| {
-                    (StatusCode::BAD_REQUEST, Json(json!({"success": false, "error": e.to_string()})))
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"success": false, "error": e.to_string()})),
+                    )
                 })?;
                 file_data = Some((orig_name, data.to_vec()));
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -292,23 +300,32 @@ async fn cert_upload(
     ))?;
 
     let save_name = match cert_type.as_str() {
-        "ca_cert"     => "AmazonRootCA1.pem",
+        "ca_cert" => "AmazonRootCA1.pem",
         "client_cert" => "certificate.pem.crt",
-        "client_key"  => "private.pem.key",
-        _ => return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "error": format!("不支持的 cert_type: '{}'. 可选：ca_cert | client_cert | client_key", cert_type)})),
-        )),
+        "client_key" => "private.pem.key",
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({"success": false, "error": format!("不支持的 cert_type: '{}'. 可选：ca_cert | client_cert | client_key", cert_type)}),
+                ),
+            ))
+        },
     };
 
     // Validate file.
-    let (orig_name, data) = file_data.ok_or_else(|| (
-        StatusCode::BAD_REQUEST,
-        Json(json!({"success": false, "error": "缺少 file 字段"})),
-    ))?;
+    let (orig_name, data) = file_data.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "error": "缺少 file 字段"})),
+        )
+    })?;
 
     if orig_name.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({"success": false, "error": "文件名不能为空"}))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "error": "文件名不能为空"})),
+        ));
     }
 
     let ext = std::path::Path::new(&orig_name)
@@ -317,20 +334,29 @@ async fn cert_upload(
         .map(|e| format!(".{}", e.to_lowercase()))
         .unwrap_or_default();
     if !ALLOWED_EXT.contains(&ext.as_str()) {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({
-            "success": false,
-            "error": format!("不支持的文件格式 '{}'，支持：{}", ext, ALLOWED_EXT.join(", "))
-        }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": format!("不支持的文件格式 '{}'，支持：{}", ext, ALLOWED_EXT.join(", "))
+            })),
+        ));
     }
 
     if data.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({"success": false, "error": "文件内容为空"}))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "error": "文件内容为空"})),
+        ));
     }
     if data.len() > MAX_SIZE {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({
-            "success": false,
-            "error": format!("文件超过 1MB 限制（当前 {} bytes）", data.len())
-        }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "error": format!("文件超过 1MB 限制（当前 {} bytes）", data.len())
+            })),
+        ));
     }
 
     // Ensure directory exists.
@@ -344,10 +370,12 @@ async fn cert_upload(
 
     // Save file.
     let dest = format!("{}/{}", cert_dir, save_name);
-    std::fs::write(&dest, &data).map_err(|e| (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({"success": false, "error": format!("写入文件失败: {}", e)})),
-    ))?;
+    std::fs::write(&dest, &data).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "error": format!("写入文件失败: {}", e)})),
+        )
+    })?;
 
     Ok(Json(json!({
         "success": true,
@@ -362,7 +390,11 @@ async fn cert_upload(
     responses((status = 200, description = "证书目录路径及各证书文件是否存在")))]
 async fn cert_info(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cert_dir = state.env.cert_dir.clone();
-    let files = ["AmazonRootCA1.pem", "certificate.pem.crt", "private.pem.key"];
+    let files = [
+        "AmazonRootCA1.pem",
+        "certificate.pem.crt",
+        "private.pem.key",
+    ];
     let info: Vec<Value> = files
         .iter()
         .map(|f| {
@@ -391,15 +423,17 @@ async fn cert_delete(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cert_dir = state.env.cert_dir.clone();
     let filename = match cert_type.as_str() {
-        "ca_cert"     => "AmazonRootCA1.pem",
+        "ca_cert" => "AmazonRootCA1.pem",
         "client_cert" => "certificate.pem.crt",
-        "client_key"  => "private.pem.key",
+        "client_key" => "private.pem.key",
         _ => {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "error": "未知的 cert_type，可选：ca_cert | client_cert | client_key"})),
+                Json(
+                    json!({"success": false, "error": "未知的 cert_type，可选：ca_cert | client_cert | client_key"}),
+                ),
             ))
-        }
+        },
     };
 
     match std::fs::remove_file(format!("{}/{}", cert_dir, filename)) {
