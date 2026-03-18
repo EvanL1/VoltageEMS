@@ -1,0 +1,63 @@
+[package]
+name = "netsrv"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[[bin]]
+name = "netsrv"
+path = "src/main.rs"
+
+[dependencies]
+# Local libraries
+common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum"] }
+errors = { path = "../../libs/errors", features = ["axum-support"] }
+voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# Web framework
+axum = { workspace = true, features = ["multipart"] }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors"] }
+
+# HTTP client (for call-alarm → alarmsrv)
+reqwest = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+regex = { workspace = true }
+async-trait = { workspace = true }
+
+# MQTT client with rustls-based TLS (no native OpenSSL dependency)
+rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"] }
+rustls-pemfile = "2"
+
+# System metrics
+sysinfo = "0.32"
+
+# OpenAPI / Swagger UI
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+
+[lints]
+workspace = true

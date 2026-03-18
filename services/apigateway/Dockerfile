@@ -1,35 +1,41 @@
-# 使用Python 3.10.12 slim镜像，支持aarch64
-FROM python:3.10.12-slim
+FROM rust:1.82-slim AS builder
 
-# 设置工作目录
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace manifests
+COPY Cargo.toml Cargo.lock ./
+COPY libs/ ./libs/
+COPY services/apigateway/ ./services/apigateway/
+
+# Build only the apigateway binary
+RUN cargo build --release -p apigateway
+
+# ── Runtime ────────────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# 设置环境变量
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+COPY --from=builder /build/target/release/apigateway /app/apigateway
 
-# 安装系统依赖（只安装必要的）
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+RUN mkdir -p /app/data /app/logs
 
-# 复制依赖文件
-COPY requirements.txt .
+ENV RUST_LOG=info
+ENV API_HOST=0.0.0.0
+ENV API_PORT=6005
+ENV REDIS_HOST=voltage-redis
+ENV REDIS_PORT=6379
+ENV VOLTAGE_DB_PATH=/app/data/voltage.db
+ENV LOG_DIR=/app/logs
+ENV JWT_SECRET_KEY=your-secret-key-here-change-in-production
+ENV ACCESS_TOKEN_EXPIRE_MINUTES=30
+ENV REFRESH_TOKEN_EXPIRE_DAYS=7
+ENV NETWORK_CONFIG_DIR=/etc/systemd/network
+ENV DATA_FETCH_INTERVAL=1
 
-# 安装Python依赖（优化pip缓存）
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# 复制应用代码
-COPY . .
-
-# 创建必要目录并设置权限（允许任意用户写入）
-RUN mkdir -p logs config && chmod 777 logs
-
-# 暴露端口
 EXPOSE 6005
 
-# 启动命令
-CMD ["python", "main.py"]
+CMD ["/app/apigateway"]

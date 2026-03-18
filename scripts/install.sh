@@ -117,8 +117,7 @@ ensure_shm_file() {
 declare -A TARBALL_TO_IMAGE=(
     ["voltageems.tar.gz"]="voltageems:latest"
     ["voltage-redis.tar.gz"]="redis:8-alpine"
-    ["voltage-influxdb.tar.gz"]="influxdb:3-core"
-    ["python-services.tar.gz"]="voltageems-ss:latest"
+    ["voltage-timescaledb.tar.gz"]="timescale/timescaledb:latest-pg16"
     ["apps.tar.gz"]="voltage-apps:latest"
     ["alpine.tar.gz"]="alpine:latest"
 )
@@ -126,16 +125,15 @@ declare -A TARBALL_TO_IMAGE=(
 # Image to container mapping
 declare -A IMAGE_TO_CONTAINERS=(
     ["redis:8-alpine"]="voltage-redis"
-    ["influxdb:3-core"]="voltage-influxdb"
-    ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv"
-    ["voltageems-ss:latest"]="voltageems-hissrv voltageems-apigateway voltageems-netsrv voltageems-alarmsrv"
+    ["timescale/timescaledb:latest-pg16"]="voltage-timescaledb"
+    ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv voltageems-hissrv voltageems-apigateway voltageems-netsrv voltageems-alarmsrv"
     ["voltage-apps:latest"]="voltage-apps"
 )
 
 # Container to service name mapping (for docker-compose)
 declare -A CONTAINER_TO_SERVICE=(
     ["voltage-redis"]="voltage-redis"
-    ["voltage-influxdb"]="influxdb"
+    ["voltage-timescaledb"]="timescaledb"
     ["voltageems-comsrv"]="comsrv"
     ["voltageems-modsrv"]="modsrv"
     ["voltageems-hissrv"]="hissrv"
@@ -619,7 +617,6 @@ fi
 echo -e "${YELLOW}[1/3] Installing CLI tools...${NC}"
 $SUDO mkdir -p /usr/local/bin
 
-# Install Monarch CLI (optional for Python-only packages)
 if [[ -f "tools/monarch" ]]; then
     $SUDO cp -v "tools/monarch" "/usr/local/bin/monarch"
     $SUDO chmod +x "/usr/local/bin/monarch"
@@ -632,7 +629,7 @@ if [[ -f "tools/monarch" ]]; then
     echo "  - Rules: monarch rules list/enable/execute"
     echo "  - Services: monarch services start/stop/logs"
 else
-    echo -e "${YELLOW}⊘ Monarch CLI not included (Python-only package)${NC}"
+    echo -e "${YELLOW}⚠ Monarch CLI not found in package${NC}"
 fi
 
 echo -e "${GREEN}[DONE] CLI tools installation${NC}"
@@ -684,7 +681,7 @@ if command -v docker &> /dev/null; then
 
             # Smart load: only load images that have changed
             # Process in specific order to handle dependencies
-            tarball_list=(docker/voltageems.tar.gz docker/python-services.tar.gz docker/voltage-redis.tar.gz docker/voltage-influxdb.tar.gz docker/apps.tar.gz docker/alpine.tar.gz)
+            tarball_list=(docker/voltageems.tar.gz docker/voltage-redis.tar.gz docker/voltage-timescaledb.tar.gz docker/apps.tar.gz docker/alpine.tar.gz)
 
             tarball_idx=0
             for tarball in "${tarball_list[@]}"; do
@@ -729,7 +726,6 @@ if command -v docker &> /dev/null; then
             declare -A CHANGE_STATUS
             INFRA_CHANGED=()
             RUST_CHANGED=()
-            PYTHON_CHANGED=()
             FRONTEND_CHANGED=()
 
             # If nothing was loaded, skip detection
@@ -773,14 +769,11 @@ if command -v docker &> /dev/null; then
                         "changed")
                             echo -e "    ${RED}⚠${NC} $image: ${RED}needs restart${NC}"
                             case "$image" in
-                                redis:*|influxdb:*)
+                                redis:*|timescale/*)
                                     INFRA_CHANGED+=("$image")
                                     ;;
                                 voltageems:latest)
                                     RUST_CHANGED+=("$image")
-                                    ;;
-                                voltageems-ss:*)
-                                    PYTHON_CHANGED+=("$image")
                                     ;;
                                 voltage-apps:*)
                                     FRONTEND_CHANGED+=("$image")
@@ -791,14 +784,11 @@ if command -v docker &> /dev/null; then
                             echo -e "    ${YELLOW}○${NC} $image: not running (will start)"
                             # Treat not-running as needing update
                             case "$image" in
-                                redis:*|influxdb:*)
+                                redis:*|timescale/*)
                                     INFRA_CHANGED+=("$image")
                                     ;;
                                 voltageems:latest)
                                     RUST_CHANGED+=("$image")
-                                    ;;
-                                voltageems-ss:*)
-                                    PYTHON_CHANGED+=("$image")
                                     ;;
                                 voltage-apps:*)
                                     FRONTEND_CHANGED+=("$image")
@@ -834,17 +824,6 @@ if command -v docker &> /dev/null; then
                 echo -e "  ${GREEN}Auto-confirmed: $image (Rust core)${NC}"
                 TO_UPDATE+=("$image")
             done
-
-            # Python services: unified image
-            if [[ ${#PYTHON_CHANGED[@]} -gt 0 ]]; then
-                # Check if unified Python services image changed
-                for img in "${PYTHON_CHANGED[@]}"; do
-                    if [[ "$img" == "voltageems-ss:latest" ]]; then
-                        echo -e "  ${GREEN}Auto-confirmed: $img (unified Python services)${NC}"
-                        TO_UPDATE+=("$img")
-                    fi
-                done
-            fi
 
             # Frontend: auto-confirm (optional service)
             for image in "${FRONTEND_CHANGED[@]}"; do
@@ -938,14 +917,17 @@ if command -v docker &> /dev/null; then
 
         # Verify loaded images
         echo "Verifying loaded images..."
-        # NOTE: voltage-apps:latest and alpine:latest are optional
-        for image_name in voltageems:latest redis:8-alpine influxdb:3-core voltageems-ss:latest voltage-apps:latest alpine:latest; do
+        # Required: voltageems:latest, redis:8-alpine
+        # Optional: timescaledb (can configure hissrv storage later via API), voltage-apps, alpine
+        for image_name in voltageems:latest redis:8-alpine timescale/timescaledb:latest-pg16 voltage-apps:latest alpine:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
                 echo -e "${GREEN}present${NC} (created: $CREATED)"
             else
-                if [[ "$image_name" == "voltage-apps:latest" ]] || [[ "$image_name" == "alpine:latest" ]]; then
+                if [[ "$image_name" == "timescale/timescaledb:latest-pg16" ]] || \
+                   [[ "$image_name" == "voltage-apps:latest" ]] || \
+                   [[ "$image_name" == "alpine:latest" ]]; then
                     echo -e "${YELLOW}missing (optional, skipping)${NC}"
                 else
                     echo -e "${RED}missing!${NC}"
@@ -1029,23 +1011,10 @@ else
     echo -e "${YELLOW}Warning: config.template not found${NC}"
 fi
 
-# Install Python service configuration files (only services with config dirs)
-echo "Installing Python service configuration files..."
-for service in hissrv netsrv; do
-    SERVICE_CONFIG_DIR="services/$service/config"
-    INSTALLER_CONFIG_DIR="config/$service"
-
-    if [[ -d "$SERVICE_CONFIG_DIR" ]]; then
-        $SUDO mkdir -p "$INSTALL_DIR/config/$service"
-        $SUDO cp -r "$SERVICE_CONFIG_DIR"/* "$INSTALL_DIR/config/$service/" 2>/dev/null || true
-        echo -e "  ${GREEN}✓${NC} $service"
-    elif [[ -d "$INSTALLER_CONFIG_DIR" ]]; then
-        $SUDO mkdir -p "$INSTALL_DIR/config/$service"
-        $SUDO cp -r "$INSTALLER_CONFIG_DIR"/* "$INSTALL_DIR/config/$service/" 2>/dev/null || true
-        echo -e "  ${GREEN}✓${NC} $service (from package)"
-    fi
-done
-echo -e "${GREEN}✓ Python service configuration installed${NC}"
+# Create certificate directory for netsrv TLS (mounted to /app/config/cert in container)
+echo "Creating certificate directory for netsrv..."
+$SUDO mkdir -p "$INSTALL_DIR/data/config/cert"
+echo -e "${GREEN}✓ Certificate directory ready: $INSTALL_DIR/data/config/cert${NC}"
 
 # Create a symlink if logs are external
 if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
@@ -1186,6 +1155,13 @@ $SUDO chmod -R 775 "$INSTALL_DIR/config.template" 2>/dev/null || true
 $SUDO chmod -R 777 "$INSTALL_DIR/upgrade" 2>/dev/null || true  # 升级目录需要容器写入权限
 $SUDO chmod -R 777 "$LOG_DIR" 2>/dev/null || true
 
+# Allow container (apigateway) to read/write network interface config files
+if [[ -d /etc/systemd/network ]]; then
+    $SUDO chmod a+w /etc/systemd/network 2>/dev/null || true
+    $SUDO chmod a+w /etc/systemd/network/*.network 2>/dev/null || true
+    echo -e "${GREEN}✓ Network config permissions set (/etc/systemd/network)${NC}"
+fi
+
 # Fix symlink ownership if exists
 [[ -L "$INSTALL_DIR/logs" ]] && $SUDO chown -h ${ACTUAL_UID}:${ACTUAL_GID} "$INSTALL_DIR/logs" 2>/dev/null || true
 
@@ -1286,7 +1262,8 @@ echo "  Installation directory: $INSTALL_DIR"
 if [[ "$AUTO_MODE" != true ]]; then
     echo "Installed components:"
     echo "  • CLI Tool: monarch (unified management)"
-    echo "  • Docker Images: voltage-redis, voltageems"
+    echo "  • Docker Images: voltageems (all Rust services), voltage-redis"
+    echo "    - Optional: voltage-timescaledb (for hissrv historical storage)"
     if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
         echo "  • Log directory: $LOG_DIR (symlinked from $INSTALL_DIR/logs)"
     else
@@ -1356,25 +1333,29 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo -e "${YELLOW}  • Using host network mode for optimal performance${NC}"
     echo "  • Services available on localhost:"
     echo "    - Redis: 6379          (data store)"
-    echo "    - InfluxDB: 8181       (time-series database - InfluxDB 3.x)"
+    echo "    - TimescaleDB: 5432    (time-series DB for hissrv, optional)"
     echo "    - ComSrv: 6001         (communication - Rust)"
     echo "    - ModSrv: 6002         (model + rules - Rust)"
-    echo "    - HisSrv: 6004         (history - Python)"
-    echo "    - APIGateway: 6005     (gateway - Python)"
-    echo "    - NetSrv: 6006         (network - Python)"
-    echo "    - AlarmSrv: 6007       (alarm - Python)"
+    echo "    - HisSrv: 6004         (history - Rust, storage via /hisApi/storage)"
+    echo "    - APIGateway: 6005     (gateway - Rust)"
+    echo "    - NetSrv: 6006         (network/MQTT - Rust)"
+    echo "    - AlarmSrv: 6007       (alarm - Rust)"
     echo "    - Frontend: 8080       (Vue.js + nginx)"
     echo ""
     echo -e "${YELLOW}Important: Configuration Setup Required${NC}"
     echo "  Before starting services, you must:"
-    echo "  1. Copy Rust service configuration template:"
-    echo "     cp -r $INSTALL_DIR/config.template/comsrv $INSTALL_DIR/config/comsrv"
-    echo "     cp -r $INSTALL_DIR/config.template/modsrv $INSTALL_DIR/config/modsrv"
-    echo "  2. Customize configuration files in config/ directory:"
-    echo "     - Rust services: config/comsrv/, config/modsrv/ (copy from config.template first)"
-    echo "     - Python services: config/hissrv/, config/apigateway/, config/netsrv/, config/alarmsrv/ (already installed)"
+    echo "  1. Copy service configuration templates:"
+    echo "     cp -r $INSTALL_DIR/config.template/comsrv $INSTALL_DIR/data/config/comsrv"
+    echo "     cp -r $INSTALL_DIR/config.template/modsrv $INSTALL_DIR/data/config/modsrv"
+    echo "  2. Customize configuration files in data/config/ directory"
     echo "  3. Sync configurations to database:"
     echo "     monarch sync"
+    echo "  4. (Optional) Configure hissrv storage backend via API after startup:"
+    echo "     PUT http://127.0.0.1:6004/hisApi/storage"
+    echo "     POST http://127.0.0.1:6004/hisApi/storage/reconnect"
+    echo "  5. (Optional) Upload MQTT TLS certificates via API:"
+    echo "     POST http://127.0.0.1:6006/netApi/certificate/upload"
+    echo "     (Files saved to $INSTALL_DIR/data/config/cert/)"
     echo ""
     echo -e "${BLUE}Database Management:${NC}"
     echo "  monarch init          - Add missing tables (safe, preserves data)"

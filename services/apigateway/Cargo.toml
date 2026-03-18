@@ -1,0 +1,65 @@
+[package]
+name = "apigateway"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[[bin]]
+name = "apigateway"
+path = "src/main.rs"
+
+[dependencies]
+# Local libraries
+common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum"] }
+errors = { path = "../../libs/errors", features = ["axum-support"] }
+voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# Web framework
+axum = { workspace = true, features = ["ws", "multipart"] }
+tower = { workspace = true }
+tower-http = { workspace = true, features = ["cors"] }
+
+# HTTP client
+reqwest = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+futures = { workspace = true }
+dashmap = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+
+# JWT authentication
+jsonwebtoken = "9"
+
+# Password hashing (bcrypt - frontend sends MD5, backend stores bcrypt(MD5))
+bcrypt = "0.15"
+
+# ZIP for config export/import
+zip = "2"
+
+# OpenAPI / Swagger UI
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+
+[lints]
+workspace = true
