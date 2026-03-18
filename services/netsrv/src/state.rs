@@ -30,6 +30,9 @@ pub struct AppState {
     pub mqtt_connected: Arc<AtomicBool>,
     /// Signal for the MQTT task to reconnect (config changed or explicit API call).
     pub reconnect_signal: Arc<Notify>,
+    /// When true the MQTT loop stays idle after a disconnect instead of auto-reconnecting.
+    /// Set by `POST /netApi/mqtt/disconnect`, cleared by `POST /netApi/mqtt/reconnect`.
+    pub disconnect_requested: Arc<AtomicBool>,
     /// HTTP client for outbound calls (call-alarm → alarmsrv).
     pub http_client: reqwest::Client,
 }

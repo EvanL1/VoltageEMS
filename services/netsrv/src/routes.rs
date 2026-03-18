@@ -217,17 +217,30 @@ async fn mqtt_status(State(state): State<Arc<AppState>>) -> Json<Value> {
 }
 
 #[utoipa::path(post, path = "/netApi/mqtt/disconnect", tag = "MQTT",
-    responses((status = 200, description = "断开指令已发送")))]
+    responses((status = 200, description = "断开 MQTT 连接，停止自动重连，直到调用 reconnect")))]
 async fn mqtt_disconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
+    // Mark disconnection intent first, then wake the mqtt loop so it stops reconnecting.
+    state
+        .disconnect_requested
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    // Drop the current client to force the event loop to exit.
+    *state.mqtt_client.lock().await = None;
+    state
+        .mqtt_connected
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     state.reconnect_signal.notify_one();
-    Json(json!({"success": true, "message": "断开指令已发送"}))
+    Json(json!({"success": true, "message": "MQTT 已断开，自动重连已暂停"}))
 }
 
 #[utoipa::path(post, path = "/netApi/mqtt/reconnect", tag = "MQTT",
-    responses((status = 200, description = "重连指令已发送，后台异步执行")))]
+    responses((status = 200, description = "触发重连，后台异步执行")))]
 async fn mqtt_reconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
+    // Clear the disconnect flag, then wake the mqtt loop to reconnect.
+    state
+        .disconnect_requested
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     state.reconnect_signal.notify_one();
-    Json(json!({"success": true, "message": "重连指令已发送"}))
+    Json(json!({"success": true, "message": "重连指令已发送，后台异步执行"}))
 }
 
 // ============================================================================

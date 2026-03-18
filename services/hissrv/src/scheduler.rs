@@ -103,13 +103,32 @@ async fn flush_buffer(state: &AppState) {
 
     let backend = state.storage.read().await.clone();
     let total = points.len();
+    let mut failed: Vec<_> = Vec::new();
     for chunk in points.chunks(batch_size) {
         match backend.write_batch(chunk.to_vec()).await {
             Ok(n) => info!("Flushed {} data points to {}", n, backend.name()),
-            Err(e) => error!("Flush failed: {}", e),
+            Err(e) => {
+                error!(
+                    "Flush failed, {} points will be retried: {}",
+                    chunk.len(),
+                    e
+                );
+                failed.extend_from_slice(chunk);
+            },
         }
     }
-    info!("Flush complete: {} points written", total);
+    // Put failed points back at the front of the buffer so they are retried next cycle.
+    let failed_count = failed.len();
+    if failed_count > 0 {
+        let mut buf = state.buffer.lock().await;
+        failed.extend(buf.drain(..));
+        *buf = failed;
+    }
+    info!(
+        "Flush complete: {}/{} points written",
+        total - failed_count,
+        total
+    );
 }
 
 async fn cleanup_task(state: Arc<AppState>, shutdown: CancellationToken) {

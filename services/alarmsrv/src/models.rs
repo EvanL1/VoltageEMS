@@ -40,6 +40,11 @@ impl AlertRule {
     }
 
     /// Redis HGET key: `{service_type}:{channel_id}:{data_type}`
+    ///
+    /// This deliberately mirrors the format produced by `KeySpaceConfig::channel_key`
+    /// (e.g. `comsrv:1001:T`) using the rule's `service_type` field as the prefix.
+    /// The caller is responsible for storing the correct prefix in `service_type`
+    /// (e.g. "comsrv" for channel data, "inst" for instance data).
     pub fn redis_key(&self) -> String {
         format!(
             "{}:{}:{}",

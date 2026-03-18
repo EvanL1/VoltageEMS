@@ -211,18 +211,16 @@ pub async fn on_rule_updated(state: &Arc<AppState>, rule_id: i64) {
         let resolved = db::resolve_alerts_by_rule_id(&state.db, rule_id)
             .await
             .unwrap_or_default();
-        for alert in resolved {
+        for alert in &resolved {
             state
                 .broadcaster
                 .send_alarm_recovery(alert.id, &rule, None, "规则被禁用")
                 .await;
         }
-        if db::get_alert_by_rule_id(&state.db, rule_id)
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-        {
+        // Broadcast updated count only when at least one alert was resolved.
+        // (Must check `resolved` before the DB call, since the alerts are
+        // already marked recovered at this point.)
+        if !resolved.is_empty() {
             send_alarm_count_broadcast(state).await;
         }
     }

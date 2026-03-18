@@ -35,7 +35,7 @@ pub async fn run_mqtt_loop(state: Arc<AppState>, shutdown: CancellationToken) {
                     info!("MQTT task shut down cleanly");
                     return;
                 }
-                info!("MQTT event loop exited, will reconnect");
+                info!("MQTT event loop exited");
             },
             Err(e) => {
                 warn!("MQTT connection error: {}", e);
@@ -46,7 +46,23 @@ pub async fn run_mqtt_loop(state: Arc<AppState>, shutdown: CancellationToken) {
             return;
         }
 
-        // Wait before reconnecting; yield early on config-change or shutdown.
+        // If an explicit disconnect was requested, stay idle until a reconnect
+        // signal arrives (do NOT auto-reconnect after the delay).
+        if state
+            .disconnect_requested
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            info!("Disconnect requested – waiting for reconnect signal");
+            state.mqtt_connected.store(false, Ordering::Relaxed);
+            tokio::select! {
+                _ = state.reconnect_signal.notified() => {}
+                _ = shutdown.cancelled() => return,
+            }
+            // If still disconnected after wakeup, loop back and check again.
+            continue;
+        }
+
+        // Normal auto-reconnect: wait for delay or an early trigger.
         tokio::select! {
             _ = time::sleep(delay) => {}
             _ = state.reconnect_signal.notified() => {
@@ -74,15 +90,11 @@ async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> a
     options.set_clean_session(true);
 
     // TLS – cert_dir is fixed at startup from EnvConfig (not API-editable).
+    // If ssl_enabled but cert loading fails, abort the connection attempt rather
+    // than silently downgrading to plaintext.
     if cfg.ssl_enabled {
-        match build_tls(&state.env.cert_dir) {
-            Ok(tls) => {
-                options.set_transport(Transport::tls_with_config(tls));
-            },
-            Err(e) => {
-                error!("TLS setup failed: {}. Falling back to plain TCP.", e);
-            },
-        }
+        let tls = build_tls(&state.env.cert_dir)?;
+        options.set_transport(Transport::tls_with_config(tls));
     }
 
     let (client, mut event_loop) = AsyncClient::new(options, 64);

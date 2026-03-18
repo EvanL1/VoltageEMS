@@ -10,7 +10,7 @@ WORKDIR /build
 # Copy workspace manifests for dependency caching
 COPY Cargo.toml Cargo.lock ./
 COPY libs/ libs/
-COPY services/alarmsrv-rust/ services/alarmsrv-rust/
+COPY services/alarmsrv/ services/alarmsrv/
 
 RUN cargo build --release -p alarmsrv
 
