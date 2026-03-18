@@ -12,7 +12,7 @@ Industrial IoT energy management system built with Rust. Multi-protocol data acq
 - **Multi-Protocol Support** — Modbus TCP/RTU, IEC 60870-5-104, OPC UA, MQTT, HTTP, DL/T 645, CAN, J1939, GPIO
 - **Zero-Copy Shared Memory** — High-performance data path between services via `/dev/shm`, bypassing serialization overhead
 - **Rule Engine** — Visual rule editing (Vue Flow) with real-time execution, expression evaluation, and scheduling
-- **Time-Series Integration** — InfluxDB 3.x for historical data persistence and trend analysis
+- **Pluggable Time-Series Storage** — Runtime-configurable backend (PostgreSQL / TimescaleDB) for historical data persistence
 - **Full-Stack Visualization** — Vue.js 3 + ECharts dashboard with real-time WebSocket updates
 
 ## Architecture
@@ -31,8 +31,8 @@ Industrial IoT energy management system built with Rust. Multi-protocol data acq
    DL645/CAN          apigateway(:6005) ──── apps(:8080)
    J1939/GPIO            API Gateway          Vue.js Frontend
                                │
-                       hissrv(:6004) ◄── InfluxDB(:8181)
-                       Historical Data       Time-Series DB
+                       hissrv(:6004) ◄── PostgreSQL/TimescaleDB
+                       Historical Data       Pluggable Backend
                                │
                      alarmsrv(:6007)    netsrv(:6006)
                      Alarm Management   MQTT Networking
@@ -44,13 +44,13 @@ Industrial IoT energy management system built with Rust. Multi-protocol data acq
 |---------|------|----------|-------------|
 | comsrv | 6001 | Rust | Communication service — industrial protocol drivers, channel management |
 | modsrv | 6002 | Rust | Model service — product definitions, device instances, rule engine |
-| hissrv | 6004 | Python | Historical data service — InfluxDB 3.x time-series persistence |
-| apigateway | 6005 | Python | API gateway — unified REST API, WebSocket, JWT auth |
-| netsrv | 6006 | Python | Network service — MQTT broker integration |
-| alarmsrv | 6007 | Python | Alarm service — alarm rules and notifications |
+| hissrv | 6004 | Rust | Historical data service — pluggable backend (PostgreSQL / TimescaleDB) |
+| apigateway | 6005 | Rust | API gateway — unified REST API, WebSocket, JWT auth |
+| netsrv | 6006 | Rust | Network service — MQTT broker integration |
+| alarmsrv | 6007 | Rust | Alarm service — alarm rules and notifications |
 | apps | 8080 | Vue.js | Frontend — ECharts dashboards, Vue Flow rule editor |
 | voltage-redis | 6379 | — | Real-time data store and message routing |
-| InfluxDB | 8181 | — | Time-series database for historical data |
+| TimescaleDB | 5432 | — | Time-series database for historical data (optional, runtime-configured) |
 
 ## Quick Start
 
@@ -93,11 +93,10 @@ VoltageEMS/
 ├── services/
 │   ├── comsrv/              # Communication service (Rust)
 │   ├── modsrv/              # Model service + rules (Rust)
-│   └── python-services/
-│       ├── hissrv/          # Historical data (Python/FastAPI)
-│       ├── apigateway/      # API gateway (Python/FastAPI)
-│       ├── netsrv/          # MQTT networking (Python/FastAPI)
-│       └── alarmsrv/        # Alarm management (Python/FastAPI)
+│   ├── hissrv/              # Historical data (Rust)
+│   ├── apigateway/          # API gateway (Rust)
+│   ├── netsrv/              # MQTT networking (Rust)
+│   └── alarmsrv/            # Alarm management (Rust)
 ├── libs/                    # 13 shared Rust libraries
 ├── tools/
 │   ├── monarch/             # CLI config & service manager

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-03-18
+
+### Breaking Changes — Full Rust Migration
+- **All services now Rust** — hissrv, apigateway, netsrv, alarmsrv migrated from Python/FastAPI to Rust/Axum
+- **Python services removed** — `services/python-services/` directory deleted; all 6 services live under `services/`
+- **Pluggable storage replaces InfluxDB** — hissrv now uses a runtime-configurable backend (PostgreSQL / TimescaleDB) via `PUT /hisApi/storage`
+- **Unified Docker image** — all Rust services share a single `voltageems:latest` Alpine-based image (105MB total)
+
+### Added
+- **monarch**: Remote management CLI with `--host` flag for all commands
+- **monarch**: Interactive TUI dashboard (`monarch top`) with local and remote monitoring
+- **monarch**: JSON output mode (`--json`) for AI agent and script integration
+- **monarch**: Channel template API — snapshot, apply, list templates
+- **monarch**: Cross-platform release pipeline (Linux ARM64/AMD64, macOS)
+- **apigateway**: JWT authentication, WebSocket proxy, unified REST API (Rust rewrite)
+- **hissrv**: Pluggable storage backend (PostgreSQL / TimescaleDB) with runtime configuration via REST API
+- **netsrv**: MQTT client with TLS support, device telemetry forwarding
+- **alarmsrv**: Alarm rule evaluation, notification management, CSV export
+
+### Refactored
+- Net reduction of ~7,000 lines of code despite adding 4 new Rust services
+- Purge 23 unused Cargo dependencies + dead functions/types across workspace
+- Remove tombstone comments, ghost imports, zombie Redis writes
+- Clean up dead VecRtdb, RingBuffer, snapshot_info, health_check code
+
+### Fixed
+- CI: multi-arch build fixes, NPM_TOKEN handling, monarch tag filtering
+- Tests: fix trailing comma in calculations DDL causing 16 integration test failures
+- Remove dead CanMappingConfig exposed by Linux-only can feature gate
+
 ## [0.1.11] - 2026-03-12
 
 ### Performance
@@ -237,7 +267,7 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
   - `monarch services set-action` - Execute M2C routing
   - `monarch services routing-show` - Display routing table
 
-### Python Services
+### Python Services (migrated to Rust in v1.0.0)
 
 #### hissrv (History Service) - Port 6004
 - Historical data storage with InfluxDB 3.x

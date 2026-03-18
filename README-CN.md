@@ -12,7 +12,7 @@
 - **多协议支持** — Modbus TCP/RTU、IEC 60870-5-104、OPC UA、MQTT、HTTP、DL/T 645、CAN、J1939、GPIO
 - **零拷贝共享内存** — 通过 `/dev/shm` 实现服务间高性能数据通路，绕过序列化开销
 - **规则引擎** — 可视化规则编辑（Vue Flow），支持实时执行、表达式求值和定时调度
-- **时序数据集成** — InfluxDB 3.x 历史数据持久化与趋势分析
+- **可插拔时序存储** — 运行时可配置后端（PostgreSQL / TimescaleDB），历史数据持久化
 - **全栈可视化** — Vue.js 3 + ECharts 仪表盘，WebSocket 实时数据更新
 
 ## 架构
@@ -31,8 +31,8 @@
    DL645/CAN         apigateway(:6005) ──── apps(:8080)
    J1939/GPIO           API 网关            Vue.js 前端
                               │
-                      hissrv(:6004) ◄── InfluxDB(:8181)
-                      历史数据服务          时序数据库
+                      hissrv(:6004) ◄── PostgreSQL/TimescaleDB
+                      历史数据服务          可插拔存储后端
                               │
                     alarmsrv(:6007)    netsrv(:6006)
                     告警管理            MQTT 网络通信
@@ -44,13 +44,13 @@
 |------|------|------|------|
 | comsrv | 6001 | Rust | 通信服务 — 工业协议驱动、通道管理 |
 | modsrv | 6002 | Rust | 模型服务 — 产品定义、设备实例、规则引擎 |
-| hissrv | 6004 | Python | 历史数据服务 — InfluxDB 3.x 时序数据持久化 |
-| apigateway | 6005 | Python | API 网关 — 统一 REST API、WebSocket、JWT 认证 |
-| netsrv | 6006 | Python | 网络服务 — MQTT 代理集成 |
-| alarmsrv | 6007 | Python | 告警服务 — 告警规则与通知 |
+| hissrv | 6004 | Rust | 历史数据服务 — 可插拔后端（PostgreSQL / TimescaleDB） |
+| apigateway | 6005 | Rust | API 网关 — 统一 REST API、WebSocket、JWT 认证 |
+| netsrv | 6006 | Rust | 网络服务 — MQTT 代理集成 |
+| alarmsrv | 6007 | Rust | 告警服务 — 告警规则与通知 |
 | apps | 8080 | Vue.js | 前端 — ECharts 仪表盘、Vue Flow 规则编辑器 |
 | voltage-redis | 6379 | — | 实时数据存储与消息路由 |
-| InfluxDB | 8181 | — | 时序数据库，历史数据存储 |
+| TimescaleDB | 5432 | — | 时序数据库，历史数据存储（可选，运行时配置） |
 
 ## 快速开始
 
@@ -93,11 +93,10 @@ VoltageEMS/
 ├── services/
 │   ├── comsrv/              # 通信服务 (Rust)
 │   ├── modsrv/              # 模型服务 + 规则 (Rust)
-│   └── python-services/
-│       ├── hissrv/          # 历史数据 (Python/FastAPI)
-│       ├── apigateway/      # API 网关 (Python/FastAPI)
-│       ├── netsrv/          # MQTT 网络通信 (Python/FastAPI)
-│       └── alarmsrv/        # 告警管理 (Python/FastAPI)
+│   ├── hissrv/              # 历史数据 (Rust)
+│   ├── apigateway/          # API 网关 (Rust)
+│   ├── netsrv/              # MQTT 网络通信 (Rust)
+│   └── alarmsrv/            # 告警管理 (Rust)
 ├── libs/                    # 13 个共享 Rust 库
 ├── tools/
 │   ├── monarch/             # CLI 配置与服务管理工具
