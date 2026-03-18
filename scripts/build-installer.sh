@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 # Build multi-architecture installer package for VoltageEMS
-# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--with-swagger]
+# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...]
 #   VERSION: Version string (default: YYYYMMDD)
 #   ARCH: arm64 | amd64 (default: arm64)
 #   TARGET: Rust target triple (default based on ARCH)
 #   --services: Comma-separated list of services to include (optional, default: all)
-#   --with-swagger: Enable Swagger UI in Rust services (comsrv, modsrv)
 #
-# Service names: comsrv, modsrv, hissrv, apigateway, netsrv, alarmsrv, apps, redis, influxdb
-# Service groups: python/py (all Python services), rust (all Rust services)
+# Service names: comsrv, modsrv, hissrv, apigateway, netsrv, alarmsrv, apps, redis, timescaledb
+# Service groups: rust (all Rust services)
 #
 # Examples:
 #   ./build-installer.sh                                    # Build all services (ARM64, today's date)
 #   ./build-installer.sh v1.2.0 arm64                       # Build all services (ARM64, v1.2.0)
-#   ./build-installer.sh v1.2.0 arm64 --services=python     # All Python services
 #   ./build-installer.sh v1.2.0 arm64 -s rust               # All Rust services
-#   ./build-installer.sh v1.2.0 arm64 -s netsrv,hissrv      # Specific Python services
-#   ./build-installer.sh v1.2.0 arm64 --with-swagger        # Build with Swagger UI enabled
+#   ./build-installer.sh v1.2.0 arm64 -s netsrv,hissrv      # Specific services
 
 set -euo pipefail
 
@@ -42,7 +39,6 @@ VERSION=""
 ARCH=""
 TARGET=""
 SELECTED_SERVICES=""
-ENABLE_SWAGGER=0
 
 # Parse all arguments
 while [[ $# -gt 0 ]]; do
@@ -54,10 +50,6 @@ while [[ $# -gt 0 ]]; do
         -s|--services)
             SELECTED_SERVICES="$2"
             shift 2
-            ;;
-        --with-swagger)
-            ENABLE_SWAGGER=1
-            shift
             ;;
         *)
             if [[ -z "$VERSION" ]]; then
@@ -94,6 +86,9 @@ esac
 
 FOLDER_NAME="MonarchEdge"
 
+# All Rust services bundled into the voltageems image
+RUST_SERVICES="comsrv,modsrv,hissrv,apigateway,netsrv,alarmsrv"
+
 # Expand service group shortcuts
 expand_service_groups() {
     local input="$1"
@@ -103,11 +98,8 @@ expand_service_groups() {
     for item in "${ITEMS[@]}"; do
         item=$(echo "$item" | xargs)  # trim whitespace
         case "$item" in
-            python|py)
-                expanded="${expanded}hissrv,apigateway,netsrv,alarmsrv,"
-                ;;
             rust)
-                expanded="${expanded}comsrv,modsrv,"
+                expanded="${expanded}${RUST_SERVICES},"
                 ;;
             *)
                 expanded="${expanded}${item},"
@@ -133,17 +125,17 @@ else
     PACKAGE_NAME="MonarchEdge-${ARCH}-${VERSION}"
 fi
 
-# Service to image mapping
+# Service to image mapping – all services now use the unified voltageems image
 declare -A SERVICE_TO_IMAGE=(
     ["comsrv"]="voltageems:latest"
     ["modsrv"]="voltageems:latest"
-    ["hissrv"]="voltageems-ss:latest"
-    ["apigateway"]="voltageems-ss:latest"
-    ["netsrv"]="voltageems-ss:latest"
-    ["alarmsrv"]="voltageems-ss:latest"
+    ["hissrv"]="voltageems:latest"
+    ["apigateway"]="voltageems:latest"
+    ["netsrv"]="voltageems:latest"
+    ["alarmsrv"]="voltageems:latest"
     ["apps"]="voltage-apps:latest"
     ["redis"]="redis:8-alpine"
-    ["influxdb"]="influxdb:3-core"
+    ["timescaledb"]="timescale/timescaledb:latest-pg16"
 )
 
 # Parse selected services
@@ -164,10 +156,9 @@ if [[ -n "$SELECTED_SERVICES" ]]; then
 else
     # Build all images
     BUILD_IMAGES["voltageems:latest"]=1
-    BUILD_IMAGES["voltageems-ss:latest"]=1
     BUILD_IMAGES["voltage-apps:latest"]=1
     BUILD_IMAGES["redis:8-alpine"]=1
-    BUILD_IMAGES["influxdb:3-core"]=1
+    BUILD_IMAGES["timescale/timescaledb:latest-pg16"]=1
 fi
 
 # Detect CPU cores
@@ -188,11 +179,7 @@ echo -e "Architecture: ${GREEN}$ARCH${NC}"
 echo -e "Target:       ${GREEN}$TARGET${NC}"
 echo -e "Platform:     ${GREEN}$DOCKER_PLATFORM${NC}"
 echo -e "CPU Cores:    ${GREEN}$CPU_CORES${NC}"
-if [[ "$ENABLE_SWAGGER" == "1" ]]; then
-    echo -e "Swagger UI:   ${GREEN}ENABLED${NC}"
-else
-    echo -e "Swagger UI:   ${YELLOW}disabled${NC}"
-fi
+echo -e "Swagger UI:   ${GREEN}ENABLED (built-in)${NC}"
 if [[ -n "$SELECTED_SERVICES" ]]; then
     echo -e "Services:     ${YELLOW}$SELECTED_SERVICES (partial build)${NC}"
     echo -e "Images:       ${YELLOW}${!BUILD_IMAGES[@]}${NC}"
@@ -234,32 +221,6 @@ copy_docker_images() {
     if [[ -d "$src" ]]; then
         mkdir -p "$dst"
         find "$src" -name "*.tar.gz" -type f -exec cp {} "$dst/" \;
-    fi
-}
-
-# Build unified Python services image for ARM64
-build_python_services() {
-    local context="$ROOT_DIR"
-    local dockerfile="$ROOT_DIR/services/python-services/Dockerfile"
-    local tag="voltageems-ss:latest"
-    local output="$BUILD_DIR/docker/python-services.tar.gz"
-
-    if [[ ! -f "$dockerfile" ]]; then
-        echo -e "${RED}Error: Unified Python services Dockerfile not found: $dockerfile${NC}"
-        return 1
-    fi
-
-    echo -e "${BLUE}Building unified Python services image $tag for $ARCH...${NC}"
-    if docker build --platform $DOCKER_PLATFORM \
-        -f "$dockerfile" \
-        -t "$tag" \
-        "$context"; then
-        docker save "$tag" | gzip > "$output"
-        local size=$(ls -lh "$output" | awk '{print $5}')
-        echo -e "${GREEN}✓ Saved python-services.tar.gz ($size)${NC}"
-    else
-        echo -e "${RED}Error: Failed to build $tag${NC}"
-        return 1
     fi
 }
 
@@ -337,29 +298,22 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
 
     chmod +x "$BUILD_DIR/tools/"* 2>/dev/null || true
 else
-    echo -e "${YELLOW}[1/5] Skipping Monarch CLI (Rust services not selected)${NC}"
+    echo -e "${YELLOW}[1/5] Skipping Monarch CLI (voltageems not selected)${NC}"
 fi
 
 # Step 2: Build Docker images
 echo ""
 echo -e "${BLUE}[2/5] Building Docker images for $ARCH...${NC}"
 
-# Build Rust services if needed
+# Build unified Rust services image if needed
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
-    echo -e "${BLUE}Building Rust services...${NC}"
+    echo -e "${BLUE}Building all Rust services...${NC}"
 
-    SWAGGER_FLAG=""
-    if [[ "$ENABLE_SWAGGER" == "1" ]]; then
-        SWAGGER_FLAG="--features swagger-ui"
-        echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
-    else
-        echo -e "${YELLOW}Building without Swagger UI (use --with-swagger to enable)${NC}"
-    fi
-
+    # Build all 6 Rust service binaries in one pass (Swagger UI always included)
     CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
-        -p comsrv -p modsrv $SWAGGER_FLAG
+        -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv
 
-    for service in comsrv modsrv; do
+    for service in comsrv modsrv alarmsrv apigateway hissrv netsrv; do
         if [[ ! -f "$ROOT_DIR/target/$TARGET/release/$service" ]]; then
             echo -e "${RED}Error: Failed to build $service${NC}"
             exit 1
@@ -368,7 +322,7 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     done
 
     # Build voltageems Docker image using pre-compiled binaries
-    echo -e "${BLUE}Building VoltageEMS Docker image...${NC}"
+    echo -e "${BLUE}Building VoltageEMS Docker image (all services)...${NC}"
     if docker build --platform $DOCKER_PLATFORM \
         --build-arg TARGET_TRIPLE=$TARGET \
         -f "$ROOT_DIR/Dockerfile" \
@@ -383,14 +337,6 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     fi
 else
     echo -e "${YELLOW}⊘ Skipping Rust services (not selected)${NC}"
-fi
-
-# Build Python services if needed
-if [[ -n "${BUILD_IMAGES[voltageems-ss:latest]:-}" ]]; then
-    echo -e "${BLUE}Building unified Python services...${NC}"
-    build_python_services
-else
-    echo -e "${YELLOW}⊘ Skipping Python services (not selected)${NC}"
 fi
 
 # Build Frontend if needed
@@ -426,10 +372,10 @@ else
     echo -e "${YELLOW}⊘ Skipping redis:8-alpine (not selected)${NC}"
 fi
 
-if [[ -n "${BUILD_IMAGES[influxdb:3-core]:-}" ]]; then
-    pull_and_save_image "influxdb:3-core" "voltage-influxdb.tar.gz"
+if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg16]:-}" ]]; then
+    pull_and_save_image "timescale/timescaledb:latest-pg16" "voltage-timescaledb.tar.gz"
 else
-    echo -e "${YELLOW}⊘ Skipping influxdb:3-core (not selected)${NC}"
+    echo -e "${YELLOW}⊘ Skipping timescaledb (not selected)${NC}"
 fi
 
 # Pull alpine image for upgrade container (always include)
@@ -444,17 +390,14 @@ declare -A EXPECTED_IMAGES
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     EXPECTED_IMAGES["voltageems"]=1
 fi
-if [[ -n "${BUILD_IMAGES[voltageems-ss:latest]:-}" ]]; then
-    EXPECTED_IMAGES["python-services"]=1
-fi
 if [[ -n "${BUILD_IMAGES[voltage-apps:latest]:-}" ]]; then
     EXPECTED_IMAGES["apps"]=1
 fi
 if [[ -n "${BUILD_IMAGES[redis:8-alpine]:-}" ]]; then
     EXPECTED_IMAGES["voltage-redis"]=1
 fi
-if [[ -n "${BUILD_IMAGES[influxdb:3-core]:-}" ]]; then
-    EXPECTED_IMAGES["voltage-influxdb"]=1
+if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg16]:-}" ]]; then
+    EXPECTED_IMAGES["voltage-timescaledb"]=1
 fi
 
 # Verify only the images that should exist
@@ -518,8 +461,9 @@ fi
 echo ""
 echo -e "${BLUE}[5/5] Creating self-extracting installer...${NC}"
 
-cd "$BUILD_DIR/.."
-TEMP_PKG_DIR="MonarchEdge-temp-$$"
+# Use Linux-native /tmp to avoid Docker Desktop's asynchronous NTFS metadata
+# updates on /mnt/d/ that cause "file changed as we read it" in tar.
+TEMP_PKG_DIR="/tmp/MonarchEdge-temp-$$"
 mkdir -p "$TEMP_PKG_DIR"
 
 cp "$BUILD_DIR/install.sh" "$TEMP_PKG_DIR/"
@@ -533,19 +477,15 @@ if [[ -f "$BUILD_DIR/tools/monarch" ]]; then
     cp "$BUILD_DIR/tools/monarch" "$TEMP_PKG_DIR/tools/"
     echo -e "${GREEN}✓ Included monarch CLI${NC}"
 elif [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
-    # Monarch is required for Rust services
+    # Monarch is required when Rust services are included
     echo -e "${RED}Error: monarch binary not found but Rust services are selected${NC}"
     rm -rf "$TEMP_PKG_DIR"
     exit 1
 else
-    # Monarch is optional for Python-only packages
-    echo -e "${YELLOW}⊘ Skipping monarch CLI (Python-only package)${NC}"
+    echo -e "${YELLOW}⊘ Skipping monarch CLI (no Rust services selected)${NC}"
 fi
 
 [[ -f "$BUILD_DIR/docker-compose.yml" ]] && cp "$BUILD_DIR/docker-compose.yml" "$TEMP_PKG_DIR/"
-
-# Ensure all files are written to disk before creating archive
-sync
 
 # Create installer description
 if [[ -n "$SELECTED_SERVICES" ]]; then

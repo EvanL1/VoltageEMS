@@ -1,36 +1,50 @@
-# 使用Python 3.10.12 slim镜像，支持aarch64
-FROM python:3.10.12-slim
+# syntax=docker/dockerfile:1
 
-# 设置工作目录
+# ── Build stage ────────────────────────────────────────────────────────────────
+FROM rust:1.82-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace manifests first for layer caching
+COPY Cargo.toml Cargo.lock ./
+COPY libs/ libs/
+COPY services/hissrv/ services/hissrv/
+
+# Stub out other services so the workspace resolves without their sources
+RUN for svc in alarmsrv apigateway comsrv modsrv; do \
+        mkdir -p services/$svc/src && \
+        echo 'fn main(){}' > services/$svc/src/main.rs && \
+        cp services/hissrv/Cargo.toml services/$svc/Cargo.toml && \
+        sed -i "s/name = \"hissrv\"/name = \"$svc\"/" services/$svc/Cargo.toml; \
+    done
+
+RUN cargo build --release -p hissrv
+
+# ── Runtime stage ─────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libssl3 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# 设置环境变量
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+COPY --from=builder /build/target/release/hissrv /app/hissrv
 
-# 安装系统依赖（只安装必要的）
-RUN apt-get update && apt-get install -y \
-    gcc \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+RUN mkdir -p /app/logs
 
-# 复制依赖文件
-COPY requirements.txt .
+ENV API_HOST=0.0.0.0
+ENV API_PORT=6004
+ENV REDIS_HOST=voltage-redis
+ENV REDIS_PORT=6379
+ENV DATABASE_URL=postgres://postgres:postgres@timescaledb:5432/hissrv
+ENV STORAGE_BACKEND=timescaledb
+ENV LOG_DIR=/app/logs
 
-# 安装Python依赖（优化pip缓存）
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+EXPOSE 6004
 
-# 复制应用代码
-COPY . .
-
-# 创建必要目录
-RUN mkdir -p logs config
-ENV CONFIG_DIR=/app/config
-
-# 暴露端口
-EXPOSE 6006
-
-# 启动命令
-CMD ["python", "main.py"]
+CMD ["/app/hissrv"]

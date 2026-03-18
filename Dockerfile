@@ -18,8 +18,12 @@ WORKDIR /app
 # Copy pre-compiled binaries (built with cargo-zigbuild)
 # These are already built by the build script before Docker runs
 ARG TARGET_TRIPLE
-COPY target/${TARGET_TRIPLE}/release/comsrv /usr/local/bin/comsrv
-COPY target/${TARGET_TRIPLE}/release/modsrv /usr/local/bin/modsrv
+COPY target/${TARGET_TRIPLE}/release/comsrv    /usr/local/bin/comsrv
+COPY target/${TARGET_TRIPLE}/release/modsrv    /usr/local/bin/modsrv
+COPY target/${TARGET_TRIPLE}/release/alarmsrv  /usr/local/bin/alarmsrv
+COPY target/${TARGET_TRIPLE}/release/apigateway /usr/local/bin/apigateway
+COPY target/${TARGET_TRIPLE}/release/hissrv    /usr/local/bin/hissrv
+COPY target/${TARGET_TRIPLE}/release/netsrv    /usr/local/bin/netsrv
 
 # Make binaries executable
 RUN chmod +x /usr/local/bin/*
@@ -31,7 +35,7 @@ COPY config.template/ /app/config/
 # Create all necessary directories with proper permissions
 RUN mkdir -p data logs && \
     mkdir -p logs/channels logs/models && \
-    mkdir -p logs/comsrv logs/modsrv && \
+    mkdir -p logs/comsrv logs/modsrv logs/alarmsrv logs/apigateway logs/hissrv logs/netsrv && \
     chmod -R 775 config data logs
 
 # Default environment variables
@@ -40,7 +44,7 @@ ENV REDIS_URL=redis://localhost:6379
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/bin/sh", "-c", "pgrep -x comsrv || pgrep -x modsrv || exit 1"]
+    CMD ["/bin/sh", "-c", "pgrep -x comsrv || pgrep -x modsrv || pgrep -x alarmsrv || pgrep -x apigateway || pgrep -x hissrv || pgrep -x netsrv || exit 1"]
 
 # Default to comsrv, but can be overridden in docker-compose
 CMD ["comsrv"]

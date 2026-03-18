@@ -1,0 +1,132 @@
+//! alarmsrv – Alarm monitoring service (Rust)
+//!
+//! Rewrites the Python alarmsrv with the same REST API surface:
+//! - Alert rules CRUD (`/alarmApi/rules`)
+//! - Active alerts (`/alarmApi/alerts`)
+//! - Alert event history (`/alarmApi/alert-events`)
+//! - Background monitoring loop (polls Redis, triggers/recovers alerts)
+//! - HTTP broadcasts to apigateway (6005) and netsrv (6006)
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use tokio_util::sync::CancellationToken;
+use tracing::info;
+
+mod broadcast;
+mod config;
+mod db;
+mod models;
+mod monitor;
+mod routes;
+mod state;
+
+use crate::broadcast::Broadcaster;
+use crate::config::AlarmConfig;
+use crate::models::MonitorStatus;
+use crate::state::AppState;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cfg = AlarmConfig::default();
+
+    // ── Logging ──────────────────────────────────────────────────────────────
+    common::logging::init_log_root(Some(&cfg.log_dir));
+    common::logging::init_with_config(common::logging::LogConfig {
+        service_name: "alarmsrv".to_string(),
+        log_dir: std::path::PathBuf::from(&cfg.log_dir),
+        console_level: tracing::Level::INFO,
+        file_level: tracing::Level::DEBUG,
+        ..Default::default()
+    })
+    .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
+
+    info!("alarmsrv starting on port {}", cfg.api_port);
+    info!("Redis: {}", cfg.redis_url);
+    info!("DB:    {}", cfg.db_path);
+
+    // ── SQLite ────────────────────────────────────────────────────────────────
+    let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(&format!("sqlite:{}?mode=rwc", cfg.db_path))
+        .await
+        .map_err(|e| anyhow::anyhow!("SQLite connect failed: {} path={}", e, cfg.db_path))?;
+
+    db::create_tables(&db_pool).await?;
+
+    // ── Redis ─────────────────────────────────────────────────────────────────
+    let (_, redis_client) =
+        common::bootstrap_database::setup_redis_connection(Some(cfg.redis_url.clone()))
+            .await
+            .map_err(|e| anyhow::anyhow!("Redis connect failed: {}", e))?;
+
+    let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client));
+
+    // ── HTTP client (for broadcasts) ──────────────────────────────────────────
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    let broadcaster = Broadcaster::new(
+        http_client,
+        cfg.apigateway_url.clone(),
+        cfg.netsrv_url.clone(),
+    );
+
+    let monitor_status = Arc::new(tokio::sync::RwLock::new(MonitorStatus {
+        running: false,
+        last_check_time: None,
+        check_interval: cfg.data_fetch_interval,
+        redis_url: cfg.redis_url.clone(),
+    }));
+
+    let state = Arc::new(AppState {
+        db: db_pool,
+        rtdb,
+        config: Arc::new(cfg.clone()),
+        broadcaster,
+        monitor_status,
+    });
+
+    // ── Background tasks ──────────────────────────────────────────────────────
+    let shutdown = CancellationToken::new();
+
+    let monitor_state = Arc::clone(&state);
+    let monitor_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        monitor::run_monitor(monitor_state, monitor_shutdown).await;
+    });
+
+    let count_state = Arc::clone(&state);
+    let count_shutdown = shutdown.clone();
+    tokio::spawn(async move {
+        monitor::run_alarm_count_broadcaster(count_state, count_shutdown).await;
+    });
+
+    // ── HTTP server ───────────────────────────────────────────────────────────
+    let app = routes::create_routes(Arc::clone(&state)).layer(axum::middleware::from_fn(
+        common::logging::http_request_logger,
+    ));
+
+    let addr: SocketAddr = format!("{}:{}", cfg.api_host, cfg.api_port)
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid bind address: {}", e))?;
+
+    let socket = tokio::net::TcpSocket::new_v4()?;
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    let listener = socket.listen(1024)?;
+
+    info!("Listening on {}", addr);
+
+    let serve_shutdown = shutdown.clone();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move { serve_shutdown.cancelled().await })
+        .await?;
+
+    // ── Graceful shutdown ─────────────────────────────────────────────────────
+    shutdown.cancel();
+    common::logging::shutdown_logging_tasks().await;
+    info!("alarmsrv stopped");
+    Ok(())
+}

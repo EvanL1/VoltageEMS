@@ -1,0 +1,55 @@
+[package]
+name = "alarmsrv"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[[bin]]
+name = "alarmsrv"
+path = "src/main.rs"
+
+[dependencies]
+# Local libraries
+common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum"] }
+errors = { path = "../../libs/errors", features = ["axum-support"] }
+voltage-rtdb = { path = "../../libs/voltage-rtdb" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# Web framework
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# HTTP client for broadcasting
+reqwest = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+csv = { workspace = true }
+
+# Database
+sqlx = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Utilities
+chrono = { workspace = true }
+futures = { workspace = true }
+
+# OpenAPI / Swagger UI
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+
+[lints]
+workspace = true

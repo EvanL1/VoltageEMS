@@ -19,6 +19,10 @@ members = [
     "libs/voltage-rules",
     "libs/voltage-schema-macro",
     "libs/voltage-sim",
+    "services/alarmsrv",
+    "services/apigateway",
+    "services/hissrv",
+    "services/netsrv",
     "services/comsrv",
     "services/modsrv",
     # CLI tools
