@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-03-18
+## [0.2.0] - 2026-03-18
 
 ### Breaking Changes — Full Rust Migration
 - **All services now Rust** — hissrv, apigateway, netsrv, alarmsrv migrated from Python/FastAPI to Rust/Axum
@@ -267,7 +267,7 @@ This is the first stable release of VoltageEMS, an Industrial Energy Management 
   - `monarch services set-action` - Execute M2C routing
   - `monarch services routing-show` - Display routing table
 
-### Python Services (migrated to Rust in v1.0.0)
+### Python Services (migrated to Rust in v0.2.0)
 
 #### hissrv (History Service) - Port 6004
 - Historical data storage with InfluxDB 3.x
