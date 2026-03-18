@@ -269,7 +269,7 @@ async fn push_subscribed_data(hub: &Arc<WsHub>) {
                                 let num = String::from_utf8_lossy(&v)
                                     .parse::<f64>()
                                     .ok()
-                                    .and_then(|f| serde_json::Number::from_f64(f))
+                                    .and_then(serde_json::Number::from_f64)
                                     .map(Value::Number)
                                     .unwrap_or(Value::Null);
                                 (k, num)

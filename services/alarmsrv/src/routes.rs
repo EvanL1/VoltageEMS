@@ -504,7 +504,7 @@ async fn export_events_csv(
     let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
 
     // Header
-    let _ = wtr.write_record(&[
+    let _ = wtr.write_record([
         "Event ID",
         "Rule ID",
         "Rule Name",
@@ -526,11 +526,11 @@ async fn export_events_csv(
     for ev in &events {
         let triggered_str = ev
             .triggered_at
-            .map(|ts| format_timestamp(ts))
+            .map(format_timestamp)
             .unwrap_or_default();
         let recovered_str = ev
             .recovered_at
-            .map(|ts| format_timestamp(ts))
+            .map(format_timestamp)
             .unwrap_or_default();
         let duration_str = ev.duration.map(|d| d.to_string()).unwrap_or_default();
 

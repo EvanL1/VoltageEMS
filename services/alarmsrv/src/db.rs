@@ -100,6 +100,7 @@ pub async fn create_tables(pool: &SqlitePool) -> Result<()> {
 // AlertRule CRUD
 // ============================================================================
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_rule(
     pool: &SqlitePool,
     service_type: &str,
@@ -241,6 +242,7 @@ pub async fn get_all_enabled_rules(pool: &SqlitePool) -> Result<Vec<AlertRule>> 
         .context("get enabled rules")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_rule(
     pool: &SqlitePool,
     id: i64,
