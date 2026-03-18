@@ -156,6 +156,5 @@ fn secs_until_02_utc() -> u64 {
         today_02 + chrono::Duration::days(1)
     };
 
-    let delta = (target - now).num_seconds().max(60) as u64;
-    delta
+    (target - now).num_seconds().max(60) as u64
 }
