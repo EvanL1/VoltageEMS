@@ -31,6 +31,7 @@ members = [
 ]
 
 [workspace.package]
+version = "0.2.0"
 license = "MIT OR Apache-2.0"
 
 # Clippy lints configuration

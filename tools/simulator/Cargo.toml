@@ -1,6 +1,6 @@
 [package]
 name = "simulator"
-version = "0.1.9"
+version.workspace = true
 edition = "2021"
 description = "Modbus TCP slave simulator for VoltageEMS CI testing"
 

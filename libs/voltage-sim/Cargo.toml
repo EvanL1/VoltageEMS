@@ -1,6 +1,6 @@
 [package]
 name = "voltage-sim"
-version = "0.1.9"
+version.workspace = true
 edition = "2021"
 description = "Waveform generation library for VoltageEMS simulation"
 

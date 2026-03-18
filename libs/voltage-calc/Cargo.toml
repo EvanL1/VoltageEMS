@@ -1,6 +1,6 @@
 [package]
 name = "voltage-calc"
-version = "0.1.9"
+version.workspace = true
 edition = "2021"
 license.workspace = true
 description = "Unified calculation library for VoltageEMS - expression evaluation and built-in functions"

@@ -1,6 +1,6 @@
 [package]
 name = "voltage-core"
-version = "0.1.9"
+version.workspace = true
 edition = "2021"
 description = "Core types and codecs for VoltageEMS - no_std compatible for embedded firmware"
 license.workspace = true

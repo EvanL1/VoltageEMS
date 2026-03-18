@@ -1,6 +1,6 @@
 [package]
 name = "voltage-shm"
-version = "0.1.9"
+version.workspace = true
 edition = "2021"
 description = "Shared memory abstraction for VoltageEMS - platform-agnostic reader/writer"
 license.workspace = true
