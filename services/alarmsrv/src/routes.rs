@@ -524,14 +524,8 @@ async fn export_events_csv(
     ]);
 
     for ev in &events {
-        let triggered_str = ev
-            .triggered_at
-            .map(format_timestamp)
-            .unwrap_or_default();
-        let recovered_str = ev
-            .recovered_at
-            .map(format_timestamp)
-            .unwrap_or_default();
+        let triggered_str = ev.triggered_at.map(format_timestamp).unwrap_or_default();
+        let recovered_str = ev.recovered_at.map(format_timestamp).unwrap_or_default();
         let duration_str = ev.duration.map(|d| d.to_string()).unwrap_or_default();
 
         let _ = wtr.write_record(&[
