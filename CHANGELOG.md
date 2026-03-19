@@ -11,14 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **All services now Rust** — hissrv, apigateway, netsrv, alarmsrv migrated from Python/FastAPI to Rust/Axum
 - **Python services removed** — `services/python-services/` directory deleted; all 6 services live under `services/`
 - **Pluggable storage replaces InfluxDB** — hissrv now uses a runtime-configurable backend (PostgreSQL / TimescaleDB) via `PUT /hisApi/storage`
-- **Unified Docker image** — all Rust services share a single `voltageems:latest` Alpine-based image (105MB total)
+- **Unified Docker image** — all Rust services share a single `voltageems:latest` Alpine-based image
 
 ### Added
 - **monarch**: Remote management CLI with `--host` flag for all commands
 - **monarch**: Interactive TUI dashboard (`monarch top`) with local and remote monitoring
 - **monarch**: JSON output mode (`--json`) for AI agent and script integration
 - **monarch**: Channel template API — snapshot, apply, list templates
-- **monarch**: Cross-platform release pipeline (Linux ARM64/AMD64, macOS)
+- **monarch**: Cross-platform release pipeline (Linux ARM64/AMD64, macOS, Windows)
 - **apigateway**: JWT authentication, WebSocket proxy, unified REST API (Rust rewrite)
 - **hissrv**: Pluggable storage backend (PostgreSQL / TimescaleDB) with runtime configuration via REST API
 - **netsrv**: MQTT client with TLS support, device telemetry forwarding
@@ -78,29 +78,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **comsrv**: Matter protocol adapter with UDP transport
 - **comsrv**: Channel template API for point-table snapshot and apply
 - **modsrv**: Auto-reload services after monarch sync
+- **modsrv**: Enforce instance topology hierarchy with cascade delete and topology API
 - **comsrv**: OpenAPI/Swagger docs for template API
 
 ### Fixed
 - Stabilize flaky seqlock concurrent test for CI coverage runs
 - Soften topology hierarchy validation to warn-only for flexible topologies
 - CI: install libdbus-1-dev for BLE adapter compilation
-
-## [0.1.8] - 2026-02-26
-
-### Added
-- **modsrv**: Enforce instance topology hierarchy with cascade delete and topology API
-- Comprehensive architecture documentation and CI hardening
-
-### Fixed
 - **comsrv**: Remove panics, unwraps, and reconnect backoff blocking
 - **voltage-rtdb-shm**: Seqlock fallback torn read + ringbuffer push guard
 - CI: ARM64 native runner; dependency-aware service restart; clippy threshold unification
-- Large-scale dead code removal and deduplication across services
-- Security, stability, and performance audit remediation; translate remaining Chinese log messages
 
 ### Refactored
 - **comsrv**: Extract state mapping, cleanup deprecated code, convert macros to functions
 - Large-scale simplification — deduplicate, extract, remove dead code
+- Security, stability, and performance audit remediation; translate remaining Chinese log messages
 
 ## [0.1.7] - 2026-02-11
 
@@ -150,7 +142,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **build**: Use musl for amd64 to fix Alpine compatibility
 - **ci**: Support multi-arch Docker builds with TARGET_TRIPLE ARG
 - **test**: Update assertions to match ryu float formatting
-- **install**: Correct pattern matching for voltageems-ss image
 - **monarch**: Cleanup redundant code and unused dependencies
 
 ## [0.1.4] - 2026-01-05
@@ -161,15 +152,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 - Multi-round performance optimization for core libraries (voltage-core, voltage-model, voltage-routing)
 
-## [0.1.3] - 2026-01-04
-
 ### Fixed
 - **comsrv**: Make start_flush_task async to avoid blocking_write panic
 - **comsrv**: Add defensive Drop impl for IgwChannelWrapper; abort background tasks on hot-reload
 - Improve type safety and error handling across concurrency paths
 - Add safety bounds for Redis retry and integer conversions
 - Improve task lifecycle management robustness
-- Restore bash syntax after upgrading to bash 5
 - Update igw to 0.2.16 (GPIO startup init)
 
 ## [0.1.2] - 2026-01-04
@@ -185,7 +173,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **rules**: Fail condition evaluation when variable is missing
 - Remove dangerous Default implementations and validate critical IDs
 - Correct volume mount path for data directory
-- Update igw to 0.2.14–0.2.13; remove voltage_modbus and tokio-serial dependencies
+- Update igw to 0.2.14-0.2.13; remove voltage_modbus and tokio-serial dependencies
 
 ### Refactored
 - **comsrv**: Replace Chinese log messages with English
@@ -200,159 +188,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.0] - 2025-12-04
+## [0.1.0] - 2025-12-24
 
 ### First Stable Release
 
-This is the first stable release of VoltageEMS, an Industrial Energy Management System designed for edge computing environments.
+First stable release of VoltageEMS, an Industrial Energy Management System designed for edge computing environments.
 
 ### Core Services (Rust)
 
 #### comsrv (Communication Service) - Port 6001
-- **Protocol Support** (10 protocols)
-  - Modbus TCP/RTU over Ethernet and serial port (RS-485/RS-232)
-  - IEC 60870-5-104
-  - OPC UA
-  - MQTT (publish/subscribe with JSON mapping)
-  - HTTP (polling and webhook with JSON mapping)
-  - DL/T 645-2007 (smart meter protocol)
-  - CAN bus
-  - J1939 (vehicle network over CAN)
-  - GPIO (digital I/O)
-  - Virtual protocol for testing and simulation
-- **Point Types (Four-Remote)**
-  - Telemetry (T): Real-time analog measurements
-  - Signal (S): Digital status indicators
-  - Control (C): Digital control commands
-  - Adjustment (A): Analog setpoint adjustments
-- **Features**
-  - Batch data upload to Redis with configurable intervals
-  - Hot-reload configuration via REST API (`POST /api/channels/reload`)
-  - Swagger UI documentation at `/swagger-ui/`
+- **10 protocol adapters**: Modbus TCP/RTU, IEC 60870-5-104, OPC UA, MQTT, HTTP, DL/T 645-2007, CAN bus, J1939, GPIO, Virtual
+- **Four-remote point types**: Telemetry (T), Signal (S), Control (C), Adjustment (A)
+- Batch data upload to Redis with configurable intervals
+- Hot-reload configuration via REST API
+- Swagger UI documentation
 
 #### modsrv (Model Service) - Port 6002
-- **Product & Instance Management**
-  - Hierarchical product definitions with measurement/adjustment points
-  - Instance lifecycle management (create, update, delete)
-  - Dynamic property configuration per instance
-- **Routing Engine**
-  - C2M (Channel-to-Model): Device data to instance mapping
-  - M2C (Model-to-Channel): Control command routing
-  - C2C (Channel-to-Channel): Direct device forwarding
-- **Rule Engine**
-  - Time-based triggers (cron expressions)
-  - Condition-based triggers (OnChange, OnCondition)
-  - Vue Flow compatible rule definitions (JSON)
-- **Virtual Points**
-  - Expression-based calculations using evalexpr
-  - Support for arithmetic, logical, and comparison operators
-- **API**
-  - Full REST API for all operations
-  - Swagger UI documentation at `/swagger-ui/`
+- Product and instance management with hierarchical definitions
+- Routing engine: C2M, M2C, C2C data flow mapping
+- Rule engine with cron and condition-based triggers (Vue Flow compatible)
+- Virtual points with expression-based calculations (evalexpr)
+- Full REST API with Swagger UI
 
 #### monarch (CLI Tool)
-- **Configuration Management**
-  - `monarch init <service>` - Initialize database tables
-  - `monarch sync <service>` - Sync YAML/CSV to SQLite
-  - `monarch status` - Check synchronization status
-  - `monarch validate` - Validate configuration files
-- **Service Management**
-  - `monarch services start` - Start all services
-  - `monarch services stop` - Stop services
-  - `monarch services restart` - Restart services
-  - `monarch services refresh --smart` - Smart refresh (detect image changes)
-  - `monarch services logs <service>` - View service logs
-  - `monarch services reload` - Hot-reload configuration
-- **Routing Commands**
-  - `monarch services set-action` - Execute M2C routing
-  - `monarch services routing-show` - Display routing table
+- Configuration management: init, sync, status, validate
+- Service management: start, stop, restart, refresh, logs, reload
+- Routing commands: set-action, routing-show
 
-### Python Services (migrated to Rust in v0.2.0)
-
-#### hissrv (History Service) - Port 6004
-- Historical data storage with InfluxDB 3.x
-- Time-series data aggregation and queries
-- REST API for data retrieval
-
-#### apigateway (API Gateway) - Port 6005
-- Unified API gateway for all backend services
-- WebSocket proxy for real-time updates
-- Authentication and authorization
-
-#### netsrv (Network Service) - Port 6006
-- MQTT client for cloud connectivity
-- HTTP forwarding for external integrations
-- Message queue management
-
-#### alarmsrv (Alarm Service) - Port 6007
-- Alarm rule configuration and evaluation
-- Notification management
-- Alarm history and acknowledgment
+### Auxiliary Services (Python, migrated to Rust in v0.2.0)
+- **hissrv** (6004): Historical data storage with InfluxDB 3.x
+- **apigateway** (6005): Unified API gateway, WebSocket proxy, authentication
+- **netsrv** (6006): MQTT cloud connectivity, HTTP forwarding
+- **alarmsrv** (6007): Alarm rule evaluation, notification management
 
 ### Frontend
-
-#### apps (Web Interface) - Port 8080
-- Vue.js 3 with TypeScript
-- Real-time dashboard with WebSocket updates
-- Configuration management UI
-- Responsive design for desktop and tablet
+- **apps** (8080): Vue.js 3 + TypeScript, real-time dashboard, configuration management UI
 
 ### Infrastructure
-
-- **Redis 8** - High-performance data store
-  - Real-time point data (Hash)
-  - Routing tables (Hash)
-  - Control command queues (List)
-  - Unix socket support for better performance
-- **InfluxDB 3** - Time-series database
-  - Historical data storage
-  - Configurable retention policies
-- **Docker Compose** - Unified orchestration
-  - Host network mode for industrial environments
-  - Volume mounts for configuration and data
-  - Health checks and restart policies
-
-### Configuration System
-
-- **SQLite** - Unified configuration database
-  - Single `voltage.db` shared by all services
-  - Atomic transactions for configuration updates
-- **YAML/CSV Sources**
-  - Human-readable configuration files
-  - Version control friendly
-  - Monarch CLI for synchronization
-- **Configuration Hierarchy**
-  - Service-specific > Global > Environment variables > Defaults
+- **Redis 8**: Real-time data store with Unix socket support
+- **InfluxDB 3**: Time-series database (replaced by TimescaleDB in v0.2.0)
+- **Docker Compose**: Host network mode, health checks, volume mounts
 
 ### Libraries
 
-| Library | Version | Description |
-|---------|---------|-------------|
-| voltage-core | 0.1.0 | Core types and codecs — no_std compatible for embedded firmware |
-| voltage-model | 0.1.0 | Model layer — calculations, product definitions, instance management |
-| voltage-routing | 0.1.0 | Data flow routing — comsrv ↔ modsrv message routing |
-| voltage-rtdb | 0.1.0 | Real-time database abstraction — Redis and in-memory backends |
-| voltage-rtdb-shm | 0.1.0 | Shared memory RTDB — zero-copy data sharing via /dev/shm |
-| voltage-shm | 0.1.0 | Platform-agnostic shared memory readers/writers |
-| voltage-infra | 0.1.0 | Infrastructure layer — Redis and SQLite integration |
-| voltage-calc | 0.1.0 | Expression evaluation engine with built-in functions |
-| voltage-rules | 0.1.0 | Rule engine — Vue Flow rule parsing, execution, and scheduling |
-| voltage-sim | 0.1.0 | Waveform generator for device simulation |
-| voltage-schema-macro | 0.1.0 | Proc macro — auto-generates SQL DDL from Rust structs |
-| common | 0.1.0 | Service bootstrap, config management, and shared utilities |
-| errors | 0.1.0 | Unified error types across all services |
-
-### Documentation
-
-- Comprehensive README (English and Chinese)
-- Architecture documentation
-- API reference via Swagger UI
-- Configuration guides
-- Operations log for knowledge preservation
-
-### Testing
-
-- Unit and integration tests with coverage
-- Integration tests with Redis
-- Pre-commit hooks for code quality
-- CI/CD pipeline with GitHub Actions
+| Library | Description |
+|---------|-------------|
+| voltage-core | Core types and codecs (no_std compatible) |
+| voltage-model | Product definitions, calculations, instance management |
+| voltage-routing | Data flow routing between comsrv and modsrv |
+| voltage-rtdb | Real-time database abstraction (Redis and in-memory) |
+| voltage-rtdb-shm | Shared memory RTDB via /dev/shm |
+| voltage-shm | Platform-agnostic shared memory readers/writers |
+| voltage-infra | Redis and SQLite integration |
+| voltage-calc | Expression evaluation engine |
+| voltage-rules | Rule engine with Vue Flow parsing and scheduling |
+| voltage-sim | Waveform generator for device simulation |
+| voltage-schema-macro | Proc macro for SQL DDL generation |
+| common | Service bootstrap, config management, shared utilities |
+| errors | Unified error types |

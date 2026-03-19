@@ -8,7 +8,7 @@
 |------|------|------|------------|
 | **comsrv** | 6001 | 通信服务 - 设备协议、通道管理、点位数据 | `http://localhost:6001/swagger-ui/` |
 | **modsrv** | 6002 | 模型服务 - 产品定义、设备实例、路由、规则 | `http://localhost:6002/swagger-ui/` |
-| **hissrv** | 6004 | 历史数据服务 - InfluxDB 3.x 时序数据持久化 | - |
+| **hissrv** | 6004 | 历史数据服务 - TimescaleDB 时序数据持久化 | - |
 | **apigateway** | 6005 | API 网关 - 统一 REST API、WebSocket、JWT 认证 | - |
 | **netsrv** | 6006 | 网络服务 - MQTT 代理集成 | - |
 | **alarmsrv** | 6007 | 告警服务 - 告警规则与通知 | - |

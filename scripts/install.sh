@@ -230,7 +230,7 @@ get_local_image_id() {
 }
 
 # Smart load: only load if image has changed
-# Special handling for multi-arch images (influxdb, redis)
+# Special handling for multi-arch images (timescaledb, redis)
 # Returns: 0 if loaded, 1 if skipped (unchanged), 2 if error
 smart_load_image() {
     local tarball=$1
@@ -374,17 +374,17 @@ confirm_infrastructure_update() {
     [[ "$confirm" =~ ^[Yy]$ ]]
 }
 
-# Select Python services to update (batch selection)
+# Select auxiliary services to update (batch selection)
 # Args: changed services as positional arguments
 # Output: selected services (space-separated)
-select_python_services() {
+select_auxiliary_services() {
     local -a changed_services=("$@")
 
     [[ ${#changed_services[@]} -eq 0 ]] && return
 
     echo ""
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}  Python Services Update${NC}"
+    echo -e "${YELLOW}  Auxiliary Services Update${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo "  Changed services: ${changed_services[*]}"
@@ -1066,14 +1066,14 @@ if [[ -f "$DB_FILE" ]]; then
         case $DB_OPTION in
             1)
                 echo -e "${YELLOW}Running safe schema upgrade...${NC}"
-                # Check if monarch command is available (not available in Python-only upgrades)
+                # Check if monarch command is available (not available in partial upgrades)
                 if command -v monarch >/dev/null 2>&1; then
                     migrate_points_tables "$DB_FILE"  # Prepare tables for migration
                     monarch init  # IF NOT EXISTS ensures safety
                     restore_migrated_data "$DB_FILE"  # Restore data after schema update
                     echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
                 else
-                    echo -e "${BLUE}ℹ Monarch CLI not available (Python-only update), skipping schema upgrade${NC}"
+                    echo -e "${BLUE}ℹ Monarch CLI not available (partial update), skipping schema upgrade${NC}"
                     echo -e "${BLUE}  Note: Run 'monarch init' manually if needed${NC}"
                 fi
                 ;;
@@ -1108,7 +1108,7 @@ else
     if command -v monarch >/dev/null 2>&1; then
         monarch init
     else
-        echo -e "${BLUE}ℹ Monarch CLI not available (Python-only package), skipping database initialization${NC}"
+        echo -e "${BLUE}ℹ Monarch CLI not available (partial package), skipping database initialization${NC}"
         echo -e "${BLUE}  Note: Run 'monarch init' manually after installation${NC}"
     fi
 fi

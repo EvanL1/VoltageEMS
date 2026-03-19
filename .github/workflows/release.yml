@@ -1,4 +1,4 @@
-name: Release Multi-Arch Installer
+name: Release
 
 on:
   push:
@@ -16,7 +16,6 @@ jobs:
   # ============================================================================
   pre-check:
     name: Pre-Release Check
-    if: "!contains(github.ref_name, '-monarch')"
     runs-on: ubuntu-latest
 
     steps:
@@ -151,6 +150,15 @@ jobs:
           chmod +x scripts/build-installer.sh
           ./scripts/build-installer.sh "${{ steps.version.outputs.version }}" "${{ matrix.arch }}" "${{ matrix.target }}"
 
+      - name: Package Standalone Monarch CLI
+        run: |
+          MONARCH_BIN="target/${{ matrix.target }}/release/monarch"
+          MONARCH_TAR="release/monarch-linux-${{ matrix.zig_arch }}.tar.gz"
+          tar czf "$MONARCH_TAR" -C "$(dirname "$MONARCH_BIN")" monarch
+          sha256sum "$MONARCH_TAR" > "${MONARCH_TAR}.sha256"
+          echo "Monarch CLI:"
+          ls -lh "$MONARCH_TAR"
+
       - name: Verify Build Artifacts
         run: |
           ARTIFACT="release/${{ steps.version.outputs.artifact_name }}"
@@ -159,10 +167,10 @@ jobs:
             ls -la release/ || echo "release directory not found"
             exit 1
           fi
-          echo "Build artifact:"
-          ls -lh "$ARTIFACT"
+          echo "Build artifacts:"
+          ls -lh release/
 
-      - name: Upload Artifacts
+      - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.arch }}-installer
@@ -170,13 +178,89 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Upload Monarch CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: monarch-linux-${{ matrix.zig_arch }}
+          path: |
+            release/monarch-linux-${{ matrix.zig_arch }}.tar.gz
+            release/monarch-linux-${{ matrix.zig_arch }}.tar.gz.sha256
+          retention-days: 7
+
   # ============================================================================
-  # Job 3: Create GitHub Release
+  # Job 3: Build Monarch CLI for macOS / Windows
+  # ============================================================================
+  monarch-extra:
+    name: Build Monarch (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    needs: pre-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            name: darwin-aarch64
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: windows-x86_64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ matrix.name }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.name }}-cargo-
+
+      - name: Build Monarch CLI
+        run: cargo build --release --target ${{ matrix.target }} -p monarch
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../monarch-${{ matrix.name }}.tar.gz monarch
+          cd ../../..
+          shasum -a 256 monarch-${{ matrix.name }}.tar.gz > monarch-${{ matrix.name }}.tar.gz.sha256
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/monarch.exe" -DestinationPath "monarch-${{ matrix.name }}.zip"
+          (Get-FileHash "monarch-${{ matrix.name }}.zip" -Algorithm SHA256).Hash.ToLower() + "  monarch-${{ matrix.name }}.zip" | Out-File "monarch-${{ matrix.name }}.zip.sha256" -Encoding ascii
+
+      - name: Upload Monarch CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: monarch-${{ matrix.name }}
+          path: |
+            monarch-${{ matrix.name }}.*
+          retention-days: 7
+
+  # ============================================================================
+  # Job 4: Create GitHub Release
   # ============================================================================
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, monarch-extra]
     permissions:
       contents: write
 
@@ -195,11 +279,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release/
-          pattern: '*-installer'
           merge-multiple: true
 
       - name: List Downloaded Artifacts
-        run: ls -la release/
+        run: ls -lh release/
 
       - name: Generate Release Notes
         run: |
@@ -209,37 +292,41 @@ jobs:
           cat > release_notes.md << EOF
           ## MonarchEdge ${VERSION}
 
-          ### Downloads
+          ### Installer (full deployment package)
 
-          | Architecture | Installer |
-          |--------------|-----------|
-          | ARM64 (树莓派/ARM开发板) | MonarchEdge-arm64-${VERSION}.run |
-          | AMD64 (x86_64 服务器) | MonarchEdge-amd64-${VERSION}.run |
+          | Architecture | File |
+          |--------------|------|
+          | ARM64 | \`MonarchEdge-arm64-${VERSION}.run\` |
+          | AMD64 | \`MonarchEdge-amd64-${VERSION}.run\` |
 
-          ### Installation
+          ### Monarch CLI (standalone)
 
-          1. Download the installer for your architecture
-          2. Copy to target device:
-             \`\`\`bash
-             scp MonarchEdge-<arch>-${VERSION}.run user@device:/tmp/
-             \`\`\`
-          3. Run installer:
-             \`\`\`bash
-             chmod +x /tmp/MonarchEdge-<arch>-${VERSION}.run
-             sudo /tmp/MonarchEdge-<arch>-${VERSION}.run
-             \`\`\`
-          4. Start services:
-             \`\`\`bash
-             cd /opt/MonarchEdge
-             docker-compose up -d
-             monarch sync
-             \`\`\`
+          | Platform | File |
+          |----------|------|
+          | Linux x86_64 | \`monarch-linux-x86_64.tar.gz\` |
+          | Linux aarch64 | \`monarch-linux-aarch64.tar.gz\` |
+          | macOS ARM64 | \`monarch-darwin-aarch64.tar.gz\` |
+          | Windows x64 | \`monarch-windows-x86_64.zip\` |
+
+          ### Quick Start
+
+          \`\`\`bash
+          # Full deployment
+          scp MonarchEdge-<arch>-${VERSION}.run user@device:/tmp/
+          chmod +x /tmp/MonarchEdge-<arch>-${VERSION}.run
+          sudo /tmp/MonarchEdge-<arch>-${VERSION}.run
+          monarch sync
+
+          # Monarch CLI only
+          tar xzf monarch-<platform>.tar.gz
+          sudo mv monarch /usr/local/bin/
+          \`\`\`
 
           ### Package Contents
 
-          - **Rust Services**: comsrv (6001), modsrv (6002)
-          - **Python Services**: hissrv (6004), apigateway (6005), netsrv (6006), alarmsrv (6007)
-          - **Infrastructure**: Redis 8, InfluxDB 3
+          - **Rust Services**: comsrv (6001), modsrv (6002), hissrv (6004), apigateway (6005), netsrv (6006), alarmsrv (6007)
+          - **Infrastructure**: Redis 8, TimescaleDB (pg16)
+          - **Frontend**: Vue.js (8080)
           - **CLI Tool**: monarch
 
           EOF
@@ -274,6 +361,14 @@ jobs:
           files: |
             release/MonarchEdge-arm64-${{ steps.version.outputs.version }}.run
             release/MonarchEdge-amd64-${{ steps.version.outputs.version }}.run
+            release/monarch-linux-x86_64.tar.gz
+            release/monarch-linux-x86_64.tar.gz.sha256
+            release/monarch-linux-aarch64.tar.gz
+            release/monarch-linux-aarch64.tar.gz.sha256
+            release/monarch-darwin-aarch64.tar.gz
+            release/monarch-darwin-aarch64.tar.gz.sha256
+            release/monarch-windows-x86_64.zip
+            release/monarch-windows-x86_64.zip.sha256
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

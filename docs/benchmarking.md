@@ -64,11 +64,11 @@ VoltageEMS 和 Ageto ARC 的产品思路高度一致——**设备无关的 Site
 | 产品需求 | VoltageEMS | Ageto ARC | Tesla Autobidder | EnergyHub |
 |---------|:---------:|:---------:|:---------------:|:---------:|
 | **实时数据看板** | ✅ Vue.js Web | ✅ 触摸屏+Web | ✅ 云端 Dashboard | ✅ 云端 Dashboard |
-| **历史趋势分析** | ✅ InfluxDB 3.x | ✅ SQL Historian | ✅ 云端分析 | ✅ 云端分析 |
+| **历史趋势分析** | ✅ TimescaleDB | ✅ SQL Historian | ✅ 云端分析 | ✅ 云端分析 |
 | **告警管理** | ✅ alarmsrv | ✅ 邮件+SMS | ✅ | ✅ |
 | **WebSocket 实时推送** | ✅ **原生** | ❌ | ❌ | ❌ |
 | **数据精度** | ✅ 1ms 级 | ✅ 1 秒级 | 未公开 | 未公开 |
-| **能耗报表** | ⚠️ InfluxDB 查询 | ✅ SQL 导出 | ✅ 自动报表 | ✅ **DER 绩效分析** |
+| **能耗报表** | ✅ TimescaleDB 查询 | ✅ SQL 导出 | ✅ 自动报表 | ✅ **DER 绩效分析** |
 | **营收级计量** | ❌ | ✅ **RMC 模块** | ❌ | ❌ |
 | **投资组合分析** | ❌ | ❌ | ✅ (收益分析) | ✅ **核心能力** |
 | **多站点统一视图** | ❌ | ❌ | ✅ (Fleet) | ✅ **核心能力 (120+电力公司)** |

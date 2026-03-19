@@ -232,33 +232,26 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                 // Check if voltage-redis image has changed
                 let redis_changed = check_container_image_changed("voltage-redis")?;
 
-                // Check if Rust services have changed
-                let rust_services_changed = if target_services.is_empty() {
+                // All 6 Rust services share the voltageems:latest image.
+                // Check any one container — if the image changed, recreate all.
+                let all_services = [
+                    "comsrv",
+                    "modsrv",
+                    "hissrv",
+                    "apigateway",
+                    "netsrv",
+                    "alarmsrv",
+                ];
+                let services_changed = if target_services.is_empty() {
                     check_container_image_changed("voltageems-comsrv")?
-                        || check_container_image_changed("voltageems-modsrv")?
                 } else {
-                    target_services.iter().any(|svc| match svc.as_str() {
-                        "comsrv" | "modsrv" => {
+                    target_services.iter().any(|svc| {
+                        if all_services.contains(&svc.as_str()) {
                             let container_name = format!("voltageems-{}", svc);
                             check_container_image_changed(&container_name).unwrap_or(false)
-                        },
-                        _ => false,
-                    })
-                };
-
-                // Check if Python services have changed
-                let python_services_changed = if target_services.is_empty() {
-                    check_container_image_changed("voltage-hissrv")?
-                        || check_container_image_changed("voltage-apigateway")?
-                        || check_container_image_changed("voltage-netsrv")?
-                        || check_container_image_changed("voltage-alarmsrv")?
-                } else {
-                    target_services.iter().any(|svc| match svc.as_str() {
-                        "hissrv" | "apigateway" | "netsrv" | "alarmsrv" => {
-                            let container_name = format!("voltage-{}", svc);
-                            check_container_image_changed(&container_name).unwrap_or(false)
-                        },
-                        _ => false,
+                        } else {
+                            false
+                        }
                     })
                 };
 
@@ -270,11 +263,11 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                         false
                     };
 
-                // Check if InfluxDB has changed
-                let infra_changed = if target_services.is_empty()
-                    || target_services.iter().any(|s| s == "influxdb")
+                // Check if TimescaleDB has changed
+                let timescaledb_changed = if target_services.is_empty()
+                    || target_services.iter().any(|s| s == "timescaledb")
                 {
-                    check_container_image_changed("voltage-influxdb")?
+                    check_container_image_changed("voltage-timescaledb")?
                 } else {
                     false
                 };
@@ -307,30 +300,23 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                     println!("✓ Redis image unchanged (no recreation needed)");
                 }
 
-                // Handle Rust services
-                if rust_services_changed {
-                    println!("\nRecreating Rust services...");
-                    execute_docker_compose(&["up", "-d", "--force-recreate", "comsrv", "modsrv"])?;
-                    println!("✓ Rust services recreated");
-                } else {
-                    println!("✓ Rust services unchanged (no recreation needed)");
-                }
-
-                // Handle Python services
-                if python_services_changed {
-                    println!("\nRecreating Python services...");
+                // Handle all Rust services (unified voltageems:latest image)
+                if services_changed {
+                    println!("\nRecreating services...");
                     execute_docker_compose(&[
                         "up",
                         "-d",
                         "--force-recreate",
+                        "comsrv",
+                        "modsrv",
                         "hissrv",
                         "apigateway",
                         "netsrv",
                         "alarmsrv",
                     ])?;
-                    println!("✓ Python services recreated");
+                    println!("✓ Services recreated");
                 } else {
-                    println!("✓ Python services unchanged (no recreation needed)");
+                    println!("✓ Services unchanged (no recreation needed)");
                 }
 
                 // Handle frontend
@@ -342,11 +328,11 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                     println!("✓ Frontend unchanged (no recreation needed)");
                 }
 
-                // Handle InfluxDB
-                if infra_changed {
-                    println!("\n⚠️  InfluxDB image has changed");
-                    println!("   Recreating InfluxDB may affect historical data queries");
-                    println!("\nRecreate InfluxDB container? (yes/NO): ");
+                // Handle TimescaleDB (with data protection)
+                if timescaledb_changed {
+                    println!("\n⚠️  TimescaleDB image has changed");
+                    println!("   Recreating TimescaleDB may affect historical data queries");
+                    println!("\nRecreate TimescaleDB container? (yes/NO): ");
 
                     use std::io::{stdin, stdout, Write};
                     let mut input = String::new();
@@ -354,14 +340,14 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                     stdin().read_line(&mut input)?;
 
                     if input.trim() == "yes" {
-                        println!("Recreating InfluxDB...");
-                        execute_docker_compose(&["up", "-d", "--force-recreate", "influxdb"])?;
-                        println!("✓ InfluxDB recreated");
+                        println!("Recreating TimescaleDB...");
+                        execute_docker_compose(&["up", "-d", "--force-recreate", "timescaledb"])?;
+                        println!("✓ TimescaleDB recreated");
                     } else {
-                        println!("Skipped InfluxDB recreation");
+                        println!("Skipped TimescaleDB recreation");
                     }
                 } else {
-                    println!("✓ InfluxDB unchanged (no recreation needed)");
+                    println!("✓ TimescaleDB unchanged (no recreation needed)");
                 }
 
                 println!("\nSmart refresh completed successfully");
@@ -614,8 +600,8 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
     // Determine the image name from container name
     let image_name = if container_name == "voltage-redis" {
         "voltage-redis:latest".to_string()
-    } else if container_name == "voltage-influxdb" {
-        "influxdb:3-core".to_string()
+    } else if container_name == "voltage-timescaledb" {
+        "timescale/timescaledb:latest-pg16".to_string()
     } else if container_name.starts_with("voltageems-") {
         "voltageems:latest".to_string()
     } else if container_name.starts_with("voltage-") {
