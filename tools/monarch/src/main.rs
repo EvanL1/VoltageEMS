@@ -282,16 +282,14 @@ async fn run(cli: Cli) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| auto_detect_path("VOLTAGE_DATA_PATH", "data"));
 
-    // Print banner for interactive commands
-    if !cli.no_color && !json {
+    if !json && matches!(cli.command, Commands::Init { .. }) && !cli.no_color {
         print_banner();
         println!(
             "{} Config: {}, DB: {}",
-            "Using paths:".bright_cyan(),
+            "Paths:".bright_cyan(),
             config_path.display(),
             db_path.display()
         );
-        println!();
     }
 
     match cli.command {
