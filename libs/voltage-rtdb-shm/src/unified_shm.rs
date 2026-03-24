@@ -989,7 +989,7 @@ impl UnifiedReader {
         let layout = self.channel_layouts.get(channel_id as usize)?;
         let slot = layout.slot(point_type, point_id)?;
         let point = self.slot_at(slot);
-        let (value, _raw, timestamp) = point.load_consistent();
+        let (value, _raw, timestamp) = point.load_consistent()?;
         Some((value, timestamp))
     }
 

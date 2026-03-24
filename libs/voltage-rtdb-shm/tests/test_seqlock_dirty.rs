@@ -57,7 +57,7 @@ fn test_consistent_read_after_split() {
         slot.set(i as f64, i as f64 * 2.0, 1000 + i);
     }
 
-    let (value, raw, ts) = slot.load_consistent();
+    let (value, raw, ts) = slot.load_consistent().unwrap();
     assert!((value - 49.0).abs() < 0.001);
     assert!((raw - 98.0).abs() < 0.001);
     assert_eq!(ts, 1049);

@@ -102,23 +102,24 @@ impl PointSlot {
     ///
     /// Loops [`try_load_consistent`](Self::try_load_consistent) up to
     /// [`MAX_CONSISTENCY_RETRIES`](Self::MAX_CONSISTENCY_RETRIES) times.
-    /// On exhaustion, falls back to an unprotected read (may be inconsistent).
+    /// Returns `None` on exhaustion rather than returning torn data.
     ///
     /// See `try_load_consistent` for the seqlock algorithm and memory ordering details.
     #[inline]
-    pub fn load_consistent(&self) -> (f64, f64, u64) {
+    pub fn load_consistent(&self) -> Option<(f64, f64, u64)> {
         for _ in 0..Self::MAX_CONSISTENCY_RETRIES {
             if let Some(result) = self.try_load_consistent() {
-                return result;
+                return Some(result);
             }
             std::hint::spin_loop();
         }
 
         tracing::warn!(
-            "load_consistent exceeded {} retries, returning possibly inconsistent data",
+            seq = self.seq.load(Ordering::Relaxed),
+            "load_consistent exceeded {} retries — returning None to avoid torn data",
             Self::MAX_CONSISTENCY_RETRIES
         );
-        self.load_relaxed()
+        None
     }
 
     /// Single-attempt seqlock read. Returns `None` on contention instead of retrying.
@@ -170,19 +171,6 @@ impl PointSlot {
         }
     }
 
-    /// Unprotected read of all fields (no seqlock guarantee).
-    ///
-    /// Used only as a last-resort fallback after retries are exhausted.
-    /// A leading `fence(Acquire)` provides best-effort freshness.
-    #[inline]
-    fn load_relaxed(&self) -> (f64, f64, u64) {
-        fence(Ordering::Acquire);
-        let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
-        let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
-        let ts = self.timestamp.load(Ordering::Relaxed);
-        (value, raw, ts)
-    }
-
     /// Set all point data with seqlock write protocol.
     ///
     /// Stores the sequence counter to odd (write-in-progress), writes all
@@ -206,6 +194,12 @@ impl PointSlot {
     #[inline]
     pub fn set(&self, value: f64, raw: f64, timestamp: u64) {
         let s = self.seq.load(Ordering::Relaxed);
+        debug_assert!(
+            s & 1 == 0,
+            "PointSlot::set() entered with odd seq={} — concurrent writer or \
+             incomplete prior write. Single-writer invariant violated.",
+            s
+        );
 
         // Begin write: seq → odd (signals write-in-progress).
         // Release: prevents subsequent data stores from being reordered
@@ -288,7 +282,7 @@ mod tests {
         slot.set(100.5, 1005.0, 1729000000);
 
         // load_consistent should return same values as individual getters
-        let (value, raw, ts) = slot.load_consistent();
+        let (value, raw, ts) = slot.load_consistent().unwrap();
         assert_eq!(value, 100.5);
         assert_eq!(raw, 1005.0);
         assert_eq!(ts, 1729000000);
@@ -318,7 +312,7 @@ mod tests {
             let v = i as f64 * 10.0;
             slot.set(v, v * 10.0, i as u64 * 1000);
 
-            let (value, raw, ts) = slot.load_consistent();
+            let (value, raw, ts) = slot.load_consistent().unwrap();
             assert_eq!(value, v);
             assert_eq!(raw, v * 10.0);
             assert_eq!(ts, i as u64 * 1000);
@@ -330,7 +324,7 @@ mod tests {
         let slot = PointSlot::new();
 
         // Default values
-        let (value, raw, ts) = slot.load_consistent();
+        let (value, raw, ts) = slot.load_consistent().unwrap();
         assert_eq!(value, 0.0);
         assert_eq!(raw, 0.0);
         assert_eq!(ts, 0);
@@ -344,14 +338,14 @@ mod tests {
         let same_ts = 1729000000u64;
 
         slot.set(100.0, 1000.0, same_ts);
-        let (v1, r1, t1) = slot.load_consistent();
+        let (v1, r1, t1) = slot.load_consistent().unwrap();
         assert_eq!(v1, 100.0);
         assert_eq!(r1, 1000.0);
         assert_eq!(t1, same_ts);
 
         // Second write with SAME timestamp but different values
         slot.set(200.0, 2000.0, same_ts);
-        let (v2, r2, t2) = slot.load_consistent();
+        let (v2, r2, t2) = slot.load_consistent().unwrap();
         assert_eq!(v2, 200.0);
         assert_eq!(r2, 2000.0);
         assert_eq!(t2, same_ts);
@@ -383,7 +377,7 @@ mod tests {
         assert!(slot.is_dirty());
 
         // load_consistent should still work after dirty flag operations
-        let (v, r, ts) = slot.load_consistent();
+        let (v, r, ts) = slot.load_consistent().unwrap();
         assert_eq!(v, 2.0);
         assert_eq!(r, 2.0);
         assert_eq!(ts, 200);
@@ -485,7 +479,7 @@ mod tests {
             let r = v + 1000.0;
             slot.set(v, r, ts);
 
-            let (rv, rr, rt) = slot.load_consistent();
+            let (rv, rr, rt) = slot.load_consistent().unwrap();
             assert_eq!(rv, v, "value mismatch at iteration {}", i);
             assert_eq!(rr, r, "raw mismatch at iteration {}", i);
             assert_eq!(rt, ts, "timestamp mismatch at iteration {}", i);
