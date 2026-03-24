@@ -1316,12 +1316,21 @@ impl ConfigSyncer {
                 })?,
             };
 
-            // nodes_json is required - extract from rule_data or use empty array
-            let nodes_json = match rule_data.get("nodes") {
-                Some(v) => serde_json::to_string(v).map_err(|e| {
-                    anyhow::anyhow!("Rule '{}': Failed to serialize nodes: {}", name, e)
+            // Parse flow_json → compact RuleFlow for execution engine
+            let flow_value: JsonValue = serde_json::from_str(&flow_json).map_err(|e| {
+                anyhow::anyhow!("Rule '{}': Failed to parse flow_json: {}", name, e)
+            })?;
+            let nodes_json = match voltage_rules::parser::extract_rule_flow(&flow_value) {
+                Ok(rule_flow) => serde_json::to_string(&rule_flow).map_err(|e| {
+                    anyhow::anyhow!("Rule '{}': Failed to serialize RuleFlow: {}", name, e)
                 })?,
-                None => "[]".to_string(),
+                Err(e) => {
+                    warn!(
+                        "Rule '{}': Failed to extract rule flow: {}. Storing empty nodes_json.",
+                        name, e
+                    );
+                    "{}".to_string()
+                },
             };
 
             sqlx::query(

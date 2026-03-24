@@ -24,7 +24,7 @@
 mod error;
 mod executor;
 pub mod logger;
-mod parser;
+pub mod parser;
 mod repository;
 mod scheduler;
 pub mod types;
