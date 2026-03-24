@@ -76,8 +76,11 @@ pub struct UnifiedHeader {
     /// When modsrv opens the SHM, it verifies its RoutingCache has the same hash.
     /// Mismatch indicates routing config changed between process starts.
     pub routing_hash: AtomicU64,
+    /// Writer generation counter — bumped on every create/reconfigure.
+    /// modsrv reads this to detect comsrv restarts with routing changes.
+    pub writer_generation: AtomicU64,
     /// Reserved for future use
-    pub _reserved: [u8; 16],
+    pub _reserved: [u8; 8],
 }
 
 const _: () = assert!(std::mem::size_of::<UnifiedHeader>() == 64);
@@ -445,7 +448,9 @@ impl UnifiedWriter {
         header.writer_heartbeat = AtomicU64::new(0);
         // Store routing cache content hash for cross-process synchronization
         header.routing_hash = AtomicU64::new(routing_cache.content_hash());
-        header._reserved = [0; 16];
+        header.writer_generation = AtomicU64::new(0);
+        header._reserved = [0; 8];
+        header.writer_generation.store(1, Ordering::Release);
 
         // Flush header to backing file for cross-process visibility.
         // Without this, a reader on ARM64 mmap'ing the same file could see
@@ -519,6 +524,12 @@ impl UnifiedWriter {
         self.header()
             .writer_heartbeat
             .store(timestamp_ms, Ordering::Relaxed);
+    }
+
+    /// Returns the current writer generation from the SHM header.
+    /// Used by modsrv to detect comsrv restarts.
+    pub fn generation(&self) -> u64 {
+        self.header().writer_generation.load(Ordering::Acquire)
     }
 
     /// Get file path
@@ -686,6 +697,7 @@ impl UnifiedWriter {
         header
             .routing_hash
             .store(routing_cache.content_hash(), Ordering::Release);
+        header.writer_generation.fetch_add(1, Ordering::Release);
 
         // Flush mmap to backing file — ensures cross-process visibility
         // on systems where mmap coherency isn't guaranteed (H3).

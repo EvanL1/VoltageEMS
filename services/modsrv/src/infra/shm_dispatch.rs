@@ -3,6 +3,7 @@
 //! Provides the low-latency M2C (modsrv-to-comsrv) dispatch path via shared memory
 //! and Unix Domain Socket notifications.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,6 +55,7 @@ pub struct ShmDispatch {
     writer: arc_swap::ArcSwapOption<voltage_rtdb_shm::UnifiedWriter>,
     config: std::sync::OnceLock<voltage_rtdb_shm::SharedConfig>,
     notifier: std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>>,
+    expected_generation: AtomicU64,
 }
 
 impl Default for ShmDispatch {
@@ -72,6 +74,7 @@ impl ShmDispatch {
             writer: arc_swap::ArcSwapOption::empty(),
             config: std::sync::OnceLock::new(),
             notifier: std::sync::OnceLock::new(),
+            expected_generation: AtomicU64::new(0),
         }
     }
 
@@ -107,6 +110,20 @@ impl ActionDispatch for ShmDispatch {
         let Some(writer) = writer_guard.as_ref() else {
             return DispatchOutcome::NoWriter;
         };
+
+        // Generation check: detect comsrv restarts that changed the SHM layout.
+        // expected == 0 means first dispatch before rebuild_writer was called — skip check.
+        let current_gen = writer.generation();
+        let expected = self.expected_generation.load(Ordering::Acquire);
+        if expected != 0 && current_gen != expected {
+            warn!(
+                "SHM writer generation mismatch (expected={}, actual={}). \
+                 comsrv may have restarted. Clearing writer.",
+                expected, current_gen
+            );
+            self.writer.store(None);
+            return DispatchOutcome::NoWriter;
+        }
 
         let mirrored = writer.set_action(
             ctx.target_channel_id,
@@ -189,6 +206,8 @@ impl ActionDispatch for ShmDispatch {
         };
         match voltage_rtdb_shm::UnifiedWriter::open_for_actions(config, routing_cache) {
             Ok(writer) => {
+                let gen = writer.generation();
+                self.expected_generation.store(gen, Ordering::Release);
                 self.writer.store(Some(Arc::new(writer)));
                 info!("SHM action writer rebuilt after routing change");
                 Ok(())
