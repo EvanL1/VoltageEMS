@@ -159,7 +159,7 @@ pub struct RuleVariable {
     pub point_type: Option<String>,
 
     /// Point ID (numeric)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "point_id", skip_serializing_if = "Option::is_none")]
     pub point: Option<u32>,
 
     /// Formula tokens (for combined type, if non-empty this is a calculated variable)

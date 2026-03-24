@@ -203,8 +203,8 @@ fn extract_calculation_rule_node(data: Option<&Value>) -> Result<RuleNode> {
 /// {
 ///   "type": "action-periodDelta",
 ///   "config": {
-///     "input": { "name": "X1", "instance": 1, "pointType": "measurement", "point": 9 },
-///     "output": { "name": "Y1", "instance": 1, "pointType": "measurement", "point": 101 },
+///     "input": { "name": "X1", "instance": 1, "pointType": "measurement", "point_id": 9 },
+///     "output": { "name": "Y1", "instance": 1, "pointType": "measurement", "point_id": 101 },
 ///     "period": "daily",
 ///     "wires": { "default": ["next-node-id"] }
 ///   }
@@ -272,7 +272,7 @@ fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Resu
         .map(String::from);
 
     let point = var
-        .get("point")
+        .get("point_id")
         .and_then(|v| v.as_u64())
         .and_then(|n| u32::try_from(n).ok());
 
@@ -318,10 +318,8 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        // Support both "point" and "point_id" as numeric point ID
         let point = var
-            .get("point")
-            .or_else(|| var.get("point_id"))
+            .get("point_id")
             .and_then(|v| v.as_u64())
             .and_then(|n| u32::try_from(n).ok());
 
@@ -525,7 +523,7 @@ mod tests {
                                     "type": "single",
                                     "instance": 1,
                                     "pointType": "measurement",
-                                    "point": 3
+                                    "point_id": 3
                                 }
                             ],
                             "rule": [
@@ -562,7 +560,7 @@ mod tests {
                                     "type": "single",
                                     "instance": 2,
                                     "pointType": "action",
-                                    "point": 5
+                                    "point_id": 5
                                 }
                             ],
                             "rule": [
