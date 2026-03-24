@@ -91,7 +91,7 @@ const RULE_HISTORY_TABLE: &str = r#"
 //   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
 
 /// Current schema structure version — increment when adding migrations
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 /// Run pending schema migrations based on `PRAGMA user_version`
 ///
@@ -122,6 +122,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 
     if current < 3 {
         migrate_v3(&mut conn).await.context("Migration v3 failed")?;
+    }
+
+    if current < 4 {
+        migrate_v4(&mut conn).await.context("Migration v4 failed")?;
     }
 
     sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -269,6 +273,33 @@ async fn migrate_v3(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
         .await?;
 
     info!("Migration v3: complete");
+    Ok(())
+}
+
+/// v4: Add `trigger_config` column to `rules` table
+///
+/// The column was added to DDL definitions but never migrated for existing databases.
+/// Without it, `repository.rs::hydrate_rule()` fails with "no such column: trigger_config",
+/// causing the rule engine to load zero rules.
+async fn migrate_v4(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    info!("Migration v4: adding trigger_config column to rules table");
+
+    // Check if column already exists (idempotent)
+    let has_column: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('rules') WHERE name = 'trigger_config'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
+    if !has_column {
+        sqlx::query("ALTER TABLE rules ADD COLUMN trigger_config TEXT")
+            .execute(&mut **conn)
+            .await?;
+        info!("Migration v4: added trigger_config column");
+    } else {
+        info!("Migration v4: trigger_config column already exists (skipped)");
+    }
+
     Ok(())
 }
 

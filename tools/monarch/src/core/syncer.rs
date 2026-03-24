@@ -1326,10 +1326,12 @@ impl ConfigSyncer {
                 })?,
                 Err(e) => {
                     warn!(
-                        "Rule '{}': Failed to extract rule flow: {}. Storing empty nodes_json.",
-                        name, e
+                        "Rule '{}' ({}): not a Vue Flow rule, skipping. ({})",
+                        name,
+                        path.file_name().unwrap_or_default().to_string_lossy(),
+                        e
                     );
-                    "{}".to_string()
+                    continue;
                 },
             };
 
