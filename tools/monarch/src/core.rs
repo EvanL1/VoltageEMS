@@ -86,11 +86,14 @@ impl MonarchCore {
         validator.validate_service(service).await
     }
 
-    /// Sync configuration from files to database
-    pub async fn sync(&self, service: &str) -> Result<SyncResult> {
+    /// Sync configuration from files to database.
+    ///
+    /// When `force` is false (default), uses UPSERT — API-created data is preserved.
+    /// When `force` is true, DELETE then INSERT — full replace (old behavior).
+    pub async fn sync(&self, service: &str, force: bool) -> Result<SyncResult> {
         self.require_write_mode()?;
 
-        let syncer = ConfigSyncer::new(&self.config_path, &self.db_path);
+        let syncer = ConfigSyncer::new(&self.config_path, &self.db_path).with_force(force);
         syncer.sync_service(service).await
     }
 

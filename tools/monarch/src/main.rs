@@ -498,7 +498,7 @@ async fn sync_command(
         }
 
         // Perform sync
-        match core.sync(cfg).await {
+        match core.sync(cfg, force).await {
             Ok(result) => {
                 let error_msgs: Vec<String> = result
                     .errors

@@ -246,9 +246,9 @@ where
 
     let mut count = 0;
 
-    // Build the INSERT query with table name
+    // Build the INSERT OR REPLACE query with table name (safe for both force and UPSERT modes)
     let insert_sql = format!(
-        "INSERT INTO {} (point_id, channel_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
+        "INSERT OR REPLACE INTO {} (point_id, channel_id, signal_name, scale, offset, unit, reverse, data_type, description, protocol_mappings)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         config.table_name
     );
@@ -306,15 +306,24 @@ pub struct SyncResult {
 pub struct ConfigSyncer {
     config_path: PathBuf,
     db_path: PathBuf,
+    /// When true, DELETE all rows before INSERT (full replace). Default: false (UPSERT).
+    force: bool,
 }
 
 impl ConfigSyncer {
-    /// Create a new syncer
+    /// Create a new syncer (default: UPSERT mode)
     pub fn new(config_path: impl AsRef<Path>, db_path: impl AsRef<Path>) -> Self {
         Self {
             config_path: config_path.as_ref().to_path_buf(),
             db_path: db_path.as_ref().to_path_buf(),
+            force: false,
         }
+    }
+
+    /// Set force mode: DELETE all rows before INSERT (destructive full replace)
+    pub fn with_force(mut self, force: bool) -> Self {
+        self.force = force;
+        self
     }
 
     /// Sync configuration for a specific service
@@ -448,26 +457,28 @@ impl ConfigSyncer {
         // Start transaction
         let mut tx = pool.begin().await?;
 
-        // Clear existing configuration in reverse dependency order
-        // (point tables first, then parent channels table, then config)
+        // In force mode: DELETE all rows before INSERT (full replace).
+        // In default UPSERT mode: skip DELETE; INSERT OR REPLACE handles conflicts.
         let mut deleted: u64 = 0;
-        for table in [
-            "telemetry_points",
-            "signal_points",
-            "control_points",
-            "adjustment_points",
-            "channels",
-        ] {
-            deleted += sqlx::query(&format!("DELETE FROM {table}"))
+        if self.force {
+            for table in [
+                "telemetry_points",
+                "signal_points",
+                "control_points",
+                "adjustment_points",
+                "channels",
+            ] {
+                deleted += sqlx::query(&format!("DELETE FROM {table}"))
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+            }
+            deleted += sqlx::query("DELETE FROM service_config WHERE service_name = ?")
+                .bind("comsrv")
                 .execute(&mut *tx)
                 .await?
                 .rows_affected();
         }
-        deleted += sqlx::query("DELETE FROM service_config WHERE service_name = ?")
-            .bind("comsrv")
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
 
         stats.items_deleted = deleted as usize;
 
@@ -550,30 +561,30 @@ impl ConfigSyncer {
         // Start transaction
         let mut tx = pool.begin().await?;
 
-        // Clear existing configuration
-        sqlx::query("DELETE FROM service_config WHERE service_name = ?")
-            .bind("modsrv")
-            .execute(&mut *tx)
-            .await?;
+        // In force mode: DELETE all rows before INSERT (full replace).
+        // In default UPSERT mode: skip DELETE; INSERT OR REPLACE handles conflicts.
+        if self.force {
+            sqlx::query("DELETE FROM service_config WHERE service_name = ?")
+                .bind("modsrv")
+                .execute(&mut *tx)
+                .await?;
 
-        // Delete in correct order: child tables first, parent tables last
-        // First delete tables that reference instances
-        sqlx::query("DELETE FROM measurement_routing")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM action_routing")
-            .execute(&mut *tx)
-            .await?;
-        // Skip instance_mappings table (deprecated)
+            // Delete in correct order: child tables first, parent tables last
+            sqlx::query("DELETE FROM measurement_routing")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM action_routing")
+                .execute(&mut *tx)
+                .await?;
 
-        // Then delete instances
-        // Note: Products are now compile-time built-in constants (voltage-model crate),
-        // no need to clear or sync product-related tables
-        sqlx::query("DELETE FROM instances")
-            .execute(&mut *tx)
-            .await?;
+            // Note: Products are now compile-time built-in constants (voltage-model crate),
+            // no need to clear or sync product-related tables
+            sqlx::query("DELETE FROM instances")
+                .execute(&mut *tx)
+                .await?;
 
-        stats.items_deleted = 4; // Cleared 4 tables (config, routing x2, instances)
+            stats.items_deleted = 4; // Cleared 4 tables (config, routing x2, instances)
+        }
 
         // Insert service configuration
         let config_count = self
@@ -622,8 +633,11 @@ impl ConfigSyncer {
         // Load and sync rules (part of modsrv)
         let rules_dir = config_dir.join("rules");
         if rules_dir.exists() {
-            // Clear existing rules
-            sqlx::query("DELETE FROM rules").execute(&mut *tx).await?;
+            // In force mode: delete all rules before re-inserting.
+            // In UPSERT mode: existing rules not in config files are preserved.
+            if self.force {
+                sqlx::query("DELETE FROM rules").execute(&mut *tx).await?;
+            }
             let rules_count = self.sync_rules(&mut tx, &rules_dir).await?;
             stats.items_synced += rules_count;
             debug!("Rules: {}", rules_count);
@@ -761,7 +775,7 @@ impl ConfigSyncer {
             let config = serde_json::to_string(&config_obj)?;
 
             sqlx::query(
-                "INSERT INTO channels (channel_id, name, protocol, enabled, config)
+                "INSERT OR REPLACE INTO channels (channel_id, name, protocol, enabled, config)
                 VALUES (?, ?, ?, ?, ?)",
             )
             .bind(channel_id)
@@ -1066,7 +1080,7 @@ impl ConfigSyncer {
         let normalized_product = normalize_product_name(product_name);
 
         if let Err(e) = sqlx::query(
-            "INSERT INTO instances (instance_id, instance_name, product_name, parent_id, properties) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO instances (instance_id, instance_name, product_name, parent_id, properties) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(instance_id)
         .bind(instance_name)
@@ -1220,7 +1234,7 @@ impl ConfigSyncer {
             let insert_result = match instance_type.as_str() {
                 "M" => {
                     sqlx::query(
-                        "INSERT INTO measurement_routing (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id)
+                        "INSERT OR REPLACE INTO measurement_routing (instance_id, instance_name, channel_id, channel_type, channel_point_id, measurement_id)
                         VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?)"
                     )
                     .bind(instance_name).bind(instance_name)
@@ -1229,7 +1243,7 @@ impl ConfigSyncer {
                 },
                 "A" => {
                     sqlx::query(
-                        "INSERT INTO action_routing (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id)
+                        "INSERT OR REPLACE INTO action_routing (instance_id, instance_name, action_id, channel_id, channel_type, channel_point_id)
                         VALUES ((SELECT instance_id FROM instances WHERE instance_name = ?), ?, ?, ?, ?, ?)"
                     )
                     .bind(instance_name).bind(instance_name)
