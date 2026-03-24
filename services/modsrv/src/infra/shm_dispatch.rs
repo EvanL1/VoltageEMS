@@ -100,6 +100,24 @@ impl ShmDispatch {
     ) -> bool {
         self.notifier.set(notifier).is_ok()
     }
+
+    /// Returns true if the SHM writer is currently configured and available.
+    ///
+    /// A `false` result means comsrv may have restarted and the writer was
+    /// cleared (generation mismatch). Actions will return `DispatchDegraded`
+    /// until routing is refreshed and the writer is rebuilt.
+    pub fn is_writer_available(&self) -> bool {
+        self.writer.load().is_some()
+    }
+
+    /// Returns true if the UDS notifier has been configured.
+    ///
+    /// Note: this checks only whether `set_notifier()` was called, not whether
+    /// the UDS socket is currently connected. Use `is_writer_available()` as
+    /// the primary liveness signal; UDS reconnects automatically on failure.
+    pub fn is_notifier_configured(&self) -> bool {
+        self.notifier.get().is_some()
+    }
 }
 
 #[async_trait]

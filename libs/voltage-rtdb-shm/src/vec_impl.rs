@@ -180,10 +180,11 @@ impl PointSlot {
     /// # Memory Ordering (store-release, AArch64-safe)
     ///
     /// Both seq stores use `Release` ordering:
-    /// - Opening `store(odd, Release)` prevents data stores from being
-    ///   reordered before it. x86: plain `mov`; ARM64: `stlr`.
-    /// - Closing `store(even, Release)` prevents data stores from being
+    /// - Opening `store(odd, Release)` prevents preceding stores from being
     ///   reordered after it. x86: plain `mov`; ARM64: `stlr`.
+    /// - Closing `store(even, Release)` prevents preceding data stores from
+    ///   being reordered after it, pairing with reader's `load(Acquire)` on
+    ///   seq2 to guarantee data visibility. x86: plain `mov`; ARM64: `stlr`.
     ///
     /// # Single-writer assumption
     ///
@@ -202,8 +203,9 @@ impl PointSlot {
         );
 
         // Begin write: seq → odd (signals write-in-progress).
-        // Release: prevents subsequent data stores from being reordered
-        // before this store. x86: plain mov. ARM64: stlr.
+        // Release: prevents preceding stores from being reordered after this
+        // store, ensuring readers that observe an odd seq also see prior writes.
+        // x86: plain mov. ARM64: stlr.
         self.seq.store(s.wrapping_add(1), Ordering::Release);
 
         // Data stores — Relaxed; ordering enforced by surrounding Release stores.

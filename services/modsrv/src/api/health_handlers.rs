@@ -106,6 +106,25 @@ pub async fn health_check(
         }),
     );
 
+    // Check SHM dispatch status (non-critical: degraded means UDS is down, not modsrv itself)
+    let shm_writer_available = state.shm_dispatch.is_writer_available();
+    let uds_notifier_configured = state.shm_dispatch.is_notifier_configured();
+    let shm_status = if shm_writer_available && uds_notifier_configured {
+        "ready"
+    } else if shm_writer_available {
+        "writer_only" // SHM write path works; UDS not yet configured
+    } else {
+        "degraded" // No writer: comsrv may have restarted or SHM not configured yet
+    };
+    checks.insert(
+        "shm_dispatch".to_string(),
+        json!({
+            "status": shm_status,
+            "writer_available": shm_writer_available,
+            "uds_notifier_configured": uds_notifier_configured
+        }),
+    );
+
     // Collect system metrics (CPU, memory)
     let metrics = SystemMetrics::collect();
 

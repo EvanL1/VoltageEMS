@@ -82,6 +82,15 @@ pub enum ModSrvError {
     SerializationError(String),
 
     // ============================================================================
+    // Dispatch Errors
+    // ============================================================================
+    /// Dispatch path is degraded — SHM written but UDS notification failed,
+    /// or SHM writer is unavailable (e.g. comsrv restarted).
+    /// Maps to HTTP 502: downstream service (comsrv) is unreachable.
+    #[error("Dispatch degraded: {0}")]
+    DispatchDegraded(String),
+
+    // ============================================================================
     // Internal Errors
     // ============================================================================
     #[error("Internal error: {0}")]
@@ -123,6 +132,9 @@ impl errors::VoltageErrorTrait for ModSrvError {
             // Data
             Self::SerializationError(_) => "MODSRV_SERIALIZATION_ERROR",
 
+            // Dispatch
+            Self::DispatchDegraded(_) => "MODSRV_DISPATCH_DEGRADED",
+
             // Internal
             Self::InternalError(_) => "MODSRV_INTERNAL_ERROR",
         }
@@ -151,6 +163,9 @@ impl errors::VoltageErrorTrait for ModSrvError {
             | Self::InvalidRouting(_)
             | Self::InvalidRule(_)
             | Self::ParseError(_) => ErrorCategory::Validation,
+
+            // Dispatch degraded → Network (HTTP 502: downstream comsrv unreachable)
+            Self::DispatchDegraded(_) => ErrorCategory::Network,
 
             // Internal (execution, scheduling, serialization, etc.)
             Self::ExecutionError(_)

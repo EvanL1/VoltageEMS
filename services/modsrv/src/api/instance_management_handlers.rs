@@ -418,8 +418,7 @@ pub async fn execute_instance_action(
     state
         .instance_manager
         .execute_action(id, &req.point_id, req.value)
-        .await
-        .map_err(|e| ModSrvError::InternalError(format!("Failed to execute action: {}", e)))?;
+        .await?;
     Ok(Json(SuccessResponse::new(json!({
         "message": "Action executed",
         "instance_id": id,

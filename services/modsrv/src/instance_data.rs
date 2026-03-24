@@ -5,6 +5,7 @@
 
 #![allow(clippy::disallowed_methods)] // json! macro used in multiple functions
 
+use crate::error::ModSrvError;
 use crate::infra::shm_dispatch::DispatchOutcome;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -298,7 +299,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         instance_id: u32,
         action_id: &str,
         value: f64,
-    ) -> Result<()> {
+    ) -> crate::error::Result<()> {
         // Route via application-layer cache, dispatch via SHM+UDS to comsrv
 
         let outcome = voltage_routing::set_action_point(
@@ -308,7 +309,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             action_id,
             value,
         )
-        .await?;
+        .await
+        .map_err(|e| ModSrvError::InternalError(e.to_string()))?;
 
         // Dispatch action to comsrv via SHM+UDS (production) or noop (tests)
         // SCADA safety: dispatch failure must propagate to the operator via API error
@@ -320,18 +322,18 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                         "Action dispatch degraded: SHM written but UDS failed ({}) for instance {} action {}",
                         reason, instance_id, action_id
                     );
-                    return Err(anyhow!(
-                        "Action dispatch degraded ({}): command may not reach device",
+                    return Err(ModSrvError::DispatchDegraded(format!(
+                        "UDS notification failed ({}): command may not reach device",
                         reason
-                    ));
+                    )));
                 },
                 DispatchOutcome::NoWriter => {
                     error!(
                         "Action dispatch failed: no SHM writer for instance {} action {}",
                         instance_id, action_id
                     );
-                    return Err(anyhow!(
-                        "Action dispatch unavailable: no SHM writer configured"
+                    return Err(ModSrvError::DispatchDegraded(
+                        "SHM writer unavailable: comsrv may have restarted".to_string(),
                     ));
                 },
             }
