@@ -83,6 +83,7 @@ impl ConfigExporter {
         debug!("Exporting to directory: {:?}", output_dir);
 
         let result = match service {
+            "global" => self.export_global(output_dir).await?,
             "comsrv" => self.export_comsrv(output_dir).await?,
             "modsrv" => self.export_modsrv(output_dir).await?,
             "rules" => self.export_rules(output_dir).await?,
@@ -97,6 +98,61 @@ impl ConfigExporter {
             result.files_exported.len(),
             result.records_exported
         );
+        Ok(result)
+    }
+
+    async fn export_global(&self, output_dir: &Path) -> Result<ExportResult> {
+        let mut result = ExportResult::default();
+
+        let rows = sqlx::query(
+            "SELECT key, value, type FROM service_config WHERE service_name = 'global' ORDER BY key",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Build nested structure from dot-separated keys
+        let mut root = serde_yml::Mapping::new();
+        for row in &rows {
+            let key: String = row.try_get("key")?;
+            let value: String = row.try_get("value")?;
+            let type_hint: Option<String> = row.try_get("type").ok();
+
+            let yaml_value = match type_hint.as_deref() {
+                Some("integer") | Some("int") => value
+                    .parse::<i64>()
+                    .map(|n| serde_yml::Value::Number(n.into()))
+                    .unwrap_or(serde_yml::Value::String(value)),
+                Some("boolean") | Some("bool") => {
+                    serde_yml::Value::Bool(value.eq_ignore_ascii_case("true") || value == "1")
+                },
+                Some("float") => value
+                    .parse::<f64>()
+                    .ok()
+                    .map(|f| serde_yml::Value::Number(f.into()))
+                    .unwrap_or(serde_yml::Value::String(value)),
+                _ => {
+                    if let Ok(n) = value.parse::<i64>() {
+                        serde_yml::Value::Number(n.into())
+                    } else if value.eq_ignore_ascii_case("true")
+                        || value.eq_ignore_ascii_case("false")
+                    {
+                        serde_yml::Value::Bool(value.eq_ignore_ascii_case("true"))
+                    } else {
+                        serde_yml::Value::String(value)
+                    }
+                },
+            };
+
+            let parts: Vec<&str> = key.split('.').collect();
+            insert_nested(&mut root, &parts, yaml_value);
+        }
+
+        let yaml_path = output_dir.join("global.yaml");
+        let yaml_content = serde_yml::to_string(&root)?;
+        std::fs::write(&yaml_path, yaml_content)?;
+        result.files_exported.push("global.yaml".to_string());
+        result.records_exported = rows.len();
+
         Ok(result)
     }
 
@@ -143,6 +199,22 @@ impl ConfigExporter {
                     result.files_exported.push(relative_path);
                     result.records_exported += mappings.len();
                 }
+            }
+        }
+
+        // Export channel templates
+        let templates = self.export_channel_templates().await?;
+        if !templates.is_empty() {
+            let templates_dir = output_dir.join("templates");
+            std::fs::create_dir_all(&templates_dir)?;
+            for (name, template_json) in &templates {
+                let safe_name = name.replace(['/', '\\', ' '], "_");
+                let json_path = templates_dir.join(format!("{}.json", safe_name));
+                std::fs::write(&json_path, serde_json::to_string_pretty(template_json)?)?;
+                result
+                    .files_exported
+                    .push(format!("templates/{}.json", safe_name));
+                result.records_exported += 1;
             }
         }
 
@@ -197,6 +269,12 @@ impl ConfigExporter {
                 result.records_exported += mappings.len();
             }
         }
+
+        // Export rules as individual JSON files (matching sync input format)
+        let rules_dir = output_dir.join("rules");
+        let rules = self.export_rules_as_json(&rules_dir).await?;
+        result.files_exported.extend(rules.files_exported);
+        result.records_exported += rules.records_exported;
 
         Ok(result)
     }
@@ -746,6 +824,96 @@ impl ConfigExporter {
         Ok(rules_list)
     }
 
+    async fn export_channel_templates(&self) -> Result<Vec<(String, serde_json::Value)>> {
+        let rows = sqlx::query(
+            "SELECT template_id, name, description, protocol, points_snapshot, mappings_snapshot, source_channel_id
+             FROM channel_templates ORDER BY template_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut templates = Vec::new();
+        for row in rows {
+            let name: String = row.try_get("name")?;
+            let description: Option<String> = row.try_get("description")?;
+            let protocol: String = row.try_get("protocol")?;
+            let points_snapshot: String = row.try_get("points_snapshot")?;
+            let mappings_snapshot: String = row.try_get("mappings_snapshot")?;
+            let source_channel_id: Option<i64> = row.try_get("source_channel_id")?;
+
+            let template = serde_json::json!({
+                "name": name,
+                "description": description,
+                "protocol": protocol,
+                "points_snapshot": serde_json::from_str::<serde_json::Value>(&points_snapshot)
+                    .unwrap_or(serde_json::Value::Null),
+                "mappings_snapshot": serde_json::from_str::<serde_json::Value>(&mappings_snapshot)
+                    .unwrap_or(serde_json::Value::Null),
+                "source_channel_id": source_channel_id,
+            });
+
+            templates.push((name, template));
+        }
+
+        Ok(templates)
+    }
+
+    async fn export_rules_as_json(&self, rules_dir: &Path) -> Result<ExportResult> {
+        let mut result = ExportResult::default();
+
+        let rows = sqlx::query(
+            "SELECT id, name, description, flow_json, nodes_json, enabled, priority, cooldown_ms, trigger_config
+             FROM rules ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(result);
+        }
+
+        std::fs::create_dir_all(rules_dir)?;
+
+        for row in rows {
+            let id: i64 = row.try_get("id")?;
+            let name: String = row.try_get("name")?;
+            let description: Option<String> = row.try_get("description")?;
+            let flow_json_str: String = row.try_get("flow_json")?;
+            let enabled: bool = row.try_get("enabled")?;
+            let priority: i64 = row.try_get("priority")?;
+            let cooldown_ms: i64 = row.try_get("cooldown_ms")?;
+
+            let flow_json: serde_json::Value =
+                serde_json::from_str(&flow_json_str).unwrap_or(serde_json::Value::Null);
+
+            let rule_file = serde_json::json!({
+                "name": name,
+                "description": description.unwrap_or_default(),
+                "enabled": enabled,
+                "priority": priority,
+                "cooldown_ms": cooldown_ms,
+                "flow_json": flow_json,
+                "format": "vue-flow",
+                "id": id.to_string(),
+            });
+
+            let safe_name = if name.is_empty() {
+                format!("rule_{}", id)
+            } else {
+                name.replace(['/', '\\', ' ', '.'], "_").to_lowercase()
+            };
+            let json_path = rules_dir.join(format!("{}.json", safe_name));
+            std::fs::write(&json_path, serde_json::to_string_pretty(&rule_file)?)?;
+
+            result
+                .files_exported
+                .push(format!("rules/{}.json", safe_name));
+            result.records_exported += 1;
+        }
+
+        Ok(result)
+    }
+
     /// Write records to a CSV file with the given column headers
     fn write_csv(
         &self,
@@ -767,5 +935,22 @@ impl ConfigExporter {
         }
         wtr.flush()?;
         Ok(())
+    }
+}
+
+/// Insert a value into a nested YAML mapping using a dot-separated key path.
+fn insert_nested(root: &mut serde_yml::Mapping, parts: &[&str], value: serde_yml::Value) {
+    if parts.len() == 1 {
+        root.insert(serde_yml::Value::String(parts[0].to_string()), value);
+        return;
+    }
+
+    let key = serde_yml::Value::String(parts[0].to_string());
+    let entry = root
+        .entry(key)
+        .or_insert_with(|| serde_yml::Value::Mapping(serde_yml::Mapping::new()));
+
+    if let serde_yml::Value::Mapping(ref mut nested) = entry {
+        insert_nested(nested, &parts[1..], value);
     }
 }
