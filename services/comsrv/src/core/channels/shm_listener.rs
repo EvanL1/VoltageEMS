@@ -16,6 +16,7 @@
 
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
@@ -35,6 +36,7 @@ pub struct ShmCommandListener {
     last_sequences: Arc<SequenceMap>,
     uds_path: String,
     shutdown: tokio::sync::watch::Receiver<bool>,
+    dropped_count: Arc<AtomicU64>,
 }
 
 impl ShmCommandListener {
@@ -48,6 +50,7 @@ impl ShmCommandListener {
             last_sequences: Arc::new(DashMap::new()),
             uds_path: path,
             shutdown,
+            dropped_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -109,10 +112,17 @@ impl ShmCommandListener {
                             let senders = Arc::clone(&self.command_senders);
                             let last_sequences = Arc::clone(&self.last_sequences);
                             let shutdown_rx = self.shutdown.clone();
+                            let dropped_count = Arc::clone(&self.dropped_count);
 
                             tokio::spawn(async move {
-                                Self::handle_connection(stream, senders, last_sequences, shutdown_rx)
-                                    .await;
+                                Self::handle_connection(
+                                    stream,
+                                    senders,
+                                    last_sequences,
+                                    shutdown_rx,
+                                    dropped_count,
+                                )
+                                .await;
                             });
                         }
                         Err(e) => {
@@ -139,6 +149,7 @@ impl ShmCommandListener {
         senders: Arc<DashMap<u32, mpsc::Sender<ChannelCommand>>>,
         last_sequences: Arc<SequenceMap>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
+        dropped_count: Arc<AtomicU64>,
     ) {
         debug!("ShmListener: new connection");
         let mut buf = [0u8; ShmNotification::SIZE];
@@ -149,7 +160,7 @@ impl ShmCommandListener {
                     match result {
                         Ok(_) => {
                             let notif = ShmNotification::from_bytes(&buf);
-                            Self::handle_notification(&notif, &senders, &last_sequences).await;
+                            Self::handle_notification(&notif, &senders, &last_sequences, &dropped_count).await;
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                             debug!("ShmListener: connection closed");
@@ -174,6 +185,7 @@ impl ShmCommandListener {
         notif: &ShmNotification,
         senders: &DashMap<u32, mpsc::Sender<ChannelCommand>>,
         last_sequences: &DashMap<(u32, u8, u32), (u64, u64)>,
+        dropped_count: &AtomicU64,
     ) {
         let channel_id = notif.channel_id;
         let point_type = match notif.get_point_type() {
@@ -263,6 +275,7 @@ impl ShmCommandListener {
                 },
                 Err(_) => {
                     // Timeout - sustained backpressure, drop command
+                    dropped_count.fetch_add(1, Ordering::Relaxed);
                     error!(
                         "ShmListener: channel {} buffer FULL for 50ms, notification DROPPED \
                          (point {:?}:{}, sustained backpressure)",
@@ -276,6 +289,11 @@ impl ShmCommandListener {
                 channel_id
             );
         }
+    }
+
+    /// Returns the number of commands dropped due to channel backpressure.
+    pub fn dropped_count(&self) -> u64 {
+        self.dropped_count.load(Ordering::Relaxed)
     }
 
     fn build_command(
