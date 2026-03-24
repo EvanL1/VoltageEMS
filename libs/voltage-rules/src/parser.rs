@@ -318,8 +318,10 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        // Support both "point" and "point_id" as numeric point ID
         let point = var
             .get("point")
+            .or_else(|| var.get("point_id"))
             .and_then(|v| v.as_u64())
             .and_then(|n| u32::try_from(n).ok());
 
