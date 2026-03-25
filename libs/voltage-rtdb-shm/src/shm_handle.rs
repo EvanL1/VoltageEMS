@@ -11,20 +11,19 @@
 //!   handle.index()    → Option<Guard<Arc<ChannelToSlotIndex>>>
 //!
 //! Cold path (routing reload):
-//!   handle.rebuild(&routing_cache) → Result<()>
-//!     1. Creates new UnifiedWriter from SharedConfig + new routing
+//!   handle.rebuild(&channel_points) → Result<()>
+//!     1. Creates new UnifiedWriter from SharedConfig + new channel point counts
 //!     2. Builds new ChannelToSlotIndex from new writer
 //!     3. ArcSwap::store() — old objects drop when last Guard releases
 //! ```
 
 use std::sync::Arc;
 
-use arc_swap::{ArcSwapOption, Guard};
-use tracing::info;
-use voltage_routing::RoutingCache;
-
+use crate::channel_points::ChannelPointCounts;
 use crate::shared_config::{ChannelToSlotIndex, SharedConfig};
 use crate::unified_shm::UnifiedWriter;
+use arc_swap::{ArcSwapOption, Guard};
+use tracing::info;
 
 /// Shared handle for runtime-swappable SHM writer and index.
 ///
@@ -89,13 +88,13 @@ impl ShmHandle {
         self.index.load_full()
     }
 
-    /// Rebuild SHM writer and index from updated routing cache.
+    /// Rebuild SHM writer and index from updated channel point counts.
     ///
-    /// Called after `reload_routing_cache()` succeeds. Reconfigures the existing
+    /// Called after routing reload succeeds. Reconfigures the existing
     /// SHM file in place, then atomically swaps the writer/index handles.
     /// Old objects are dropped when the last reader Guard releases.
-    pub fn rebuild(&self, routing_cache: &RoutingCache) -> anyhow::Result<()> {
-        let writer = UnifiedWriter::reconfigure_existing(&self.config, routing_cache)?;
+    pub fn rebuild(&self, channel_points: &ChannelPointCounts) -> anyhow::Result<()> {
+        let writer = UnifiedWriter::reconfigure_existing(&self.config, channel_points)?;
         let slot_count = writer.slot_count();
         let index = ChannelToSlotIndex::from_unified_writer(&writer);
         let index_len = index.len();

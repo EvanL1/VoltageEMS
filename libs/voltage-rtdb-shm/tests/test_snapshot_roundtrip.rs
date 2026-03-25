@@ -7,10 +7,9 @@
 
 #![allow(clippy::disallowed_methods)] // Test code — unwrap is acceptable
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use tempfile::tempdir;
-use voltage_routing::RoutingCache;
-use voltage_rtdb_shm::{SharedConfig, UnifiedReader, UnifiedWriter};
+use voltage_rtdb_shm::{ChannelPointCounts, SharedConfig, UnifiedReader, UnifiedWriter};
 
 // ============================================================================
 // Test Helpers
@@ -23,32 +22,14 @@ fn test_config(dir: &std::path::Path) -> SharedConfig {
         .with_max_slots(1000)
 }
 
-/// Build a RoutingCache with:
-///   channel 1001: T:0-4, S:0-2, C:0-1  → instance 23
-///   channel 1002: T:0-2                 → instance 24
-fn test_routing_cache() -> RoutingCache {
-    let mut c2m = HashMap::new();
-    let m2c = HashMap::new();
-    let c2c = HashMap::new();
-
-    // Channel 1001 — Telemetry (T)
-    for i in 0..5u32 {
-        c2m.insert(format!("1001:T:{i}"), format!("23:M:{i}"));
-    }
-    // Channel 1001 — Signal (S)
-    for i in 0..3u32 {
-        c2m.insert(format!("1001:S:{i}"), format!("23:M:{}", 5 + i));
-    }
-    // Channel 1001 — Control (C)
-    for i in 0..2u32 {
-        c2m.insert(format!("1001:C:{i}"), format!("23:M:{}", 8 + i));
-    }
-    // Channel 1002 — Telemetry (T)
-    for i in 0..3u32 {
-        c2m.insert(format!("1002:T:{i}"), format!("24:M:{i}"));
-    }
-
-    RoutingCache::from_maps(c2m, m2c, c2c)
+/// Build ChannelPointCounts matching:
+///   channel 1001: T:0-4 (5), S:0-2 (3), C:0-1 (2)
+///   channel 1002: T:0-2 (3)
+fn test_channel_points() -> ChannelPointCounts {
+    let mut map = BTreeMap::new();
+    map.insert(1001u32, [5u32, 3, 2, 0]);
+    map.insert(1002u32, [3u32, 0, 0, 0]);
+    ChannelPointCounts::from_map(map)
 }
 
 // ============================================================================
@@ -61,13 +42,13 @@ fn test_routing_cache() -> RoutingCache {
 fn test_snapshot_save_and_restore_preserves_values() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let snapshot_path = dir.path().join("snap.bin");
 
     let now = 1_704_067_200_000u64;
 
     // --- Write phase ---
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Telemetry points on channel 1001
     assert!(writer.set(1001, 0, 0, 10.5, 105.0, now));
@@ -91,10 +72,10 @@ fn test_snapshot_save_and_restore_preserves_values() {
         .with_max_slots(1000);
 
     let restored =
-        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &routing).unwrap();
+        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &channel_points).unwrap();
 
-    // Verify by reading through UnifiedReader (same routing → same slot mapping).
-    let reader = UnifiedReader::open(&config2, &routing).unwrap();
+    // Verify by reading through UnifiedReader (same channel_points → same slot mapping).
+    let reader = UnifiedReader::open(&config2, &channel_points).unwrap();
 
     // Channel 1001 — Telemetry
     let (v, ts) = reader.get_channel(1001, 0, 0).unwrap();
@@ -161,13 +142,13 @@ fn test_snapshot_save_and_restore_preserves_values() {
 fn test_snapshot_restore_clears_seq_and_dirty() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let snapshot_path = dir.path().join("snap.bin");
 
     let now = 1_704_067_200_000u64;
 
     // Write a value multiple times so seq reaches a high value in the original SHM.
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     for i in 0..10u64 {
         writer.set(1001, 0, 0, i as f64, i as f64 * 10.0, now + i);
     }
@@ -180,7 +161,7 @@ fn test_snapshot_restore_clears_seq_and_dirty() {
         .with_max_slots(1000);
 
     let restored =
-        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &routing).unwrap();
+        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &channel_points).unwrap();
 
     // get_slot is not public; validate via the accessor macros indirectly.
     // We can observe seq and dirty through PointSlot's public API by reading
@@ -197,7 +178,7 @@ fn test_snapshot_restore_clears_seq_and_dirty() {
     restored.set(1001, 0, 0, 999.0, 9990.0, now + 9999);
     restored.flush().unwrap();
 
-    let reader = UnifiedReader::open(&config2, &routing).unwrap();
+    let reader = UnifiedReader::open(&config2, &channel_points).unwrap();
     let (v, ts) = reader.get_channel(1001, 0, 0).unwrap();
     assert!(
         (v - 999.0).abs() < f64::EPSILON,
@@ -212,12 +193,12 @@ fn test_snapshot_restore_clears_seq_and_dirty() {
 fn test_snapshot_multiple_channels() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let snapshot_path = dir.path().join("snap.bin");
 
     let now = 1_704_100_000_000u64;
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Populate all mapped points for both channels.
     let telemetry_1001: Vec<(u32, f64, f64, u64)> = (0..5)
@@ -257,9 +238,9 @@ fn test_snapshot_multiple_channels() {
         .with_path(dir.path().join("test2.shm"))
         .with_max_slots(1000);
     let _restored =
-        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &routing).unwrap();
+        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &channel_points).unwrap();
 
-    let reader = UnifiedReader::open(&config2, &routing).unwrap();
+    let reader = UnifiedReader::open(&config2, &channel_points).unwrap();
 
     for (pid, expected_v, _r, expected_ts) in &telemetry_1001 {
         let (v, ts) = reader.get_channel(1001, 0, *pid).unwrap();
@@ -306,7 +287,7 @@ fn test_snapshot_multiple_channels() {
 fn test_snapshot_with_special_values() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let snapshot_path = dir.path().join("snap.bin");
 
     let now = 1_704_200_000_000u64;
@@ -320,7 +301,7 @@ fn test_snapshot_with_special_values() {
         (4, f64::MIN_POSITIVE, now + 4),
     ];
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     for (pid, v, ts) in cases {
         // raw == value for simplicity
         assert!(
@@ -335,9 +316,9 @@ fn test_snapshot_with_special_values() {
         .with_path(dir.path().join("test2.shm"))
         .with_max_slots(1000);
     let _restored =
-        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &routing).unwrap();
+        UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &channel_points).unwrap();
 
-    let reader = UnifiedReader::open(&config2, &routing).unwrap();
+    let reader = UnifiedReader::open(&config2, &channel_points).unwrap();
 
     for (pid, expected_v, expected_ts) in cases {
         let (v, ts) = reader
@@ -363,11 +344,11 @@ fn test_snapshot_with_special_values() {
 fn test_snapshot_file_not_found() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
 
     let missing = dir.path().join("no_such_file.bin");
 
-    let result = UnifiedWriter::restore_from_snapshot(&config, &missing, &routing);
+    let result = UnifiedWriter::restore_from_snapshot(&config, &missing, &channel_points);
     assert!(result.is_err(), "Expected Err for missing snapshot, got Ok");
 
     let err = result.err().expect("already confirmed is_err");

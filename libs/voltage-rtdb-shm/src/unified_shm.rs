@@ -27,16 +27,16 @@
 //! - **Vec index**: O(1) array access, faster than HashMap
 //! - **Routing is permission**: Runtime DashMap, not data synchronization
 
+use crate::channel_points::ChannelPointCounts;
 use crate::shared_config::SharedConfig;
 use crate::vec_impl::PointSlot;
 use anyhow::{bail, Context, Result};
 use memmap2::{Mmap, MmapMut, MmapOptions};
-use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
 use voltage_model::PointType;
-use voltage_routing::routing_cache::RoutingCache;
+use voltage_routing::RoutingCache;
 
 // ========== Constants ==========
 
@@ -70,11 +70,11 @@ pub struct UnifiedHeader {
     pub last_update_ts: AtomicU64,
     /// Writer heartbeat (for monitoring)
     pub writer_heartbeat: AtomicU64,
-    /// Routing cache content hash for cross-process synchronization
+    /// Channel layout hash for cross-process synchronization
     ///
-    /// When comsrv creates the SHM, it stores the hash of RoutingCache content.
-    /// When modsrv opens the SHM, it verifies its RoutingCache has the same hash.
-    /// Mismatch indicates routing config changed between process starts.
+    /// When comsrv creates the SHM, it stores the hash of ChannelPointCounts layout.
+    /// When modsrv opens the SHM, it verifies its ChannelPointCounts has the same hash.
+    /// Mismatch indicates channel point definitions changed between process starts.
     pub routing_hash: AtomicU64,
     /// Writer generation counter — bumped on every create/reconfigure.
     /// modsrv reads this to detect comsrv restarts with routing changes.
@@ -136,7 +136,7 @@ fn save_snapshot_impl(
 /// The caller must ensure `header` points to a valid, readable `UnifiedHeader`.
 fn validate_shm_header(
     header: &UnifiedHeader,
-    routing_cache: &RoutingCache,
+    channel_points: &ChannelPointCounts,
 ) -> Result<(u32, usize)> {
     if header.magic != UNIFIED_MAGIC {
         bail!(
@@ -153,12 +153,12 @@ fn validate_shm_header(
         );
     }
 
-    let expected_hash = routing_cache.content_hash();
+    let expected_hash = channel_points.layout_hash();
     let actual_hash = header.routing_hash.load(Ordering::Acquire);
     if expected_hash != actual_hash {
         bail!(
-            "Routing configuration mismatch! \
-             SHM routing_hash=0x{:016X}, local routing_hash=0x{:016X}. \
+            "Channel layout mismatch! \
+             SHM layout_hash=0x{:016X}, local layout_hash=0x{:016X}. \
              Slot indexes may be misaligned. \
              Solution: Restart the writer process (comsrv) to synchronize.",
             actual_hash,
@@ -319,49 +319,20 @@ impl ChannelLayout {
 
 // ========== Slot Allocation ==========
 
-/// Collect channel point info from RoutingCache
+/// Allocate layouts from channel point counts
 ///
-/// Returns: BTreeMap<channel_id, [T_count, S_count, C_count, A_count]>
-fn collect_channel_points(routing_cache: &RoutingCache) -> BTreeMap<u32, [u32; 4]> {
-    let mut channel_points: BTreeMap<u32, [u32; 4]> = BTreeMap::new();
-
-    // Collect from C2M (T/S points - upstream)
-    for ((channel_id, point_type, point_id), _target) in routing_cache.c2m_iter() {
-        let counts = channel_points.entry(channel_id).or_insert([0; 4]);
-        let type_idx = point_type.to_u8() as usize;
-        if type_idx < 4 {
-            // Track max point_id + 1 as count
-            counts[type_idx] = counts[type_idx].max(point_id + 1);
-        }
-    }
-
-    // Collect from M2C (C/A points - downstream)
-    for (_key, target) in routing_cache.m2c_iter() {
-        let counts = channel_points.entry(target.channel_id).or_insert([0; 4]);
-        let type_idx = target.point_type.to_u8() as usize;
-        if type_idx < 4 {
-            counts[type_idx] = counts[type_idx].max(target.point_id + 1);
-        }
-    }
-
-    channel_points
-}
-
-/// Allocate layouts from RoutingCache
-///
-/// Both Writer and Reader call this with same RoutingCache → same slot allocation
-pub fn allocate_layouts(routing_cache: &RoutingCache) -> (Vec<ChannelLayout>, usize) {
-    let channel_points = collect_channel_points(routing_cache);
-
+/// Both Writer and Reader call this with same ChannelPointCounts → same slot allocation.
+/// Routing-independent: layout only depends on which channels have which points.
+pub fn allocate_layouts(channel_points: &ChannelPointCounts) -> (Vec<ChannelLayout>, usize) {
     // Find max channel_id to size the Vec
-    let max_channel_id = channel_points.keys().copied().max().unwrap_or(0);
+    let max_channel_id = channel_points.0.keys().copied().max().unwrap_or(0);
     let vec_size = (max_channel_id + 1) as usize;
 
     let mut layouts = vec![ChannelLayout::default(); vec_size];
     let mut next_slot = 0usize;
 
     // Allocate in channel_id order (BTreeMap is sorted)
-    for (channel_id, counts) in channel_points {
+    for (&channel_id, counts) in &channel_points.0 {
         let layout = &mut layouts[channel_id as usize];
         layout.base_slot = next_slot;
 
@@ -393,13 +364,13 @@ pub struct UnifiedWriter {
 }
 
 impl UnifiedWriter {
-    /// Create shared memory and initialize from RoutingCache
-    pub fn create(config: &SharedConfig, routing_cache: &RoutingCache) -> Result<Self> {
+    /// Create shared memory and initialize from ChannelPointCounts
+    pub fn create(config: &SharedConfig, channel_points: &ChannelPointCounts) -> Result<Self> {
         let path = config.path();
         let max_slots = config.max_slots().unwrap_or(DEFAULT_MAX_SLOTS);
 
         // Allocate layouts
-        let (channel_layouts, slot_count) = allocate_layouts(routing_cache);
+        let (channel_layouts, slot_count) = allocate_layouts(channel_points);
 
         if slot_count > max_slots as usize {
             bail!("Too many slots: {} (max={})", slot_count, max_slots);
@@ -446,8 +417,8 @@ impl UnifiedWriter {
         header._pad = [0; 4];
         header.last_update_ts = AtomicU64::new(0);
         header.writer_heartbeat = AtomicU64::new(0);
-        // Store routing cache content hash for cross-process synchronization
-        header.routing_hash = AtomicU64::new(routing_cache.content_hash());
+        // Store channel layout hash for cross-process synchronization
+        header.routing_hash = AtomicU64::new(channel_points.layout_hash());
         header.writer_generation = AtomicU64::new(0);
         header._reserved = [0; 8];
         header.writer_generation.store(1, Ordering::Release);
@@ -560,7 +531,10 @@ impl UnifiedWriter {
     /// - Only writes to C/A slots (type 2 and 3)
     /// - T/S slots (type 0 and 1) should not be written by this writer
     /// - Atomic operations ensure cross-process safety
-    pub fn open_for_actions(config: &SharedConfig, routing_cache: &RoutingCache) -> Result<Self> {
+    pub fn open_for_actions(
+        config: &SharedConfig,
+        channel_points: &ChannelPointCounts,
+    ) -> Result<Self> {
         let path = config.path();
 
         let file = OpenOptions::new()
@@ -570,7 +544,7 @@ impl UnifiedWriter {
             .with_context(|| format!("Failed to open {:?} for actions", path))?;
 
         // SAFETY: File exists and was created by the primary writer (comsrv).
-        // We validate magic/version/routing_hash immediately after mapping.
+        // We validate magic/version/layout_hash immediately after mapping.
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
@@ -580,9 +554,9 @@ impl UnifiedWriter {
         // SAFETY: mmap is at least page-sized (>= 64 bytes for header).
         // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
         let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
-        let (max_slots, slot_count) = validate_shm_header(header, routing_cache)?;
+        let (max_slots, slot_count) = validate_shm_header(header, channel_points)?;
 
-        let (channel_layouts, calculated_slots) = allocate_layouts(routing_cache);
+        let (channel_layouts, calculated_slots) = allocate_layouts(channel_points);
         verify_slot_count(slot_count, calculated_slots)?;
 
         tracing::info!(
@@ -641,14 +615,14 @@ impl UnifiedWriter {
         save_snapshot_impl(&self.mmap, current_slot_count, path, "Writer")
     }
 
-    /// Reconfigure the existing SHM file in place for an updated routing cache.
+    /// Reconfigure the existing SHM file in place for updated channel point counts.
     ///
     /// This keeps the same underlying file/inode alive so existing mmaps are not
     /// invalidated by truncation. All point slots are cleared before the new
     /// layout is published to avoid stale values being interpreted as new points.
     pub fn reconfigure_existing(
         config: &SharedConfig,
-        routing_cache: &RoutingCache,
+        channel_points: &ChannelPointCounts,
     ) -> Result<Self> {
         let path = config.path();
 
@@ -669,13 +643,22 @@ impl UnifiedWriter {
             validate_reconfigurable_header(header)?
         };
 
-        let (channel_layouts, slot_count) = allocate_layouts(routing_cache);
+        // Read old slot_count before allocating new layout
+        let old_slot_count = {
+            let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
+            header.slot_count.load(Ordering::Acquire) as usize
+        };
+
+        let (channel_layouts, slot_count) = allocate_layouts(channel_points);
         if slot_count > max_slots as usize {
             bail!("Too many slots: {} (max={})", slot_count, max_slots);
         }
 
-        // Zero all slot data to prevent stale values
-        mmap[slot_offset()..].fill(0);
+        // Zero only the previously-used slot region (not the entire 2GB sparse file).
+        // We clear max(old, new) slots to cover both old stale data and any new slots.
+        let clear_slots = old_slot_count.max(slot_count);
+        let clear_end = slot_offset() + clear_slots * std::mem::size_of::<PointSlot>();
+        mmap[slot_offset()..clear_end].fill(0);
 
         // FULL BARRIER: ensure all zero-fills are globally visible
         // before the new routing_hash/slot_count are published.
@@ -696,7 +679,7 @@ impl UnifiedWriter {
         header.writer_heartbeat.store(now_ms, Ordering::Relaxed);
         header
             .routing_hash
-            .store(routing_cache.content_hash(), Ordering::Release);
+            .store(channel_points.layout_hash(), Ordering::Release);
         header.writer_generation.fetch_add(1, Ordering::Release);
 
         // Flush mmap to backing file — ensures cross-process visibility
@@ -741,7 +724,7 @@ impl UnifiedWriter {
     /// # Arguments
     /// - `config`: Shared memory configuration
     /// - `snapshot_path`: Path to the snapshot file
-    /// - `routing_cache`: Routing configuration for slot allocation
+    /// - `channel_points`: Channel point counts for slot allocation
     ///
     /// # Returns
     /// - `Ok(Self)` with restored data
@@ -749,13 +732,13 @@ impl UnifiedWriter {
     pub fn restore_from_snapshot(
         config: &SharedConfig,
         snapshot_path: &std::path::Path,
-        routing_cache: &RoutingCache,
+        channel_points: &ChannelPointCounts,
     ) -> Result<Self> {
         use std::io::Read;
 
         // First create a fresh writer with current config
         // Note: create() already initializes all slots to default values (zeroed)
-        let writer = Self::create(config, routing_cache)?;
+        let writer = Self::create(config, channel_points)?;
 
         // Read snapshot file
         let mut file = std::fs::File::open(snapshot_path)
@@ -806,11 +789,11 @@ impl UnifiedWriter {
             );
         }
 
-        // Check routing hash (warn but don't fail — routing may have changed since snapshot)
-        let current_hash = routing_cache.content_hash();
+        // Check layout hash (warn but don't fail — channel config may have changed since snapshot)
+        let current_hash = channel_points.layout_hash();
         if current_hash != snap_routing_hash {
             tracing::warn!(
-                "Snapshot routing hash differs: snapshot=0x{:016X}, current=0x{:016X}",
+                "Snapshot layout hash differs: snapshot=0x{:016X}, current=0x{:016X}",
                 snap_routing_hash,
                 current_hash
             );
@@ -927,7 +910,7 @@ impl UnifiedWriter {
 /// Unified shared memory reader
 ///
 /// Multiple readers allowed (modsrv, monarch, etc.).
-/// Builds indexes from RoutingCache using same allocation algorithm.
+/// Builds indexes from ChannelPointCounts using same allocation algorithm.
 pub struct UnifiedReader {
     mmap: Mmap,
     max_slots: u32,
@@ -939,8 +922,8 @@ pub struct UnifiedReader {
 }
 
 impl UnifiedReader {
-    /// Open shared memory and build indexes from RoutingCache
-    pub fn open(config: &SharedConfig, routing_cache: &RoutingCache) -> Result<Self> {
+    /// Open shared memory and build indexes from ChannelPointCounts
+    pub fn open(config: &SharedConfig, channel_points: &ChannelPointCounts) -> Result<Self> {
         let path = config.path();
 
         let file = OpenOptions::new()
@@ -949,7 +932,7 @@ impl UnifiedReader {
             .with_context(|| format!("Failed to open {:?}", path))?;
 
         // SAFETY: File exists and was created by the primary writer (comsrv).
-        // We validate magic/version/routing_hash immediately after mapping.
+        // We validate magic/version/layout_hash immediately after mapping.
         let mmap = unsafe {
             MmapOptions::new()
                 .map(&file)
@@ -959,9 +942,9 @@ impl UnifiedReader {
         // SAFETY: mmap is at least page-sized (>= 64 bytes for header).
         // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
         let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
-        let (max_slots, slot_count) = validate_shm_header(header, routing_cache)?;
+        let (max_slots, slot_count) = validate_shm_header(header, channel_points)?;
 
-        let (channel_layouts, calculated_slots) = allocate_layouts(routing_cache);
+        let (channel_layouts, calculated_slots) = allocate_layouts(channel_points);
         verify_slot_count(slot_count, calculated_slots)?;
 
         let channel_ids: Vec<u32> = channel_layouts
@@ -983,6 +966,49 @@ impl UnifiedReader {
             slot_count,
             channel_layouts,
             channel_ids,
+        })
+    }
+
+    /// Open shared memory read-only without layout validation.
+    ///
+    /// For debug tools (monarch) that don't have channel point data.
+    /// Reads slot_count from header but cannot navigate to specific channel points.
+    pub fn open_raw(config: &SharedConfig) -> Result<Self> {
+        let path = config.path();
+        let file = OpenOptions::new()
+            .read(true)
+            .open(path)
+            .with_context(|| format!("Failed to open {:?}", path))?;
+
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map(&file)
+                .with_context(|| "Failed to mmap")?
+        };
+
+        let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
+        if header.magic != UNIFIED_MAGIC {
+            bail!(
+                "Invalid magic: expected 0x{:X}, got 0x{:X}",
+                UNIFIED_MAGIC,
+                header.magic
+            );
+        }
+
+        let max_slots = header.max_slots;
+        let slot_count = header.slot_count.load(Ordering::Acquire) as usize;
+
+        tracing::info!(
+            "Opened raw reader: {} slots (no layout validation)",
+            slot_count
+        );
+
+        Ok(Self {
+            mmap,
+            max_slots,
+            slot_count,
+            channel_layouts: Vec::new(),
+            channel_ids: Vec::new(),
         })
     }
 
@@ -1162,7 +1188,9 @@ impl UnifiedReader {
 #[allow(clippy::approx_constant)] // Test values, not actual PI
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use tempfile::tempdir;
+    use voltage_routing::RoutingCache;
 
     fn test_config(dir: &std::path::Path) -> SharedConfig {
         SharedConfig::default()
@@ -1170,46 +1198,48 @@ mod tests {
             .with_max_slots(1000)
     }
 
+    /// Build ChannelPointCounts matching the test topology:
+    /// - channel 1001: T:3, C:1 (maps to instance 23)
+    /// - channel 1002: S:1     (maps to instance 24)
+    fn test_channel_points() -> ChannelPointCounts {
+        let mut map = BTreeMap::new();
+        map.insert(1001, [3u32, 0, 1, 0]); // T=3, S=0, C=1, A=0
+        map.insert(1002, [0u32, 1, 0, 0]); // T=0, S=1, C=0, A=0
+        ChannelPointCounts::from_map(map)
+    }
+
+    /// Build RoutingCache for tests that still exercise instance-based lookup APIs.
     fn test_routing_cache() -> RoutingCache {
-        // Create routing with C2M and M2C entries (using string format for from_maps)
         let mut c2m = std::collections::HashMap::new();
         let mut m2c = std::collections::HashMap::new();
         let c2c = std::collections::HashMap::new();
 
-        // C2M: channel 1001 T:0,1,2 → instance 23 M:0,1,2
-        // Key format: "channel:type:point", Value format: "instance:M:point"
         c2m.insert("1001:T:0".to_string(), "23:M:0".to_string());
         c2m.insert("1001:T:1".to_string(), "23:M:1".to_string());
         c2m.insert("1001:T:2".to_string(), "23:M:2".to_string());
-
-        // C2M: channel 1002 S:0 → instance 24 M:0
         c2m.insert("1002:S:0".to_string(), "24:M:0".to_string());
-
-        // M2C: instance 23 C:0 → channel 1001 C:0
-        // Key format: "instance:type:point", Value format: "channel:type:point"
         m2c.insert("23:C:0".to_string(), "1001:C:0".to_string());
 
-        // from_maps signature: (c2m, m2c, c2c)
         RoutingCache::from_maps(c2m, m2c, c2c)
     }
 
-    fn setup_test_env() -> (tempfile::TempDir, SharedConfig, RoutingCache) {
+    fn setup_test_env() -> (tempfile::TempDir, SharedConfig, ChannelPointCounts) {
         let dir = tempdir().unwrap();
         let config = test_config(dir.path());
-        let routing = test_routing_cache();
-        (dir, config, routing)
+        let channel_points = test_channel_points();
+        (dir, config, channel_points)
     }
 
     /// Create writer, run setup closure, flush, then open reader
     fn write_and_open_reader(
         config: &SharedConfig,
-        routing: &RoutingCache,
+        channel_points: &ChannelPointCounts,
         setup: impl FnOnce(&UnifiedWriter),
     ) -> UnifiedReader {
-        let writer = UnifiedWriter::create(config, routing).unwrap();
+        let writer = UnifiedWriter::create(config, channel_points).unwrap();
         setup(&writer);
         writer.flush().unwrap();
-        UnifiedReader::open(config, routing).unwrap()
+        UnifiedReader::open(config, channel_points).unwrap()
     }
 
     #[test]
@@ -1225,8 +1255,8 @@ mod tests {
 
     #[test]
     fn test_allocate_layouts() {
-        let routing = test_routing_cache();
-        let (layouts, slot_count) = allocate_layouts(&routing);
+        let channel_points = test_channel_points();
+        let (layouts, slot_count) = allocate_layouts(&channel_points);
 
         // Should have layouts up to channel 1002
         assert!(layouts.len() >= 1003);
@@ -1248,16 +1278,16 @@ mod tests {
 
     #[test]
     fn test_writer_create() {
-        let (_dir, config, routing) = setup_test_env();
-        let writer = UnifiedWriter::create(&config, &routing).unwrap();
+        let (_dir, config, channel_points) = setup_test_env();
+        let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
         assert_eq!(writer.slot_count(), 5);
         assert_eq!(writer.max_slots(), 1000);
     }
 
     #[test]
     fn test_write_read() {
-        let (_dir, config, routing) = setup_test_env();
-        let reader = write_and_open_reader(&config, &routing, |w| {
+        let (_dir, config, channel_points) = setup_test_env();
+        let reader = write_and_open_reader(&config, &channel_points, |w| {
             assert!(w.set(1001, 0, 0, 3.14, 3.14, 1705234567890));
             assert!(w.set(1001, 0, 1, 2.71, 2.71, 1705234567890));
         });
@@ -1273,8 +1303,9 @@ mod tests {
 
     #[test]
     fn test_instance_lookup() {
-        let (_dir, config, routing) = setup_test_env();
-        let reader = write_and_open_reader(&config, &routing, |w| {
+        let (_dir, config, channel_points) = setup_test_env();
+        let routing = test_routing_cache();
+        let reader = write_and_open_reader(&config, &channel_points, |w| {
             w.set(1001, 0, 1, 42.0, 42.0, 100);
         });
         let (val, _) = reader.get_instance(23, 0, 1, &routing).unwrap();
@@ -1283,8 +1314,9 @@ mod tests {
 
     #[test]
     fn test_monarch_api() {
-        let (_dir, config, routing) = setup_test_env();
-        let reader = write_and_open_reader(&config, &routing, |w| {
+        let (_dir, config, channel_points) = setup_test_env();
+        let routing = test_routing_cache();
+        let reader = write_and_open_reader(&config, &channel_points, |w| {
             w.set(1001, 0, 0, 1.0, 1.0, 100);
             w.set(1001, 0, 1, 2.0, 2.0, 100);
             w.set(1001, 0, 2, 3.0, 3.0, 100);
@@ -1308,13 +1340,13 @@ mod tests {
 
     #[test]
     fn test_direct_write() {
-        let (_dir, config, routing) = setup_test_env();
-        let writer = UnifiedWriter::create(&config, &routing).unwrap();
+        let (_dir, config, channel_points) = setup_test_env();
+        let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
         let slot = writer.lookup(1001, 0, 0).unwrap();
         writer.set_direct(slot, 99.0, 99.0, 100);
         writer.flush().unwrap();
 
-        let reader = UnifiedReader::open(&config, &routing).unwrap();
+        let reader = UnifiedReader::open(&config, &channel_points).unwrap();
         let (val, _) = reader.get_channel(1001, 0, 0).unwrap();
         assert!((val - 99.0).abs() < 1e-10);
     }

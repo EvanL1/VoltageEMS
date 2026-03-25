@@ -7,15 +7,15 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tempfile::tempdir;
 use voltage_model::PointType;
 use voltage_routing::batch::ChannelPointUpdate;
 use voltage_routing::RoutingCache;
 use voltage_rtdb::{WriteBuffer, WriteBufferConfig};
 use voltage_rtdb_shm::{
-    batch_direct::write_channel_batch_direct, ChannelToSlotIndex, SharedConfig, UnifiedReader,
-    UnifiedWriter,
+    batch_direct::write_channel_batch_direct, ChannelPointCounts, ChannelToSlotIndex, SharedConfig,
+    UnifiedReader, UnifiedWriter,
 };
 
 // ============================================================================
@@ -29,7 +29,17 @@ fn test_config(dir: &std::path::Path) -> SharedConfig {
         .with_max_slots(2000)
 }
 
-/// Create routing cache with C2M mappings for two channels
+/// Create ChannelPointCounts for two channels:
+///   channel 1001: T:0-9 (10), S:0-4 (5)
+///   channel 1002: T:0-4 (5)
+fn test_channel_points() -> ChannelPointCounts {
+    let mut map = BTreeMap::new();
+    map.insert(1001u32, [10u32, 5, 0, 0]);
+    map.insert(1002u32, [5u32, 0, 0, 0]);
+    ChannelPointCounts::from_map(map)
+}
+
+/// Create routing cache with C2M mappings for two channels (used for Redis lookups)
 fn test_routing_cache() -> RoutingCache {
     let mut c2m = HashMap::new();
 
@@ -50,6 +60,16 @@ fn test_routing_cache() -> RoutingCache {
     RoutingCache::from_maps(c2m, HashMap::new(), HashMap::new())
 }
 
+/// Create ChannelPointCounts for C2C test:
+///   channel 1001: T:0, channel 1002: T:0, channel 1003: T:0
+fn test_channel_points_with_c2c() -> ChannelPointCounts {
+    let mut map = BTreeMap::new();
+    map.insert(1001u32, [1u32, 0, 0, 0]);
+    map.insert(1002u32, [1u32, 0, 0, 0]);
+    map.insert(1003u32, [1u32, 0, 0, 0]);
+    ChannelPointCounts::from_map(map)
+}
+
 /// Create routing cache with C2C forwarding rules
 fn test_routing_cache_with_c2c() -> RoutingCache {
     let mut c2m = HashMap::new();
@@ -66,6 +86,15 @@ fn test_routing_cache_with_c2c() -> RoutingCache {
     c2c.insert("1001:T:0".to_string(), "1002:T:0".to_string());
 
     RoutingCache::from_maps(c2m, HashMap::new(), c2c)
+}
+
+/// Create ChannelPointCounts for C2C cycle test:
+///   channel 1001: T:0, channel 1002: T:0
+fn test_channel_points_with_c2c_cycle() -> ChannelPointCounts {
+    let mut map = BTreeMap::new();
+    map.insert(1001u32, [1u32, 0, 0, 0]);
+    map.insert(1002u32, [1u32, 0, 0, 0]);
+    ChannelPointCounts::from_map(map)
 }
 
 /// Create routing cache with C2C cycle: A → B → A
@@ -124,9 +153,10 @@ fn make_update_with_raw(
 fn test_single_point_direct_write() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points();
     let routing = test_routing_cache();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -143,7 +173,7 @@ fn test_single_point_direct_write() {
 
     // Verify SHM data via UnifiedReader
     writer.flush().unwrap();
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
     let (value, _ts) = reader.get_channel(1001, 0, 0).unwrap();
     assert!(
         (value - 123.456).abs() < 0.001,
@@ -160,9 +190,10 @@ fn test_single_point_direct_write() {
 fn test_batch_write_100_points() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points();
     let routing = test_routing_cache();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -194,7 +225,7 @@ fn test_batch_write_100_points() {
 
     // Verify data integrity via reader
     writer.flush().unwrap();
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
 
     // Verify channel 1001 T:5
     let (value, _ts) = reader.get_channel(1001, 0, 5).unwrap();
@@ -217,9 +248,10 @@ fn test_batch_write_100_points() {
 fn test_c2c_routing_forward() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points_with_c2c();
     let routing = test_routing_cache_with_c2c();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -236,7 +268,7 @@ fn test_c2c_routing_forward() {
 
     // Verify the forwarded value is written to channel 1002
     writer.flush().unwrap();
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
 
     // Original write: 1001:T:0
     let (value, _ts) = reader.get_channel(1001, 0, 0).unwrap();
@@ -255,9 +287,10 @@ fn test_c2c_routing_forward() {
 fn test_c2c_cycle_detection() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points_with_c2c_cycle();
     let routing = test_routing_cache_with_c2c_cycle();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -279,7 +312,7 @@ fn test_c2c_cycle_detection() {
 
     // Verify both channels got the value (before the cycle was detected)
     writer.flush().unwrap();
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
     let (v1, _) = reader.get_channel(1001, 0, 0).unwrap();
     assert!((v1 - 99.0).abs() < 0.001, "Source channel value");
 }
@@ -292,9 +325,10 @@ fn test_c2c_cycle_detection() {
 fn test_empty_batch_no_panic() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points();
     let routing = test_routing_cache();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -315,9 +349,10 @@ fn test_empty_batch_no_panic() {
 fn test_unmapped_channel_no_shm_write() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points();
     let routing = test_routing_cache();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -346,9 +381,10 @@ fn test_unmapped_channel_no_shm_write() {
 fn test_raw_value_propagation() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points();
     let routing = test_routing_cache();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -367,7 +403,7 @@ fn test_raw_value_propagation() {
 
     // Verify SHM stores the engineering value
     writer.flush().unwrap();
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
     let (value, _ts) = reader.get_channel(1001, 0, 0).unwrap();
     assert!((value - 23.05).abs() < 0.001, "Engineering value mismatch");
 }
@@ -380,9 +416,10 @@ fn test_raw_value_propagation() {
 fn test_mixed_channels_single_batch() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
+    let channel_points = test_channel_points();
     let routing = test_routing_cache();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
     let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
@@ -402,7 +439,7 @@ fn test_mixed_channels_single_batch() {
 
     // Verify isolation between channels
     writer.flush().unwrap();
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
 
     let (v, _) = reader.get_channel(1001, 0, 0).unwrap();
     assert!((v - 100.0).abs() < 0.001);
