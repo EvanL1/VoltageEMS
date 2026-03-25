@@ -36,12 +36,6 @@ fn point_type_to_static(pt: Option<&str>, default: &'static str) -> &'static str
     }
 }
 
-/// Check if a string is an arithmetic operator
-#[inline]
-fn is_rpn_operator(s: &str) -> bool {
-    matches!(s, "+" | "-" | "*" | "/")
-}
-
 /// Validate variable fields and sanitize value for write operations.
 ///
 /// Common validation shared by `execute_rule_change`, `write_calculation_result`,
@@ -122,85 +116,29 @@ fn snapshot_or_reuse(
 }
 
 /// Evaluate a formula in Reverse Polish Notation (RPN)
-///
-/// Formula format: `["X1", "X2", "+", 2, "*"]`
-/// This evaluates as: `(X1 + X2) * 2`
-///
-/// Supported operators: `+`, `-`, `*`, `/`
-///
-/// # Arguments
-/// * `formula` - RPN tokens (variable names, numbers, operators)
-/// * `values` - Variable values map
-///
-/// # Returns
-/// * `Some(f64)` - Computed result
-/// * `None` - If formula is invalid or references undefined variables
-fn evaluate_rpn_formula(
-    formula: &[serde_json::Value],
+/// Convert a JSON token array `["X1", "+", "X2"]` to an expression string `"X1 + X2"`,
+/// then evaluate via the shared `formula::evaluate_formula` engine (evalexpr).
+fn evaluate_token_formula(
+    tokens: &[serde_json::Value],
     values: &HashMap<String, f64>,
 ) -> Option<f64> {
-    let mut stack: Vec<f64> = Vec::with_capacity(formula.len());
+    // Build expression string from tokens
+    let expr: String = tokens
+        .iter()
+        .map(|t| match t {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            other => format!("{}", other),
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
 
-    for token in formula {
-        match token {
-            // Operator: pop two operands, compute, push result
-            serde_json::Value::String(s) if is_rpn_operator(s) => {
-                if stack.len() < 2 {
-                    tracing::warn!(
-                        "RPN formula error: not enough operands for operator '{}'",
-                        s
-                    );
-                    return None;
-                }
-                let b = stack.pop()?;
-                let a = stack.pop()?;
-                let result = match s.as_str() {
-                    "+" => a + b,
-                    "-" => a - b,
-                    "*" => a * b,
-                    "/" => {
-                        if b == 0.0 {
-                            tracing::warn!("RPN formula error: division by zero");
-                            return None;
-                        }
-                        a / b
-                    },
-                    _ => return None,
-                };
-                stack.push(result);
-            },
-            // Variable reference: look up in values map
-            serde_json::Value::String(var_name) => {
-                let val = values.get(var_name).copied().or_else(|| {
-                    tracing::warn!("RPN formula error: undefined variable '{}'", var_name);
-                    None
-                })?;
-                stack.push(val);
-            },
-            // Number literal (integer or float)
-            serde_json::Value::Number(n) => {
-                let val = n.as_f64().or_else(|| {
-                    tracing::warn!("RPN formula error: invalid number {:?}", n);
-                    None
-                })?;
-                stack.push(val);
-            },
-            _ => {
-                tracing::warn!("RPN formula error: invalid token {:?}", token);
-                return None;
-            },
-        }
-    }
-
-    // Result should be a single value on the stack
-    if stack.len() == 1 {
-        stack.pop()
-    } else {
-        tracing::warn!(
-            "RPN formula error: expected 1 result, got {} values on stack",
-            stack.len()
-        );
-        None
+    match crate::formula::evaluate_formula(&expr, values) {
+        Ok(val) => Some(val),
+        Err(e) => {
+            tracing::warn!("Formula '{}' evaluation failed: {}", expr, e);
+            None
+        },
     }
 }
 
@@ -805,7 +743,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             }
 
             let var_name = var.name.clone();
-            match evaluate_rpn_formula(&var.formula, values) {
+            match evaluate_token_formula(&var.formula, values) {
                 Some(result) => {
                     values_changed |= values.insert(var_name, result) != Some(result);
                 },

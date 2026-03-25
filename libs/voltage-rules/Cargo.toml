@@ -25,6 +25,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
 
+# Expression evaluation
+evalexpr = { workspace = true }
+
 # Error handling
 thiserror = { workspace = true }
 anyhow = { workspace = true }

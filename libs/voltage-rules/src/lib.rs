@@ -23,6 +23,7 @@
 
 mod error;
 mod executor;
+pub(crate) mod formula;
 pub mod logger;
 pub mod parser;
 mod repository;

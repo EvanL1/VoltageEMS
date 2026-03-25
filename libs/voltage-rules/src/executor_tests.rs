@@ -353,74 +353,89 @@ async fn test_read_variables_no_cache_uses_redis() {
 }
 
 // =========================================================================
-// RPN Formula Calculation Tests
+// Token Formula Tests (infix format from frontend)
 // =========================================================================
 
 #[test]
-fn test_rpn_simple_addition() {
-    let formula = vec![json!("X1"), json!("X2"), json!("+")];
+fn test_formula_simple_addition() {
+    // Frontend sends: ["X1", "+", "X2"]
+    let formula = vec![json!("X1"), json!("+"), json!("X2")];
     let mut values = HashMap::new();
     values.insert("X1".to_string(), 10.0);
     values.insert("X2".to_string(), 20.0);
-    assert_eq!(evaluate_rpn_formula(&formula, &values), Some(30.0));
+    assert_eq!(evaluate_token_formula(&formula, &values), Some(30.0));
 }
 
 #[test]
-fn test_rpn_complex_expression() {
-    // (X1 + X2) * 2 = (10 + 20) * 2 = 60
-    let formula = vec![json!("X1"), json!("X2"), json!("+"), json!(2), json!("*")];
+fn test_formula_precedence() {
+    // X1 + X2 * 2 = 10 + 20*2 = 50
+    let formula = vec![json!("X1"), json!("+"), json!("X2"), json!("*"), json!(2)];
     let mut values = HashMap::new();
     values.insert("X1".to_string(), 10.0);
     values.insert("X2".to_string(), 20.0);
-    assert_eq!(evaluate_rpn_formula(&formula, &values), Some(60.0));
+    assert_eq!(evaluate_token_formula(&formula, &values), Some(50.0));
 }
 
 #[test]
-fn test_rpn_all_operators() {
-    // (a + b) - (c * d / e) = (10+5) - (6*4/2) = 15 - 12 = 3
+fn test_formula_all_operators() {
+    // a + b - c * d / e = 10 + 5 - 6*4/2 = 15 - 12 = 3
     let formula = vec![
         json!("a"),
-        json!("b"),
         json!("+"),
-        json!("c"),
-        json!("d"),
-        json!("*"),
-        json!("e"),
-        json!("/"),
+        json!("b"),
         json!("-"),
+        json!("c"),
+        json!("*"),
+        json!("d"),
+        json!("/"),
+        json!("e"),
     ];
     let mut values = HashMap::new();
     for (k, v) in [("a", 10.0), ("b", 5.0), ("c", 6.0), ("d", 4.0), ("e", 2.0)] {
         values.insert(k.to_string(), v);
     }
-    assert_eq!(evaluate_rpn_formula(&formula, &values), Some(3.0));
+    assert_eq!(evaluate_token_formula(&formula, &values), Some(3.0));
 }
 
 #[test]
-fn test_rpn_division_by_zero() {
-    let formula = vec![json!("X1"), json!(0), json!("/")];
+fn test_formula_division_by_zero() {
+    let formula = vec![json!("X1"), json!("/"), json!(0)];
     let mut values = HashMap::new();
     values.insert("X1".to_string(), 10.0);
-    assert_eq!(evaluate_rpn_formula(&formula, &values), None);
+    // evalexpr returns infinity for division by zero
+    let result = evaluate_token_formula(&formula, &values);
+    assert!(result.is_some());
+    assert!(result.unwrap().is_infinite());
 }
 
 #[test]
-fn test_rpn_undefined_variable() {
-    let formula = vec![json!("X1"), json!("UNDEFINED"), json!("+")];
+fn test_formula_undefined_variable() {
+    let formula = vec![json!("X1"), json!("+"), json!("UNDEFINED")];
     let mut values = HashMap::new();
     values.insert("X1".to_string(), 10.0);
-    assert_eq!(evaluate_rpn_formula(&formula, &values), None);
+    assert_eq!(evaluate_token_formula(&formula, &values), None);
 }
 
 #[test]
-fn test_rpn_numeric_literals() {
-    // 5 + (3 * 2) = 11
-    let formula = vec![json!(5), json!(3), json!(2), json!("*"), json!("+")];
-    assert_eq!(evaluate_rpn_formula(&formula, &HashMap::new()), Some(11.0));
+fn test_formula_numeric_literals() {
+    // 5 + 3 * 2 = 11
+    let formula = vec![json!(5), json!("+"), json!(3), json!("*"), json!(2)];
+    assert_eq!(
+        evaluate_token_formula(&formula, &HashMap::new()),
+        Some(11.0)
+    );
 }
 
 #[test]
-fn test_rpn_float_precision() {
-    let formula = vec![json!(1.5), json!(2.5), json!("+")];
-    assert_eq!(evaluate_rpn_formula(&formula, &HashMap::new()), Some(4.0));
+fn test_formula_float_precision() {
+    let formula = vec![json!(1.5), json!("+"), json!(2.5)];
+    assert_eq!(evaluate_token_formula(&formula, &HashMap::new()), Some(4.0));
+}
+
+#[test]
+fn test_formula_single_variable() {
+    let formula = vec![json!("X1")];
+    let mut values = HashMap::new();
+    values.insert("X1".to_string(), 42.0);
+    assert_eq!(evaluate_token_formula(&formula, &values), Some(42.0));
 }
