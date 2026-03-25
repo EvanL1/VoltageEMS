@@ -47,7 +47,7 @@ use crate::api::single_point_handlers::{
     upsert_measurement_routing,
 };
 
-use common::admin_api::{get_log_level, set_log_level};
+use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
 
 // OpenAPI documentation - only compiled when swagger-ui feature is enabled
 #[cfg(feature = "swagger-ui")]
@@ -207,11 +207,13 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/api/products/{product_name}/points", get(get_product_points))
         // Cloud sync endpoints
         .route("/api/instances/export", get(export_instances))
-        // Admin endpoints (log level management)
+        // Admin endpoints (log level + file access)
         .route(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
+        .route("/api/admin/logs/files", get(list_log_files))
+        .route("/api/admin/logs/view", get(view_log_file))
         // Apply HTTP request logging middleware
         .layer(axum::middleware::from_fn(common::logging::http_request_logger))
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB request body limit

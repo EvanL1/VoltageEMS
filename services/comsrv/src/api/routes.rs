@@ -25,7 +25,7 @@ use crate::api::{
         template_handlers::*,
     },
 };
-use common::admin_api::{get_log_level, set_log_level};
+use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
 
 /// Global service start time storage
 static SERVICE_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
@@ -311,11 +311,13 @@ pub fn create_api_routes_generic<R: Rtdb>(
             "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
             get(get_point_info_handler),
         )
-        // Admin endpoints (log level management)
+        // Admin endpoints (log level + file access)
         .route(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
+        .route("/api/admin/logs/files", get(list_log_files))
+        .route("/api/admin/logs/view", get(view_log_file))
         // Template management endpoints
         .route("/api/templates", get(list_templates).post(create_template))
         .route("/api/templates/from-channel/{channel_id}", post(create_template_from_channel))

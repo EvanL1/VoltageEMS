@@ -167,6 +167,198 @@ async fn get_log_level(service: &str, host: Option<&str>) -> Result<String> {
     }
 }
 
+// ── Remote log helpers (HTTP API) ────────────────────────────────────
+
+/// Minimal percent-encoding for query parameter values.
+fn encode_query(s: &str) -> String {
+    s.replace('%', "%25")
+        .replace(' ', "%20")
+        .replace('&', "%26")
+        .replace('=', "%3D")
+        .replace('#', "%23")
+        .replace('+', "%2B")
+}
+
+/// Build admin API base URL for a given host.
+/// Uses comsrv (port 6001) as the default endpoint since all services
+/// share the same /app/logs/ directory.
+fn admin_logs_url(host: &str) -> String {
+    let port = voltage_model::service_ports::default_port_for("comsrv").unwrap_or(6001);
+    format!("http://{host}:{port}/api/admin/logs")
+}
+
+/// Remote list: GET /api/admin/logs/files
+async fn remote_list(
+    host: &str,
+    service: &Option<String>,
+    date: &Option<String>,
+    json: bool,
+) -> Result<()> {
+    let base = admin_logs_url(host);
+    let mut url = format!("{base}/files?");
+    if let Some(d) = date {
+        url.push_str(&format!("date={d}&"));
+    }
+    if let Some(s) = service {
+        url.push_str(&format!("service={s}&"));
+    }
+
+    let resp: serde_json::Value = reqwest::get(&url)
+        .await
+        .with_context(|| format!("Failed to connect to {host}"))?
+        .json()
+        .await?;
+
+    if let Some(err) = resp.get("error") {
+        anyhow::bail!("{}", err.as_str().unwrap_or("Unknown error"));
+    }
+
+    if json {
+        crate::output::print_success(&resp["files"]);
+        return Ok(());
+    }
+
+    let empty = vec![];
+    let files = resp["files"].as_array().unwrap_or(&empty);
+    if files.is_empty() {
+        println!(
+            "  {} No log files found on {}",
+            "•".dimmed(),
+            host.bright_cyan()
+        );
+        return Ok(());
+    }
+
+    println!("{} ({}):", "Log files".bright_cyan(), host.dimmed());
+    for f in files {
+        let name = f["name"].as_str().unwrap_or("?");
+        let size = f["size"].as_u64().unwrap_or(0);
+        println!(
+            "  {} {:>10}",
+            name.bright_white(),
+            format_size(size).dimmed()
+        );
+    }
+    Ok(())
+}
+
+/// Remote view: GET /api/admin/logs/view
+async fn remote_view(
+    host: &str,
+    service: &str,
+    lines: usize,
+    api: bool,
+    grep: &Option<String>,
+    json: bool,
+) -> Result<()> {
+    let today = chrono::Local::now().format("%Y%m%d").to_string();
+    let file_name = if api {
+        format!("{today}_{service}_api.log")
+    } else {
+        format!("{today}_{service}.log")
+    };
+
+    let base = admin_logs_url(host);
+    let mut url = format!("{base}/view?file={file_name}&lines={lines}");
+    if let Some(g) = grep {
+        url.push_str(&format!("&grep={}", encode_query(g)));
+    }
+
+    let resp: serde_json::Value = reqwest::get(&url)
+        .await
+        .with_context(|| format!("Failed to connect to {host}"))?
+        .json()
+        .await?;
+
+    if let Some(err) = resp.get("error") {
+        anyhow::bail!("{}", err.as_str().unwrap_or("Unknown error"));
+    }
+
+    let empty_lines = vec![];
+    let lines_arr = resp["lines"].as_array().unwrap_or(&empty_lines);
+
+    if json {
+        crate::output::print_success(&resp);
+        return Ok(());
+    }
+
+    println!(
+        "{} {} on {} (last {} lines):",
+        "Viewing".bright_cyan(),
+        file_name.bright_white(),
+        host.dimmed(),
+        lines_arr.len(),
+    );
+    println!();
+    for line in lines_arr {
+        let s = line.as_str().unwrap_or("");
+        print_colored_line(s);
+    }
+    Ok(())
+}
+
+/// Remote tail: poll /api/admin/logs/view every second for new lines.
+async fn remote_tail(host: &str, service: &str, api: bool, grep: &Option<String>) -> Result<()> {
+    let today = chrono::Local::now().format("%Y%m%d").to_string();
+    let file_name = if api {
+        format!("{today}_{service}_api.log")
+    } else {
+        format!("{today}_{service}.log")
+    };
+
+    println!(
+        "{} {} on {} (Ctrl+C to stop)",
+        "Tailing".bright_cyan(),
+        file_name.bright_white(),
+        host.dimmed(),
+    );
+
+    let base = admin_logs_url(host);
+    let client = reqwest::Client::new();
+    let mut seen_total: usize = 0;
+
+    // Get initial total line count (don't print, just record offset)
+    let init_url = format!("{base}/view?file={file_name}&lines=0");
+    if let Ok(resp) = client.get(&init_url).send().await {
+        if let Ok(body) = resp.json::<serde_json::Value>().await {
+            seen_total = body["total"].as_u64().unwrap_or(0) as usize;
+        }
+    }
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!();
+                break;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                // Fetch latest lines
+                let mut url = format!("{base}/view?file={file_name}&lines=1000");
+                if let Some(g) = grep {
+                    url.push_str(&format!("&grep={}", encode_query(g)));
+                }
+                let Ok(resp) = client.get(&url).send().await else { continue };
+                let Ok(body) = resp.json::<serde_json::Value>().await else { continue };
+
+                let total = body["total"].as_u64().unwrap_or(0) as usize;
+                if total > seen_total {
+                    let new_count = total - seen_total;
+                    let empty = vec![];
+                    let lines_arr = body["lines"].as_array().unwrap_or(&empty);
+                    // Show only the new lines (tail of the returned array)
+                    let skip = lines_arr.len().saturating_sub(new_count);
+                    for line in &lines_arr[skip..] {
+                        let s = line.as_str().unwrap_or("");
+                        print_colored_line(s);
+                    }
+                    seen_total = total;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ── File-based log helpers ──────────────────────────────────────────
 
 /// Resolve the host-side log directory (read-only, does not create).
@@ -504,8 +696,12 @@ pub async fn handle_command(command: LogCommands, json: bool, host: Option<&str>
         },
 
         LogCommands::List { service, date } => {
-            let log_dir = resolve_log_dir();
-            handle_list(&log_dir, &service, &date, json)?;
+            if let Some(h) = host {
+                remote_list(h, &service, &date, json).await?;
+            } else {
+                let log_dir = resolve_log_dir();
+                handle_list(&log_dir, &service, &date, json)?;
+            }
         },
 
         LogCommands::View {
@@ -514,16 +710,30 @@ pub async fn handle_command(command: LogCommands, json: bool, host: Option<&str>
             api,
             grep,
         } => {
-            let log_dir = resolve_log_dir();
-            handle_view(&log_dir, &service, lines, api, &grep, json)?;
+            if let Some(h) = host {
+                remote_view(h, &service, lines, api, &grep, json).await?;
+            } else {
+                let log_dir = resolve_log_dir();
+                handle_view(&log_dir, &service, lines, api, &grep, json)?;
+            }
         },
 
         LogCommands::Tail { service, api, grep } => {
-            let log_dir = resolve_log_dir();
-            handle_tail(&log_dir, &service, api, &grep).await?;
+            if let Some(h) = host {
+                remote_tail(h, &service, api, &grep).await?;
+            } else {
+                let log_dir = resolve_log_dir();
+                handle_tail(&log_dir, &service, api, &grep).await?;
+            }
         },
 
         LogCommands::Ui { service, api } => {
+            if host.is_some() {
+                anyhow::bail!(
+                    "Interactive UI is not supported for remote hosts. Use 'monarch logs view {} --host ...' or 'monarch logs tail {} --host ...' instead.",
+                    service, service
+                );
+            }
             let log_dir = resolve_log_dir();
             let path = find_log_file(&log_dir, &service, api)?;
             crate::logs_tui::run_log_viewer(&path)?;
