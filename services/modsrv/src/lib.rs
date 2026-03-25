@@ -31,8 +31,7 @@ pub mod api {
 }
 // Map dto module to api/dto.rs while keeping crate::dto path stable
 pub mod infra {
-    //! Infrastructure layer — external side effects (HTTP, SHM, Redis)
-    pub mod comsrv_coordinator;
+    //! Infrastructure layer — external side effects (SHM, Redis)
     pub mod shm_dispatch;
 }
 pub mod runtime {

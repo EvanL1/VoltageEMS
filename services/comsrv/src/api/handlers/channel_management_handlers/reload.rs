@@ -199,15 +199,8 @@ pub async fn reload_routing_handler<R: Rtdb>(
         .await
         {
             Ok(counts) => {
-                // Rebuild SHM writer/index to match updated routing
-                if let Some(handle) = manager.shm_handle() {
-                    if let Err(e) = handle.rebuild(&manager.routing_cache) {
-                        let error_msg =
-                            format!("Failed to rebuild SHM after routing reload: {}", e);
-                        tracing::error!("{}", error_msg);
-                        errors.push(error_msg);
-                    }
-                }
+                // SHM layout is based on channel points, not routing.
+                // No SHM rebuild needed for routing changes.
                 counts
             },
             Err(e) => {

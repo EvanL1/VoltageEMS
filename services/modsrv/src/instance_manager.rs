@@ -81,12 +81,6 @@ pub struct InstanceManager<R: Rtdb> {
     // ========== Action Dispatch (SHM/UDS or Noop) ==========
     /// Dispatches M2C action commands via SHM+UDS (production) or noop (tests)
     pub(crate) dispatch: Arc<dyn ActionDispatch>,
-    // ========== Comsrv Coordinator ==========
-    /// HTTP coordinator for cross-service communication (routing reload)
-    comsrv: crate::infra::comsrv_coordinator::ComsrvCoordinator,
-    // ========== Concurrency Guard ==========
-    /// Prevents concurrent refresh_routing_and_shm calls (Steps 1-3 must be atomic)
-    refresh_lock: tokio::sync::Mutex<()>,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
@@ -105,8 +99,6 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             name_cache: DashMap::new(),
             slot_runtime: crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime::new(),
             dispatch,
-            comsrv: crate::infra::comsrv_coordinator::ComsrvCoordinator::new(),
-            refresh_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -150,31 +142,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         &self.routing_cache
     }
 
-    /// Refresh routing cache from database, notify comsrv, and rebuild SHM writer
+    /// Refresh routing cache from database (local operation only)
     ///
-    /// Delegates to:
-    /// 1. `bootstrap::refresh_routing_cache` — reload routing from SQLite
-    /// 2. `ComsrvCoordinator::reload_routing` — ask comsrv to update SHM header
-    /// 3. `ActionDispatch::rebuild_writer` — re-open SHM action writer against updated header
-    ///
-    /// Order matters: comsrv must update the SHM header before modsrv reopens its writer,
-    /// because `open_for_actions` validates routing_hash in the SHM header.
-    /// All three steps always execute; comsrv failure is propagated but doesn't skip rebuild.
-    pub async fn refresh_routing_and_shm(&self) -> anyhow::Result<usize> {
-        // Prevent concurrent refreshes — Steps 1-3 must run atomically
-        let _guard = self.refresh_lock.lock().await;
-        // Step 1: refresh local routing cache from SQLite
-        let count =
-            crate::bootstrap::refresh_routing_cache(&self.pool, &self.routing_cache).await?;
-        // Step 2: comsrv updates SHM file header with new routing layout
-        let comsrv_result = self.comsrv.reload_routing().await;
-        // Step 3: rebuild modsrv writer (validates hash vs SHM header, may fail if comsrv did)
-        if let Err(e) = self.dispatch.rebuild_writer(&self.routing_cache) {
-            tracing::warn!("Dispatch writer rebuild failed, writer cleared: {e}");
-        }
-        // Propagate comsrv failure after rebuild — API handlers need to know
-        comsrv_result?;
-        Ok(count)
+    /// SHM layout is based on channel points, not routing — no SHM rebuild needed.
+    /// comsrv independently refreshes its own routing cache via periodic polling.
+    pub async fn refresh_routing(&self) -> anyhow::Result<usize> {
+        crate::bootstrap::refresh_routing_cache(&self.pool, &self.routing_cache).await
     }
 
     /// Get the product loader reference

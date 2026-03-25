@@ -12,33 +12,32 @@
 
 #![allow(clippy::disallowed_methods)] // Integration tests — unwrap is acceptable
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use modsrv::infra::shm_dispatch::{ActionDispatch, DispatchOutcome, ShmDispatch};
+use std::collections::BTreeMap;
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 use voltage_model::PointType;
-use voltage_routing::{RouteContext, RoutingCache};
-use voltage_rtdb_shm::{SharedConfig, ShmNotification, ShmNotifier, UnifiedWriter};
+use voltage_routing::RouteContext;
+use voltage_rtdb_shm::{
+    ChannelPointCounts, SharedConfig, ShmNotification, ShmNotifier, UnifiedWriter,
+};
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
-/// Build a minimal RoutingCache with one M2C entry:
-///   instance 1:C:0  →  channel 1001:C:0
+/// Build the ChannelPointCounts matching the routing layout from `make_route_ctx`.
 ///
-/// The SHM layout is driven by this entry, so the writer will have a
-/// valid slot for channel_id=1001, point_type=Control, point_id=0.
-fn make_routing_cache() -> RoutingCache {
-    let mut m2c_data = HashMap::new();
-    // M2C key format: "instance_id:point_type:point_id"
-    // M2C value format: "channel_id:point_type:point_id"
-    m2c_data.insert("1:C:0".to_string(), "1001:C:0".to_string());
-    RoutingCache::from_maps(HashMap::new(), m2c_data, HashMap::new())
+/// Channel 1001 has 1 Control slot (point_id 0 → count 1).
+/// Array layout: [T, S, C, A] = [0, 0, 1, 0].
+fn make_channel_point_counts() -> ChannelPointCounts {
+    let mut map = BTreeMap::new();
+    map.insert(1001u32, [0u32, 0, 1, 0]);
+    ChannelPointCounts::from_map(map)
 }
 
 /// Build a RouteContext that targets the M2C entry created by `make_routing_cache`.
@@ -101,11 +100,11 @@ async fn spawn_uds_listener(sock_path: &str) -> tokio::task::JoinHandle<()> {
 #[tokio::test]
 async fn test_dispatch_delivered() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let routing_cache = make_routing_cache();
+    let channel_points = make_channel_point_counts();
     let config = make_shm_config(&temp_dir);
 
     // Create the SHM file with the correct routing layout
-    let writer = UnifiedWriter::create(&config, &routing_cache).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let writer = Arc::new(writer);
 
     // Set up UDS notifier
@@ -136,7 +135,7 @@ async fn test_dispatch_delivered() {
 
     // Verify SHM contains the written value via UnifiedReader
     let reader =
-        voltage_rtdb_shm::UnifiedReader::open(&config, &routing_cache).expect("open reader");
+        voltage_rtdb_shm::UnifiedReader::open(&config, &channel_points).expect("open reader");
     let (val, _ts) = reader
         .get_channel(1001, PointType::Control.to_u8(), 0)
         .expect("slot must exist for channel 1001:C:0");
@@ -174,10 +173,10 @@ async fn test_dispatch_no_writer() {
 #[tokio::test]
 async fn test_dispatch_shm_only_no_notifier() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let routing_cache = make_routing_cache();
+    let channel_points = make_channel_point_counts();
     let config = make_shm_config(&temp_dir);
 
-    let writer = Arc::new(UnifiedWriter::create(&config, &routing_cache).unwrap());
+    let writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
 
     let dispatch = ShmDispatch::new();
     dispatch.set_writer(writer, config.clone());
@@ -198,7 +197,7 @@ async fn test_dispatch_shm_only_no_notifier() {
     );
 
     // SHM value should still have been written
-    let reader = voltage_rtdb_shm::UnifiedReader::open(&config, &routing_cache).unwrap();
+    let reader = voltage_rtdb_shm::UnifiedReader::open(&config, &channel_points).unwrap();
     let (val, _ts) = reader
         .get_channel(1001, PointType::Control.to_u8(), 0)
         .expect("slot must exist");
@@ -218,17 +217,17 @@ async fn test_dispatch_shm_only_no_notifier() {
 #[tokio::test]
 async fn test_rebuild_writer_success() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let routing_cache = make_routing_cache();
+    let channel_points = make_channel_point_counts();
     let config = make_shm_config(&temp_dir);
 
     // Create SHM with initial routing
-    let initial_writer = Arc::new(UnifiedWriter::create(&config, &routing_cache).unwrap());
+    let initial_writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
 
     let dispatch = ShmDispatch::new();
     dispatch.set_writer(initial_writer, config);
 
     // rebuild_writer opens the existing SHM file with the same routing hash
-    let result = dispatch.rebuild_writer(&routing_cache);
+    let result = dispatch.rebuild_writer(&channel_points);
     assert!(
         result.is_ok(),
         "rebuild_writer should succeed: {:?}",
@@ -254,11 +253,11 @@ async fn test_rebuild_writer_success() {
 #[tokio::test]
 async fn test_rebuild_writer_failure_clears_writer() {
     let temp_dir = tempfile::tempdir().unwrap();
-    let routing_cache = make_routing_cache();
+    let channel_points = make_channel_point_counts();
     let config = make_shm_config(&temp_dir);
 
     // Create SHM and install a valid writer
-    let initial_writer = Arc::new(UnifiedWriter::create(&config, &routing_cache).unwrap());
+    let initial_writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
     let dispatch = ShmDispatch::new();
     dispatch.set_writer(initial_writer, config.clone());
 
@@ -272,7 +271,7 @@ async fn test_rebuild_writer_failure_clears_writer() {
 
     // Now delete the SHM file so open_for_actions fails, then rebuild
     std::fs::remove_file(config.path()).expect("should be able to delete shm file");
-    let rebuild_result = dispatch.rebuild_writer(&routing_cache);
+    let rebuild_result = dispatch.rebuild_writer(&channel_points);
     assert!(
         rebuild_result.is_err(),
         "rebuild_writer should fail when SHM file is missing"

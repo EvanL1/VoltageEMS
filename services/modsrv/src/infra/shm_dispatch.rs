@@ -43,7 +43,10 @@ pub trait ActionDispatch: Send + Sync {
     /// Accepts routing_cache so the dispatch layer doesn't need to hold it,
     /// enabling construction before the cache is available.
     /// Returns Err if the writer could not be rebuilt (caller decides recovery).
-    fn rebuild_writer(&self, routing_cache: &voltage_routing::RoutingCache) -> anyhow::Result<()>;
+    fn rebuild_writer(
+        &self,
+        channel_points: &voltage_rtdb_shm::ChannelPointCounts,
+    ) -> anyhow::Result<()>;
 }
 
 /// SHM + UDS dispatch implementation (production path)
@@ -218,22 +221,22 @@ impl ActionDispatch for ShmDispatch {
         }
     }
 
-    fn rebuild_writer(&self, routing_cache: &voltage_routing::RoutingCache) -> anyhow::Result<()> {
+    fn rebuild_writer(
+        &self,
+        channel_points: &voltage_rtdb_shm::ChannelPointCounts,
+    ) -> anyhow::Result<()> {
         let Some(config) = self.config.get() else {
             return Ok(()); // SHM not configured — not an error
         };
-        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(config, routing_cache) {
+        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(config, channel_points) {
             Ok(writer) => {
                 let gen = writer.generation();
                 self.expected_generation.store(gen, Ordering::Release);
                 self.writer.store(Some(Arc::new(writer)));
-                info!("SHM action writer rebuilt after routing change");
+                info!("SHM action writer rebuilt after channel layout change");
                 Ok(())
             },
             Err(e) => {
-                // Clear stale writer: after routing changes, slot layout is different.
-                // A stale writer would dispatch values to wrong physical points — a field
-                // safety issue in SCADA. NoWriter is safer than wrong-slot writes.
                 self.writer.store(None);
                 warn!("SHM action writer rebuild failed, dispatch disabled: {}", e);
                 Err(e)
@@ -251,7 +254,10 @@ impl ActionDispatch for NoopDispatch {
         DispatchOutcome::Noop
     }
 
-    fn rebuild_writer(&self, _routing_cache: &voltage_routing::RoutingCache) -> anyhow::Result<()> {
+    fn rebuild_writer(
+        &self,
+        _channel_points: &voltage_rtdb_shm::ChannelPointCounts,
+    ) -> anyhow::Result<()> {
         Ok(()) // No-op
     }
 }

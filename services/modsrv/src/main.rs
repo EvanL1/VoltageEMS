@@ -97,8 +97,16 @@ async fn main() -> Result<()> {
         cfg
     };
 
+    // Load channel point counts for SHM layout (routing-independent)
+    let channel_points = voltage_rtdb_shm::ChannelPointCounts::load_from_db(&sqlite_pool)
+        .await
+        .unwrap_or_else(|e| {
+            warn!("Failed to load channel points: {}, using empty layout", e);
+            voltage_rtdb_shm::ChannelPointCounts::new()
+        });
+
     // Initialize UnifiedReader for cross-process zero-copy reads
-    // Simplified: Header + PointSlots only, indexes built from RoutingCache
+    // Simplified: Header + PointSlots only, indexes built from channel points
     // Added retry mechanism for cold start race condition
     let shared_reader = {
         const MAX_RETRIES: u32 = 10;
@@ -109,7 +117,7 @@ async fn main() -> Result<()> {
         loop {
             if is_shm_available(&shm_config) {
                 // Open reader with RoutingCache (builds indexes from routing)
-                match UnifiedReader::open(&shm_config, &routing_cache) {
+                match UnifiedReader::open(&shm_config, &channel_points) {
                     Ok(reader) => {
                         info!(
                             "UnifiedReader opened: {} slots, {} instances, {} channels",
@@ -162,7 +170,7 @@ async fn main() -> Result<()> {
     // Initialize UnifiedWriter for M2C actions (Control/Adjustment via SHM)
     // Only open if reader succeeded (SHM file exists)
     let shm_action_writer = if shared_reader.is_some() {
-        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(&shm_config, &routing_cache) {
+        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(&shm_config, &channel_points) {
             Ok(writer) => {
                 info!("UnifiedWriter (actions) opened for M2C via SHM");
                 Some(Arc::new(writer))

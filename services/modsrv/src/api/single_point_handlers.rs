@@ -86,7 +86,7 @@ pub async fn upsert_measurement_routing(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(
@@ -137,7 +137,7 @@ pub async fn delete_measurement_routing(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(
@@ -191,7 +191,7 @@ pub async fn toggle_measurement_routing(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(
@@ -280,7 +280,7 @@ pub async fn upsert_action_routing(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(
@@ -331,7 +331,7 @@ pub async fn delete_action_routing(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(
@@ -385,7 +385,7 @@ pub async fn toggle_action_routing(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(
