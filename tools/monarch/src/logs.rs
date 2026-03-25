@@ -1,11 +1,14 @@
 //! Log management commands for Monarch CLI
 //!
-//! Provides commands for dynamically adjusting log levels in running services.
+//! Provides commands for dynamically adjusting log levels in running services,
+//! and viewing/tailing service log files on disk.
 
 use anyhow::{Context, Result};
 use clap::Subcommand;
 use colored::*;
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 /// Log management commands
 #[derive(Subcommand, Debug)]
@@ -26,6 +29,62 @@ pub enum LogCommands {
     Get {
         /// Service name (comsrv, modsrv, all)
         service: String,
+    },
+
+    /// List available log files
+    #[command(about = "List log files on disk (default: today)")]
+    List {
+        /// Service name filter (optional; omit for all services)
+        service: Option<String>,
+
+        /// Date in YYYYMMDD format (default: today)
+        #[arg(short, long)]
+        date: Option<String>,
+    },
+
+    /// View last N lines of a service log file
+    #[command(about = "View recent lines from a service log file")]
+    View {
+        /// Service name (comsrv, modsrv, hissrv, netsrv, alarmsrv, apigateway)
+        service: String,
+
+        /// Number of lines from end (default: 50)
+        #[arg(short = 'n', long, default_value = "50")]
+        lines: usize,
+
+        /// Show API access log instead of main log
+        #[arg(long)]
+        api: bool,
+
+        /// Filter lines containing this pattern (case-insensitive)
+        #[arg(short, long)]
+        grep: Option<String>,
+    },
+
+    /// Follow a log file in real-time (Ctrl+C to stop)
+    #[command(about = "Tail a service log file in real-time")]
+    Tail {
+        /// Service name
+        service: String,
+
+        /// Show API access log instead of main log
+        #[arg(long)]
+        api: bool,
+
+        /// Filter lines containing this pattern (case-insensitive)
+        #[arg(short, long)]
+        grep: Option<String>,
+    },
+
+    /// Interactive TUI log viewer (scrollable, searchable)
+    #[command(about = "Open interactive log viewer with scroll, search, and follow")]
+    Ui {
+        /// Service name
+        service: String,
+
+        /// Show API access log instead of main log
+        #[arg(long)]
+        api: bool,
     },
 }
 
@@ -108,6 +167,261 @@ async fn get_log_level(service: &str, host: Option<&str>) -> Result<String> {
     }
 }
 
+// ── File-based log helpers ──────────────────────────────────────────
+
+/// Resolve the host-side log directory (read-only, does not create).
+/// Fallback: VOLTAGE_LOG_PATH env → /opt/MonarchEdge/logs → ./logs
+fn resolve_log_dir() -> PathBuf {
+    std::env::var("VOLTAGE_LOG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let prod = PathBuf::from("/opt/MonarchEdge/logs");
+            if prod.exists() {
+                prod
+            } else {
+                PathBuf::from("logs")
+            }
+        })
+}
+
+/// Find today's log file for a service.
+/// Pattern: `{YYYYMMDD}_{service}[_api].log`
+fn find_log_file(log_dir: &Path, service: &str, api: bool) -> Result<PathBuf> {
+    let today = chrono::Local::now().format("%Y%m%d").to_string();
+    find_log_file_for_date(log_dir, service, api, &today)
+}
+
+/// Find a log file for a specific date (YYYYMMDD).
+fn find_log_file_for_date(log_dir: &Path, service: &str, api: bool, date: &str) -> Result<PathBuf> {
+    let stem = if api {
+        format!("{}_{}_api", date, service)
+    } else {
+        format!("{}_{}", date, service)
+    };
+    let candidate = log_dir.join(format!("{stem}.log"));
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+    // Check size-rotated variants (.1, .2, ...)
+    for i in 1..=9 {
+        let rotated = log_dir.join(format!("{stem}.log.{i}"));
+        if rotated.exists() {
+            return Ok(rotated);
+        }
+    }
+    anyhow::bail!(
+        "No log file found: {stem}.log (looked in {})",
+        log_dir.display()
+    )
+}
+
+/// Print a line with optional level-based coloring.
+fn print_colored_line(line: &str) {
+    if line.contains("[ERROR]") || line.contains(" ERROR ") {
+        println!("{}", line.red());
+    } else if line.contains("[WARN]") || line.contains(" WARN ") {
+        println!("{}", line.yellow());
+    } else {
+        println!("{}", line);
+    }
+}
+
+/// Check if a line matches an optional grep pattern (case-insensitive).
+fn matches_grep(line: &str, grep: &Option<String>) -> bool {
+    match grep {
+        Some(pattern) => line.to_lowercase().contains(&pattern.to_lowercase()),
+        None => true,
+    }
+}
+
+/// Format file size for human display.
+fn format_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// List log files matching optional service/date filter.
+fn handle_list(
+    log_dir: &Path,
+    service: &Option<String>,
+    date: &Option<String>,
+    json: bool,
+) -> Result<()> {
+    let date_prefix = date
+        .clone()
+        .unwrap_or_else(|| chrono::Local::now().format("%Y%m%d").to_string());
+
+    if !log_dir.exists() {
+        anyhow::bail!("Log directory not found: {}", log_dir.display());
+    }
+
+    let mut entries: Vec<(String, u64)> = Vec::new();
+
+    for entry in std::fs::read_dir(log_dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Must start with date prefix and end with .log (or .log.N)
+        if !name.starts_with(&date_prefix) || !name.contains(".log") {
+            continue;
+        }
+        // Skip compressed files
+        if name.ends_with(".gz") {
+            continue;
+        }
+
+        // Optional service filter
+        if let Some(svc) = service {
+            // Pattern: {date}_{service}... so check after the date prefix + underscore
+            let after_date = &name[date_prefix.len()..];
+            if !after_date.starts_with(&format!("_{svc}")) {
+                continue;
+            }
+        }
+
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        entries.push((name, size));
+    }
+
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    if json {
+        let items: Vec<_> = entries
+            .iter()
+            .map(|(name, size)| serde_json::json!({"file": name, "size": size}))
+            .collect();
+        crate::output::print_success(&items);
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!(
+            "  {} No log files for {} in {}",
+            "•".dimmed(),
+            date_prefix.bright_cyan(),
+            log_dir.display()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} ({}):",
+        "Log files".bright_cyan(),
+        log_dir.display().to_string().dimmed()
+    );
+    for (name, size) in &entries {
+        println!(
+            "  {} {:>10}",
+            name.bright_white(),
+            format_size(*size).dimmed()
+        );
+    }
+
+    Ok(())
+}
+
+/// View last N lines of a log file with optional grep filter.
+fn handle_view(
+    log_dir: &Path,
+    service: &str,
+    lines: usize,
+    api: bool,
+    grep: &Option<String>,
+    json: bool,
+) -> Result<()> {
+    let path = find_log_file(log_dir, service, api)?;
+    let file =
+        std::fs::File::open(&path).with_context(|| format!("Cannot open {}", path.display()))?;
+    let reader = BufReader::new(file);
+
+    let all_lines: Vec<String> = reader
+        .lines()
+        .map_while(Result::ok)
+        .filter(|l| matches_grep(l, grep))
+        .collect();
+
+    let start = all_lines.len().saturating_sub(lines);
+    let tail = &all_lines[start..];
+
+    if json {
+        crate::output::print_success(serde_json::json!({
+            "file": path.display().to_string(),
+            "lines": tail,
+        }));
+        return Ok(());
+    }
+
+    println!(
+        "{} {} (last {} lines):",
+        "Viewing".bright_cyan(),
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .bright_white(),
+        tail.len(),
+    );
+    println!();
+    for line in tail {
+        print_colored_line(line);
+    }
+
+    Ok(())
+}
+
+/// Tail a log file in real-time (poll every 200ms, Ctrl+C to stop).
+async fn handle_tail(
+    log_dir: &Path,
+    service: &str,
+    api: bool,
+    grep: &Option<String>,
+) -> Result<()> {
+    let path = find_log_file(log_dir, service, api)?;
+    let mut file =
+        std::fs::File::open(&path).with_context(|| format!("Cannot open {}", path.display()))?;
+
+    // Seek to end — only show new content
+    file.seek(SeekFrom::End(0))?;
+
+    println!(
+        "{} {} (Ctrl+C to stop)",
+        "Tailing".bright_cyan(),
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .bright_white(),
+    );
+
+    let mut buf = String::new();
+    let mut reader = BufReader::new(file);
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!();
+                break;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                buf.clear();
+                while reader.read_line(&mut buf)? > 0 {
+                    // read_line appends, so we process the last line added
+                    let line = buf.trim_end_matches('\n').trim_end_matches('\r');
+                    if matches_grep(line, grep) {
+                        print_colored_line(line);
+                    }
+                    buf.clear();
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Handle log commands
 pub async fn handle_command(command: LogCommands, json: bool, host: Option<&str>) -> Result<()> {
     match command {
@@ -187,6 +501,32 @@ pub async fn handle_command(command: LogCommands, json: bool, host: Option<&str>
             if json {
                 crate::output::print_success(&results);
             }
+        },
+
+        LogCommands::List { service, date } => {
+            let log_dir = resolve_log_dir();
+            handle_list(&log_dir, &service, &date, json)?;
+        },
+
+        LogCommands::View {
+            service,
+            lines,
+            api,
+            grep,
+        } => {
+            let log_dir = resolve_log_dir();
+            handle_view(&log_dir, &service, lines, api, &grep, json)?;
+        },
+
+        LogCommands::Tail { service, api, grep } => {
+            let log_dir = resolve_log_dir();
+            handle_tail(&log_dir, &service, api, &grep).await?;
+        },
+
+        LogCommands::Ui { service, api } => {
+            let log_dir = resolve_log_dir();
+            let path = find_log_file(&log_dir, &service, api)?;
+            crate::logs_tui::run_log_viewer(&path)?;
         },
     }
 

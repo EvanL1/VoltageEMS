@@ -7,6 +7,7 @@ mod channels;
 mod core;
 mod doctor;
 mod logs;
+mod logs_tui;
 mod models;
 mod output;
 mod rtdb;
@@ -45,7 +46,7 @@ Service Operations:
   models      Manage product templates and device instances
   rules       Manage and execute business rules
   services    Start, stop, and manage VoltageEMS services
-  logs        Dynamically adjust log levels for running services
+  logs        Log level control and log file viewer
 
 Examples:
   monarch sync                          # Sync all configurations
@@ -55,7 +56,9 @@ Examples:
   monarch rules enable R001             # Enable a rule
   monarch services status               # Check service status
   monarch logs level all debug          # Switch all services to debug mode
-  monarch logs get all                  # Show current log levels
+  monarch logs list                     # List today's log files
+  monarch logs view comsrv -n 100       # View last 100 lines of comsrv log
+  monarch logs tail modsrv --grep ERROR # Follow modsrv log, filter ERRORs
 
 Use 'monarch <command> --help' for more information on a specific command.")]
 #[command(version)]
@@ -171,8 +174,8 @@ enum Commands {
         command: services::ServiceCommands,
     },
 
-    /// Manage log levels
-    #[command(about = "Dynamically adjust log levels for running services")]
+    /// Manage logs
+    #[command(about = "Log level control and log file viewer")]
     Logs {
         #[command(subcommand)]
         command: logs::LogCommands,
