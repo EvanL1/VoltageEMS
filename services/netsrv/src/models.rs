@@ -93,6 +93,24 @@ pub struct CommandReply {
 ///
 /// 修改后立即触发 MQTT 重连，无需重启服务。
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "product_sn": "MonarchHub",
+    "device_sn": "auto",
+    "broker_host": "mqtt.example.com",
+    "broker_port": 8883,
+    "broker_keepalive_secs": 120,
+    "client_id": "auto",
+    "ssl_enabled": false,
+    "reconnect_delay_secs": 10,
+    "reconnect_max_attempts": 50,
+    "report_interval_secs": 50,
+    "report_batch_size": 50,
+    "system_monitor_enabled": true,
+    "system_monitor_interval_secs": 10,
+    "subscribe_patterns": ["inst:*:M", "inst:*:A"],
+    "exclude_patterns": [],
+    "alarmsrv_url": "http://localhost:6007"
+}))]
 pub struct NetConfig {
     // -- Device identity --
     /// 产品序列号，用于构造 MQTT Topic 前缀，如 `status/{product_sn}/{device_sn}`

@@ -325,7 +325,7 @@ jobs:
           ### Package Contents
 
           - **Rust Services**: comsrv (6001), modsrv (6002), hissrv (6004), apigateway (6005), netsrv (6006), alarmsrv (6007)
-          - **Infrastructure**: Redis 8, TimescaleDB (pg16)
+          - **Infrastructure**: Redis 8, TimescaleDB (pg17)
           - **Frontend**: Vue.js (8080)
           - **CLI Tool**: monarch
 

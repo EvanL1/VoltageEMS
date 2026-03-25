@@ -66,6 +66,7 @@ pub async fn broadcast_status(State(state): State<Arc<AppState>>) -> impl IntoRe
 
     Json(json!({
         "success": true,
+        "message": "获取成功",
         "data": {
             "websocket_available": true,
             "connection_count": status["connection_count"],

@@ -176,7 +176,11 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
     let target = Path::new(CONFIG_DIR);
     if let Err(e) = std::fs::create_dir_all(target) {
         error!("Create config dir error: {}", e);
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "message": format!("创建配置目录失败: {}", e)})),
+        )
+            .into_response();
     }
 
     match extract_zip(&data, target) {
@@ -402,6 +406,7 @@ pub async fn upgrade_status() -> impl IntoResponse {
 
     Json(json!({
         "success": true,
+        "message": "获取成功",
         "data": {
             "running": running,
             "pid": pid,

@@ -77,6 +77,18 @@ pub struct DataStats {
 /// 控制数据采集频率、写入批量、查询限制和 Redis 监听规则。
 /// 存储后端连接参数请通过 `/hisApi/storage` 单独管理。
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "collection_interval_secs": 30,
+    "flush_interval_secs": 60,
+    "batch_size": 1000,
+    "cleanup_enabled": true,
+    "cleanup_older_than_days": 30,
+    "default_page_size": 100,
+    "max_page_size": 1000,
+    "max_time_range_days": 365,
+    "subscribe_patterns": ["inst:*:M", "inst:*:A"],
+    "exclude_patterns": []
+}))]
 pub struct ServiceConfig {
     /// 采集间隔（秒）
     ///
@@ -194,11 +206,78 @@ pub struct StorageSettings {
 // ── Storage configuration request ────────────────────────────────────────────
 
 /// 存储后端连接参数（`PUT /hisApi/storage`）
+/// 连通性测试请求（`POST /hisApi/storage/test`）
+///
+/// 探测时**不写入任何数据、不修改任何运行状态**。  
+/// 对 PostgreSQL / TimescaleDB：连接内置 `postgres` 维护库并执行 `SELECT 1`，
+/// 因此**业务数据库不需要提前存在**即可通过测试。
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StorageTestRequest {
+    /// 数据库类型
+    ///
+    /// - `postgres` — 标准 PostgreSQL
+    /// - `timescaledb` — PostgreSQL + TimescaleDB 扩展（连接参数与 postgres 相同）
+    /// - `influxdb` — InfluxDB（预留，暂未实现）
+    #[schema(example = "timescaledb")]
+    pub backend: String,
+
+    /// 数据库主机地址（IP 或域名）
+    #[schema(example = "192.168.20.21")]
+    pub host: String,
+
+    /// 数据库端口
+    ///
+    /// PostgreSQL / TimescaleDB 默认 `5432`；InfluxDB 默认 `8086`。
+    #[schema(example = 5432, minimum = 1, maximum = 65535)]
+    pub port: Option<u16>,
+
+    /// 数据库用户名（PostgreSQL / TimescaleDB）
+    #[schema(example = "postgres")]
+    pub username: String,
+
+    /// 数据库密码（PostgreSQL / TimescaleDB）
+    #[schema(example = "secret")]
+    pub password: String,
+}
+
+impl StorageTestRequest {
+    /// Friendly `host:port` string for log / response messages.
+    pub fn addr(&self) -> String {
+        let default_port = match self.backend.as_str() {
+            "influxdb" => 8086,
+            _ => 5432,
+        };
+        format!("{}:{}", self.host, self.port.unwrap_or(default_port))
+    }
+
+    /// Build a PostgreSQL DSN pointing at the always-present `postgres`
+    /// maintenance database (used for postgres / timescaledb probing).
+    pub fn pg_probe_dsn(&self) -> String {
+        build_dsn(
+            &self.host,
+            self.port,
+            "postgres",
+            &self.username,
+            &self.password,
+        )
+    }
+}
+
+/// PUT /hisApi/storage 请求体
 ///
 /// 此接口**只保存参数**，不会立即建立数据库连接。
 /// 保存后通过 `POST /hisApi/storage/reconnect` 应用并连接，
 /// 或通过 `POST /hisApi/storage/test` 提前验证连通性。
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "enabled": true,
+    "backend": "timescaledb",
+    "host": "192.168.20.21",
+    "port": 5432,
+    "database": "hissrv",
+    "username": "postgres",
+    "password": "postgres"
+}))]
 pub struct StorageConfigRequest {
     /// 是否启用历史存储
     ///

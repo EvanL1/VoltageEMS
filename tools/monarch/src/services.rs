@@ -601,7 +601,7 @@ fn check_container_image_changed(container_name: &str) -> Result<bool> {
     let image_name = if container_name == "voltage-redis" {
         "voltage-redis:latest".to_string()
     } else if container_name == "voltage-timescaledb" {
-        "timescale/timescaledb:latest-pg16".to_string()
+        "timescale/timescaledb:latest-pg17".to_string()
     } else if container_name.starts_with("voltageems-") {
         "voltageems:latest".to_string()
     } else if container_name.starts_with("voltage-") {

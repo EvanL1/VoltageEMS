@@ -117,7 +117,7 @@ ensure_shm_file() {
 declare -A TARBALL_TO_IMAGE=(
     ["voltageems.tar.gz"]="voltageems:latest"
     ["voltage-redis.tar.gz"]="redis:8-alpine"
-    ["voltage-timescaledb.tar.gz"]="timescale/timescaledb:latest-pg16"
+    ["voltage-timescaledb.tar.gz"]="timescale/timescaledb:latest-pg17"
     ["apps.tar.gz"]="voltage-apps:latest"
     ["alpine.tar.gz"]="alpine:latest"
 )
@@ -125,7 +125,7 @@ declare -A TARBALL_TO_IMAGE=(
 # Image to container mapping
 declare -A IMAGE_TO_CONTAINERS=(
     ["redis:8-alpine"]="voltage-redis"
-    ["timescale/timescaledb:latest-pg16"]="voltage-timescaledb"
+    ["timescale/timescaledb:latest-pg17"]="voltage-timescaledb"
     ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv voltageems-hissrv voltageems-apigateway voltageems-netsrv voltageems-alarmsrv"
     ["voltage-apps:latest"]="voltage-apps"
 )
@@ -919,13 +919,13 @@ if command -v docker &> /dev/null; then
         echo "Verifying loaded images..."
         # Required: voltageems:latest, redis:8-alpine
         # Optional: timescaledb (can configure hissrv storage later via API), voltage-apps, alpine
-        for image_name in voltageems:latest redis:8-alpine timescale/timescaledb:latest-pg16 voltage-apps:latest alpine:latest; do
+        for image_name in voltageems:latest redis:8-alpine timescale/timescaledb:latest-pg17 voltage-apps:latest alpine:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
                 echo -e "${GREEN}present${NC} (created: $CREATED)"
             else
-                if [[ "$image_name" == "timescale/timescaledb:latest-pg16" ]] || \
+                if [[ "$image_name" == "timescale/timescaledb:latest-pg17" ]] || \
                    [[ "$image_name" == "voltage-apps:latest" ]] || \
                    [[ "$image_name" == "alpine:latest" ]]; then
                     echo -e "${YELLOW}missing (optional, skipping)${NC}"
@@ -1013,8 +1013,8 @@ fi
 
 # Create certificate directory for netsrv TLS (mounted to /app/config/cert in container)
 echo "Creating certificate directory for netsrv..."
-$SUDO mkdir -p "$INSTALL_DIR/data/config/cert"
-echo -e "${GREEN}✓ Certificate directory ready: $INSTALL_DIR/data/config/cert${NC}"
+$SUDO mkdir -p "$INSTALL_DIR/data/cert"
+echo -e "${GREEN}✓ Certificate directory ready: $INSTALL_DIR/data/cert${NC}"
 
 # Create a symlink if logs are external
 if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
@@ -1355,7 +1355,7 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo "     POST http://127.0.0.1:6004/hisApi/storage/reconnect"
     echo "  5. (Optional) Upload MQTT TLS certificates via API:"
     echo "     POST http://127.0.0.1:6006/netApi/certificate/upload"
-    echo "     (Files saved to $INSTALL_DIR/data/config/cert/)"
+    echo "     (Files saved to $INSTALL_DIR/data/cert/)"
     echo ""
     echo -e "${BLUE}Database Management:${NC}"
     echo "  monarch init          - Add missing tables (safe, preserves data)"
