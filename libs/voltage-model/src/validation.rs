@@ -189,34 +189,28 @@ pub fn sanitize_value(value: f64, default: f64, config: &ValidationConfig) -> f6
 // Name Validation (existing functionality)
 // ============================================================================
 
+/// Forbidden characters for names (filesystem/shell unsafe).
+const FORBIDDEN_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
 /// Validate instance name format
 ///
 /// Rules:
 /// - Length: 1-64 characters
-/// - Characters: alphanumeric, underscore (_), hyphen (-)
-/// - Cannot start with a number
-/// - Cannot contain spaces or special characters
-///
-/// # Arguments
-/// * `name` - Instance name to validate
-///
-/// # Returns
-/// * `Ok(())` - Name is valid
-/// * `Err(ModelError)` - Validation error with description
+/// - No control characters (< 0x20)
+/// - No forbidden characters: / \ : * ? " < > |
 ///
 /// # Examples
 /// ```
 /// use voltage_model::validate_instance_name;
 ///
 /// assert!(validate_instance_name("pv_inverter_01").is_ok());
-/// assert!(validate_instance_name("battery-system").is_ok());
-/// assert!(validate_instance_name("_underscore_start").is_ok());
-/// assert!(validate_instance_name("123_invalid").is_err());
-/// assert!(validate_instance_name("bad name!").is_err());
+/// assert!(validate_instance_name("1DL2(1)").is_ok());
+/// assert!(validate_instance_name("PCS-01.A").is_ok());
+/// assert!(validate_instance_name("负载1").is_ok());
+/// assert!(validate_instance_name("test/path").is_err());
 /// assert!(validate_instance_name("").is_err());
 /// ```
 pub fn validate_instance_name(name: &str) -> Result<()> {
-    // Length check
     if name.is_empty() {
         return Err(ModelError::InvalidInstanceName(
             "Instance name cannot be empty".to_string(),
@@ -229,23 +223,19 @@ pub fn validate_instance_name(name: &str) -> Result<()> {
         )));
     }
 
-    // Character validation: only alphanumeric, underscore, and hyphen allowed
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return Err(ModelError::InvalidInstanceName(format!(
-            "Instance name can only contain letters (a-z, A-Z), numbers (0-9), underscores (_), and hyphens (-). Invalid name: '{}'",
-            name
-        )));
-    }
-
-    // Cannot start with a number (helps distinguish from IDs)
-    if name.chars().next().is_some_and(|c| c.is_numeric()) {
-        return Err(ModelError::InvalidInstanceName(
-            "Instance name cannot start with a number. Please start with a letter or underscore."
-                .to_string(),
-        ));
+    // Reject control characters and forbidden filesystem/shell characters
+    for c in name.chars() {
+        if c.is_control() {
+            return Err(ModelError::InvalidInstanceName(
+                "Instance name cannot contain control characters".to_string(),
+            ));
+        }
+        if FORBIDDEN_CHARS.contains(&c) {
+            return Err(ModelError::InvalidInstanceName(format!(
+                "Instance name cannot contain '{}'. Forbidden characters: / \\ : * ? \" < > |",
+                c
+            )));
+        }
     }
 
     Ok(())
@@ -255,18 +245,9 @@ pub fn validate_instance_name(name: &str) -> Result<()> {
 ///
 /// Rules:
 /// - Length: 1-64 characters
-/// - Characters: alphanumeric, underscore (_), hyphen (-)
-/// - Cannot start with a number
-/// - Cannot contain path traversal characters (/, \, ..)
-///
-/// # Arguments
-/// * `name` - Product name to validate
-///
-/// # Returns
-/// * `Ok(())` - Name is valid
-/// * `Err(ModelError)` - Validation error with description
+/// - No control characters (< 0x20)
+/// - No forbidden characters: / \ : * ? " < > |
 pub fn validate_product_name(name: &str) -> Result<()> {
-    // Length check
     if name.is_empty() {
         return Err(ModelError::Validation(
             "Product name cannot be empty".to_string(),
@@ -279,29 +260,18 @@ pub fn validate_product_name(name: &str) -> Result<()> {
         )));
     }
 
-    // Path traversal prevention
-    if name.contains("..") || name.contains('/') || name.contains('\\') {
-        return Err(ModelError::Validation(
-            "Product name contains path traversal characters".to_string(),
-        ));
-    }
-
-    // Character validation
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return Err(ModelError::Validation(format!(
-            "Product name can only contain letters, numbers, underscores, and hyphens. Invalid name: '{}'",
-            name
-        )));
-    }
-
-    // Cannot start with a number
-    if name.chars().next().is_some_and(|c| c.is_numeric()) {
-        return Err(ModelError::Validation(
-            "Product name cannot start with a number".to_string(),
-        ));
+    for c in name.chars() {
+        if c.is_control() {
+            return Err(ModelError::Validation(
+                "Product name cannot contain control characters".to_string(),
+            ));
+        }
+        if FORBIDDEN_CHARS.contains(&c) {
+            return Err(ModelError::Validation(format!(
+                "Product name cannot contain '{}'. Forbidden characters: / \\ : * ? \" < > |",
+                c
+            )));
+        }
     }
 
     Ok(())
@@ -350,6 +320,12 @@ mod tests {
         assert!(validate_instance_name("_underscore_start").is_ok());
         assert!(validate_instance_name("A").is_ok());
         assert!(validate_instance_name("test123").is_ok());
+        assert!(validate_instance_name("1DL2").is_ok());
+        assert!(validate_instance_name("1DL2(1)").is_ok());
+        assert!(validate_instance_name("PCS-01.A").is_ok());
+        assert!(validate_instance_name("负载1").is_ok());
+        assert!(validate_instance_name("bad name!").is_ok()); // spaces and ! are allowed now
+        assert!(validate_instance_name("test@email").is_ok());
     }
 
     #[test]
@@ -357,14 +333,20 @@ mod tests {
         // Empty name
         assert!(validate_instance_name("").is_err());
 
-        // Starts with number
-        assert!(validate_instance_name("123_invalid").is_err());
-        assert!(validate_instance_name("1test").is_err());
-
-        // Invalid characters
-        assert!(validate_instance_name("bad name!").is_err());
-        assert!(validate_instance_name("test@email").is_err());
+        // Forbidden characters: / \ : * ? " < > |
         assert!(validate_instance_name("test/path").is_err());
+        assert!(validate_instance_name("test\\path").is_err());
+        assert!(validate_instance_name("test:colon").is_err());
+        assert!(validate_instance_name("test*star").is_err());
+        assert!(validate_instance_name("test?question").is_err());
+        assert!(validate_instance_name("test\"quote").is_err());
+        assert!(validate_instance_name("test<angle").is_err());
+        assert!(validate_instance_name("test>angle").is_err());
+        assert!(validate_instance_name("test|pipe").is_err());
+
+        // Control characters
+        assert!(validate_instance_name("test\x00null").is_err());
+        assert!(validate_instance_name("test\nnewline").is_err());
 
         // Too long (65 characters)
         let long_name = "a".repeat(65);
@@ -376,20 +358,20 @@ mod tests {
         assert!(validate_product_name("pv_inverter").is_ok());
         assert!(validate_product_name("battery-system").is_ok());
         assert!(validate_product_name("TestProduct").is_ok());
+        assert!(validate_product_name("1product").is_ok());
+        assert!(validate_product_name("Load(AC)").is_ok());
     }
 
     #[test]
     fn test_invalid_product_names() {
-        // Path traversal
-        assert!(validate_product_name("../etc/passwd").is_err());
-        assert!(validate_product_name("test/subdir").is_err());
-        assert!(validate_product_name("test\\subdir").is_err());
-
         // Empty
         assert!(validate_product_name("").is_err());
 
-        // Starts with number
-        assert!(validate_product_name("1product").is_err());
+        // Forbidden characters
+        assert!(validate_product_name("../etc/passwd").is_err());
+        assert!(validate_product_name("test/subdir").is_err());
+        assert!(validate_product_name("test\\subdir").is_err());
+        assert!(validate_product_name("test:bad").is_err());
     }
 
     #[test]
