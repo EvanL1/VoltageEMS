@@ -124,16 +124,20 @@ pub struct ApiDoc;
     responses((status = 200, description = "服务基本信息")))]
 async fn service_info() -> Json<Value> {
     Json(json!({
-        "name": "alarmsrv",
-        "version": env!("CARGO_PKG_VERSION"),
-        "description": "VoltageEMS alarm service (Rust)",
+        "success": true,
+        "message": "服务运行正常",
+        "data": {
+            "name": "alarmsrv",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "VoltageEMS alarm service (Rust)",
+        }
     }))
 }
 
 #[utoipa::path(get, path = "/health", tag = "Meta",
     responses((status = 200, description = "健康检查")))]
 async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+    Json(json!({ "success": true, "message": "服务运行正常" }))
 }
 
 // ============================================================================

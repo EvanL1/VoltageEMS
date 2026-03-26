@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 # Build multi-architecture installer package for VoltageEMS
-# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--with-swagger]
+# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...]
 #   VERSION: Version string (default: YYYYMMDD)
 #   ARCH: arm64 | amd64 (default: arm64)
 #   TARGET: Rust target triple (default based on ARCH)
 #   --services: Comma-separated list of services to include (optional, default: all)
-#   --with-swagger: Enable Swagger UI in comsrv/modsrv (others always include it)
 #
 # Service names: comsrv, modsrv, hissrv, apigateway, netsrv, alarmsrv, apps, redis, timescaledb
-# Service groups: rust (all Rust services)
+# Service groups: rust (all Rust services), py (alarmsrv, apigateway, hissrv, netsrv)
 #
 # Examples:
 #   ./build-installer.sh                                    # Build all services (ARM64, today's date)
 #   ./build-installer.sh v1.2.0 arm64                       # Build all services (ARM64, v1.2.0)
 #   ./build-installer.sh v1.2.0 arm64 -s rust               # All Rust services
-#   ./build-installer.sh v1.2.0 arm64 -s rust --with-swagger # With Swagger UI
+#   ./build-installer.sh v1.2.0 arm64 -s netsrv,hissrv      # Specific services
 
 set -euo pipefail
 
@@ -40,7 +39,6 @@ VERSION=""
 ARCH=""
 TARGET=""
 SELECTED_SERVICES=""
-ENABLE_SWAGGER=0
 
 # Parse all arguments
 while [[ $# -gt 0 ]]; do
@@ -52,10 +50,6 @@ while [[ $# -gt 0 ]]; do
         -s|--services)
             SELECTED_SERVICES="$2"
             shift 2
-            ;;
-        --with-swagger)
-            ENABLE_SWAGGER=1
-            shift
             ;;
         *)
             if [[ -z "$VERSION" ]]; then
@@ -107,6 +101,10 @@ expand_service_groups() {
             rust)
                 expanded="${expanded}${RUST_SERVICES},"
                 ;;
+            py)
+                # 4 services rewritten from Python
+                expanded="${expanded}alarmsrv,apigateway,hissrv,netsrv,"
+                ;;
             *)
                 expanded="${expanded}${item},"
                 ;;
@@ -117,10 +115,45 @@ expand_service_groups() {
     echo "$expanded" | sed 's/,$//' | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//'
 }
 
+# Save original input before group expansion (used for dev mode detection below)
+ORIGINAL_SERVICES_INPUT="${SELECTED_SERVICES}"
+
 # Expand service groups if shortcuts are used
 if [[ -n "$SELECTED_SERVICES" ]]; then
     SELECTED_SERVICES=$(expand_service_groups "$SELECTED_SERVICES")
 fi
+
+# ── Dev mode detection ────────────────────────────────────────────────────────
+# Triggered when the ORIGINAL input (before expansion) is:
+#   • A single Rust service name  →  voltageems:dev-<name>, restart that 1 container
+#   • "py"                        →  voltageems:dev-py,    restart 4 py-rewritten containers
+# voltageems:latest is NEVER touched in dev mode.
+DEV_SERVICE=""        # image tag suffix  (e.g. "netsrv" or "py")
+DEV_SERVICES_LIST=""  # space-separated container service names to restart
+_RUST_SVC_LIST="comsrv modsrv hissrv apigateway netsrv alarmsrv"
+
+if [[ -n "$ORIGINAL_SERVICES_INPUT" ]]; then
+    _orig=$(echo "$ORIGINAL_SERVICES_INPUT" | xargs)
+    if [[ "$_orig" == "py" ]]; then
+        DEV_SERVICE="py"
+        DEV_SERVICES_LIST="alarmsrv apigateway hissrv netsrv"
+    else
+        _cnt=$(echo "$ORIGINAL_SERVICES_INPUT" | tr ',' '\n' | grep -c .)
+        if [[ $_cnt -eq 1 ]]; then
+            for _s in $_RUST_SVC_LIST; do
+                if [[ "$_orig" == "$_s" ]]; then
+                    DEV_SERVICE="$_s"
+                    DEV_SERVICES_LIST="$_s"
+                    break
+                fi
+            done
+        fi
+        unset _cnt
+    fi
+    unset _orig
+fi
+unset _RUST_SVC_LIST
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Adjust package name based on selected services
 if [[ -n "$SELECTED_SERVICES" ]]; then
@@ -141,7 +174,7 @@ declare -A SERVICE_TO_IMAGE=(
     ["alarmsrv"]="voltageems:latest"
     ["apps"]="voltage-apps:latest"
     ["redis"]="redis:8-alpine"
-    ["timescaledb"]="timescale/timescaledb:latest-pg16"
+    ["timescaledb"]="timescale/timescaledb:latest-pg17"
 )
 
 # Parse selected services
@@ -164,7 +197,7 @@ else
     BUILD_IMAGES["voltageems:latest"]=1
     BUILD_IMAGES["voltage-apps:latest"]=1
     BUILD_IMAGES["redis:8-alpine"]=1
-    BUILD_IMAGES["timescale/timescaledb:latest-pg16"]=1
+    BUILD_IMAGES["timescale/timescaledb:latest-pg17"]=1
 fi
 
 # Detect CPU cores
@@ -185,12 +218,12 @@ echo -e "Architecture: ${GREEN}$ARCH${NC}"
 echo -e "Target:       ${GREEN}$TARGET${NC}"
 echo -e "Platform:     ${GREEN}$DOCKER_PLATFORM${NC}"
 echo -e "CPU Cores:    ${GREEN}$CPU_CORES${NC}"
-if [[ "$ENABLE_SWAGGER" == "1" ]]; then
-    echo -e "Swagger UI:   ${GREEN}ENABLED${NC}"
-else
-    echo -e "Swagger UI:   ${YELLOW}DISABLED for comsrv/modsrv (use --with-swagger to enable)${NC}"
-fi
-if [[ -n "$SELECTED_SERVICES" ]]; then
+echo -e "Swagger UI:   ${GREEN}ENABLED (built-in)${NC}"
+if [[ -n "$DEV_SERVICE" ]]; then
+    echo -e "Mode:         ${YELLOW}DEV — shared test machine, voltageems:latest untouched${NC}"
+    echo -e "Dev tag:      ${YELLOW}voltageems:dev-${DEV_SERVICE}${NC}"
+    echo -e "Containers:   ${YELLOW}${DEV_SERVICES_LIST}${NC}"
+elif [[ -n "$SELECTED_SERVICES" ]]; then
     echo -e "Services:     ${YELLOW}$SELECTED_SERVICES (partial build)${NC}"
     echo -e "Images:       ${YELLOW}${!BUILD_IMAGES[@]}${NC}"
 else
@@ -234,41 +267,99 @@ copy_docker_images() {
     fi
 }
 
+# 持久化镜像缓存目录（跨构建复用，按架构隔离）
+IMAGE_CACHE_DIR="$ROOT_DIR/build/image-cache/$ARCH"
+mkdir -p "$IMAGE_CACHE_DIR"
+
+# 获取远端镜像针对当前架构的 digest（不下载镜像本身）
+# 返回值写入 stdout；失败时输出空字符串
+_get_remote_digest() {
+    local full_image="$1"
+    skopeo inspect --override-os linux --override-arch "$ARCH" \
+        --format '{{.Digest}}' \
+        "docker://$full_image" 2>/dev/null || true
+}
+
 pull_and_save_image() {
     local image=$1
     local output_name=$2
     local output_path="$BUILD_DIR/docker/$output_name"
 
-    # 优先尝试使用 skopeo (不需要本地 Docker 参与，完美解决架构和 manifest 问题)
-    if command -v skopeo &> /dev/null; then
-        echo -e "${BLUE}Using skopeo to directly fetch $image for $ARCH...${NC}"
-        local base_tar="${output_path%.gz}"
-        
-        # 补全官方镜像的完整路径 (skopeo 需要)
-        local full_image="$image"
-        [[ "$image" != *"/"* ]] && full_image="docker.io/library/$image"
+    # 补全官方镜像的完整路径（skopeo 需要 docker.io/library/ 前缀）
+    local full_image="$image"
+    [[ "$image" != *"/"* ]] && full_image="docker.io/library/$image"
 
-        if skopeo copy --override-os linux --override-arch "$ARCH" \
-            "docker://$full_image" \
-            "docker-archive:$base_tar:$image" > /dev/null; then
-            gzip -f "$base_tar"
+    # ── skopeo 路径（含缓存）──────────────────────────────────────────────────
+    if command -v skopeo &> /dev/null; then
+        local cache_tar="$IMAGE_CACHE_DIR/${output_name}"
+        local cache_digest_file="$IMAGE_CACHE_DIR/${output_name%.gz}.digest"
+
+        # 获取远端 digest（仅元数据请求，速度很快）
+        echo -e "${BLUE}Checking remote digest for $image ($ARCH)...${NC}"
+        local remote_digest
+        remote_digest=$(_get_remote_digest "$full_image")
+
+        local cached_digest=""
+        [[ -f "$cache_digest_file" ]] && cached_digest=$(cat "$cache_digest_file")
+
+        if [[ -n "$remote_digest" && "$remote_digest" == "$cached_digest" && -f "$cache_tar" ]]; then
+            # 缓存命中：直接复用，跳过下载
+            echo -e "${GREEN}✓ Cache hit for $image ($remote_digest)${NC}"
+            cp "$cache_tar" "$output_path"
             local size=$(ls -lh "$output_path" | awk '{print $5}')
-            echo -e "${GREEN}✓ Saved $output_name using skopeo ($size)${NC}"
+            echo -e "${GREEN}✓ Restored $output_name from cache ($size)${NC}"
+            return 0
+        fi
+
+        if [[ -n "$remote_digest" && "$remote_digest" != "$cached_digest" && -f "$cache_tar" ]]; then
+            echo -e "${YELLOW}  Cache outdated (local: ${cached_digest:0:19}… remote: ${remote_digest:0:19}…), re-downloading...${NC}"
+        elif [[ ! -f "$cache_tar" ]]; then
+            echo -e "${BLUE}  No cache found, downloading $image...${NC}"
+        fi
+
+        # 下载到缓存（最多重试 3 次）
+        local base_tar="${cache_tar%.gz}"
+        local skopeo_ok=0
+        for attempt in 1 2 3; do
+            [[ $attempt -gt 1 ]] && echo -e "${YELLOW}  Retrying skopeo (attempt $attempt/3)...${NC}" && sleep 5
+            rm -f "$base_tar"
+            if skopeo copy --override-os linux --override-arch "$ARCH" \
+                "docker://$full_image" \
+                "docker-archive:$base_tar:$image" > /dev/null; then
+                skopeo_ok=1
+                break
+            fi
+        done
+
+        if [[ $skopeo_ok -eq 1 ]]; then
+            gzip -f "$base_tar"
+            # 写入 digest 到缓存（仅下载成功后才更新）
+            [[ -n "$remote_digest" ]] && echo "$remote_digest" > "$cache_digest_file"
+            cp "$cache_tar" "$output_path"
+            local size=$(ls -lh "$output_path" | awk '{print $5}')
+            echo -e "${GREEN}✓ Saved $output_name via skopeo and cached ($size)${NC}"
             return 0
         else
-            echo -e "${YELLOW}Warning: skopeo failed, falling back to docker...${NC}"
+            echo -e "${YELLOW}Warning: skopeo failed after 3 attempts, falling back to docker...${NC}"
         fi
     fi
 
-    # 兜底逻辑：传统的 docker pull + save
-    if docker image inspect "$image" &>/dev/null; then
-        echo -e "${GREEN}Using existing local image: $image${NC}"
+    # ── docker 兜底路径（无缓存）────────────────────────────────────────────
+    # Docker 24+ containerd 镜像存储对多架构 manifest list 执行 docker save 有 bug，
+    # 使用 buildx 将镜像重新打包为单架构副本后再 save。
+    echo -e "${BLUE}Pulling $image for $ARCH via docker...${NC}"
+    docker pull --platform "$DOCKER_PLATFORM" "$image"
+
+    local temp_tag="voltage-save-temp-$(date +%s%N)"
+    if echo "FROM --platform=$DOCKER_PLATFORM $image" \
+        | docker buildx build --platform "$DOCKER_PLATFORM" --load -t "$temp_tag" - 2>/dev/null; then
+        docker save "$temp_tag" | gzip > "$output_path"
+        docker rmi "$temp_tag" > /dev/null 2>&1
     else
-        echo -e "${BLUE}Pulling $image for $ARCH...${NC}"
-        docker pull --platform $DOCKER_PLATFORM "$image"
+        echo -e "${YELLOW}Warning: buildx re-tag failed, trying direct docker save...${NC}"
+        docker save "$image" | gzip > "$output_path"
     fi
 
-    docker save "$image" | gzip > "$output_path"
     local size=$(ls -lh "$output_path" | awk '{print $5}')
     echo -e "${GREEN}✓ Saved $output_name ($size)${NC}"
 }
@@ -319,16 +410,9 @@ echo -e "${BLUE}[2/5] Building Docker images for $ARCH...${NC}"
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     echo -e "${BLUE}Building all Rust services...${NC}"
 
-    # Build all 6 Rust service binaries in one pass
-    SWAGGER_FEATURES=""
-    if [[ "$ENABLE_SWAGGER" == "1" ]]; then
-        SWAGGER_FEATURES="--features modsrv/swagger-ui,comsrv/swagger-ui"
-        echo -e "${GREEN}Building with Swagger UI ENABLED${NC}"
-    fi
-
+    # Build all 6 Rust service binaries in one pass (Swagger UI always included)
     CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
-        -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv \
-        $SWAGGER_FEATURES
+        -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv
 
     for service in comsrv modsrv alarmsrv apigateway hissrv netsrv; do
         if [[ ! -f "$ROOT_DIR/target/$TARGET/release/$service" ]]; then
@@ -339,18 +423,36 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     done
 
     # Build voltageems Docker image using pre-compiled binaries
-    echo -e "${BLUE}Building VoltageEMS Docker image (all services)...${NC}"
-    if docker build --platform $DOCKER_PLATFORM \
-        --build-arg TARGET_TRIPLE=$TARGET \
-        -f "$ROOT_DIR/Dockerfile" \
-        -t voltageems:latest \
-        "$ROOT_DIR"; then
-        docker save voltageems:latest | gzip > "$BUILD_DIR/docker/voltageems.tar.gz"
-        sync
-        echo -e "${GREEN}✓ Saved voltageems.tar.gz${NC}"
+    if [[ -n "$DEV_SERVICE" ]]; then
+        # Dev mode: tag as voltageems:dev-<service>, do NOT overwrite voltageems:latest
+        _DEV_TAG="voltageems:dev-${DEV_SERVICE}"
+        echo -e "${BLUE}Building VoltageEMS Docker image (dev tag: ${_DEV_TAG})...${NC}"
+        if docker build --platform $DOCKER_PLATFORM \
+            --build-arg TARGET_TRIPLE=$TARGET \
+            -f "$ROOT_DIR/Dockerfile" \
+            -t "$_DEV_TAG" \
+            "$ROOT_DIR"; then
+            docker save "$_DEV_TAG" | gzip > "$BUILD_DIR/docker/voltageems.tar.gz"
+            sync
+            echo -e "${GREEN}✓ Saved voltageems.tar.gz (tag: ${_DEV_TAG})${NC}"
+        else
+            echo -e "${RED}Error: Docker build failed${NC}"
+            exit 1
+        fi
     else
-        echo -e "${RED}Error: Docker build failed${NC}"
-        exit 1
+        echo -e "${BLUE}Building VoltageEMS Docker image (all services)...${NC}"
+        if docker build --platform $DOCKER_PLATFORM \
+            --build-arg TARGET_TRIPLE=$TARGET \
+            -f "$ROOT_DIR/Dockerfile" \
+            -t voltageems:latest \
+            "$ROOT_DIR"; then
+            docker save voltageems:latest | gzip > "$BUILD_DIR/docker/voltageems.tar.gz"
+            sync
+            echo -e "${GREEN}✓ Saved voltageems.tar.gz${NC}"
+        else
+            echo -e "${RED}Error: Docker build failed${NC}"
+            exit 1
+        fi
     fi
 else
     echo -e "${YELLOW}⊘ Skipping Rust services (not selected)${NC}"
@@ -389,8 +491,8 @@ else
     echo -e "${YELLOW}⊘ Skipping redis:8-alpine (not selected)${NC}"
 fi
 
-if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg16]:-}" ]]; then
-    pull_and_save_image "timescale/timescaledb:latest-pg16" "voltage-timescaledb.tar.gz"
+if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg17]:-}" ]]; then
+    pull_and_save_image "timescale/timescaledb:latest-pg17" "voltage-timescaledb.tar.gz"
 else
     echo -e "${YELLOW}⊘ Skipping timescaledb (not selected)${NC}"
 fi
@@ -413,7 +515,7 @@ fi
 if [[ -n "${BUILD_IMAGES[redis:8-alpine]:-}" ]]; then
     EXPECTED_IMAGES["voltage-redis"]=1
 fi
-if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg16]:-}" ]]; then
+if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg17]:-}" ]]; then
     EXPECTED_IMAGES["voltage-timescaledb"]=1
 fi
 
@@ -474,46 +576,123 @@ else
     exit 1
 fi
 
-# Step 5: Create self-extracting installer
+# Step 5: Create self-extracting installer / dev deploy package
 echo ""
-echo -e "${BLUE}[5/5] Creating self-extracting installer...${NC}"
+echo -e "${BLUE}[5/5] Creating self-extracting package...${NC}"
 
-# Use Linux-native /tmp to avoid Docker Desktop's asynchronous NTFS metadata
-# updates on /mnt/d/ that cause "file changed as we read it" in tar.
 TEMP_PKG_DIR="/tmp/MonarchEdge-temp-$$"
 mkdir -p "$TEMP_PKG_DIR"
 
-cp "$BUILD_DIR/install.sh" "$TEMP_PKG_DIR/"
-chmod +x "$TEMP_PKG_DIR/install.sh"
-
-[[ -d "$BUILD_DIR/config.template" ]] && copy_config_files "$BUILD_DIR/config.template" "$TEMP_PKG_DIR/config.template"
 [[ -d "$BUILD_DIR/docker" ]] && copy_docker_images "$BUILD_DIR/docker" "$TEMP_PKG_DIR/docker"
 
-mkdir -p "$TEMP_PKG_DIR/tools"
-if [[ -f "$BUILD_DIR/tools/monarch" ]]; then
-    cp "$BUILD_DIR/tools/monarch" "$TEMP_PKG_DIR/tools/"
-    echo -e "${GREEN}✓ Included monarch CLI${NC}"
-elif [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
-    # Monarch is required when Rust services are included
-    echo -e "${RED}Error: monarch binary not found but Rust services are selected${NC}"
-    rm -rf "$TEMP_PKG_DIR"
+if [[ -n "$DEV_SERVICE" ]]; then
+    # ── Dev mode: lightweight deploy script ──────────────────────────────────
+    # Loads voltageems:dev-<service> and restarts ONLY that one container.
+    # voltageems:latest and all other containers are untouched.
+    _DEV_TAG="voltageems:dev-${DEV_SERVICE}"
+    _COMPOSE_FILE="/opt/MonarchEdge/docker-compose.yml"
+
+    cat > "$TEMP_PKG_DIR/deploy.sh" << DEPLOY_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+DEV_SERVICE="${DEV_SERVICE}"
+DEV_TAG="${_DEV_TAG}"
+DEV_SERVICES="${DEV_SERVICES_LIST}"
+COMPOSE_FILE="${_COMPOSE_FILE}"
+
+echo -e "\${BLUE}================================================\${NC}"
+echo -e "\${BLUE}  VoltageEMS Dev Deploy: \${DEV_TAG}\${NC}"
+echo -e "\${BLUE}================================================\${NC}"
+echo -e "Image:      \${YELLOW}\${DEV_TAG}\${NC}"
+echo -e "Containers: \${YELLOW}\${DEV_SERVICES}\${NC}"
+echo ""
+
+echo -e "\${BLUE}Loading image...\${NC}"
+docker load < docker/voltageems.tar.gz
+echo -e "\${GREEN}✓ Loaded \${DEV_TAG}\${NC}"
+
+if [[ ! -f "\$COMPOSE_FILE" ]]; then
+    echo -e "\${RED}Error: docker-compose.yml not found at \$COMPOSE_FILE\${NC}"
+    echo -e "\${YELLOW}Is VoltageEMS fully installed on this machine?\${NC}"
     exit 1
-else
-    echo -e "${YELLOW}⊘ Skipping monarch CLI (no Rust services selected)${NC}"
 fi
 
-[[ -f "$BUILD_DIR/docker-compose.yml" ]] && cp "$BUILD_DIR/docker-compose.yml" "$TEMP_PKG_DIR/"
-
-# Create installer description
-if [[ -n "$SELECTED_SERVICES" ]]; then
-    INSTALLER_DESC="VoltageEMS ${ARCH^^} Partial Update ($SELECTED_SERVICES) $VERSION"
+# Detect compose command: prefer plugin form, fall back to standalone
+if docker compose version &>/dev/null 2>&1; then
+    _COMPOSE="docker compose"
+elif command -v docker-compose &>/dev/null; then
+    _COMPOSE="docker-compose"
 else
-    INSTALLER_DESC="VoltageEMS ${ARCH^^} Full Installer $VERSION"
+    echo -e "\${RED}Error: neither 'docker compose' nor 'docker-compose' found\${NC}"
+    exit 1
 fi
 
-makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \
-    "$INSTALLER_DESC" \
-    bash ./install.sh
+# Generate a temporary override file so the exact dev image is used regardless
+# of whether the installed docker-compose.yml supports the IMAGE_TAG variable.
+_OVERRIDE=$(mktemp /tmp/dev-override-XXXXXX.yml)
+cat > "\$_OVERRIDE" << OVERRIDE_EOF
+services:
+OVERRIDE_EOF
+for svc in \$DEV_SERVICES; do
+    printf "  %s:\n    image: %s\n" "\$svc" "\$DEV_TAG" >> "\$_OVERRIDE"
+done
+
+echo -e "\${BLUE}Restarting containers: \${DEV_SERVICES}...\${NC}"
+# shellcheck disable=SC2086
+\$_COMPOSE -f "\$COMPOSE_FILE" -f "\$_OVERRIDE" up --no-deps -d \$DEV_SERVICES
+rm -f "\$_OVERRIDE"
+echo -e "\${GREEN}✓ Done — containers are now running \${DEV_TAG}\${NC}"
+echo ""
+for svc in \$DEV_SERVICES; do
+    echo -e "  Logs: \${YELLOW}docker logs -f voltageems-\${svc}\${NC}"
+done
+echo -e "  Stop: \${YELLOW}\$_COMPOSE -f \$COMPOSE_FILE stop \$DEV_SERVICES\${NC}"
+DEPLOY_EOF
+    chmod +x "$TEMP_PKG_DIR/deploy.sh"
+
+    INSTALLER_DESC="VoltageEMS DEV ${ARCH^^} — ${DEV_SERVICE} ${VERSION}"
+    makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \
+        "$INSTALLER_DESC" \
+        bash ./deploy.sh
+else
+    # ── Normal mode: full installer ───────────────────────────────────────────
+    cp "$BUILD_DIR/install.sh" "$TEMP_PKG_DIR/"
+    chmod +x "$TEMP_PKG_DIR/install.sh"
+
+    [[ -d "$BUILD_DIR/config.template" ]] && copy_config_files "$BUILD_DIR/config.template" "$TEMP_PKG_DIR/config.template"
+
+    mkdir -p "$TEMP_PKG_DIR/tools"
+    if [[ -f "$BUILD_DIR/tools/monarch" ]]; then
+        cp "$BUILD_DIR/tools/monarch" "$TEMP_PKG_DIR/tools/"
+        echo -e "${GREEN}✓ Included monarch CLI${NC}"
+    elif [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
+        echo -e "${RED}Error: monarch binary not found but Rust services are selected${NC}"
+        rm -rf "$TEMP_PKG_DIR"
+        exit 1
+    else
+        echo -e "${YELLOW}⊘ Skipping monarch CLI (no Rust services selected)${NC}"
+    fi
+
+    [[ -f "$BUILD_DIR/docker-compose.yml" ]] && cp "$BUILD_DIR/docker-compose.yml" "$TEMP_PKG_DIR/"
+
+    # Include dpkg packages if present
+    if [[ -d "$ROOT_DIR/dpkg" ]]; then
+        cp -r "$ROOT_DIR/dpkg" "$TEMP_PKG_DIR/dpkg"
+        chmod +x "$TEMP_PKG_DIR/dpkg/"*.sh 2>/dev/null || true
+        echo -e "${GREEN}✓ Included dpkg packages ($(ls "$ROOT_DIR/dpkg/"*.deb 2>/dev/null | wc -l) .deb file(s))${NC}"
+    fi
+
+    if [[ -n "$SELECTED_SERVICES" ]]; then
+        INSTALLER_DESC="VoltageEMS ${ARCH^^} Partial Update ($SELECTED_SERVICES) $VERSION"
+    else
+        INSTALLER_DESC="VoltageEMS ${ARCH^^} Full Installer $VERSION"
+    fi
+
+    makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \
+        "$INSTALLER_DESC" \
+        bash ./install.sh
+fi
 
 rm -rf "$TEMP_PKG_DIR"
 
@@ -525,7 +704,12 @@ echo -e "${GREEN}       Build Complete!                          ${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 echo -e "Package: ${GREEN}$OUTPUT_DIR/${PACKAGE_NAME}.run${NC} (${YELLOW}$RUN_SIZE${NC})"
-if [[ -n "$SELECTED_SERVICES" ]]; then
+if [[ -n "$DEV_SERVICE" ]]; then
+    echo -e "Type:       ${YELLOW}Dev Deploy${NC}"
+    echo -e "Image:      ${YELLOW}voltageems:dev-${DEV_SERVICE}${NC}"
+    echo -e "Containers: ${YELLOW}${DEV_SERVICES_LIST}${NC}"
+    echo -e "            ${YELLOW}voltageems:latest NOT affected${NC}"
+elif [[ -n "$SELECTED_SERVICES" ]]; then
     echo -e "Type:    ${YELLOW}Partial Update${NC}"
     echo -e "Services: ${YELLOW}$SELECTED_SERVICES${NC}"
     echo -e "Images:   ${YELLOW}${!BUILD_IMAGES[@]}${NC}"
@@ -533,9 +717,9 @@ else
     echo -e "Type:    ${GREEN}Full Installation${NC}"
 fi
 echo ""
-echo "Installation:"
-echo "  scp ${PACKAGE_NAME}.run user@device:/tmp/"
-echo "  ssh user@device 'chmod +x /tmp/${PACKAGE_NAME}.run && sudo /tmp/${PACKAGE_NAME}.run'"
+echo "Deploy:"
+echo "  scp $OUTPUT_DIR/${PACKAGE_NAME}.run user@testmachine:/tmp/"
+echo "  ssh user@testmachine 'chmod +x /tmp/${PACKAGE_NAME}.run && sudo /tmp/${PACKAGE_NAME}.run'"
 echo ""
 
 # Cleanup

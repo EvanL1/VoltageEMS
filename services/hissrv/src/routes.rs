@@ -16,7 +16,7 @@ use crate::backend_null::NullBackend;
 use crate::db_config;
 use crate::models::{
     DataStats, HistoryRecord, LatestParams, QueryRangeParams, QueryResult, ServiceConfig,
-    StorageConfigRequest, StorageSettings,
+    StorageConfigRequest, StorageSettings, StorageTestRequest,
 };
 use crate::state::AppState;
 use crate::storage::StorageBackend;
@@ -25,8 +25,22 @@ use crate::storage::StorageBackend;
 // Internal: lightweight connectivity probe (no schema init, no data write)
 // ============================================================================
 
-/// Try to open a connection and run `SELECT 1`.  Returns `Ok(())` on success.
-async fn probe_connection(url: &str) -> anyhow::Result<()> {
+/// Probe connectivity for the given backend type without writing any data.
+///
+/// Add a new branch here when a new `StorageBackend` is implemented.
+async fn probe_backend(req: &StorageTestRequest) -> anyhow::Result<()> {
+    match req.backend.as_str() {
+        "postgres" | "timescaledb" => probe_pg(&req.pg_probe_dsn()).await,
+        "influxdb" => anyhow::bail!("InfluxDB 后端尚未实现，暂不支持连通性测试"),
+        other => anyhow::bail!(
+            "未知的后端类型 '{}'，可选：postgres | timescaledb | influxdb",
+            other
+        ),
+    }
+}
+
+/// Open a PostgreSQL connection pool, run `SELECT 1`, then close it.
+async fn probe_pg(url: &str) -> anyhow::Result<()> {
     use sqlx::postgres::PgPoolOptions;
     use sqlx::Executor;
 
@@ -65,7 +79,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/hisApi/config", get(get_config).put(update_config))
         // Storage backend config & control
         .route("/hisApi/storage", get(get_storage).put(update_storage))
-        .route("/hisApi/storage/test", get(test_storage))
+        .route("/hisApi/storage/test", axum::routing::post(test_storage))
         .route("/hisApi/storage/reconnect", axum::routing::post(reconnect_storage))
         .with_state(state);
 
@@ -108,6 +122,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         DataStats,
         ServiceConfig,
         StorageConfigRequest,
+        StorageTestRequest,
     )),
     tags(
         (name = "Data",    description = "历史数据查询"),
@@ -232,11 +247,14 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
     let storage_enabled = state.storage_settings.read().await.enabled;
 
     Json(json!({
-        "status": if storage_ok { "healthy" } else { "degraded" },
-        "backend": backend.name(),
-        "storage_enabled": storage_enabled,
-        "storage_healthy": storage_ok,
-        "buffer_size": buf_len,
+        "success": storage_ok,
+        "message": if storage_ok { "存储后端运行正常" } else { "存储后端异常或未连接" },
+        "data": {
+            "backend":          backend.name(),
+            "storage_enabled":  storage_enabled,
+            "storage_healthy":  storage_ok,
+            "buffer_size":      buf_len,
+        }
     }))
 }
 
@@ -278,7 +296,7 @@ async fn query_range(
         Ok((data, total)) => {
             let has_more = (page * page_size) < total;
             Ok(Json(json!({
-                "status": "success",
+                "success": true,
                 "message": format!("成功查询到 {} 条数据", data.len()),
                 "data": data,
                 "total": total,
@@ -291,7 +309,7 @@ async fn query_range(
             error!("query_range error: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"status": "error", "message": e.to_string()})),
+                Json(json!({"success": false, "message": e.to_string()})),
             ))
         },
     }
@@ -314,18 +332,19 @@ async fn query_latest(
         .await
     {
         Ok(Some(record)) => Ok(Json(json!({
-            "status": "success",
+            "success": true,
+            "message": "查询成功",
             "data": record,
         }))),
         Ok(None) => Err((
             StatusCode::NOT_FOUND,
-            Json(json!({"status": "not_found", "message": "No data found"})),
+            Json(json!({"success": false, "message": "暂无数据"})),
         )),
         Err(e) => {
             error!("query_latest error: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"status": "error", "message": e.to_string()})),
+                Json(json!({"success": false, "message": e.to_string()})),
             ))
         },
     }
@@ -342,17 +361,21 @@ async fn data_range(
     let backend = state.storage.read().await.clone();
     match backend.get_stats().await {
         Ok(stats) => Ok(Json(json!({
-            "earliest_timestamp": stats.earliest_timestamp,
-            "latest_timestamp":   stats.latest_timestamp,
-            "total_points":       stats.total_points,
-            "channels":           stats.channels,
-            "data_types":         stats.data_types,
+            "success": true,
+            "message": "获取成功",
+            "data": {
+                "earliest_timestamp": stats.earliest_timestamp,
+                "latest_timestamp":   stats.latest_timestamp,
+                "total_points":       stats.total_points,
+                "channels":           stats.channels,
+                "data_types":         stats.data_types,
+            }
         }))),
         Err(e) => {
             error!("data_range error: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"status": "error", "message": e.to_string()})),
+                Json(json!({"success": false, "message": e.to_string()})),
             ))
         },
     }
@@ -375,14 +398,15 @@ async fn list_channels(
         Ok(channels) => {
             let count = channels.len();
             Ok(Json(json!({
-                "status": "success",
-                "channels": channels,
+                "success": true,
+                "message": format!("查询到 {} 个通道", count),
+                "data": channels,
                 "count": count,
             })))
         },
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"status": "error", "message": e.to_string()})),
+            Json(json!({"success": false, "message": e.to_string()})),
         )),
     }
 }
@@ -400,10 +424,14 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
     });
 
     Json(json!({
-        "total_points": stats.total_points,
-        "channel_count": stats.channels.len(),
-        "backend": backend.name(),
-        "buffer_size": state.buffer.lock().await.len(),
+        "success": true,
+        "message": "获取成功",
+        "data": {
+            "total_points":  stats.total_points,
+            "channel_count": stats.channels.len(),
+            "backend":       backend.name(),
+            "buffer_size":   state.buffer.lock().await.len(),
+        }
     }))
 }
 
@@ -415,7 +443,7 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
     responses((status = 200, description = "当前服务配置", body = ServiceConfig)))]
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cfg = state.config.read().await.clone();
-    Json(json!({ "status": "success", "data": cfg }))
+    Json(json!({ "success": true, "message": "获取成功", "data": cfg }))
 }
 
 #[utoipa::path(put, path = "/hisApi/config", tag = "Config",
@@ -432,15 +460,13 @@ async fn update_config(
         error!("Failed to save config: {}", e);
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"status": "error", "message": e.to_string()})),
+            Json(json!({"success": false, "message": e.to_string()})),
         ));
     }
 
     *state.config.write().await = new_cfg;
 
-    Ok(Json(
-        json!({ "status": "success", "message": "配置已更新" }),
-    ))
+    Ok(Json(json!({ "success": true, "message": "配置已更新" })))
 }
 
 // ============================================================================
@@ -459,7 +485,8 @@ async fn get_storage(State(state): State<Arc<AppState>>) -> Json<Value> {
     let (host, port, database, username) = parse_dsn_fields(&ss.url);
 
     Json(json!({
-        "status": "success",
+        "success": true,
+        "message": "获取成功",
         "data": {
             "enabled":        ss.enabled,
             "backend":        ss.backend,
@@ -493,7 +520,7 @@ async fn update_storage(
     if req.host.is_empty() || req.database.is_empty() || req.username.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"status": "error", "message": "host、database、username 为必填项"})),
+            Json(json!({"success": false, "message": "host、database、username 为必填项"})),
         ));
     }
 
@@ -510,7 +537,7 @@ async fn update_storage(
         error!("Failed to persist storage config: {}", e);
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"status": "error", "message": e.to_string()})),
+            Json(json!({"success": false, "message": e.to_string()})),
         ));
     }
 
@@ -523,60 +550,35 @@ async fn update_storage(
     *state.storage_settings.write().await = new_ss;
 
     Ok(Json(json!({
-        "status": "success",
+        "success": true,
         "message": "参数已保存，如需连接请调用 POST /hisApi/storage/reconnect"
     })))
 }
 
-/// GET /hisApi/storage/test – 用已保存的参数测试数据库连通性
+/// POST /hisApi/storage/test – 用前端传入的参数测试数据库连通性
 ///
-/// 无需请求体，直接使用 `PUT /hisApi/storage` 保存的 host/port/username/password。
-/// 探测时连接到 PostgreSQL 内置的 `postgres` 维护库，该库在任何 PG 服务器上
-/// 都存在，因此**业务数据库不需要提前创建**即可测试通过。
+/// 探测时连接 PostgreSQL 内置的 `postgres` 维护库（该库在任何 PG/TimescaleDB 服务器上
+/// 都存在），因此**业务数据库不需要提前存在**即可通过测试。
 /// 不修改任何运行状态，不写入任何数据。
-#[utoipa::path(get, path = "/hisApi/storage/test", tag = "Storage",
+#[utoipa::path(post, path = "/hisApi/storage/test", tag = "Storage",
+    request_body = StorageTestRequest,
     responses(
         (status = 200, description = "连接测试成功"),
-        (status = 400, description = "连接参数尚未配置，请先调用 PUT /hisApi/storage"),
         (status = 500, description = "连接失败，返回具体错误信息"),
     ))]
 async fn test_storage(
-    State(state): State<Arc<AppState>>,
+    Json(req): Json<StorageTestRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let ss = state.storage_settings.read().await.clone();
+    let addr = req.addr();
 
-    if ss.url.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(
-                json!({"status": "error", "message": "连接参数尚未配置，请先调用 PUT /hisApi/storage"}),
-            ),
-        ));
-    }
-
-    // Replace the database segment with "postgres" (the always-present
-    // maintenance DB) so the test succeeds even before the target DB is created.
-    let probe_dsn = replace_db_in_dsn(&ss.url, "postgres");
-
-    // Parse host:port for a friendly success message.
-    let addr = url::Url::parse(&ss.url)
-        .map(|u| {
-            format!(
-                "{}:{}",
-                u.host_str().unwrap_or("?"),
-                u.port().unwrap_or(5432)
-            )
-        })
-        .unwrap_or_else(|_| "?".to_string());
-
-    match probe_connection(&probe_dsn).await {
+    match probe_backend(&req).await {
         Ok(()) => Ok(Json(json!({
-            "status": "success",
-            "message": format!("成功连接到 {} (用已保存的账号验证通过)", addr)
+            "success": true,
+            "message": format!("成功连接到 {}", addr)
         }))),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"status": "error", "message": e.to_string()})),
+            Json(json!({"success": false, "message": e.to_string()})),
         )),
     }
 }
@@ -603,7 +605,7 @@ async fn reconnect_storage(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(
-                json!({"status": "error", "message": "存储未启用，请先通过 PUT /hisApi/storage 将 enabled 设为 true"}),
+                json!({"success": false, "message": "存储未启用，请先通过 PUT /hisApi/storage 将 enabled 设为 true"}),
             ),
         ));
     }
@@ -612,7 +614,7 @@ async fn reconnect_storage(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(
-                json!({"status": "error", "message": "连接参数未配置，请先调用 PUT /hisApi/storage"}),
+                json!({"success": false, "message": "连接参数未配置，请先调用 PUT /hisApi/storage"}),
             ),
         ));
     }
@@ -622,7 +624,7 @@ async fn reconnect_storage(
             info!("Storage backend '{}' reconnected", backend_type);
             *state.storage.write().await = b;
             Ok(Json(json!({
-                "status": "success",
+                "success": true,
                 "message": format!("已成功连接至 '{}' 后端，开始采集历史数据", backend_type)
             })))
         },
@@ -630,7 +632,7 @@ async fn reconnect_storage(
             error!("Storage reconnect failed: {}", e);
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"status": "error", "message": e.to_string()})),
+                Json(json!({"success": false, "message": e.to_string()})),
             ))
         },
     }

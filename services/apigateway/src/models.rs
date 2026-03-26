@@ -50,6 +50,7 @@ pub struct RoleInfo {
 // ── Auth DTOs ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({"username": "operator1", "password": "e10adc3949ba59abbe56e057f20f883e", "role_id": 2}))]
 pub struct UserCreate {
     /// 用户名
     pub username: String,
@@ -60,6 +61,7 @@ pub struct UserCreate {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({"username": "admin", "password": "e10adc3949ba59abbe56e057f20f883e"}))]
 pub struct UserLogin {
     pub username: String,
     /// 前端传入的 MD5 密码
@@ -75,12 +77,14 @@ pub struct UserUpdate {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({"old_password": "e10adc3949ba59abbe56e057f20f883e", "new_password": "新密码的MD5哈希值"}))]
 pub struct PasswordChange {
     pub old_password: String,
     pub new_password: String,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({"refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}))]
 pub struct RefreshTokenRequest {
     pub refresh_token: String,
 }
@@ -178,6 +182,15 @@ pub struct NetworkConfig {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "lan": 1,
+    "dhcp": false,
+    "ip": "192.168.1.100",
+    "subnet_mask": "255.255.255.0",
+    "gateway": "192.168.1.1",
+    "dns1": "8.8.8.8",
+    "dns2": "8.8.4.4"
+}))]
 pub struct NetworkUpdateRequest {
     /// LAN 口编号（1 或 2）
     pub lan: u8,

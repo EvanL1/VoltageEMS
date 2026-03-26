@@ -55,7 +55,11 @@ pub async fn list_points(
         },
         Err(e) => {
             error!("List points error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -84,7 +88,11 @@ pub async fn get_point(
             .into_response(),
         Err(e) => {
             error!("Get point error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -112,7 +120,11 @@ pub async fn update_point(
         },
         Err(e) => {
             error!("DB error: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response();
         },
         _ => {},
     }
@@ -135,11 +147,19 @@ pub async fn update_point(
                 "data": updated,
             }))
             .into_response(),
-            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            _ => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response(),
         },
         Err(e) => {
             error!("Update point error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -162,7 +182,11 @@ pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoRespon
         .into_response(),
         Err(e) => {
             error!("Reset points error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }

@@ -277,7 +277,11 @@ pub async fn update_network_config(
     };
 
     let Some(iface) = lan_iface(req.lan) else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "message": format!("无效的 LAN 编号: {}", req.lan)})),
+        )
+            .into_response();
     };
 
     let ip = req.ip.as_deref().unwrap_or("");
@@ -336,7 +340,11 @@ pub async fn update_network_config(
         .into_response(),
         Err(e) => {
             error!("Write network config error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": format!("写入网络配置失败: {}", e)})),
+            )
+                .into_response()
         },
     }
 }
@@ -402,7 +410,11 @@ pub async fn apply_network_config() -> impl IntoResponse {
         },
         Err(e) => {
             error!("Docker command error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": format!("执行 docker 命令失败: {}", e)})),
+            )
+                .into_response()
         },
     }
 }

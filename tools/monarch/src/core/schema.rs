@@ -284,6 +284,19 @@ async fn migrate_v3(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 async fn migrate_v4(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
     info!("Migration v4: adding trigger_config column to rules table");
 
+    // If the rules table doesn't exist yet, skip — it will be created fresh
+    // with trigger_config included when monarch init runs the full DDL.
+    let table_exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='rules'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
+    if !table_exists {
+        info!("Migration v4: rules table not yet created, skipping ALTER TABLE");
+        return Ok(());
+    }
+
     // Check if column already exists (idempotent)
     let has_column: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM pragma_table_info('rules') WHERE name = 'trigger_config'",

@@ -271,8 +271,10 @@ fn extract_single_rule_variable(value: Option<&Value>, field_name: &str) -> Resu
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    // Accept both "point_id" and "point"
     let point = var
         .get("point_id")
+        .or_else(|| var.get("point"))
         .and_then(|v| v.as_u64())
         .and_then(|n| u32::try_from(n).ok());
 
@@ -318,8 +320,10 @@ fn extract_rule_variables(config: &Value) -> Result<Vec<RuleVariable>> {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        // Accept both "point_id" (parser tests) and "point" (frontend/executor tests)
         let point = var
             .get("point_id")
+            .or_else(|| var.get("point"))
             .and_then(|v| v.as_u64())
             .and_then(|n| u32::try_from(n).ok());
 

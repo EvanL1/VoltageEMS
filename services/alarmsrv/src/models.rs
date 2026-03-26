@@ -117,6 +117,18 @@ pub struct AlertEvent {
 // ============================================================================
 
 #[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "service_type": "comsrv",
+    "channel_id": 1001,
+    "data_type": "M",
+    "point_id": 1,
+    "rule_name": "过压告警",
+    "warning_level": 2,
+    "operator": ">",
+    "value": 260.0,
+    "enabled": true,
+    "description": "电压超过 260V 触发告警"
+}))]
 pub struct CreateRuleRequest {
     pub service_type: String,
     pub channel_id: i64,
