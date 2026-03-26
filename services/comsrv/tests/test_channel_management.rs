@@ -115,6 +115,7 @@ async fn create_test_app() -> Result<axum::Router> {
         redis_client,
         pool,
         command_tx_cache,
+        None,
     );
     Ok(router)
 }

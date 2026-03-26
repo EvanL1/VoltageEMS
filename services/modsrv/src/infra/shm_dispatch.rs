@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tracing::{info, warn};
+use tracing::warn;
 use voltage_routing::RouteContext;
 
 /// Outcome of an action dispatch operation
@@ -37,16 +37,6 @@ pub enum DispatchOutcome {
 pub trait ActionDispatch: Send + Sync {
     /// Dispatch an action value to the target channel via the fastest available path
     async fn dispatch(&self, ctx: &RouteContext, value: f64) -> DispatchOutcome;
-
-    /// Rebuild internal writer state after routing changes
-    ///
-    /// Accepts routing_cache so the dispatch layer doesn't need to hold it,
-    /// enabling construction before the cache is available.
-    /// Returns Err if the writer could not be rebuilt (caller decides recovery).
-    fn rebuild_writer(
-        &self,
-        channel_points: &voltage_rtdb_shm::ChannelPointCounts,
-    ) -> anyhow::Result<()>;
 }
 
 /// SHM + UDS dispatch implementation (production path)
@@ -59,6 +49,8 @@ pub struct ShmDispatch {
     config: std::sync::OnceLock<voltage_rtdb_shm::SharedConfig>,
     notifier: std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>>,
     expected_generation: AtomicU64,
+    /// Signal to trigger background SHM writer rebuild after generation mismatch
+    rebuild_trigger: Arc<tokio::sync::Notify>,
 }
 
 impl Default for ShmDispatch {
@@ -78,6 +70,7 @@ impl ShmDispatch {
             config: std::sync::OnceLock::new(),
             notifier: std::sync::OnceLock::new(),
             expected_generation: AtomicU64::new(0),
+            rebuild_trigger: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -90,6 +83,9 @@ impl ShmDispatch {
         writer: Arc<voltage_rtdb_shm::UnifiedWriter>,
         config: voltage_rtdb_shm::SharedConfig,
     ) {
+        // Capture generation so dispatch() can detect comsrv restarts or SHM rebuilds.
+        self.expected_generation
+            .store(writer.generation(), Ordering::Release);
         self.writer.store(Some(writer));
         let _ = self.config.set(config);
     }
@@ -121,6 +117,15 @@ impl ShmDispatch {
     pub fn is_notifier_configured(&self) -> bool {
         self.notifier.get().is_some()
     }
+
+    /// Get the rebuild trigger for spawning a background rebuild task.
+    ///
+    /// The returned `Notify` fires when `dispatch()` detects a generation
+    /// mismatch (comsrv restarted). The background task should reopen
+    /// the SHM writer and call `set_writer()` to restore dispatch.
+    pub fn rebuild_trigger(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.rebuild_trigger)
+    }
 }
 
 #[async_trait]
@@ -133,16 +138,18 @@ impl ActionDispatch for ShmDispatch {
         };
 
         // Generation check: detect comsrv restarts that changed the SHM layout.
-        // expected == 0 means first dispatch before rebuild_writer was called — skip check.
+        // expected == 0 should not occur in practice (set_writer always writes the generation),
+        // but guard it anyway to avoid false positives during initialization.
         let current_gen = writer.generation();
         let expected = self.expected_generation.load(Ordering::Acquire);
         if expected != 0 && current_gen != expected {
             warn!(
                 "SHM writer generation mismatch (expected={}, actual={}). \
-                 comsrv may have restarted. Clearing writer.",
+                 comsrv may have restarted. Clearing writer and triggering rebuild.",
                 expected, current_gen
             );
             self.writer.store(None);
+            self.rebuild_trigger.notify_one();
             return DispatchOutcome::NoWriter;
         }
 
@@ -220,29 +227,6 @@ impl ActionDispatch for ShmDispatch {
             }
         }
     }
-
-    fn rebuild_writer(
-        &self,
-        channel_points: &voltage_rtdb_shm::ChannelPointCounts,
-    ) -> anyhow::Result<()> {
-        let Some(config) = self.config.get() else {
-            return Ok(()); // SHM not configured — not an error
-        };
-        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(config, channel_points) {
-            Ok(writer) => {
-                let gen = writer.generation();
-                self.expected_generation.store(gen, Ordering::Release);
-                self.writer.store(Some(Arc::new(writer)));
-                info!("SHM action writer rebuilt after channel layout change");
-                Ok(())
-            },
-            Err(e) => {
-                self.writer.store(None);
-                warn!("SHM action writer rebuild failed, dispatch disabled: {}", e);
-                Err(e)
-            },
-        }
-    }
 }
 
 /// No-op dispatch for testing and environments without SHM
@@ -252,12 +236,5 @@ pub struct NoopDispatch;
 impl ActionDispatch for NoopDispatch {
     async fn dispatch(&self, _ctx: &RouteContext, _value: f64) -> DispatchOutcome {
         DispatchOutcome::Noop
-    }
-
-    fn rebuild_writer(
-        &self,
-        _channel_points: &voltage_rtdb_shm::ChannelPointCounts,
-    ) -> anyhow::Result<()> {
-        Ok(()) // No-op
     }
 }

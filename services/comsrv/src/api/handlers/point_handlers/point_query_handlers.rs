@@ -422,6 +422,7 @@ mod cache_tests {
             rtdb,
             sqlite_pool,
             command_tx_cache,
+            warning_stats: None,
         }
     }
 

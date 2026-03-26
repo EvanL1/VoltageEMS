@@ -360,13 +360,17 @@ async fn main() -> VoltageResult<()> {
     let (cleanup_handle, cleanup_token) =
         start_cleanup_task(Arc::clone(&channel_manager), configured_count);
     let warning_token = shutdown_token.clone();
-    let warning_handle = tokio::spawn(async move {
-        if let Err(e) =
-            common::warning_monitor::start_warning_monitor(redis_url, warning_token).await
-        {
-            tracing::error!("Warning monitor error: {}", e);
-        }
-    });
+    let warning_stats =
+        match common::warning_monitor::start_warning_monitor(redis_url, warning_token).await {
+            Ok(stats) => Some(stats),
+            Err(e) => {
+                tracing::warn!("Warning monitor failed to start: {}", e);
+                None
+            },
+        };
+    // Warning monitor now spawns its own task internally (stopped via CancellationToken).
+    // Provide a completed handle to satisfy shutdown_services signature.
+    let warning_handle = tokio::spawn(async {});
 
     // Start routing cache polling task (auto-detect routing changes from SQLite)
     let poll_pool = sqlite_pool.clone();
@@ -410,6 +414,7 @@ async fn main() -> VoltageResult<()> {
         redis_client,
         sqlite_pool,
         Arc::clone(&command_tx_cache),
+        warning_stats,
     );
 
     #[cfg(feature = "swagger-ui")]

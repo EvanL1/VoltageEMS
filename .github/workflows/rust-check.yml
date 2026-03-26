@@ -11,6 +11,32 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Job 0: Ensure submodules track the latest remote commit
+  submodule-check:
+    name: Submodule Freshness
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Check submodule is up-to-date with remote
+        run: |
+          git submodule foreach --quiet '
+            git fetch --quiet origin 2>/dev/null
+            LOCAL=$(git rev-parse HEAD)
+            REMOTE=$(git rev-parse origin/HEAD 2>/dev/null || git rev-parse origin/main 2>/dev/null || echo "")
+            if [ -z "$REMOTE" ]; then
+              echo "::warning::Submodule $name: cannot determine remote HEAD"
+            elif [ "$LOCAL" != "$REMOTE" ]; then
+              BEHIND=$(git rev-list --count HEAD..${REMOTE} 2>/dev/null || echo "?")
+              echo "::warning::Submodule $name is ${BEHIND} commit(s) behind remote. Run: git submodule update --remote"
+            else
+              echo "✓ Submodule $name is up-to-date"
+            fi
+          '
+
   # Job 1: Code Quality Checks (fastest, no Redis needed)
   quality-check:
     name: Quality Check

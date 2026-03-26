@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            tokio::signal::ctrl_c().await.ok();
+            common::shutdown::wait_for_shutdown().await;
             info!("Shutdown signal received");
             shutdown.cancel();
         })

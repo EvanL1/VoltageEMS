@@ -93,11 +93,74 @@ pub async fn setup_sqlite_with_config(config: &DatabaseConfig) -> VoltageResult<
     Ok(pool)
 }
 
+/// Setup Redis connection with exponential backoff retry (base=2s, max=15s, retries=5)
+pub async fn setup_redis_with_retry(
+    redis_url: Option<String>,
+) -> VoltageResult<(String, Arc<RedisClient>)> {
+    const MAX_RETRIES: u32 = 5;
+    const BASE_DELAY_MS: u64 = 2000;
+    const MAX_DELAY_MS: u64 = 15000;
+
+    let candidates = build_redis_candidates(redis_url, "redis://127.0.0.1:6379");
+    let url = candidates
+        .first()
+        .map(|(_, u)| u.clone())
+        .unwrap_or_else(|| "redis://127.0.0.1:6379".to_string());
+
+    let mut retry_count = 0u32;
+    loop {
+        match RedisClient::new(&url).await {
+            Ok(client) => match client.ping().await {
+                Ok(_) => {
+                    info!("Redis connected: {}", url);
+                    return Ok((url, Arc::new(client)));
+                },
+                Err(e) if retry_count < MAX_RETRIES => {
+                    let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
+                    warn!(
+                        "Redis ping failed (retry {}/{}): {} — retrying in {}ms",
+                        retry_count + 1,
+                        MAX_RETRIES,
+                        e,
+                        delay
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    retry_count += 1;
+                },
+                Err(e) => {
+                    return Err(VoltageError::Internal(format!(
+                        "Redis ping failed after {} retries: {}",
+                        MAX_RETRIES, e
+                    )));
+                },
+            },
+            Err(e) if retry_count < MAX_RETRIES => {
+                let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
+                warn!(
+                    "Redis not ready (retry {}/{}): {} — retrying in {}ms",
+                    retry_count + 1,
+                    MAX_RETRIES,
+                    e,
+                    delay
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                retry_count += 1;
+            },
+            Err(e) => {
+                return Err(VoltageError::Internal(format!(
+                    "Redis connection failed after {} retries: {}",
+                    MAX_RETRIES, e
+                )));
+            },
+        }
+    }
+}
+
 /// Setup Redis connection with retry logic
 pub async fn setup_redis_connection(
     redis_url: Option<String>,
 ) -> VoltageResult<(String, Arc<RedisClient>)> {
-    setup_redis_with_timeout(redis_url, tokio::time::Duration::from_secs(5)).await
+    setup_redis_with_retry(redis_url).await
 }
 
 /// Setup Redis with custom timeout
