@@ -1484,6 +1484,21 @@ else
     echo -e "${BLUE}No installer package found in common locations.${NC}"
 fi
 
+# ── Install optional dpkg packages ──────────────────────────────────────────
+if [[ -f "./dpkg/install-awsiot-deb.sh" ]]; then
+    echo ""
+    echo -e "${BLUE}================================================${NC}"
+    echo -e "${BLUE}  Installing bundled dpkg packages${NC}"
+    echo -e "${BLUE}================================================${NC}"
+    chmod +x ./dpkg/install-awsiot-deb.sh
+    if $SUDO ./dpkg/install-awsiot-deb.sh; then
+        echo -e "${GREEN}✓ dpkg packages installed successfully${NC}"
+    else
+        echo -e "${YELLOW}Warning: dpkg install returned non-zero exit code${NC}"
+        echo -e "${YELLOW}You can retry manually: sudo ./dpkg/install-awsiot-deb.sh${NC}"
+    fi
+fi
+
 echo ""
 echo -e "${GREEN}Installation complete! Thank you for using VoltageEMS.${NC}"
 echo ""
