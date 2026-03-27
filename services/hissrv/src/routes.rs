@@ -81,6 +81,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/hisApi/storage", get(get_storage).put(update_storage))
         .route("/hisApi/storage/test", axum::routing::post(test_storage))
         .route("/hisApi/storage/reconnect", axum::routing::post(reconnect_storage))
+        // Admin API (shared endpoints from common lib)
+        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
+        .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
+        .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
     api.merge(

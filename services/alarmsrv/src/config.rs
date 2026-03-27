@@ -12,7 +12,6 @@ pub struct AlarmConfig {
     pub data_fetch_interval: u64,
     pub apigateway_url: String,
     pub netsrv_url: String,
-    pub log_dir: String,
 }
 
 impl Default for AlarmConfig {
@@ -35,7 +34,6 @@ impl Default for AlarmConfig {
                 .unwrap_or_else(|_| "http://localhost:6005".to_string()),
             netsrv_url: env::var("NETSRV_URL")
                 .unwrap_or_else(|_| "http://localhost:6006".to_string()),
-            log_dir: env::var("VOLTAGE_LOG_DIR").unwrap_or_else(|_| "logs".to_string()),
         }
     }
 }

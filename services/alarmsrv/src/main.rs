@@ -31,15 +31,15 @@ async fn main() -> anyhow::Result<()> {
     let cfg = AlarmConfig::default();
 
     // ── Logging ──────────────────────────────────────────────────────────────
-    common::logging::init_log_root(Some(&cfg.log_dir));
-    common::logging::init_with_config(common::logging::LogConfig {
-        service_name: "alarmsrv".to_string(),
-        log_dir: std::path::PathBuf::from(&cfg.log_dir),
-        console_level: tracing::Level::INFO,
-        file_level: tracing::Level::DEBUG,
-        ..Default::default()
-    })
-    .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
+    let service_info = common::service_bootstrap::ServiceInfo::new(
+        "alarmsrv",
+        "Alarm monitoring service",
+        cfg.api_port,
+    );
+    common::service_bootstrap::init_logging(&service_info, None)
+        .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
+    common::logging::enable_sighup_log_reopen();
+    common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("alarmsrv starting on port {}", cfg.api_port);
     info!("Redis: {}", cfg.redis_url);
@@ -104,9 +104,11 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // ── HTTP server ───────────────────────────────────────────────────────────
-    let app = routes::create_routes(Arc::clone(&state)).layer(axum::middleware::from_fn(
-        common::logging::http_request_logger,
-    ));
+    let app = routes::create_routes(Arc::clone(&state))
+        .layer(axum::middleware::from_fn(
+            common::logging::http_request_logger,
+        ))
+        .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024));
 
     let addr: SocketAddr = format!("{}:{}", cfg.api_host, cfg.api_port)
         .parse()
@@ -119,13 +121,14 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Listening on {}", addr);
 
-    let serve_shutdown = shutdown.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(async move { serve_shutdown.cancelled().await })
+        .with_graceful_shutdown(async move {
+            common::shutdown::wait_for_shutdown().await;
+            info!("Shutdown signal received");
+            shutdown.cancel();
+        })
         .await?;
 
-    // ── Graceful shutdown ─────────────────────────────────────────────────────
-    shutdown.cancel();
     common::logging::shutdown_logging_tasks().await;
     info!("alarmsrv stopped");
     Ok(())

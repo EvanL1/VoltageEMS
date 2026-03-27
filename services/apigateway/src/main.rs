@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Query, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
     response::IntoResponse,
     routing::{delete, get, post, put},
     Router,
@@ -199,6 +199,18 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(|| async { "ok" }))
         .route("/ws", get(ws_handler))
         .nest("/api/v1", api_v1)
+        .route(
+            "/api/admin/logs/level",
+            get(common::admin_api::get_log_level).post(common::admin_api::set_log_level),
+        )
+        .route(
+            "/api/admin/logs/files",
+            get(common::admin_api::list_log_files),
+        )
+        .route(
+            "/api/admin/logs/view",
+            get(common::admin_api::view_log_file),
+        )
         .merge(
             SwaggerUi::new("/docs")
                 .url("/openapi.json", ApiDoc::openapi())
@@ -209,6 +221,10 @@ fn build_router(state: Arc<AppState>) -> Router {
                 ),
         )
         .with_state(state)
+        .layer(axum::middleware::from_fn(
+            common::logging::http_request_logger,
+        ))
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(cors)
 }
 
@@ -219,15 +235,15 @@ async fn main() -> anyhow::Result<()> {
     let cfg = GatewayConfig::default();
 
     // ── Logging ───────────────────────────────────────────────────────────────
-    common::logging::init_log_root(Some(&cfg.log_dir));
-    common::logging::init_with_config(common::logging::LogConfig {
-        service_name: "apigateway".to_string(),
-        log_dir: std::path::PathBuf::from(&cfg.log_dir),
-        console_level: tracing::Level::INFO,
-        file_level: tracing::Level::DEBUG,
-        ..Default::default()
-    })
-    .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
+    let service_info = common::service_bootstrap::ServiceInfo::new(
+        "apigateway",
+        "API Gateway service",
+        cfg.api_port,
+    );
+    common::service_bootstrap::init_logging(&service_info, None)
+        .map_err(|e| anyhow::anyhow!("Failed to init logging: {}", e))?;
+    common::logging::enable_sighup_log_reopen();
+    common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("apigateway starting on port {}", cfg.api_port);
     info!("Redis: {}", cfg.redis_url);
@@ -294,9 +310,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // ── HTTP server ───────────────────────────────────────────────────────────
-    let app = build_router(Arc::clone(&state)).layer(axum::middleware::from_fn(
-        common::logging::http_request_logger,
-    ));
+    let app = build_router(Arc::clone(&state));
 
     let bind_addr: SocketAddr = format!("{}:{}", state.config.api_host, state.config.api_port)
         .parse()
@@ -309,12 +323,14 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Listening on {}", bind_addr);
 
-    let serve_shutdown = shutdown.clone();
     axum::serve(listener, app)
-        .with_graceful_shutdown(async move { serve_shutdown.cancelled().await })
+        .with_graceful_shutdown(async move {
+            common::shutdown::wait_for_shutdown().await;
+            info!("Shutdown signal received");
+            shutdown.cancel();
+        })
         .await?;
 
-    shutdown.cancel();
     common::logging::shutdown_logging_tasks().await;
     info!("apigateway stopped");
     Ok(())

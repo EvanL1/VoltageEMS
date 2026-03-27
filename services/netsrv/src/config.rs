@@ -9,7 +9,6 @@ pub struct EnvConfig {
     pub redis_url: String,
     /// Shared SQLite database path (same as alarmsrv / apigateway).
     pub db_path: String,
-    pub log_dir: String,
     /// Directory for TLS certificate files. Fixed at container build time;
     /// set via CERT_DIR env var (default: /app/config/cert).
     /// Mount a host path to this directory in docker-compose.
@@ -32,7 +31,6 @@ impl Default for EnvConfig {
             redis_url,
             db_path: env::var("VOLTAGE_DB_PATH")
                 .unwrap_or_else(|_| "/app/data/voltage.db".to_string()),
-            log_dir: env::var("VOLTAGE_LOG_DIR").unwrap_or_else(|_| "logs".to_string()),
             cert_dir: env::var("CERT_DIR").unwrap_or_else(|_| "/app/config/cert".to_string()),
         }
     }

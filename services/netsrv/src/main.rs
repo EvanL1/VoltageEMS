@@ -42,15 +42,15 @@ async fn main() -> anyhow::Result<()> {
     let env = Arc::new(EnvConfig::default());
 
     // ── Logging ───────────────────────────────────────────────────────────────
-    common::logging::init_log_root(Some(&env.log_dir));
-    common::logging::init_with_config(common::logging::LogConfig {
-        service_name: "netsrv".to_string(),
-        log_dir: std::path::PathBuf::from(&env.log_dir),
-        console_level: tracing::Level::INFO,
-        file_level: tracing::Level::DEBUG,
-        ..Default::default()
-    })
-    .map_err(|e| anyhow::anyhow!("Logging init failed: {}", e))?;
+    let service_info = common::service_bootstrap::ServiceInfo::new(
+        "netsrv",
+        "Cloud data-forwarding service",
+        env.api_port,
+    );
+    common::service_bootstrap::init_logging(&service_info, None)
+        .map_err(|e| anyhow::anyhow!("Logging init failed: {}", e))?;
+    common::logging::enable_sighup_log_reopen();
+    common::service_bootstrap::print_startup_banner(&service_info);
 
     info!("netsrv starting");
 
@@ -125,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(axum::middleware::from_fn(
             common::logging::http_request_logger,
         ))
+        .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(cors);
 
     let addr: std::net::SocketAddr = format!("{}:{}", env.api_host, env.api_port)

@@ -39,6 +39,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/netApi/certificate/upload", post(cert_upload))
         .route("/netApi/certificate/info", get(cert_info))
         .route("/netApi/certificate/{cert_type}", delete(cert_delete))
+        // Admin API (shared endpoints from common lib)
+        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
+        .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
+        .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
     api.merge(

@@ -56,6 +56,10 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/alarmApi/monitor/status", get(monitor_status))
         .route("/alarmApi/monitor/check-rule/{id}", post(manual_check_rule))
         .route("/alarmApi/call-data", post(call_data))
+        // Admin API (shared endpoints from common lib)
+        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
+        .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
+        .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
     api.merge(
