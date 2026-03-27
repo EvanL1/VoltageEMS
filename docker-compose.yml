@@ -254,6 +254,7 @@ services:
 
   # Vue.js Frontend - Web 管理界面 (端口 8080)
   apps:
+    # Pre-built image required: load via `docker load < apps.tar.gz` or build manually
     image: voltage-apps:latest
     container_name: voltage-apps
     network_mode: host

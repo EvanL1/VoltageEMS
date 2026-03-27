@@ -8,27 +8,39 @@ use crate::core::channels::ChannelManager;
 use crate::core::config::ChannelCore;
 use crate::dto::{AppError, SuccessResponse};
 use axum::response::Json;
+use sqlx::Acquire;
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 
 /// Migrate channel ID in database (all related tables)
 ///
 /// Updates the channel_id in all related tables within a single transaction.
+///
+/// `PRAGMA foreign_keys` is connection-scoped, not transaction-scoped. We acquire
+/// a dedicated connection, disable FKs on it before starting the transaction, do
+/// all work inside the transaction, commit, then re-enable FKs. This ensures the
+/// connection is returned to the pool with FKs back on, even if the commit fails.
 async fn migrate_channel_id_in_db(
     old_id: u32,
     new_id: u32,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), AppError> {
-    let mut tx = pool
+    // Acquire a dedicated connection so FK pragma changes are isolated.
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to acquire connection: {}", e)))?;
+
+    // Disable FK constraints BEFORE starting the transaction (connection-scoped).
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to disable FK: {}", e)))?;
+
+    let mut tx = conn
         .begin()
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to begin transaction: {}", e)))?;
-
-    // Disable foreign key constraints temporarily
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::internal_error(format!("Failed to disable FK: {}", e)))?;
 
     // Update all related tables (order matters for potential future FK constraints)
     for table in &RELATED_TABLES {
@@ -66,15 +78,16 @@ async fn migrate_channel_id_in_db(
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to update channels: {}", e)))?;
 
-    // Re-enable foreign key constraints
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::internal_error(format!("Failed to enable FK: {}", e)))?;
-
     tx.commit()
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to commit transaction: {}", e)))?;
+
+    // Re-enable FK constraints AFTER commit, on the underlying connection.
+    // This guarantees the connection is returned to the pool with FKs on.
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to re-enable FK: {}", e)))?;
 
     tracing::info!("Ch{} -> Ch{}: database migration complete", old_id, new_id);
     Ok(())

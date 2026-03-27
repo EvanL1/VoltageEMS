@@ -6,7 +6,6 @@ use anyhow::Result;
 use clap::Subcommand;
 use reqwest::Client;
 use serde_json::Value;
-use tracing::info;
 
 #[derive(Subcommand)]
 pub enum RuleCommands {
@@ -59,8 +58,8 @@ pub enum RuleCommands {
     /// Show recent rule executions
     #[command(about = "Display recent rule execution history")]
     Executions {
-        /// Rule ID (optional, shows all if not specified)
-        rule_id: Option<i64>,
+        /// Rule ID
+        rule_id: i64,
         /// Limit number of results
         #[arg(long, default_value = "10")]
         limit: usize,
@@ -157,7 +156,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Rule '{}' enabled", rule_id);
+                println!("Rule '{}' enabled", rule_id);
             }
         },
         RuleCommands::Disable { rule_id } => {
@@ -165,7 +164,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Rule '{}' disabled", rule_id);
+                println!("Rule '{}' disabled", rule_id);
             }
         },
         RuleCommands::Test { rule_id } => {
@@ -205,7 +204,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             if json {
                 crate::output::print_success(&result);
             } else {
-                info!("Rule created: {}", serde_json::to_string_pretty(&result)?);
+                println!("Rule created: {}", serde_json::to_string_pretty(&result)?);
             }
         },
         RuleCommands::Update {
@@ -253,7 +252,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             if json {
                 crate::output::print_success(&result);
             } else {
-                info!("Rule {} updated", rule_id);
+                println!("Rule {} updated", rule_id);
             }
         },
         RuleCommands::Delete { rule_id, force } => {
@@ -270,7 +269,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Rule {} deleted", rule_id);
+                println!("Rule {} deleted", rule_id);
             }
         },
     }
@@ -393,15 +392,11 @@ impl RuleClient {
         }
     }
 
-    async fn list_executions(&self, rule_id: Option<i64>, limit: usize) -> Result<Value> {
-        let url = if let Some(id) = rule_id {
-            format!(
-                "{}/api/rules/{}/executions?limit={}",
-                self.base_url, id, limit
-            )
-        } else {
-            format!("{}/api/executions?limit={}", self.base_url, limit)
-        };
+    async fn list_executions(&self, rule_id: i64, limit: usize) -> Result<Value> {
+        let url = format!(
+            "{}/api/rules/{}/executions?limit={}",
+            self.base_url, rule_id, limit
+        );
 
         let response = self.client.get(url).send().await?;
 

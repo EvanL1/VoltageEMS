@@ -3,10 +3,51 @@
 //! Provides functionality to manage channel-to-instance point routing via HTTP API
 
 use anyhow::Result;
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use reqwest::Client;
 use serde_json::Value;
-use tracing::info;
+
+/// Point type: M (measurement) or A (action)
+#[derive(Clone, ValueEnum, serde::Serialize)]
+pub(crate) enum PointType {
+    /// Measurement point
+    M,
+    /// Action point
+    A,
+}
+
+impl std::fmt::Display for PointType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PointType::M => write!(f, "M"),
+            PointType::A => write!(f, "A"),
+        }
+    }
+}
+
+/// Four-remote type: T (telemetry), S (signal), C (control), A (adjustment)
+#[derive(Clone, ValueEnum, serde::Serialize)]
+pub(crate) enum FourRemote {
+    /// Telemetry
+    T,
+    /// Signal
+    S,
+    /// Control
+    C,
+    /// Adjustment
+    A,
+}
+
+impl std::fmt::Display for FourRemote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FourRemote::T => write!(f, "T"),
+            FourRemote::S => write!(f, "S"),
+            FourRemote::C => write!(f, "C"),
+            FourRemote::A => write!(f, "A"),
+        }
+    }
+}
 
 #[derive(Subcommand)]
 pub enum RoutingCommands {
@@ -25,8 +66,8 @@ pub enum RoutingCommands {
         /// Instance ID
         instance_id: u32,
         /// Point type: M (measurement) or A (action)
-        #[arg(short = 't', long = "point-type")]
-        point_type: String,
+        #[arg(short = 't', long = "point-type", value_enum)]
+        point_type: PointType,
         /// Instance point ID
         #[arg(short = 'p', long = "point-id")]
         point_id: u32,
@@ -34,8 +75,8 @@ pub enum RoutingCommands {
         #[arg(long = "channel-id")]
         channel_id: u32,
         /// Four-remote type: T (telemetry), S (signal), C (control), A (adjustment)
-        #[arg(short = 'r', long = "four-remote")]
-        four_remote: String,
+        #[arg(short = 'r', long = "four-remote", value_enum)]
+        four_remote: FourRemote,
         /// Channel point ID
         #[arg(short = 'P', long = "channel-point-id")]
         channel_point_id: u32,
@@ -118,18 +159,18 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
             four_remote,
             channel_point_id,
         } => {
-            let entries = serde_json::json!([{
+            let entry = serde_json::json!({
                 "point_type": point_type,
                 "point_id": point_id,
                 "channel_id": channel_id,
                 "four_remote": four_remote,
                 "channel_point_id": channel_point_id,
-            }]);
-            let result = client.create_routing(instance_id, entries).await?;
+            });
+            let result = client.create_routing(instance_id, entry).await?;
             if json {
                 crate::output::print_success(&result);
             } else {
-                info!(
+                println!(
                     "Routing created for instance {}: {}",
                     instance_id,
                     serde_json::to_string_pretty(&result)?
@@ -151,7 +192,7 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_success(&result);
             } else {
-                info!("Batch routing upserted for instance {}", instance_id);
+                println!("Batch routing upserted for instance {}", instance_id);
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         },
@@ -172,7 +213,7 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Routing deleted for instance '{}'", instance_name);
+                println!("Routing deleted for instance '{}'", instance_name);
             }
         },
         RoutingCommands::DeleteChannel { channel_id, force } => {
@@ -189,7 +230,7 @@ pub async fn handle_command(cmd: RoutingCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Routing deleted for channel {}", channel_id);
+                println!("Routing deleted for channel {}", channel_id);
             }
         },
     }
@@ -221,9 +262,12 @@ impl RoutingClient {
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to list routing: {} - ensure modsrv is running (monarch services start)",
-                response.status()
+                "Failed to list routing: {} - {} (ensure modsrv is running)",
+                status,
+                text
             ))
         }
     }
@@ -238,10 +282,13 @@ impl RoutingClient {
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to list routing for instance {}: {} - ensure modsrv is running (monarch services start)",
+                "Failed to list routing for instance {}: {} - {}",
                 id,
-                response.status()
+                status,
+                text
             ))
         }
     }
@@ -256,10 +303,13 @@ impl RoutingClient {
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to list routing for channel {}: {} - ensure modsrv is running (monarch services start)",
+                "Failed to list routing for channel {}: {} - {}",
                 id,
-                response.status()
+                status,
+                text
             ))
         }
     }
@@ -278,10 +328,13 @@ impl RoutingClient {
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to create routing for instance {}: {} - ensure modsrv is running (monarch services start)",
+                "Failed to create routing for instance {}: {} - {}",
                 instance_id,
-                response.status()
+                status,
+                text
             ))
         }
     }
@@ -300,10 +353,13 @@ impl RoutingClient {
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to batch upsert routing for instance {}: {} - ensure modsrv is running (monarch services start)",
+                "Failed to batch upsert routing for instance {}: {} - {}",
                 instance_id,
-                response.status()
+                status,
+                text
             ))
         }
     }
@@ -318,10 +374,13 @@ impl RoutingClient {
         if response.status().is_success() {
             Ok(())
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to delete routing for instance '{}': {} - ensure modsrv is running (monarch services start)",
+                "Failed to delete routing for instance '{}': {} - {}",
                 name,
-                response.status()
+                status,
+                text
             ))
         }
     }
@@ -336,10 +395,13 @@ impl RoutingClient {
         if response.status().is_success() {
             Ok(())
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to delete routing for channel {}: {} - ensure modsrv is running (monarch services start)",
+                "Failed to delete routing for channel {}: {} - {}",
                 id,
-                response.status()
+                status,
+                text
             ))
         }
     }

@@ -6,7 +6,6 @@ use anyhow::Result;
 use clap::Subcommand;
 use reqwest::Client;
 use serde_json::Value;
-use tracing::info;
 
 #[derive(Subcommand)]
 pub enum ChannelCommands {
@@ -67,7 +66,7 @@ pub enum ChannelCommands {
         #[arg(long)]
         description: Option<String>,
         /// Start channel immediately (default: true)
-        #[arg(long, default_value = "true")]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         enabled: bool,
         /// Override channel ID (auto-assigned if omitted)
         #[arg(long)]
@@ -134,7 +133,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_ok();
             } else {
-                info!(
+                println!(
                     "Control command sent to channel {} point {}",
                     channel_id, point_id
                 );
@@ -149,7 +148,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_ok();
             } else {
-                info!(
+                println!(
                     "Adjustment sent to channel {} point {}: {}",
                     channel_id, point_id, value
                 );
@@ -160,7 +159,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Configuration reloaded");
+                println!("Configuration reloaded");
             }
         },
         ChannelCommands::Health => {
@@ -194,7 +193,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_success(&result);
             } else {
-                info!(
+                println!(
                     "Channel created: {}",
                     result
                         .get("data")
@@ -228,7 +227,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_success(&result);
             } else {
-                info!("Channel {} updated", channel_id);
+                println!("Channel {} updated", channel_id);
             }
         },
         ChannelCommands::Delete { channel_id, force } => {
@@ -245,7 +244,7 @@ pub async fn handle_command(cmd: ChannelCommands, base_url: &str, json: bool) ->
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Channel {} deleted", channel_id);
+                println!("Channel {} deleted", channel_id);
             }
         },
     }
@@ -404,7 +403,7 @@ impl ChannelClient {
             body["description"] = Value::String(desc.to_string());
         }
         if let Some(channel_id) = id {
-            body["id"] = Value::Number(channel_id.into());
+            body["channel_id"] = Value::Number(channel_id.into());
         }
         let response = self
             .client

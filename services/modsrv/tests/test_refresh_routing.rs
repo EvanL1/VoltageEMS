@@ -105,6 +105,11 @@ async fn test_refresh_routing_updates_cache() {
 }
 
 /// refresh_routing() succeeds even when no comsrv is reachable.
+///
+/// This test also implicitly verifies that refresh_routing() triggers no SHM
+/// operations: `NoopDispatch` is used, which performs no SHM reads or writes by
+/// definition. If refresh_routing() attempted any SHM call it would panic or
+/// require a real SHM file, causing the test to fail.
 #[tokio::test]
 async fn test_refresh_routing_succeeds_without_comsrv() {
     let (_tmp, pool) = create_test_db().await;
