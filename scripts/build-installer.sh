@@ -370,10 +370,10 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"/{tools,docker,config,scripts}
 mkdir -p "$OUTPUT_DIR"
 
-# Step 1: Build Monarch CLI (only if Rust services are selected)
+# Step 1+2: Build Rust binaries and Docker images
 echo ""
 if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
-    echo -e "${BLUE}[1/5] Building Monarch CLI for $ARCH...${NC}"
+    echo -e "${BLUE}[1/5] Building all Rust binaries for $ARCH...${NC}"
 
     # Check for cargo-zigbuild
     if ! command -v cargo-zigbuild &> /dev/null; then
@@ -387,8 +387,10 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
         rustup target add $TARGET
     fi
 
-    # Build monarch CLI
-    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET -p monarch
+    # Build monarch CLI + all 6 service binaries in one pass
+    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
+        -p monarch -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv
+
     if [[ -f "$ROOT_DIR/target/$TARGET/release/monarch" ]]; then
         cp "$ROOT_DIR/target/$TARGET/release/monarch" "$BUILD_DIR/tools/"
         echo -e "${GREEN}✓ Built monarch CLI${NC}"
@@ -398,21 +400,6 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     fi
 
     chmod +x "$BUILD_DIR/tools/"* 2>/dev/null || true
-else
-    echo -e "${YELLOW}[1/5] Skipping Monarch CLI (voltageems not selected)${NC}"
-fi
-
-# Step 2: Build Docker images
-echo ""
-echo -e "${BLUE}[2/5] Building Docker images for $ARCH...${NC}"
-
-# Build unified Rust services image if needed
-if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
-    echo -e "${BLUE}Building all Rust services...${NC}"
-
-    # Build all 6 Rust service binaries in one pass (Swagger UI always included)
-    CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
-        -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv
 
     for service in comsrv modsrv alarmsrv apigateway hissrv netsrv; do
         if [[ ! -f "$ROOT_DIR/target/$TARGET/release/$service" ]]; then
@@ -422,7 +409,9 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
         echo -e "${GREEN}✓ Built $service${NC}"
     done
 
-    # Build voltageems Docker image using pre-compiled binaries
+    # Step 2: Build voltageems Docker image using pre-compiled binaries
+    echo ""
+    echo -e "${BLUE}[2/5] Building Docker images for $ARCH...${NC}"
     if [[ -n "$DEV_SERVICE" ]]; then
         # Dev mode: tag as voltageems:dev-<service>, do NOT overwrite voltageems:latest
         _DEV_TAG="voltageems:dev-${DEV_SERVICE}"
@@ -455,7 +444,9 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
         fi
     fi
 else
-    echo -e "${YELLOW}⊘ Skipping Rust services (not selected)${NC}"
+    echo -e "${YELLOW}[1/5] Skipping Rust binaries (voltageems not selected)${NC}"
+    echo ""
+    echo -e "${BLUE}[2/5] Building Docker images for $ARCH...${NC}"
 fi
 
 # Build Frontend if needed
@@ -497,9 +488,13 @@ else
     echo -e "${YELLOW}⊘ Skipping timescaledb (not selected)${NC}"
 fi
 
-# Pull alpine image for upgrade container (always include)
-echo -e "${BLUE}Pulling alpine:latest for upgrade container...${NC}"
-pull_and_save_image "alpine:latest" "alpine.tar.gz"
+# Pull alpine image for upgrade container (only in full build, not dev/partial)
+if [[ -z "$SELECTED_SERVICES" ]]; then
+    echo -e "${BLUE}Pulling alpine:latest for upgrade container...${NC}"
+    pull_and_save_image "alpine:latest" "alpine.tar.gz"
+else
+    echo -e "${YELLOW}⊘ Skipping alpine:latest (partial build)${NC}"
+fi
 
 # Verify images
 echo -e "${YELLOW}Verifying Docker images...${NC}"
@@ -559,16 +554,19 @@ if [[ -f "$ROOT_DIR/scripts/install.sh" ]]; then
     cp "$ROOT_DIR/scripts/install.sh" "$BUILD_DIR/install.sh"
     chmod +x "$BUILD_DIR/install.sh"
 
-    # Customize script for target architecture
-    if [[ "$ARCH" == "amd64" ]]; then
-        echo -e "${YELLOW}Customizing install.sh for AMD64...${NC}"
-        # Replace ARM64 references with AMD64
-        sed -i.bak \
-            -e 's/ARM64/AMD64/g' \
-            -e 's/arm64/amd64/g' \
-            -e 's/aarch64/x86_64/g' \
-            "$BUILD_DIR/install.sh"
-        rm -f "$BUILD_DIR/install.sh.bak"
+    # Customize script for target architecture by setting variables
+    if [[ "$ARCH" != "arm64" ]]; then
+        echo -e "${YELLOW}Customizing install.sh for ${ARCH^^}...${NC}"
+        case "$ARCH" in
+            amd64)
+                sed -i.bak \
+                    -e 's/^INSTALLER_ARCH_LABEL=.*/INSTALLER_ARCH_LABEL="AMD64"/' \
+                    -e 's/^INSTALLER_ARCH_UNAME=.*/INSTALLER_ARCH_UNAME="x86_64"/' \
+                    -e 's/^INSTALLER_ARCH_SHORT=.*/INSTALLER_ARCH_SHORT="amd64"/' \
+                    "$BUILD_DIR/install.sh"
+                rm -f "$BUILD_DIR/install.sh.bak"
+                ;;
+        esac
     fi
     echo -e "${GREEN}[DONE] Installation script copied${NC}"
 else

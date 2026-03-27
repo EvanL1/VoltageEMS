@@ -1,14 +1,11 @@
-# Rust build artifacts - exclude most but allow release binaries for cross-compilation
-target/**/deps/
-target/**/build/
-target/**/.fingerprint/
-target/**/incremental/
-target/**/examples/
-target/debug/
-target/doc/
-target/.rustc_info.json
-target/.cargo-lock
-# Keep: target/*/release/comsrv, target/*/release/modsrv, target/*/release/monarch
+# Rust build artifacts - exclude all, then whitelist only needed release binaries
+target/
+!target/*/release/comsrv
+!target/*/release/modsrv
+!target/*/release/alarmsrv
+!target/*/release/apigateway
+!target/*/release/hissrv
+!target/*/release/netsrv
 **/*.rs.bk
 *.pdb
 

@@ -10,6 +10,7 @@ mod logs;
 mod logs_tui;
 mod models;
 mod output;
+mod routing;
 mod rtdb;
 mod rules;
 mod services;
@@ -158,6 +159,13 @@ enum Commands {
     Rules {
         #[command(subcommand)]
         command: rules::RuleCommands,
+    },
+
+    /// Manage routing configurations
+    #[command(about = "Manage channel-to-instance point routing")]
+    Routing {
+        #[command(subcommand)]
+        command: routing::RoutingCommands,
     },
 
     /// Direct Redis RTDB operations
@@ -379,6 +387,15 @@ async fn run(cli: Cli) -> Result<()> {
                 host,
             );
             rules::handle_command(command, &url, json).await?;
+        },
+        Commands::Routing { command } => {
+            let url = service_url(
+                "VOLTAGE_MODSRV_URL",
+                "http",
+                voltage_model::service_ports::MODSRV_PORT,
+                host,
+            );
+            routing::handle_command(command, &url, json).await?;
         },
         Commands::Rtdb { command } => {
             let url = service_url(

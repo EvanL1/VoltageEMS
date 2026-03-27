@@ -254,9 +254,6 @@ services:
 
   # Vue.js Frontend - Web 管理界面 (端口 8080)
   apps:
-    build:
-      context: ./apps
-      dockerfile: Dockerfile
     image: voltage-apps:latest
     container_name: voltage-apps
     network_mode: host

@@ -6,15 +6,13 @@
 
 #![allow(clippy::disallowed_methods)] // test code — unwrap is acceptable
 
-use async_trait::async_trait;
-use modsrv::infra::shm_dispatch::{ActionDispatch, DispatchOutcome, NoopDispatch};
+use modsrv::infra::shm_dispatch::{ActionDispatch, NoopDispatch};
 use modsrv::instance_manager::InstanceManager;
 use modsrv::product_loader::ProductLoader;
 use sqlx::SqlitePool;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
-use voltage_routing::{RouteContext, RoutingCache};
+use voltage_routing::RoutingCache;
 use voltage_rtdb::helpers::create_test_rtdb;
 
 // ============================================================================
@@ -37,16 +35,6 @@ fn make_manager(pool: SqlitePool) -> InstanceManager<voltage_rtdb::MemoryRtdb> {
     let routing_cache = Arc::new(RoutingCache::new());
     let product_loader = Arc::new(ProductLoader::new(pool.clone()));
     let dispatch: Arc<dyn ActionDispatch> = Arc::new(NoopDispatch);
-    InstanceManager::new(pool, rtdb, routing_cache, product_loader, dispatch)
-}
-
-fn make_manager_with_dispatch(
-    pool: SqlitePool,
-    dispatch: Arc<dyn ActionDispatch>,
-) -> InstanceManager<voltage_rtdb::MemoryRtdb> {
-    let rtdb = create_test_rtdb();
-    let routing_cache = Arc::new(RoutingCache::new());
-    let product_loader = Arc::new(ProductLoader::new(pool.clone()));
     InstanceManager::new(pool, rtdb, routing_cache, product_loader, dispatch)
 }
 
@@ -113,53 +101,6 @@ async fn test_refresh_routing_updates_cache() {
     assert!(
         manager.routing_cache().lookup_m2c("1:A:1").is_some(),
         "RoutingCache must hold the M2C route after refresh"
-    );
-}
-
-/// Custom dispatch that records whether rebuild_writer was called.
-struct TrackingDispatch {
-    rebuilt: Arc<AtomicBool>,
-}
-
-#[async_trait]
-impl ActionDispatch for TrackingDispatch {
-    async fn dispatch(&self, _ctx: &RouteContext, _value: f64) -> DispatchOutcome {
-        DispatchOutcome::Noop
-    }
-
-    fn rebuild_writer(
-        &self,
-        _channel_points: &voltage_rtdb_shm::ChannelPointCounts,
-    ) -> anyhow::Result<()> {
-        self.rebuilt.store(true, Ordering::SeqCst);
-        Ok(())
-    }
-}
-
-/// refresh_routing() is a local-only operation — it does NOT contact comsrv
-/// and does NOT call rebuild_writer.
-#[tokio::test]
-async fn test_refresh_routing_does_not_call_rebuild_writer() {
-    let rebuilt = Arc::new(AtomicBool::new(false));
-    let dispatch: Arc<dyn ActionDispatch> = Arc::new(TrackingDispatch {
-        rebuilt: Arc::clone(&rebuilt),
-    });
-
-    let (_tmp, pool) = create_test_db().await;
-    insert_action_routing(&pool).await;
-    let manager = make_manager_with_dispatch(pool, dispatch);
-
-    let result = manager.refresh_routing().await;
-
-    assert!(
-        result.is_ok(),
-        "refresh_routing must succeed: {:?}",
-        result.err()
-    );
-
-    assert!(
-        !rebuilt.load(Ordering::SeqCst),
-        "refresh_routing must not call rebuild_writer"
     );
 }
 

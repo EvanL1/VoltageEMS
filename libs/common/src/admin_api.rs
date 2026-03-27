@@ -149,7 +149,7 @@ pub async fn list_log_files(Query(q): Query<ListLogFilesQuery>) -> impl IntoResp
     let mut files: Vec<LogFileEntry> = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with(&date_prefix) || !name.contains(".log") || name.ends_with(".gz") {
+        if !name.starts_with(&date_prefix) || !name.ends_with(".log") || name.ends_with(".gz") {
             continue;
         }
         if let Some(ref svc) = q.service {
@@ -196,51 +196,91 @@ pub struct ViewLogFileQuery {
     tag = "admin"
 ))]
 pub async fn view_log_file(Query(q): Query<ViewLogFileQuery>) -> impl IntoResponse {
-    // Security: reject path traversal
-    if q.file.contains('/') || q.file.contains('\\') || q.file.contains("..") {
+    let log_dir = crate::logging::get_log_root();
+
+    // Security: canonicalize resolves symlinks and `..` components at the OS level,
+    // then assert the resolved path is still inside the log root.
+    // This replaces character-based denylist checks and also handles the TOCTOU
+    // race between exists() and open() — canonicalize() fails if the file is absent.
+    let canonical_root = match log_dir.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Log directory unavailable"})),
+            );
+        },
+    };
+    let canonical = match log_dir.join(&q.file).canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": format!("File not found: {}", q.file)})),
+            );
+        },
+    };
+    if !canonical.starts_with(&canonical_root) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "Invalid file name"})),
         );
     }
 
-    let path = crate::logging::get_log_root().join(&q.file);
-    if !path.exists() {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": format!("File not found: {}", q.file)})),
-        );
-    }
+    // Cap lines to avoid excessive memory use on embedded ARM64 target.
+    let n = q.lines.unwrap_or(50).min(10_000);
+    let grep_pattern = q.grep.as_ref().map(|s| s.to_lowercase());
 
-    let file = match std::fs::File::open(&path) {
-        Ok(f) => f,
-        Err(e) => {
+    // Offload blocking file I/O to the blocking thread pool so we don't
+    // starve the tokio async executor.
+    // Use a ring buffer (VecDeque<N>) so memory is O(n) regardless of file size.
+    let read_result =
+        tokio::task::spawn_blocking(move || -> std::io::Result<(usize, Vec<String>)> {
+            let file = std::fs::File::open(&canonical)?;
+            let reader = BufReader::new(file);
+            let mut total = 0usize;
+            let mut ring: std::collections::VecDeque<String> =
+                std::collections::VecDeque::with_capacity(n);
+            for line in reader.lines().map_while(Result::ok) {
+                let matches = match &grep_pattern {
+                    Some(pat) => line.to_lowercase().contains(pat.as_str()),
+                    None => true,
+                };
+                if matches {
+                    total += 1;
+                    if n > 0 {
+                        if ring.len() == n {
+                            ring.pop_front();
+                        }
+                        ring.push_back(line);
+                    }
+                }
+            }
+            Ok((total, ring.into_iter().collect()))
+        })
+        .await;
+
+    let (total, tail) = match read_result {
+        Ok(Ok(data)) => data,
+        Ok(Err(e)) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("Cannot open file: {}", e)})),
+                Json(serde_json::json!({"error": format!("Cannot read file: {}", e)})),
+            );
+        },
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error reading file"})),
             );
         },
     };
-
-    let n = q.lines.unwrap_or(50);
-    let reader = BufReader::new(file);
-    let all_lines: Vec<String> = reader
-        .lines()
-        .map_while(Result::ok)
-        .filter(|l| match &q.grep {
-            Some(pattern) => l.to_lowercase().contains(&pattern.to_lowercase()),
-            None => true,
-        })
-        .collect();
-
-    let start = all_lines.len().saturating_sub(n);
-    let tail: Vec<&str> = all_lines[start..].iter().map(|s| s.as_str()).collect();
 
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "file": q.file,
-            "total": all_lines.len(),
+            "total": total,
             "lines": tail,
         })),
     )

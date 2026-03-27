@@ -239,6 +239,11 @@ pub(super) async fn change_channel_id<R: Rtdb + 'static>(
         message: Some(format!("Channel ID changed from {} to {}", old_id, new_id)),
     };
 
-    tracing::info!("Ch{} -> Ch{}: migration complete", old_id, new_id);
+    tracing::info!(
+        "Ch{} -> Ch{}: migration complete. \
+         Run `monarch services refresh modsrv` to restore M2C dispatch.",
+        old_id,
+        new_id
+    );
     Ok(Json(SuccessResponse::new(result)))
 }
