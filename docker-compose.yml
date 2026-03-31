@@ -31,7 +31,7 @@ services:
 
   # TimescaleDB - Time-series database for hissrv historical data
   timescaledb:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:latest-pg17
     container_name: voltage-timescaledb
     network_mode: host
     labels:
@@ -207,7 +207,7 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro
-      - ${VOLTAGE_BASE_PATH:-./data}/config/cert:/app/config/cert:rw  # TLS 证书目录（固定挂载点）
+      - ${VOLTAGE_BASE_PATH:-./data}/cert:/app/config/cert:rw  # TLS 证书目录（固定挂载点）
     depends_on:
       voltage-redis:
         condition: service_healthy
@@ -254,9 +254,7 @@ services:
 
   # Vue.js Frontend - Web 管理界面 (端口 8080)
   apps:
-    build:
-      context: ./apps
-      dockerfile: Dockerfile
+    # Pre-built image required: load via `docker load < apps.tar.gz` or build manually
     image: voltage-apps:latest
     container_name: voltage-apps
     network_mode: host

@@ -8,27 +8,39 @@ use crate::core::channels::ChannelManager;
 use crate::core::config::ChannelCore;
 use crate::dto::{AppError, SuccessResponse};
 use axum::response::Json;
+use sqlx::Acquire;
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 
 /// Migrate channel ID in database (all related tables)
 ///
 /// Updates the channel_id in all related tables within a single transaction.
+///
+/// `PRAGMA foreign_keys` is connection-scoped, not transaction-scoped. We acquire
+/// a dedicated connection, disable FKs on it before starting the transaction, do
+/// all work inside the transaction, commit, then re-enable FKs. This ensures the
+/// connection is returned to the pool with FKs back on, even if the commit fails.
 async fn migrate_channel_id_in_db(
     old_id: u32,
     new_id: u32,
     pool: &sqlx::SqlitePool,
 ) -> Result<(), AppError> {
-    let mut tx = pool
+    // Acquire a dedicated connection so FK pragma changes are isolated.
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to acquire connection: {}", e)))?;
+
+    // Disable FK constraints BEFORE starting the transaction (connection-scoped).
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to disable FK: {}", e)))?;
+
+    let mut tx = conn
         .begin()
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to begin transaction: {}", e)))?;
-
-    // Disable foreign key constraints temporarily
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::internal_error(format!("Failed to disable FK: {}", e)))?;
 
     // Update all related tables (order matters for potential future FK constraints)
     for table in &RELATED_TABLES {
@@ -66,15 +78,16 @@ async fn migrate_channel_id_in_db(
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to update channels: {}", e)))?;
 
-    // Re-enable foreign key constraints
-    sqlx::query("PRAGMA foreign_keys = ON")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::internal_error(format!("Failed to enable FK: {}", e)))?;
-
     tx.commit()
         .await
         .map_err(|e| AppError::internal_error(format!("Failed to commit transaction: {}", e)))?;
+
+    // Re-enable FK constraints AFTER commit, on the underlying connection.
+    // This guarantees the connection is returned to the pool with FKs on.
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| AppError::internal_error(format!("Failed to re-enable FK: {}", e)))?;
 
     tracing::info!("Ch{} -> Ch{}: database migration complete", old_id, new_id);
     Ok(())
@@ -165,7 +178,7 @@ pub(super) async fn change_channel_id<R: Rtdb + 'static>(
         new_id
     );
 
-    // 9. Reload routing cache and rebuild SHM
+    // 9. Reload routing cache (in-memory only, no SHM rebuild)
     if let Err(e) = ChannelManager::<voltage_rtdb::RedisRtdb>::reload_routing_cache(
         &state.sqlite_pool,
         &manager.routing_cache,
@@ -173,9 +186,16 @@ pub(super) async fn change_channel_id<R: Rtdb + 'static>(
     .await
     {
         tracing::warn!("Routing cache reload failed: {}", e);
-    } else if let Some(handle) = manager.shm_handle() {
-        if let Err(e) = handle.rebuild(&manager.routing_cache) {
-            tracing::warn!("SHM rebuild after migration failed: {}", e);
+    }
+    // 9b. Rebuild SHM for channel structure change (new channel points)
+    if let Some(handle) = manager.shm_handle() {
+        match voltage_rtdb_shm::ChannelPointCounts::load_from_db(&state.sqlite_pool).await {
+            Ok(cp) => {
+                if let Err(e) = handle.rebuild(&cp) {
+                    tracing::warn!("SHM rebuild after migration failed: {}", e);
+                }
+            },
+            Err(e) => tracing::warn!("Failed to load channel points for SHM rebuild: {}", e),
         }
     }
 
@@ -232,6 +252,11 @@ pub(super) async fn change_channel_id<R: Rtdb + 'static>(
         message: Some(format!("Channel ID changed from {} to {}", old_id, new_id)),
     };
 
-    tracing::info!("Ch{} -> Ch{}: migration complete", old_id, new_id);
+    tracing::info!(
+        "Ch{} -> Ch{}: migration complete. \
+         Run `monarch services refresh modsrv` to restore M2C dispatch.",
+        old_id,
+        new_id
+    );
     Ok(Json(SuccessResponse::new(result)))
 }

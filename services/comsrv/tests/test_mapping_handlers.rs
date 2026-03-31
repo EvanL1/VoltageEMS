@@ -273,6 +273,7 @@ async fn create_test_app_with_pool(pool: sqlx::SqlitePool) -> Result<axum::Route
         redis_client,
         pool,
         command_tx_cache,
+        None,
     );
     Ok(router)
 }

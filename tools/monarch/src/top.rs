@@ -803,7 +803,14 @@ pub(crate) fn format_time(ts_ms: u64) -> String {
     use chrono::{Local, TimeZone};
     let secs = (ts_ms / 1000) as i64;
     match Local.timestamp_opt(secs, 0) {
-        chrono::LocalResult::Single(dt) => dt.format("%H:%M:%S").to_string(),
+        chrono::LocalResult::Single(dt) => {
+            let today = Local::now().date_naive();
+            if dt.date_naive() == today {
+                dt.format("%H:%M:%S").to_string()
+            } else {
+                dt.format("%m-%d %H:%M:%S").to_string()
+            }
+        },
         _ => "-".to_string(),
     }
 }

@@ -64,6 +64,7 @@ pub fn evaluate_formula(formula: &str, variables: &HashMap<String, f64>) -> Resu
 /// # Returns
 /// * `Ok(())` - Formula is syntactically valid
 /// * `Err(String)` - Syntax error description
+#[allow(dead_code)]
 pub fn validate_formula(formula: &str, expected_variables: &[&str]) -> Result<(), String> {
     // Create a test context with dummy values for all expected variables
     let mut context = HashMapContext::new();

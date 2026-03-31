@@ -28,17 +28,6 @@ const POINT_CSV_HEADERS: [&str; 8] = [
     "description",
 ];
 
-/// CSV column headers for Modbus mapping exports
-const MAPPING_CSV_HEADERS: [&str; 7] = [
-    "point_id",
-    "slave_id",
-    "function_code",
-    "register_address",
-    "data_type",
-    "byte_order",
-    "bit_position",
-];
-
 /// CSV column headers for instance mapping exports
 const INSTANCE_MAPPING_CSV_HEADERS: [&str; 6] = [
     "channel_id",
@@ -83,6 +72,7 @@ impl ConfigExporter {
         debug!("Exporting to directory: {:?}", output_dir);
 
         let result = match service {
+            "global" => self.export_global(output_dir).await?,
             "comsrv" => self.export_comsrv(output_dir).await?,
             "modsrv" => self.export_modsrv(output_dir).await?,
             "rules" => self.export_rules(output_dir).await?,
@@ -97,6 +87,61 @@ impl ConfigExporter {
             result.files_exported.len(),
             result.records_exported
         );
+        Ok(result)
+    }
+
+    async fn export_global(&self, output_dir: &Path) -> Result<ExportResult> {
+        let mut result = ExportResult::default();
+
+        let rows = sqlx::query(
+            "SELECT key, value, type FROM service_config WHERE service_name = 'global' ORDER BY key",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Build nested structure from dot-separated keys
+        let mut root = serde_yml::Mapping::new();
+        for row in &rows {
+            let key: String = row.try_get("key")?;
+            let value: String = row.try_get("value")?;
+            let type_hint: Option<String> = row.try_get("type").ok();
+
+            let yaml_value = match type_hint.as_deref() {
+                Some("integer") | Some("int") => value
+                    .parse::<i64>()
+                    .map(|n| serde_yml::Value::Number(n.into()))
+                    .unwrap_or(serde_yml::Value::String(value)),
+                Some("boolean") | Some("bool") => {
+                    serde_yml::Value::Bool(value.eq_ignore_ascii_case("true") || value == "1")
+                },
+                Some("float") => value
+                    .parse::<f64>()
+                    .ok()
+                    .map(|f| serde_yml::Value::Number(f.into()))
+                    .unwrap_or(serde_yml::Value::String(value)),
+                _ => {
+                    if let Ok(n) = value.parse::<i64>() {
+                        serde_yml::Value::Number(n.into())
+                    } else if value.eq_ignore_ascii_case("true")
+                        || value.eq_ignore_ascii_case("false")
+                    {
+                        serde_yml::Value::Bool(value.eq_ignore_ascii_case("true"))
+                    } else {
+                        serde_yml::Value::String(value)
+                    }
+                },
+            };
+
+            let parts: Vec<&str> = key.split('.').collect();
+            insert_nested(&mut root, &parts, yaml_value);
+        }
+
+        let yaml_path = output_dir.join("global.yaml");
+        let yaml_content = serde_yml::to_string(&root)?;
+        std::fs::write(&yaml_path, yaml_content)?;
+        result.files_exported.push("global.yaml".to_string());
+        result.records_exported = rows.len();
+
         Ok(result)
     }
 
@@ -117,32 +162,69 @@ impl ConfigExporter {
         std::fs::write(&yaml_path, yaml_content)?;
         result.files_exported.push("comsrv.yaml".to_string());
 
-        // Export all point types to CSV
-        for point_type in ["telemetry", "signal", "control", "adjustment"] {
-            let points = self.export_points(point_type).await?;
-            if !points.is_empty() {
-                let csv_name = format!("{}.csv", point_type);
-                self.write_csv(output_dir.join(&csv_name), &POINT_CSV_HEADERS, &points)?;
-                result.files_exported.push(csv_name);
-                result.records_exported += points.len();
+        // Export per-channel point CSVs and mapping CSVs
+        for channel in &channels {
+            let ch_id = channel.id();
+            let channel_dir = output_dir.join(ch_id.to_string());
+            std::fs::create_dir_all(&channel_dir)?;
+
+            for point_type in ["telemetry", "signal", "control", "adjustment"] {
+                // Export point definitions
+                let points = self.export_points_by_channel(point_type, ch_id).await?;
+                if !points.is_empty() {
+                    let csv_path = channel_dir.join(format!("{}.csv", point_type));
+                    self.write_csv(&csv_path, &POINT_CSV_HEADERS, &points)?;
+                    result
+                        .files_exported
+                        .push(format!("{}/{}.csv", ch_id, point_type));
+                    result.records_exported += points.len();
+                }
+
+                // Export protocol mappings
+                let mappings = self
+                    .export_channel_mappings_from_points(point_type, ch_id)
+                    .await?;
+                if !mappings.is_empty() {
+                    let mapping_dir = channel_dir.join("mapping");
+                    std::fs::create_dir_all(&mapping_dir)?;
+
+                    // Build ordered headers: point_id first, then remaining keys sorted
+                    let headers: Vec<String> = {
+                        let mut extra_keys: Vec<String> = mappings[0]
+                            .keys()
+                            .filter(|k| k.as_str() != "point_id")
+                            .cloned()
+                            .collect();
+                        extra_keys.sort();
+                        let mut ordered = vec!["point_id".to_string()];
+                        ordered.extend(extra_keys);
+                        ordered
+                    };
+                    let header_refs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
+
+                    let csv_path = mapping_dir.join(format!("{}_mapping.csv", point_type));
+                    self.write_csv(&csv_path, &header_refs, &mappings)?;
+                    result
+                        .files_exported
+                        .push(format!("{}/mapping/{}_mapping.csv", ch_id, point_type));
+                    result.records_exported += mappings.len();
+                }
             }
         }
 
-        // Export protocol mappings for each channel
-        for channel in &channels {
-            let channel_mappings = self.export_channel_mappings(channel.id()).await?;
-            if !channel_mappings.is_empty() {
-                for (mapping_type, mappings) in channel_mappings {
-                    let mapping_dir = output_dir.join(format!("{}/mapping", channel.id()));
-                    std::fs::create_dir_all(&mapping_dir)?;
-
-                    let csv_path = mapping_dir.join(format!("{}.csv", mapping_type));
-                    self.write_csv(&csv_path, &MAPPING_CSV_HEADERS, &mappings)?;
-
-                    let relative_path = format!("{}/mapping/{}.csv", channel.id(), mapping_type);
-                    result.files_exported.push(relative_path);
-                    result.records_exported += mappings.len();
-                }
+        // Export channel templates
+        let templates = self.export_channel_templates().await?;
+        if !templates.is_empty() {
+            let templates_dir = output_dir.join("templates");
+            std::fs::create_dir_all(&templates_dir)?;
+            for (name, template_json) in &templates {
+                let safe_name = name.replace(['/', '\\', ' '], "_");
+                let json_path = templates_dir.join(format!("{}.json", safe_name));
+                std::fs::write(&json_path, serde_json::to_string_pretty(template_json)?)?;
+                result
+                    .files_exported
+                    .push(format!("templates/{}.json", safe_name));
+                result.records_exported += 1;
             }
         }
 
@@ -197,6 +279,12 @@ impl ConfigExporter {
                 result.records_exported += mappings.len();
             }
         }
+
+        // Export rules as individual JSON files (matching sync input format)
+        let rules_dir = output_dir.join("rules");
+        let rules = self.export_rules_as_json(&rules_dir).await?;
+        result.files_exported.extend(rules.files_exported);
+        result.records_exported += rules.records_exported;
 
         Ok(result)
     }
@@ -312,20 +400,27 @@ impl ConfigExporter {
         Ok(channels)
     }
 
-    async fn export_points(&self, point_type: &str) -> Result<Vec<HashMap<String, String>>> {
-        let telemetry_type = match point_type {
-            "telemetry" => "T",
-            "signal" => "S",
-            "control" => "C",
-            "adjustment" => "A",
+    async fn export_points_by_channel(
+        &self,
+        point_type: &str,
+        channel_id: u32,
+    ) -> Result<Vec<HashMap<String, String>>> {
+        let table = match point_type {
+            "telemetry" => "telemetry_points",
+            "signal" => "signal_points",
+            "control" => "control_points",
+            "adjustment" => "adjustment_points",
             _ => return Ok(Vec::new()),
         };
 
-        let query = "SELECT DISTINCT point_id, signal_name, scale, offset, unit, reverse, data_type, description
-                     FROM points WHERE telemetry_type = ? ORDER BY point_id";
+        let query = format!(
+            "SELECT point_id, signal_name, scale, offset, unit, reverse, data_type, description
+             FROM {} WHERE channel_id = ? ORDER BY point_id",
+            table
+        );
 
-        let rows = sqlx::query(query)
-            .bind(telemetry_type)
+        let rows = sqlx::query(&query)
+            .bind(channel_id as i64)
             .fetch_all(&self.pool)
             .await?;
 
@@ -363,182 +458,55 @@ impl ConfigExporter {
         Ok(points)
     }
 
-    async fn export_channel_mappings(
+    async fn export_channel_mappings_from_points(
         &self,
+        point_type: &str,
         channel_id: u32,
-    ) -> Result<HashMap<String, Vec<HashMap<String, String>>>> {
-        let mut mappings_by_type = HashMap::new();
-
-        // First get the protocol type for this channel
-        let protocol: String =
-            sqlx::query_scalar("SELECT protocol FROM channels WHERE channel_id = ?")
-                .bind(channel_id as i64)
-                .fetch_optional(&self.pool)
-                .await?
-                .unwrap_or_else(|| "modbus_tcp".to_string());
-
-        // Query the appropriate protocol-specific table
-        let rows = match protocol.to_lowercase().as_str() {
-            "modbus_tcp" | "modbus_rtu" | "modbus" => {
-                sqlx::query(
-                    "SELECT telemetry_type, point_id, slave_id, function_code, register_address,
-                            data_type, byte_order, bit_position
-                     FROM modbus_mappings WHERE channel_id = ? ORDER BY telemetry_type, point_id",
-                )
-                .bind(channel_id as i64)
-                .fetch_all(&self.pool)
-                .await?
-            },
-            "virtual" => {
-                // For virtual, we need to handle different columns
-                let virtual_rows = sqlx::query(
-                    "SELECT telemetry_type, point_id, expression, update_interval, initial_value, noise_range
-                     FROM virtual_mappings WHERE channel_id = ? ORDER BY telemetry_type, point_id",
-                )
-                .bind(channel_id as i64)
-                .fetch_all(&self.pool)
-                .await?;
-
-                // Convert virtual protocol fields to match expected format
-                for row in virtual_rows {
-                    let telemetry_type: String = row.try_get("telemetry_type")?;
-                    let mapping_type = match telemetry_type.as_str() {
-                        "T" => "telemetry",
-                        "S" => "signal",
-                        "C" => "control",
-                        "A" => "adjustment",
-                        _ => continue,
-                    };
-
-                    let mut mapping = HashMap::new();
-                    mapping.insert(
-                        "point_id".to_string(),
-                        row.try_get::<i64, _>("point_id")?.to_string(),
-                    );
-
-                    if let Ok(Some(expr)) = row.try_get::<Option<String>, _>("expression") {
-                        mapping.insert("expression".to_string(), expr);
-                    }
-                    if let Ok(Some(ui)) = row.try_get::<Option<i64>, _>("update_interval") {
-                        mapping.insert("update_interval".to_string(), ui.to_string());
-                    }
-                    if let Ok(Some(iv)) = row.try_get::<Option<f64>, _>("initial_value") {
-                        mapping.insert("initial_value".to_string(), iv.to_string());
-                    }
-                    if let Ok(Some(nr)) = row.try_get::<Option<f64>, _>("noise_range") {
-                        mapping.insert("noise_range".to_string(), nr.to_string());
-                    }
-
-                    mappings_by_type
-                        .entry(mapping_type.to_string())
-                        .or_insert_with(Vec::new)
-                        .push(mapping);
-                }
-                // Return early for virtual since we already processed
-                return Ok(mappings_by_type);
-            },
-            "iec60870" | "iec104" | "iec" => {
-                sqlx::query(
-                    "SELECT telemetry_type, point_id, asdu_address, object_address, type_id, cot, qualifier
-                     FROM iec_mappings WHERE channel_id = ? ORDER BY telemetry_type, point_id",
-                )
-                .bind(channel_id as i64)
-                .fetch_all(&self.pool)
-                .await?
-            },
-            "grpc" => {
-                sqlx::query(
-                    "SELECT telemetry_type, point_id, service_name, method_name, field_path
-                     FROM grpc_mappings WHERE channel_id = ? ORDER BY telemetry_type, point_id",
-                )
-                .bind(channel_id as i64)
-                .fetch_all(&self.pool)
-                .await?
-            },
-            _ => {
-                // Unknown protocol, return empty mappings
-                return Ok(mappings_by_type);
-            }
+    ) -> Result<Vec<HashMap<String, String>>> {
+        let table = match point_type {
+            "telemetry" => "telemetry_points",
+            "signal" => "signal_points",
+            "control" => "control_points",
+            "adjustment" => "adjustment_points",
+            _ => return Ok(Vec::new()),
         };
 
-        // Process rows based on protocol (non-virtual protocols)
+        let query = format!(
+            "SELECT point_id, protocol_mappings FROM {} WHERE channel_id = ? AND protocol_mappings IS NOT NULL ORDER BY point_id",
+            table
+        );
+
+        let rows = sqlx::query(&query)
+            .bind(channel_id as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut mappings = Vec::new();
         for row in rows {
-            let telemetry_type: String = row.try_get("telemetry_type")?;
+            let point_id: i64 = row.try_get("point_id")?;
+            let pm_str: String = row.try_get("protocol_mappings")?;
 
-            let mapping_type = match telemetry_type.as_str() {
-                "T" => "telemetry",
-                "S" => "signal",
-                "C" => "control",
-                "A" => "adjustment",
-                _ => continue,
-            };
+            if let Ok(serde_json::Value::Object(obj)) =
+                serde_json::from_str::<serde_json::Value>(&pm_str)
+            {
+                let mut mapping = HashMap::new();
+                mapping.insert("point_id".to_string(), point_id.to_string());
 
-            let mut mapping = HashMap::new();
-            mapping.insert(
-                "point_id".to_string(),
-                row.try_get::<i64, _>("point_id")?.to_string(),
-            );
+                for (k, v) in obj {
+                    let val_str = match v {
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::String(s) => s,
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        _ => continue,
+                    };
+                    mapping.insert(k, val_str);
+                }
 
-            // Handle different protocols' fields
-            match protocol.to_lowercase().as_str() {
-                "modbus_tcp" | "modbus_rtu" | "modbus" => {
-                    if let Ok(Some(sid)) = row.try_get::<Option<i64>, _>("slave_id") {
-                        mapping.insert("slave_id".to_string(), sid.to_string());
-                    }
-                    if let Ok(Some(fc)) = row.try_get::<Option<i64>, _>("function_code") {
-                        mapping.insert("function_code".to_string(), fc.to_string());
-                    }
-                    if let Ok(Some(ra)) = row.try_get::<Option<i64>, _>("register_address") {
-                        mapping.insert("register_address".to_string(), ra.to_string());
-                    }
-                    if let Ok(Some(dt)) = row.try_get::<Option<String>, _>("data_type") {
-                        mapping.insert("data_type".to_string(), dt);
-                    }
-                    if let Ok(Some(bo)) = row.try_get::<Option<String>, _>("byte_order") {
-                        mapping.insert("byte_order".to_string(), bo);
-                    }
-                    if let Ok(Some(bp)) = row.try_get::<Option<i64>, _>("bit_position") {
-                        mapping.insert("bit_position".to_string(), bp.to_string());
-                    }
-                },
-                "iec60870" | "iec104" | "iec" => {
-                    if let Ok(Some(asdu)) = row.try_get::<Option<i64>, _>("asdu_address") {
-                        mapping.insert("asdu_address".to_string(), asdu.to_string());
-                    }
-                    if let Ok(Some(obj)) = row.try_get::<Option<i64>, _>("object_address") {
-                        mapping.insert("object_address".to_string(), obj.to_string());
-                    }
-                    if let Ok(Some(tid)) = row.try_get::<Option<i64>, _>("type_id") {
-                        mapping.insert("type_id".to_string(), tid.to_string());
-                    }
-                    if let Ok(Some(cot)) = row.try_get::<Option<i64>, _>("cot") {
-                        mapping.insert("cot".to_string(), cot.to_string());
-                    }
-                    if let Ok(Some(qual)) = row.try_get::<Option<i64>, _>("qualifier") {
-                        mapping.insert("qualifier".to_string(), qual.to_string());
-                    }
-                },
-                "grpc" => {
-                    if let Ok(Some(sn)) = row.try_get::<Option<String>, _>("service_name") {
-                        mapping.insert("service_name".to_string(), sn);
-                    }
-                    if let Ok(Some(mn)) = row.try_get::<Option<String>, _>("method_name") {
-                        mapping.insert("method_name".to_string(), mn);
-                    }
-                    if let Ok(Some(fp)) = row.try_get::<Option<String>, _>("field_path") {
-                        mapping.insert("field_path".to_string(), fp);
-                    }
-                },
-                _ => {},
+                mappings.push(mapping);
             }
-
-            mappings_by_type
-                .entry(mapping_type.to_string())
-                .or_insert_with(Vec::new)
-                .push(mapping);
         }
 
-        Ok(mappings_by_type)
+        Ok(mappings)
     }
 
     // Helper methods for modsrv export
@@ -746,6 +714,96 @@ impl ConfigExporter {
         Ok(rules_list)
     }
 
+    async fn export_channel_templates(&self) -> Result<Vec<(String, serde_json::Value)>> {
+        let rows = sqlx::query(
+            "SELECT template_id, name, description, protocol, points_snapshot, mappings_snapshot, source_channel_id
+             FROM channel_templates ORDER BY template_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut templates = Vec::new();
+        for row in rows {
+            let name: String = row.try_get("name")?;
+            let description: Option<String> = row.try_get("description")?;
+            let protocol: String = row.try_get("protocol")?;
+            let points_snapshot: String = row.try_get("points_snapshot")?;
+            let mappings_snapshot: String = row.try_get("mappings_snapshot")?;
+            let source_channel_id: Option<i64> = row.try_get("source_channel_id")?;
+
+            let template = serde_json::json!({
+                "name": name,
+                "description": description,
+                "protocol": protocol,
+                "points_snapshot": serde_json::from_str::<serde_json::Value>(&points_snapshot)
+                    .unwrap_or(serde_json::Value::Null),
+                "mappings_snapshot": serde_json::from_str::<serde_json::Value>(&mappings_snapshot)
+                    .unwrap_or(serde_json::Value::Null),
+                "source_channel_id": source_channel_id,
+            });
+
+            templates.push((name, template));
+        }
+
+        Ok(templates)
+    }
+
+    async fn export_rules_as_json(&self, rules_dir: &Path) -> Result<ExportResult> {
+        let mut result = ExportResult::default();
+
+        let rows = sqlx::query(
+            "SELECT id, name, description, flow_json, nodes_json, enabled, priority, cooldown_ms, trigger_config
+             FROM rules ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(result);
+        }
+
+        std::fs::create_dir_all(rules_dir)?;
+
+        for row in rows {
+            let id: i64 = row.try_get("id")?;
+            let name: String = row.try_get("name")?;
+            let description: Option<String> = row.try_get("description")?;
+            let flow_json_str: String = row.try_get("flow_json")?;
+            let enabled: bool = row.try_get("enabled")?;
+            let priority: i64 = row.try_get("priority")?;
+            let cooldown_ms: i64 = row.try_get("cooldown_ms")?;
+
+            let flow_json: serde_json::Value =
+                serde_json::from_str(&flow_json_str).unwrap_or(serde_json::Value::Null);
+
+            let rule_file = serde_json::json!({
+                "name": name,
+                "description": description.unwrap_or_default(),
+                "enabled": enabled,
+                "priority": priority,
+                "cooldown_ms": cooldown_ms,
+                "flow_json": flow_json,
+                "format": "vue-flow",
+                "id": id.to_string(),
+            });
+
+            let safe_name = if name.is_empty() {
+                format!("rule_{}", id)
+            } else {
+                name.replace(['/', '\\', ' ', '.'], "_").to_lowercase()
+            };
+            let json_path = rules_dir.join(format!("{}.json", safe_name));
+            std::fs::write(&json_path, serde_json::to_string_pretty(&rule_file)?)?;
+
+            result
+                .files_exported
+                .push(format!("rules/{}.json", safe_name));
+            result.records_exported += 1;
+        }
+
+        Ok(result)
+    }
+
     /// Write records to a CSV file with the given column headers
     fn write_csv(
         &self,
@@ -767,5 +825,22 @@ impl ConfigExporter {
         }
         wtr.flush()?;
         Ok(())
+    }
+}
+
+/// Insert a value into a nested YAML mapping using a dot-separated key path.
+fn insert_nested(root: &mut serde_yml::Mapping, parts: &[&str], value: serde_yml::Value) {
+    if parts.len() == 1 {
+        root.insert(serde_yml::Value::String(parts[0].to_string()), value);
+        return;
+    }
+
+    let key = serde_yml::Value::String(parts[0].to_string());
+    let entry = root
+        .entry(key)
+        .or_insert_with(|| serde_yml::Value::Mapping(serde_yml::Mapping::new()));
+
+    if let serde_yml::Value::Mapping(ref mut nested) = entry {
+        insert_nested(nested, &parts[1..], value);
     }
 }

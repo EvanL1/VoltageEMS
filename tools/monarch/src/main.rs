@@ -7,8 +7,10 @@ mod channels;
 mod core;
 mod doctor;
 mod logs;
+mod logs_tui;
 mod models;
 mod output;
+mod routing;
 mod rtdb;
 mod rules;
 mod services;
@@ -45,7 +47,7 @@ Service Operations:
   models      Manage product templates and device instances
   rules       Manage and execute business rules
   services    Start, stop, and manage VoltageEMS services
-  logs        Dynamically adjust log levels for running services
+  logs        Log level control and log file viewer
 
 Examples:
   monarch sync                          # Sync all configurations
@@ -55,7 +57,9 @@ Examples:
   monarch rules enable R001             # Enable a rule
   monarch services status               # Check service status
   monarch logs level all debug          # Switch all services to debug mode
-  monarch logs get all                  # Show current log levels
+  monarch logs list                     # List today's log files
+  monarch logs view comsrv -n 100       # View last 100 lines of comsrv log
+  monarch logs tail modsrv --grep ERROR # Follow modsrv log, filter ERRORs
 
 Use 'monarch <command> --help' for more information on a specific command.")]
 #[command(version)]
@@ -157,6 +161,13 @@ enum Commands {
         command: rules::RuleCommands,
     },
 
+    /// Manage routing configurations
+    #[command(about = "Manage channel-to-instance point routing")]
+    Routing {
+        #[command(subcommand)]
+        command: routing::RoutingCommands,
+    },
+
     /// Direct Redis RTDB operations
     #[command(about = "Direct Redis RTDB operations for debugging and inspection")]
     Rtdb {
@@ -171,8 +182,8 @@ enum Commands {
         command: services::ServiceCommands,
     },
 
-    /// Manage log levels
-    #[command(about = "Dynamically adjust log levels for running services")]
+    /// Manage logs
+    #[command(about = "Log level control and log file viewer")]
     Logs {
         #[command(subcommand)]
         command: logs::LogCommands,
@@ -282,16 +293,14 @@ async fn run(cli: Cli) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| auto_detect_path("VOLTAGE_DATA_PATH", "data"));
 
-    // Print banner for interactive commands
-    if !cli.no_color && !json {
+    if !json && matches!(cli.command, Commands::Init { .. }) && !cli.no_color {
         print_banner();
         println!(
             "{} Config: {}, DB: {}",
-            "Using paths:".bright_cyan(),
+            "Paths:".bright_cyan(),
             config_path.display(),
             db_path.display()
         );
-        println!();
     }
 
     match cli.command {
@@ -378,6 +387,15 @@ async fn run(cli: Cli) -> Result<()> {
                 host,
             );
             rules::handle_command(command, &url, json).await?;
+        },
+        Commands::Routing { command } => {
+            let url = service_url(
+                "VOLTAGE_MODSRV_URL",
+                "http",
+                voltage_model::service_ports::MODSRV_PORT,
+                host,
+            );
+            routing::handle_command(command, &url, json).await?;
         },
         Commands::Rtdb { command } => {
             let url = service_url(
@@ -500,7 +518,7 @@ async fn sync_command(
         }
 
         // Perform sync
-        match core.sync(cfg).await {
+        match core.sync(cfg, force).await {
             Ok(result) => {
                 let error_msgs: Vec<String> = result
                     .errors

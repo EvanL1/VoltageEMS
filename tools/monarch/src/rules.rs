@@ -6,7 +6,6 @@ use anyhow::Result;
 use clap::Subcommand;
 use reqwest::Client;
 use serde_json::Value;
-use tracing::info;
 
 #[derive(Subcommand)]
 pub enum RuleCommands {
@@ -59,11 +58,57 @@ pub enum RuleCommands {
     /// Show recent rule executions
     #[command(about = "Display recent rule execution history")]
     Executions {
-        /// Rule ID (optional, shows all if not specified)
-        rule_id: Option<i64>,
+        /// Rule ID
+        rule_id: i64,
         /// Limit number of results
         #[arg(long, default_value = "10")]
         limit: usize,
+    },
+
+    /// Create a new rule (empty shell, configure with 'update')
+    #[command(about = "Create a new business rule")]
+    Create {
+        /// Rule name
+        #[arg(long)]
+        name: String,
+        /// Rule description
+        #[arg(long)]
+        description: Option<String>,
+    },
+
+    /// Update rule metadata and/or flow logic
+    #[command(about = "Update rule metadata and/or flow logic")]
+    Update {
+        /// Rule ID
+        rule_id: i64,
+        /// New rule name
+        #[arg(long)]
+        name: Option<String>,
+        /// New description
+        #[arg(long)]
+        description: Option<String>,
+        /// Enable or disable the rule
+        #[arg(long)]
+        enabled: Option<bool>,
+        /// Rule priority (lower = higher priority)
+        #[arg(long)]
+        priority: Option<u32>,
+        /// Cooldown between executions in milliseconds
+        #[arg(long)]
+        cooldown_ms: Option<u64>,
+        /// Path to Vue Flow JSON file (use '-' for stdin)
+        #[arg(long = "flow-json")]
+        flow_json: Option<String>,
+    },
+
+    /// Delete a rule
+    #[command(about = "Delete a business rule")]
+    Delete {
+        /// Rule ID
+        rule_id: i64,
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        force: bool,
     },
 }
 
@@ -111,7 +156,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Rule '{}' enabled", rule_id);
+                println!("Rule '{}' enabled", rule_id);
             }
         },
         RuleCommands::Disable { rule_id } => {
@@ -119,7 +164,7 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
             if json {
                 crate::output::print_ok();
             } else {
-                info!("Rule '{}' disabled", rule_id);
+                println!("Rule '{}' disabled", rule_id);
             }
         },
         RuleCommands::Test { rule_id } => {
@@ -152,6 +197,79 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
                 crate::output::print_success(&executions);
             } else {
                 println!("Executions: {}", serde_json::to_string_pretty(&executions)?);
+            }
+        },
+        RuleCommands::Create { name, description } => {
+            let result = client.create_rule(&name, description.as_deref()).await?;
+            if json {
+                crate::output::print_success(&result);
+            } else {
+                println!("Rule created: {}", serde_json::to_string_pretty(&result)?);
+            }
+        },
+        RuleCommands::Update {
+            rule_id,
+            name,
+            description,
+            enabled,
+            priority,
+            cooldown_ms,
+            flow_json,
+        } => {
+            let mut body = serde_json::Map::new();
+            if let Some(n) = name {
+                body.insert("name".into(), Value::String(n));
+            }
+            if let Some(d) = description {
+                body.insert("description".into(), Value::String(d));
+            }
+            if let Some(e) = enabled {
+                body.insert("enabled".into(), Value::Bool(e));
+            }
+            if let Some(p) = priority {
+                body.insert("priority".into(), Value::from(p));
+            }
+            if let Some(c) = cooldown_ms {
+                body.insert("cooldown_ms".into(), Value::from(c));
+            }
+            if let Some(path) = flow_json {
+                let content = if path == "-" {
+                    let mut buf = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+                    buf
+                } else {
+                    std::fs::read_to_string(&path)
+                        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path, e))?
+                };
+                let flow: Value = serde_json::from_str(&content)
+                    .map_err(|e| anyhow::anyhow!("Invalid JSON in flow file: {}", e))?;
+                body.insert("flow_json".into(), flow);
+            }
+            if body.is_empty() {
+                anyhow::bail!("No fields to update. Use --name, --description, --enabled, --priority, --cooldown-ms, or --flow-json");
+            }
+            let result = client.update_rule(rule_id, Value::Object(body)).await?;
+            if json {
+                crate::output::print_success(&result);
+            } else {
+                println!("Rule {} updated", rule_id);
+            }
+        },
+        RuleCommands::Delete { rule_id, force } => {
+            if !force && !json {
+                println!("Delete rule {}? [y/N]", rule_id);
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("Cancelled");
+                    return Ok(());
+                }
+            }
+            client.delete_rule(rule_id).await?;
+            if json {
+                crate::output::print_ok();
+            } else {
+                println!("Rule {} deleted", rule_id);
             }
         },
     }
@@ -274,15 +392,11 @@ impl RuleClient {
         }
     }
 
-    async fn list_executions(&self, rule_id: Option<i64>, limit: usize) -> Result<Value> {
-        let url = if let Some(id) = rule_id {
-            format!(
-                "{}/api/rules/{}/executions?limit={}",
-                self.base_url, id, limit
-            )
-        } else {
-            format!("{}/api/executions?limit={}", self.base_url, limit)
-        };
+    async fn list_executions(&self, rule_id: i64, limit: usize) -> Result<Value> {
+        let url = format!(
+            "{}/api/rules/{}/executions?limit={}",
+            self.base_url, rule_id, limit
+        );
 
         let response = self.client.get(url).send().await?;
 
@@ -291,6 +405,67 @@ impl RuleClient {
         } else {
             Err(anyhow::anyhow!(
                 "Failed to list executions: {}",
+                response.status()
+            ))
+        }
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    async fn create_rule(&self, name: &str, description: Option<&str>) -> Result<Value> {
+        let mut body = serde_json::Map::new();
+        body.insert("name".into(), Value::String(name.to_string()));
+        if let Some(d) = description {
+            body.insert("description".into(), Value::String(d.to_string()));
+        }
+        let response = self
+            .client
+            .post(format!("{}/api/rules", self.base_url))
+            .json(&Value::Object(body))
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            Err(anyhow::anyhow!(
+                "Failed to create rule: {}",
+                response.status()
+            ))
+        }
+    }
+
+    async fn update_rule(&self, rule_id: i64, body: Value) -> Result<Value> {
+        let response = self
+            .client
+            .put(format!("{}/api/rules/{}", self.base_url, rule_id))
+            .json(&body)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            Err(anyhow::anyhow!(
+                "Failed to update rule {}: {}",
+                rule_id,
+                response.status()
+            ))
+        }
+    }
+
+    async fn delete_rule(&self, rule_id: i64) -> Result<()> {
+        let response = self
+            .client
+            .delete(format!("{}/api/rules/{}", self.base_url, rule_id))
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Failed to delete rule {}: {}",
+                rule_id,
                 response.status()
             ))
         }

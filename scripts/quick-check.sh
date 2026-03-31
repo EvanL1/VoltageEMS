@@ -15,6 +15,19 @@ echo -e "${GREEN}=== VoltageEMS Quick Check ===${NC}"
 echo -e "${YELLOW}Syncing git submodules...${NC}"
 git submodule update --init --recursive
 
+# Check if submodules are behind their remote tracking branch
+echo -e "${YELLOW}Checking submodule freshness...${NC}"
+git submodule foreach --quiet '
+  git fetch --quiet origin 2>/dev/null
+  LOCAL=$(git rev-parse HEAD)
+  REMOTE=$(git rev-parse origin/HEAD 2>/dev/null || git rev-parse origin/main 2>/dev/null || echo "")
+  if [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
+    BEHIND=$(git rev-list --count HEAD..origin/HEAD 2>/dev/null || git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+    echo "⚠️  Submodule $name is ${BEHIND} commit(s) behind remote"
+    echo "   Run: git submodule update --remote && git add $sm_path && git commit"
+  fi
+'
+
 # Check for forbidden mod.rs files (project convention)
 echo -e "${YELLOW}Checking for mod.rs files...${NC}"
 MOD_RS_FILES=$(find . -name "mod.rs" -not -path "./target/*" 2>/dev/null || true)

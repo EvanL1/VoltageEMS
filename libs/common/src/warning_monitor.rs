@@ -34,8 +34,8 @@ pub struct UnmappedPointsWarning {
     pub severity: String,
 }
 
-/// Warning statistics for tracking
-#[derive(Debug, Default)]
+/// Warning statistics for tracking (queryable via health endpoints)
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct WarningStats {
     pub queue_overflow_count: u64,
     pub queue_high_count: u64,
@@ -44,12 +44,20 @@ pub struct WarningStats {
     pub last_unmapped_points: Option<i64>,
 }
 
-/// Start the warning monitor that subscribes to Redis warning channels
-pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) -> RedisResult<()> {
+/// Shared handle to warning stats, readable from health endpoints
+pub type WarningStatsHandle = Arc<RwLock<WarningStats>>;
+
+/// Start the warning monitor that subscribes to Redis warning channels.
+///
+/// Returns a shared handle to live warning statistics, queryable from health endpoints.
+/// The monitoring loop runs as a background task and stops when `token` is cancelled.
+pub async fn start_warning_monitor(
+    redis_url: String,
+    token: CancellationToken,
+) -> RedisResult<WarningStatsHandle> {
     let client = Client::open(redis_url.as_str())?;
     let mut pubsub = client.get_async_pubsub().await?;
 
-    // Subscribe to warning channels
     pubsub
         .subscribe(&[
             "warnings:queue_overflow",
@@ -60,102 +68,87 @@ pub async fn start_warning_monitor(redis_url: String, token: CancellationToken) 
 
     info!("WarnMonitor started");
 
-    let stats = Arc::new(RwLock::new(WarningStats::default()));
+    let stats: WarningStatsHandle = Arc::new(RwLock::new(WarningStats::default()));
+    let stats_clone = Arc::clone(&stats);
 
-    let mut pubsub_stream = pubsub.on_message();
-
-    loop {
-        tokio::select! {
-            Some(msg) = pubsub_stream.next() => {
-                let channel = msg.get_channel_name();
-                let payload: String = msg.get_payload()?;
-
-                match channel {
-                    "warnings:queue_overflow" => {
-                        match serde_json::from_str::<QueueOverflowWarning>(&payload) {
-                            Ok(data) => {
-                                error!(
-                                    "QUEUE OVERFLOW: {} Ch{}:{} len={}",
-                                    data.service, data.channel_id, data.point_type, data.queue_length
-                                );
-
-                                // Update statistics
-                                let mut s = stats.write().await;
-                                s.queue_overflow_count += 1;
-                                s.last_queue_overflow = Some(data.timestamp);
-
-                                // Here you could add more actions:
-                                // - Send alerts to monitoring systems
-                                // - Trigger auto-recovery procedures
-                                // - Log to database for analysis
-                            }
-                            Err(e) => {
-                                error!("Queue overflow parse: {}", e);
-                            }
-                        }
-                    }
-                    "warnings:queue_high" => {
-                        match serde_json::from_str::<QueueOverflowWarning>(&payload) {
-                            Ok(data) => {
-                                warn!(
-                                    "Queue high: {} Ch{}:{} len={}",
-                                    data.service, data.channel_id, data.point_type, data.queue_length
-                                );
-
-                                // Update statistics
-                                let mut s = stats.write().await;
-                                s.queue_high_count += 1;
-                            }
-                            Err(e) => {
-                                error!("Queue high parse: {}", e);
-                            }
-                        }
-                    }
-                    "warnings:unmapped_points" => {
-                        match serde_json::from_str::<UnmappedPointsWarning>(&payload) {
-                            Ok(data) => {
-                                if data.unmapped_count > 10 {
-                                    warn!(
-                                        "Unmapped: {} Ch{}:{} unmapped={} routed={}",
-                                        data.service, data.channel_id, data.telemetry_type, data.unmapped_count, data.routed_count
-                                    );
-                                } else {
-                                    debug!(
-                                        "Unmapped: {} Ch{}:{} unmapped={} routed={}",
-                                        data.service, data.channel_id, data.telemetry_type, data.unmapped_count, data.routed_count
-                                    );
-                                }
-
-                                // Update statistics
-                                let mut s = stats.write().await;
-                                s.unmapped_points_count += data.unmapped_count as u64;
-                                s.last_unmapped_points = Some(data.timestamp);
-
-                                // Could trigger configuration validation or auto-mapping
-                            }
-                            Err(e) => {
-                                error!("Unmapped parse: {}", e);
-                            }
-                        }
-                    }
-                    _ => {
-                        debug!("Unknown channel: {}", channel);
-                    }
+    tokio::spawn(async move {
+        let mut pubsub_stream = pubsub.on_message();
+        loop {
+            tokio::select! {
+                Some(msg) = pubsub_stream.next() => {
+                    let channel = msg.get_channel_name();
+                    let Ok(payload) = msg.get_payload::<String>() else {
+                        continue;
+                    };
+                    process_warning(&stats_clone, channel, &payload).await;
+                }
+                _ = token.cancelled() => {
+                    debug!("WarnMonitor stopping");
+                    break;
                 }
             }
-            _ = token.cancelled() => {
-                debug!("WarnMonitor stopping");
-                break;
-            }
         }
+        let s = stats_clone.read().await;
+        info!(
+            "WarnMonitor stats: overflow={} high={} unmapped={}",
+            s.queue_overflow_count, s.queue_high_count, s.unmapped_points_count
+        );
+    });
+
+    Ok(stats)
+}
+
+async fn process_warning(stats: &WarningStatsHandle, channel: &str, payload: &str) {
+    match channel {
+        "warnings:queue_overflow" => {
+            if let Ok(data) = serde_json::from_str::<QueueOverflowWarning>(payload) {
+                error!(
+                    "QUEUE OVERFLOW: {} Ch{}:{} len={}",
+                    data.service, data.channel_id, data.point_type, data.queue_length
+                );
+                let mut s = stats.write().await;
+                s.queue_overflow_count += 1;
+                s.last_queue_overflow = Some(data.timestamp);
+            }
+        },
+        "warnings:queue_high" => {
+            if let Ok(data) = serde_json::from_str::<QueueOverflowWarning>(payload) {
+                warn!(
+                    "Queue high: {} Ch{}:{} len={}",
+                    data.service, data.channel_id, data.point_type, data.queue_length
+                );
+                let mut s = stats.write().await;
+                s.queue_high_count += 1;
+            }
+        },
+        "warnings:unmapped_points" => {
+            if let Ok(data) = serde_json::from_str::<UnmappedPointsWarning>(payload) {
+                if data.unmapped_count > 10 {
+                    warn!(
+                        "Unmapped: {} Ch{}:{} unmapped={} routed={}",
+                        data.service,
+                        data.channel_id,
+                        data.telemetry_type,
+                        data.unmapped_count,
+                        data.routed_count
+                    );
+                } else {
+                    debug!(
+                        "Unmapped: {} Ch{}:{} unmapped={} routed={}",
+                        data.service,
+                        data.channel_id,
+                        data.telemetry_type,
+                        data.unmapped_count,
+                        data.routed_count
+                    );
+                }
+                let mut s = stats.write().await;
+                s.unmapped_points_count += data.unmapped_count as u64;
+                s.last_unmapped_points = Some(data.timestamp);
+            }
+        },
+        _ => {
+            debug!("Unknown warning channel: {}", channel);
+        },
     }
-
-    // Print final statistics
-    let s = stats.read().await;
-    info!(
-        "WarnMonitor stats: overflow={} high={} unmapped={}",
-        s.queue_overflow_count, s.queue_high_count, s.unmapped_points_count
-    );
-
-    Ok(())
 }

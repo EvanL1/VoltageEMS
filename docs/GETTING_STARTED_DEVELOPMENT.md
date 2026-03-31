@@ -183,11 +183,10 @@ VoltageEMS/
 │   │   │   └── rule_routes.rs  # 规则 API
 │   │   └── Cargo.toml
 │   │
-│   └── python-services/    # Python 辅助服务 (FastAPI)
-│       ├── hissrv/         # 历史数据服务 (InfluxDB 3.x)
-│       ├── apigateway/     # API 网关 (WebSocket, JWT)
-│       ├── netsrv/         # 网络服务 (MQTT)
-│       └── alarmsrv/       # 告警管理
+├── hissrv/             # 历史数据服务 - TimescaleDB (Rust)
+│   ├── apigateway/     # API 网关 (WebSocket, JWT, Rust)
+│   ├── netsrv/         # 网络服务 (MQTT, Rust)
+│   └── alarmsrv/       # 告警管理 (Rust)
 │
 ├── libs/                    # 13 个共享 Rust 库
 │   ├── voltage-core/       # 核心类型与编解码器（no_std）

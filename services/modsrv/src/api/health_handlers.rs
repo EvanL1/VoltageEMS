@@ -106,6 +106,29 @@ pub async fn health_check(
         }),
     );
 
+    // Check SHM dispatch status
+    // degraded (no writer) → unhealthy (503): M2C actions will fail
+    // writer_only (UDS down) → warning: SHM writes work but comsrv may not process them
+    let shm_writer_available = state.shm_dispatch.is_writer_available();
+    let uds_notifier_configured = state.shm_dispatch.is_notifier_configured();
+    let shm_status = if shm_writer_available && uds_notifier_configured {
+        "ready"
+    } else if shm_writer_available {
+        "writer_only"
+    } else {
+        overall_healthy = false;
+        errors.push("shm_dispatch: writer unavailable (comsrv may have restarted)".to_string());
+        "degraded"
+    };
+    checks.insert(
+        "shm_dispatch".to_string(),
+        json!({
+            "status": shm_status,
+            "writer_available": shm_writer_available,
+            "uds_notifier_configured": uds_notifier_configured
+        }),
+    );
+
     // Collect system metrics (CPU, memory)
     let metrics = SystemMetrics::collect();
 

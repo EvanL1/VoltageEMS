@@ -64,6 +64,16 @@ pub const ENV_MODSRV_URL: &str = "MODSRV_URL";
 /// Environment variable name for rules URL
 pub const ENV_RULES_URL: &str = "RULES_URL";
 
+/// Resolve the comsrv base URL, preferring the `COMSRV_URL` environment variable.
+pub fn comsrv_url() -> String {
+    env::var(ENV_COMSRV_URL).unwrap_or_else(|_| DEFAULT_COMSRV_URL.to_string())
+}
+
+/// Resolve the modsrv base URL, preferring the `MODSRV_URL` environment variable.
+pub fn modsrv_url() -> String {
+    env::var(ENV_MODSRV_URL).unwrap_or_else(|_| DEFAULT_MODSRV_URL.to_string())
+}
+
 // ============================================================================
 // Redis routing keys (for cross-service data routing)
 // ============================================================================

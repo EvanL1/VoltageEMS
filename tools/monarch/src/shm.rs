@@ -308,13 +308,12 @@ pub(crate) fn open_reader() -> Result<(UnifiedReader, RoutingCache)> {
     let path = default_shm_path();
     let config = SharedConfig::default().with_path(path.clone());
 
-    // Use empty RoutingCache - monarch is a debug tool, doesn't need full routing
-    // This means instance_ids() will return empty, but channel access still works
-    let routing_cache = RoutingCache::default();
-
-    let reader = UnifiedReader::open(&config, &routing_cache)
+    // Open raw (no layout validation) — monarch is a debug tool
+    let reader = UnifiedReader::open_raw(&config)
         .with_context(|| format!("Failed to open shared memory at {:?}", path))?;
 
+    // Keep empty RoutingCache for instance_ids() API (returns empty for monarch)
+    let routing_cache = RoutingCache::default();
     Ok((reader, routing_cache))
 }
 

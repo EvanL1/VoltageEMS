@@ -99,7 +99,11 @@ pub async fn register(
         },
         Err(e) => {
             error!("DB error: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response();
         },
         _ => {},
     }
@@ -109,7 +113,11 @@ pub async fn register(
         Ok(h) => h,
         Err(e) => {
             error!("bcrypt hash error: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response();
         },
     };
 
@@ -122,7 +130,11 @@ pub async fn register(
         .into_response(),
         Err(e) => {
             error!("Create user error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -143,7 +155,11 @@ pub async fn login(
         },
         Err(e) => {
             error!("DB login error: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response();
         },
     };
 
@@ -153,7 +169,13 @@ pub async fn login(
 
     let row = match db::get_user_by_username(&state.db, &body.username).await {
         Ok(Some(r)) => r,
-        _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
+        },
     };
 
     if !verify_password(&body.password, &row.password_hash) {
@@ -185,7 +207,11 @@ pub async fn login(
         },
         Err(e) => {
             error!("Token creation error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -252,7 +278,13 @@ pub async fn refresh_token(
     // Issue new token pair
     let user = match db::get_user_with_role(&state.db, claims.user_id).await {
         Ok(Some(u)) => u,
-        _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
+        },
     };
 
     let cfg = &state.config;
@@ -278,7 +310,11 @@ pub async fn refresh_token(
         },
         Err(e) => {
             error!("Token refresh error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -331,7 +367,11 @@ pub async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> i
             .into_response(),
         Err(e) => {
             error!("DB error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -471,7 +511,11 @@ pub async fn admin_get_user(
             .into_response(),
         Err(e) => {
             error!("DB error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -527,7 +571,11 @@ pub async fn admin_delete_user(
                     "data": { "user_id": user_id, "username": user.username }
                 }))
                 .into_response(),
-                _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"success": false, "message": "内部服务器错误"})),
+                )
+                    .into_response(),
             }
         },
         Ok(None) => (
@@ -537,7 +585,11 @@ pub async fn admin_delete_user(
             .into_response(),
         Err(e) => {
             error!("DB error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }
@@ -619,14 +671,22 @@ async fn apply_user_update(
     if let Some(role_id) = body.role_id {
         if let Err(e) = db::update_user_role(&state.db, user_id, role_id).await {
             error!("Update role error: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response();
         }
     }
 
     if let Some(is_active) = body.is_active {
         if let Err(e) = db::update_user_active(&state.db, user_id, is_active).await {
             error!("Update active error: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response();
         }
     }
 
@@ -656,7 +716,11 @@ async fn apply_user_update(
             "data": user,
         }))
         .into_response(),
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        _ => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "message": "内部服务器错误"})),
+        )
+            .into_response(),
     }
 }
 
@@ -667,7 +731,13 @@ async fn apply_password_change(
 ) -> axum::response::Response {
     let row = match db::get_user_by_id(&state.db, user_id).await {
         Ok(Some(r)) => r,
-        _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        _ => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
+        },
     };
 
     if !verify_password(&body.old_password, &row.password_hash) {
@@ -682,7 +752,11 @@ async fn apply_password_change(
         Ok(h) => h,
         Err(e) => {
             error!("bcrypt error: {}", e);
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response();
         },
     };
 
@@ -690,7 +764,11 @@ async fn apply_password_change(
         Ok(_) => Json(json!({"success": true, "message": "密码修改成功"})).into_response(),
         Err(e) => {
             error!("Update password error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": "内部服务器错误"})),
+            )
+                .into_response()
         },
     }
 }

@@ -192,7 +192,7 @@ pub async fn create_instance_routing(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!("Failed to refresh routing after create: {}", e))
@@ -433,7 +433,7 @@ pub async fn update_instance_routing(
 
         state
             .instance_manager
-            .refresh_routing_and_shm()
+            .refresh_routing()
             .await
             .map_err(|e| {
                 ModSrvError::InternalError(format!("Failed to refresh routing after update: {}", e))
@@ -486,7 +486,7 @@ pub async fn delete_instance_routing(
 
             state
                 .instance_manager
-                .refresh_routing_and_shm()
+                .refresh_routing()
                 .await
                 .map_err(|e| {
                     ModSrvError::InternalError(format!(

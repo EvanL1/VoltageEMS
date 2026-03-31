@@ -97,8 +97,16 @@ async fn main() -> Result<()> {
         cfg
     };
 
+    // Load channel point counts for SHM layout (routing-independent)
+    let channel_points = voltage_rtdb_shm::ChannelPointCounts::load_from_db(&sqlite_pool)
+        .await
+        .unwrap_or_else(|e| {
+            warn!("Failed to load channel points: {}, using empty layout", e);
+            voltage_rtdb_shm::ChannelPointCounts::new()
+        });
+
     // Initialize UnifiedReader for cross-process zero-copy reads
-    // Simplified: Header + PointSlots only, indexes built from RoutingCache
+    // Simplified: Header + PointSlots only, indexes built from channel points
     // Added retry mechanism for cold start race condition
     let shared_reader = {
         const MAX_RETRIES: u32 = 10;
@@ -109,7 +117,7 @@ async fn main() -> Result<()> {
         loop {
             if is_shm_available(&shm_config) {
                 // Open reader with RoutingCache (builds indexes from routing)
-                match UnifiedReader::open(&shm_config, &routing_cache) {
+                match UnifiedReader::open(&shm_config, &channel_points) {
                     Ok(reader) => {
                         info!(
                             "UnifiedReader opened: {} slots, {} instances, {} channels",
@@ -162,7 +170,7 @@ async fn main() -> Result<()> {
     // Initialize UnifiedWriter for M2C actions (Control/Adjustment via SHM)
     // Only open if reader succeeded (SHM file exists)
     let shm_action_writer = if shared_reader.is_some() {
-        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(&shm_config, &routing_cache) {
+        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(&shm_config, &channel_points) {
             Ok(writer) => {
                 info!("UnifiedWriter (actions) opened for M2C via SHM");
                 Some(Arc::new(writer))
@@ -216,6 +224,75 @@ async fn main() -> Result<()> {
         } else {
             None
         };
+
+    // Spawn SHM writer auto-rebuild task.
+    // When dispatch() detects a generation mismatch (comsrv restarted), it fires
+    // rebuild_trigger. This task re-opens the writer with exponential backoff,
+    // restoring M2C dispatch without a modsrv restart.
+    {
+        let rebuild_notify = state.shm_dispatch.rebuild_trigger();
+        let rebuild_dispatch = Arc::clone(&state.shm_dispatch);
+        let rebuild_pool = sqlite_pool.clone();
+        let rebuild_shm_config = shm_config.clone();
+        let rebuild_token = shutdown_token.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = rebuild_notify.notified() => {},
+                    _ = rebuild_token.cancelled() => break,
+                }
+                info!("SHM rebuild triggered — attempting to reopen writer...");
+                const MAX_RETRIES: u32 = 10;
+                const BASE_DELAY_MS: u64 = 1000;
+                const MAX_DELAY_MS: u64 = 15000;
+                let mut retry_count = 0u32;
+                let ok = loop {
+                    // Reload channel points (layout may have changed)
+                    let cp = voltage_rtdb_shm::ChannelPointCounts::load_from_db(&rebuild_pool)
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!("SHM rebuild: failed to load channel points: {}", e);
+                            voltage_rtdb_shm::ChannelPointCounts::new()
+                        });
+                    match voltage_rtdb_shm::UnifiedWriter::open_for_actions(
+                        &rebuild_shm_config,
+                        &cp,
+                    ) {
+                        Ok(writer) => {
+                            let writer = Arc::new(writer);
+                            rebuild_dispatch
+                                .set_writer(Arc::clone(&writer), rebuild_shm_config.clone());
+                            info!("SHM rebuild: writer restored successfully");
+                            break true;
+                        },
+                        Err(e) if retry_count < MAX_RETRIES => {
+                            let delay = (BASE_DELAY_MS * 2u64.pow(retry_count)).min(MAX_DELAY_MS);
+                            info!(
+                                "SHM rebuild retry {}/{} in {}ms: {}",
+                                retry_count + 1,
+                                MAX_RETRIES,
+                                delay,
+                                e
+                            );
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
+                            retry_count += 1;
+                        },
+                        Err(e) => {
+                            warn!(
+                                "SHM rebuild failed after {} retries: {}. \
+                                 Will retry on next generation mismatch.",
+                                MAX_RETRIES, e
+                            );
+                            break false;
+                        },
+                    }
+                };
+                if ok {
+                    info!("SHM auto-rebuild complete — M2C dispatch restored");
+                }
+            }
+        });
+    }
 
     // Load max_concurrency from global config (SQLite key-value table)
     let max_concurrency: usize = sqlx::query_scalar::<_, String>(

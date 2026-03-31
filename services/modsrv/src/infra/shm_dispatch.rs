@@ -3,11 +3,12 @@
 //! Provides the low-latency M2C (modsrv-to-comsrv) dispatch path via shared memory
 //! and Unix Domain Socket notifications.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tracing::{info, warn};
+use tracing::warn;
 use voltage_routing::RouteContext;
 
 /// Outcome of an action dispatch operation
@@ -36,13 +37,6 @@ pub enum DispatchOutcome {
 pub trait ActionDispatch: Send + Sync {
     /// Dispatch an action value to the target channel via the fastest available path
     async fn dispatch(&self, ctx: &RouteContext, value: f64) -> DispatchOutcome;
-
-    /// Rebuild internal writer state after routing changes
-    ///
-    /// Accepts routing_cache so the dispatch layer doesn't need to hold it,
-    /// enabling construction before the cache is available.
-    /// Returns Err if the writer could not be rebuilt (caller decides recovery).
-    fn rebuild_writer(&self, routing_cache: &voltage_routing::RoutingCache) -> anyhow::Result<()>;
 }
 
 /// SHM + UDS dispatch implementation (production path)
@@ -54,6 +48,9 @@ pub struct ShmDispatch {
     writer: arc_swap::ArcSwapOption<voltage_rtdb_shm::UnifiedWriter>,
     config: std::sync::OnceLock<voltage_rtdb_shm::SharedConfig>,
     notifier: std::sync::OnceLock<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>>,
+    expected_generation: AtomicU64,
+    /// Signal to trigger background SHM writer rebuild after generation mismatch
+    rebuild_trigger: Arc<tokio::sync::Notify>,
 }
 
 impl Default for ShmDispatch {
@@ -72,6 +69,8 @@ impl ShmDispatch {
             writer: arc_swap::ArcSwapOption::empty(),
             config: std::sync::OnceLock::new(),
             notifier: std::sync::OnceLock::new(),
+            expected_generation: AtomicU64::new(0),
+            rebuild_trigger: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -84,6 +83,9 @@ impl ShmDispatch {
         writer: Arc<voltage_rtdb_shm::UnifiedWriter>,
         config: voltage_rtdb_shm::SharedConfig,
     ) {
+        // Capture generation so dispatch() can detect comsrv restarts or SHM rebuilds.
+        self.expected_generation
+            .store(writer.generation(), Ordering::Release);
         self.writer.store(Some(writer));
         let _ = self.config.set(config);
     }
@@ -97,6 +99,33 @@ impl ShmDispatch {
     ) -> bool {
         self.notifier.set(notifier).is_ok()
     }
+
+    /// Returns true if the SHM writer is currently configured and available.
+    ///
+    /// A `false` result means comsrv may have restarted and the writer was
+    /// cleared (generation mismatch). Actions will return `DispatchDegraded`
+    /// until routing is refreshed and the writer is rebuilt.
+    pub fn is_writer_available(&self) -> bool {
+        self.writer.load().is_some()
+    }
+
+    /// Returns true if the UDS notifier has been configured.
+    ///
+    /// Note: this checks only whether `set_notifier()` was called, not whether
+    /// the UDS socket is currently connected. Use `is_writer_available()` as
+    /// the primary liveness signal; UDS reconnects automatically on failure.
+    pub fn is_notifier_configured(&self) -> bool {
+        self.notifier.get().is_some()
+    }
+
+    /// Get the rebuild trigger for spawning a background rebuild task.
+    ///
+    /// The returned `Notify` fires when `dispatch()` detects a generation
+    /// mismatch (comsrv restarted). The background task should reopen
+    /// the SHM writer and call `set_writer()` to restore dispatch.
+    pub fn rebuild_trigger(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.rebuild_trigger)
+    }
 }
 
 #[async_trait]
@@ -107,6 +136,22 @@ impl ActionDispatch for ShmDispatch {
         let Some(writer) = writer_guard.as_ref() else {
             return DispatchOutcome::NoWriter;
         };
+
+        // Generation check: detect comsrv restarts that changed the SHM layout.
+        // expected == 0 should not occur in practice (set_writer always writes the generation),
+        // but guard it anyway to avoid false positives during initialization.
+        let current_gen = writer.generation();
+        let expected = self.expected_generation.load(Ordering::Acquire);
+        if expected != 0 && current_gen != expected {
+            warn!(
+                "SHM writer generation mismatch (expected={}, actual={}). \
+                 comsrv may have restarted. Clearing writer and triggering rebuild.",
+                expected, current_gen
+            );
+            self.writer.store(None);
+            self.rebuild_trigger.notify_one();
+            return DispatchOutcome::NoWriter;
+        }
 
         let mirrored = writer.set_action(
             ctx.target_channel_id,
@@ -182,27 +227,6 @@ impl ActionDispatch for ShmDispatch {
             }
         }
     }
-
-    fn rebuild_writer(&self, routing_cache: &voltage_routing::RoutingCache) -> anyhow::Result<()> {
-        let Some(config) = self.config.get() else {
-            return Ok(()); // SHM not configured — not an error
-        };
-        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(config, routing_cache) {
-            Ok(writer) => {
-                self.writer.store(Some(Arc::new(writer)));
-                info!("SHM action writer rebuilt after routing change");
-                Ok(())
-            },
-            Err(e) => {
-                // Clear stale writer: after routing changes, slot layout is different.
-                // A stale writer would dispatch values to wrong physical points — a field
-                // safety issue in SCADA. NoWriter is safer than wrong-slot writes.
-                self.writer.store(None);
-                warn!("SHM action writer rebuild failed, dispatch disabled: {}", e);
-                Err(e)
-            },
-        }
-    }
 }
 
 /// No-op dispatch for testing and environments without SHM
@@ -212,9 +236,5 @@ pub struct NoopDispatch;
 impl ActionDispatch for NoopDispatch {
     async fn dispatch(&self, _ctx: &RouteContext, _value: f64) -> DispatchOutcome {
         DispatchOutcome::Noop
-    }
-
-    fn rebuild_writer(&self, _routing_cache: &voltage_routing::RoutingCache) -> anyhow::Result<()> {
-        Ok(()) // No-op
     }
 }

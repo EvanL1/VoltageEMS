@@ -7,11 +7,12 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::tempdir;
-use voltage_routing::RoutingCache;
-use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, UnifiedReader, UnifiedWriter};
+use voltage_rtdb_shm::{
+    ChannelPointCounts, ChannelToSlotIndex, SharedConfig, UnifiedReader, UnifiedWriter,
+};
 
 // ============================================================================
 // Test Helpers
@@ -24,32 +25,14 @@ fn test_config(dir: &std::path::Path) -> SharedConfig {
         .with_max_slots(1000)
 }
 
-/// Create test RoutingCache with predefined channels
-fn test_routing_cache() -> RoutingCache {
-    let mut c2m = HashMap::new();
-    let m2c = HashMap::new();
-    let c2c = HashMap::new();
-
-    // Channel 1001: T:0-9, S:0-4, C:0-2 → instance 23
-    for i in 0..10 {
-        c2m.insert(format!("1001:T:{}", i), format!("23:M:{}", i));
-    }
-    for i in 0..5 {
-        c2m.insert(format!("1001:S:{}", i), format!("23:M:{}", 10 + i));
-    }
-    for i in 0..3 {
-        c2m.insert(format!("1001:C:{}", i), format!("23:M:{}", 15 + i));
-    }
-
-    // Channel 1002: T:0-4, S:0-2 → instance 24
-    for i in 0..5 {
-        c2m.insert(format!("1002:T:{}", i), format!("24:M:{}", i));
-    }
-    for i in 0..3 {
-        c2m.insert(format!("1002:S:{}", i), format!("24:M:{}", 5 + i));
-    }
-
-    RoutingCache::from_maps(c2m, m2c, c2c)
+/// Create ChannelPointCounts with predefined channels:
+///   channel 1001: T:0-9 (10), S:0-4 (5), C:0-2 (3)
+///   channel 1002: T:0-4 (5), S:0-2 (3)
+fn test_channel_points() -> ChannelPointCounts {
+    let mut map = BTreeMap::new();
+    map.insert(1001u32, [10u32, 5, 3, 0]);
+    map.insert(1002u32, [5u32, 3, 0, 0]);
+    ChannelPointCounts::from_map(map)
 }
 
 // ============================================================================
@@ -60,9 +43,9 @@ fn test_routing_cache() -> RoutingCache {
 fn test_shm_write_single_point() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let now = 1704067200000u64;
 
     // Write value: channel 1001, T:0
@@ -71,7 +54,7 @@ fn test_shm_write_single_point() {
     writer.flush().unwrap();
 
     // Read back and verify
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
     let (value, ts) = reader.get_channel(1001, 0, 0).unwrap();
 
     assert!((value - 123.456).abs() < 0.001);
@@ -82,10 +65,10 @@ fn test_shm_write_single_point() {
 fn test_shm_write_all_point_types() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let now = 1704067200000u64;
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Write all point types for channel 1001
     // T=0 (Telemetry), S=1 (Signal), C=2 (Control)
@@ -102,7 +85,7 @@ fn test_shm_write_all_point_types() {
     writer.flush().unwrap();
 
     // Verify all
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
 
     for (pt, pid, expected_value) in test_cases {
         let (value, _) = reader.get_channel(1001, pt, pid).unwrap();
@@ -121,10 +104,10 @@ fn test_shm_write_all_point_types() {
 fn test_shm_write_batch() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let now = 1704067200000u64;
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Write 10 telemetry points
     for pid in 0..10 {
@@ -134,7 +117,7 @@ fn test_shm_write_batch() {
     writer.flush().unwrap();
 
     // Verify all
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
 
     for pid in 0..10 {
         let (value, _) = reader.get_channel(1001, 0, pid).unwrap();
@@ -150,9 +133,9 @@ fn test_shm_write_batch() {
 fn test_channel_to_slot_index_lookup() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let index = ChannelToSlotIndex::from_unified_writer(&writer);
 
     // Verify mapped points exist
@@ -182,10 +165,10 @@ fn test_channel_to_slot_index_lookup() {
 fn test_channel_to_slot_index_direct_write() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let now = 1704067200000u64;
 
-    let writer = Arc::new(UnifiedWriter::create(&config, &routing).unwrap());
+    let writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
     let index = ChannelToSlotIndex::from_unified_writer(&writer);
 
     // Get slot offset and write directly
@@ -200,7 +183,7 @@ fn test_channel_to_slot_index_direct_write() {
     writer.flush().unwrap();
 
     // Verify
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
     let (value, _) = reader.get_channel(1001, 0, 0).unwrap();
     assert!((value - 42.0).abs() < 0.001);
 }
@@ -213,9 +196,9 @@ fn test_channel_to_slot_index_direct_write() {
 fn test_shm_timestamp_update() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Write with increasing timestamps
     let ts1 = 1704067200000u64;
@@ -225,7 +208,7 @@ fn test_shm_timestamp_update() {
     writer.set(1001, 0, 0, 100.0, 100.0, ts1);
     writer.flush().unwrap();
 
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
     let (_, ts) = reader.get_channel(1001, 0, 0).unwrap();
     assert_eq!(ts, ts1);
 
@@ -246,10 +229,10 @@ fn test_shm_timestamp_update() {
 fn test_shm_multi_channel_write() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let now = 1704067200000u64;
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Write to both channels
     assert!(writer.set(1001, 0, 0, 111.0, 111.0, now));
@@ -258,7 +241,7 @@ fn test_shm_multi_channel_write() {
     writer.flush().unwrap();
 
     // Verify isolation
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
 
     let (v1, _) = reader.get_channel(1001, 0, 0).unwrap();
     let (v2, _) = reader.get_channel(1002, 0, 0).unwrap();
@@ -275,10 +258,10 @@ fn test_shm_multi_channel_write() {
 fn test_shm_write_unmapped_returns_false() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let now = 1704067200000u64;
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Unknown channel
     assert!(!writer.set(9999, 0, 0, 100.0, 100.0, now));
@@ -291,12 +274,12 @@ fn test_shm_write_unmapped_returns_false() {
 fn test_shm_reader_unmapped_returns_none() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     writer.flush().unwrap();
 
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
 
     // Unknown channel
     assert!(reader.get_channel(9999, 0, 0).is_none());
@@ -313,10 +296,10 @@ fn test_shm_reader_unmapped_returns_none() {
 fn test_shm_direct_write_performance() {
     let dir = tempdir().unwrap();
     let config = test_config(dir.path());
-    let routing = test_routing_cache();
+    let channel_points = test_channel_points();
     let now = 1704067200000u64;
 
-    let writer = UnifiedWriter::create(&config, &routing).unwrap();
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
 
     // Pre-lookup slot for hot path
     let slot = writer.lookup(1001, 0, 0).unwrap();
@@ -329,7 +312,7 @@ fn test_shm_direct_write_performance() {
     writer.flush().unwrap();
 
     // Verify last value
-    let reader = UnifiedReader::open(&config, &routing).unwrap();
+    let reader = UnifiedReader::open(&config, &channel_points).unwrap();
     let (value, ts) = reader.get_channel(1001, 0, 0).unwrap();
     assert!((value - 999.0).abs() < 0.001);
     assert_eq!(ts, now + 999);

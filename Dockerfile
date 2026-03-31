@@ -10,7 +10,8 @@ FROM alpine:3.19
 # Install only essential runtime dependencies
 RUN apk add --no-cache \
     ca-certificates \
-    tzdata
+    tzdata \
+    docker-cli
 
 # Set working directory
 WORKDIR /app

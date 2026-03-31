@@ -203,6 +203,26 @@ pub async fn health_check<R: Rtdb>(
         },
     );
 
+    // Warning monitor statistics (Redis pub/sub: queue overflow, unmapped points)
+    if let Some(ref ws) = state.warning_stats {
+        let s = ws.read().await;
+        checks.insert(
+            "warnings".to_string(),
+            ComponentHealth {
+                status: if s.queue_overflow_count > 0 {
+                    HealthServiceStatus::Unhealthy
+                } else {
+                    HealthServiceStatus::Healthy
+                },
+                message: Some(format!(
+                    "overflow={}, high={}, unmapped={}",
+                    s.queue_overflow_count, s.queue_high_count, s.unmapped_points_count
+                )),
+                duration_ms: None,
+            },
+        );
+    }
+
     // Collect system metrics (CPU, memory)
     let metrics = SystemMetrics::collect();
 

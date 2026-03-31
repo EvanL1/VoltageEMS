@@ -25,7 +25,7 @@ use crate::api::{
         template_handlers::*,
     },
 };
-use common::admin_api::{get_log_level, set_log_level};
+use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
 
 /// Global service start time storage
 static SERVICE_START_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
@@ -58,6 +58,8 @@ pub struct AppState<R: voltage_rtdb::Rtdb> {
     /// Command TX cache for O(1) hot path access
     /// Bypasses ChannelManager RwLock for Control/Adjustment writes
     pub command_tx_cache: Arc<CommandTxCache>,
+    /// Live warning statistics from Redis pub/sub monitor (None if monitor not started)
+    pub warning_stats: Option<common::warning_monitor::WarningStatsHandle>,
 }
 
 // Manual Clone implementation to avoid requiring R: Clone
@@ -69,6 +71,7 @@ impl<R: voltage_rtdb::Rtdb> Clone for AppState<R> {
             rtdb: self.rtdb.clone(),
             sqlite_pool: self.sqlite_pool.clone(),
             command_tx_cache: self.command_tx_cache.clone(),
+            warning_stats: self.warning_stats.clone(),
         }
     }
 }
@@ -88,6 +91,7 @@ impl<R: voltage_rtdb::Rtdb> AppState<R> {
             rtdb,
             sqlite_pool,
             command_tx_cache,
+            warning_stats: None,
         }
     }
 }
@@ -242,9 +246,16 @@ pub fn create_api_routes(
     redis_client: Arc<common::redis::RedisClient>,
     sqlite_pool: sqlx::SqlitePool,
     command_tx_cache: Arc<CommandTxCache>,
+    warning_stats: Option<common::warning_monitor::WarningStatsHandle>,
 ) -> Router {
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client));
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache)
+    create_api_routes_generic(
+        channel_manager,
+        rtdb,
+        sqlite_pool,
+        command_tx_cache,
+        warning_stats,
+    )
 }
 
 /// Generic version of create_api_routes that accepts any Rtdb implementation.
@@ -256,8 +267,10 @@ pub fn create_api_routes_generic<R: Rtdb>(
     rtdb: Arc<R>,
     sqlite_pool: sqlx::SqlitePool,
     command_tx_cache: Arc<CommandTxCache>,
+    warning_stats: Option<common::warning_monitor::WarningStatsHandle>,
 ) -> Router {
-    let state = AppState::new(channel_manager, rtdb, sqlite_pool, command_tx_cache);
+    let mut state = AppState::new(channel_manager, rtdb, sqlite_pool, command_tx_cache);
+    state.warning_stats = warning_stats;
 
     Router::new()
         // Health check (top-level for monitoring systems)
@@ -311,11 +324,13 @@ pub fn create_api_routes_generic<R: Rtdb>(
             "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
             get(get_point_info_handler),
         )
-        // Admin endpoints (log level management)
+        // Admin endpoints (log level + file access)
         .route(
             "/api/admin/logs/level",
             get(get_log_level).post(set_log_level),
         )
+        .route("/api/admin/logs/files", get(list_log_files))
+        .route("/api/admin/logs/view", get(view_log_file))
         // Template management endpoints
         .route("/api/templates", get(list_templates).post(create_template))
         .route("/api/templates/from-channel/{channel_id}", post(create_template_from_channel))

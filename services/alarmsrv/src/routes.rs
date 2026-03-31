@@ -56,6 +56,10 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         .route("/alarmApi/monitor/status", get(monitor_status))
         .route("/alarmApi/monitor/check-rule/{id}", post(manual_check_rule))
         .route("/alarmApi/call-data", post(call_data))
+        // Admin API (shared endpoints from common lib)
+        .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
+        .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
+        .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
     api.merge(
@@ -124,16 +128,20 @@ pub struct ApiDoc;
     responses((status = 200, description = "服务基本信息")))]
 async fn service_info() -> Json<Value> {
     Json(json!({
-        "name": "alarmsrv",
-        "version": env!("CARGO_PKG_VERSION"),
-        "description": "VoltageEMS alarm service (Rust)",
+        "success": true,
+        "message": "服务运行正常",
+        "data": {
+            "name": "alarmsrv",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "VoltageEMS alarm service (Rust)",
+        }
     }))
 }
 
 #[utoipa::path(get, path = "/health", tag = "Meta",
     responses((status = 200, description = "健康检查")))]
 async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+    Json(json!({ "success": true, "message": "服务运行正常" }))
 }
 
 // ============================================================================

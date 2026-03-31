@@ -50,7 +50,6 @@ dashmap = { workspace = true }  # For high-performance concurrent name→id cach
 parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
 itoa = { workspace = true }  # Stack-allocated u32→str formatting
 tower = { workspace = true }
-reqwest = { workspace = true, features = ["json"] }
 
 [dev-dependencies]
 # criterion removed - no benchmarks

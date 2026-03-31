@@ -15,6 +15,8 @@
 //! - **snapshot**: Periodic SHM snapshot management
 //! - **shared_config**: SharedConfig, ChannelToSlotIndex, utility functions
 
+pub mod channel_points;
+
 pub mod vec_impl;
 
 pub mod slot_bitmap;
@@ -45,6 +47,9 @@ pub use notification::ShmNotification;
 pub use notifier::{NotifyResult, ShmNotifier, DEFAULT_UDS_PATH};
 pub use slot_bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
 pub use vec_impl::PointSlot;
+
+// Channel point counts (routing-independent SHM layout data source)
+pub use channel_points::ChannelPointCounts;
 
 // Unified shared memory
 pub use unified_shm::{

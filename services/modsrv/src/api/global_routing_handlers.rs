@@ -219,7 +219,7 @@ pub async fn delete_all_routing_handler(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!("Failed to refresh routing after delete_all: {}", e))
@@ -379,7 +379,7 @@ pub async fn delete_instance_routing_handler(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(
@@ -453,7 +453,7 @@ pub async fn delete_channel_routing_handler(
 
     state
         .instance_manager
-        .refresh_routing_and_shm()
+        .refresh_routing()
         .await
         .map_err(|e| {
             ModSrvError::InternalError(format!(

@@ -33,8 +33,11 @@ pub use csv::{Reader, ReaderBuilder, StringRecord, Writer, WriterBuilder};
 
 // Re-export commonly used service_config types at crate root for convenience
 pub use service_config::{
+    // URL resolver functions
+    comsrv_url,
     // Helpers
     helpers,
+    modsrv_url,
     // Config types
     ApiConfig,
     BaseServiceConfig,

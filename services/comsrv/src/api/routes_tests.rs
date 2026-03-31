@@ -54,7 +54,7 @@ async fn create_test_api_routes(channel_manager: Arc<ChannelManager<MemoryRtdb>>
     let rtdb = Arc::new(MemoryRtdb::new());
     let sqlite_pool = create_test_sqlite_pool().await;
     let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache)
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache, None)
 }
 
 /// Helper: Build a Router using a provided in-memory SQLite pool
@@ -64,7 +64,7 @@ async fn create_test_api_with_pool(
 ) -> Router {
     let rtdb = Arc::new(MemoryRtdb::new());
     let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache)
+    create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache, None)
 }
 
 async fn create_test_api_with_pool_rtdb_and_instance(
@@ -73,8 +73,13 @@ async fn create_test_api_with_pool_rtdb_and_instance(
     rtdb: Arc<MemoryRtdb>,
 ) -> (Router, Arc<MemoryRtdb>) {
     let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-    let router =
-        create_api_routes_generic(channel_manager, rtdb.clone(), sqlite_pool, command_tx_cache);
+    let router = create_api_routes_generic(
+        channel_manager,
+        rtdb.clone(),
+        sqlite_pool,
+        command_tx_cache,
+        None,
+    );
     (router, rtdb)
 }
 
@@ -1184,6 +1189,7 @@ fn test_api_routes_compile() {
             Arc<common::redis::RedisClient>,
             sqlx::SqlitePool,
             Arc<CommandTxCache>,
+            Option<common::warning_monitor::WarningStatsHandle>,
         ) -> Router;
 }
 

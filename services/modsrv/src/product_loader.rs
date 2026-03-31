@@ -4,6 +4,7 @@
 //! No database queries needed - all data is embedded in the binary.
 
 use anyhow::{Context, Result};
+use common::test_utils::schema::INSTANCES_TABLE;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::debug;
@@ -58,22 +59,8 @@ impl ProductLoader {
     pub async fn init_schema(&self) -> Result<()> {
         debug!("Init instance tables");
 
-        // Create instances table with parent_id for topology hierarchy
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS instances (
-                instance_id INTEGER PRIMARY KEY,
-                instance_name TEXT UNIQUE NOT NULL,
-                product_name TEXT NOT NULL,
-                parent_id INTEGER,
-                properties TEXT,  -- JSON format
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (parent_id) REFERENCES instances(instance_id) ON DELETE SET NULL
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
+        // Reuse canonical DDL from common crate (single source of truth)
+        sqlx::query(INSTANCES_TABLE).execute(&self.pool).await?;
 
         // Create instance mappings table for point-to-redis-key mappings
         sqlx::query(

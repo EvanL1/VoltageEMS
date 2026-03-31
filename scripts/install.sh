@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# VoltageEMS ARM64 Installation Script
+# VoltageEMS Installation Script
 
 set -euo pipefail
+
+# Target architecture (injected by build-installer.sh, do not edit manually)
+INSTALLER_ARCH_LABEL="ARM64"    # Display name: ARM64 or AMD64
+INSTALLER_ARCH_UNAME="aarch64"  # uname -m value: aarch64 or x86_64
+INSTALLER_ARCH_SHORT="arm64"    # Short name: arm64 or amd64
 
 # Colors
 RED='\033[0;31m'
@@ -14,7 +19,8 @@ NC='\033[0m'
 # Default: /opt/MonarchEdge for production, can be overridden
 INSTALL_DIR="${VOLTAGE_INSTALL_DIR:-${INSTALL_DIR:-/opt/MonarchEdge}}"
 # Allow logs to be stored on external storage if available
-LOG_DIR="${VOLTAGE_LOG_DIR:-${LOG_DIR:-$INSTALL_DIR/logs}}"
+# Accept both VOLTAGE_LOG_PATH (matches docker-compose.yml) and VOLTAGE_LOG_DIR (legacy)
+LOG_DIR="${VOLTAGE_LOG_PATH:-${VOLTAGE_LOG_DIR:-${LOG_DIR:-$INSTALL_DIR/logs}}}"
 
 # Save the directory where installation was launched (for cleanup later)
 LAUNCH_DIR="${LAUNCH_DIR:-$(pwd)}"
@@ -50,7 +56,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$SHOW_HELP" == true ]]; then
-    echo "MonarchEdge ARM64 Installation Script"
+    echo "MonarchEdge ${INSTALLER_ARCH_LABEL} Installation Script"
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""
@@ -117,7 +123,7 @@ ensure_shm_file() {
 declare -A TARBALL_TO_IMAGE=(
     ["voltageems.tar.gz"]="voltageems:latest"
     ["voltage-redis.tar.gz"]="redis:8-alpine"
-    ["voltage-timescaledb.tar.gz"]="timescale/timescaledb:latest-pg16"
+    ["voltage-timescaledb.tar.gz"]="timescale/timescaledb:latest-pg17"
     ["apps.tar.gz"]="voltage-apps:latest"
     ["alpine.tar.gz"]="alpine:latest"
 )
@@ -125,7 +131,7 @@ declare -A TARBALL_TO_IMAGE=(
 # Image to container mapping
 declare -A IMAGE_TO_CONTAINERS=(
     ["redis:8-alpine"]="voltage-redis"
-    ["timescale/timescaledb:latest-pg16"]="voltage-timescaledb"
+    ["timescale/timescaledb:latest-pg17"]="voltage-timescaledb"
     ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv voltageems-hissrv voltageems-apigateway voltageems-netsrv voltageems-alarmsrv"
     ["voltage-apps:latest"]="voltage-apps"
 )
@@ -230,7 +236,7 @@ get_local_image_id() {
 }
 
 # Smart load: only load if image has changed
-# Special handling for multi-arch images (influxdb, redis)
+# Special handling for multi-arch images (timescaledb, redis)
 # Returns: 0 if loaded, 1 if skipped (unchanged), 2 if error
 smart_load_image() {
     local tarball=$1
@@ -319,6 +325,9 @@ update_service() {
         docker rm "$container" 2>/dev/null || true
     done
 
+    # Step 2.5: Ensure SHM file exists (Docker creates directory if missing!)
+    ensure_shm_file
+
     # Step 3: Start new containers (--no-deps avoids recreating running dependencies)
     for container in $containers; do
         local service="${CONTAINER_TO_SERVICE[$container]:-$container}"
@@ -374,17 +383,17 @@ confirm_infrastructure_update() {
     [[ "$confirm" =~ ^[Yy]$ ]]
 }
 
-# Select Python services to update (batch selection)
+# Select auxiliary services to update (batch selection)
 # Args: changed services as positional arguments
 # Output: selected services (space-separated)
-select_python_services() {
+select_auxiliary_services() {
     local -a changed_services=("$@")
 
     [[ ${#changed_services[@]} -eq 0 ]] && return
 
     echo ""
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${YELLOW}  Python Services Update${NC}"
+    echo -e "${YELLOW}  Auxiliary Services Update${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     echo "  Changed services: ${changed_services[*]}"
@@ -522,6 +531,12 @@ determine_install_user() {
 migrate_points_tables() {
     local db_file="$1"
 
+    if ! command -v sqlite3 &>/dev/null; then
+        echo -e "${YELLOW}Warning: sqlite3 not found, skipping point table migration${NC}"
+        echo -e "${YELLOW}  Install sqlite3 or run 'monarch init' manually if migration is needed${NC}"
+        return
+    fi
+
     # Check if migration is needed (tables exist but lack ON DELETE CASCADE)
     local needs_migration=$(sqlite3 "$db_file" "SELECT sql FROM sqlite_master WHERE type='table' AND name='telemetry_points'" 2>/dev/null | grep -v "ON DELETE CASCADE")
 
@@ -577,14 +592,20 @@ restore_migrated_data() {
 }
 
 echo -e "${BLUE}================================${NC}"
-echo -e "${BLUE}  VoltageEMS ARM64 Installer   ${NC}"
+echo -e "${BLUE}  VoltageEMS ${INSTALLER_ARCH_LABEL} Installer   ${NC}"
 echo -e "${BLUE}================================${NC}"
 echo ""
 
 # Check architecture
 ARCH=$(uname -m)
-if [[ "$ARCH" != "aarch64" && "$ARCH" != "arm64" ]]; then
-    echo -e "${YELLOW}Warning: This installer is for ARM64. Current arch: $ARCH${NC}"
+if [[ "$ARCH" != "$INSTALLER_ARCH_UNAME" && "$ARCH" != "$INSTALLER_ARCH_SHORT" ]]; then
+    echo -e "${YELLOW}Warning: This installer is for ${INSTALLER_ARCH_LABEL}. Current arch: $ARCH${NC}"
+    # Verify monarch binary can actually execute on this architecture
+    if [[ -f "tools/monarch" ]] && ! ./tools/monarch --version &>/dev/null; then
+        echo -e "${RED}Error: monarch binary cannot execute on $ARCH (built for ${INSTALLER_ARCH_LABEL})${NC}"
+        echo -e "${RED}Use the correct architecture installer for this machine.${NC}"
+        exit 1
+    fi
     if [[ "$AUTO_MODE" == true ]]; then
         echo -e "${YELLOW}Auto mode: continuing despite architecture mismatch${NC}"
     else
@@ -637,9 +658,9 @@ echo -e "${GREEN}[DONE] CLI tools installation${NC}"
 # Step 2: Load Docker images (Smart Update Mode)
 echo -e "${YELLOW}[2/3] Loading Docker images...${NC}"
 if command -v docker &> /dev/null; then
-    # Check if images already exist (check for both :latest and :arm64 tags)
+    # Check if images already exist
     EXISTING_IMAGES=false
-    if docker images | grep -q "voltageems.*latest\|voltageems.*arm64"; then
+    if docker images | grep -q "voltageems.*latest\|voltageems.*${INSTALLER_ARCH_SHORT}"; then
         EXISTING_IMAGES=true
     fi
     if docker images | grep -q "redis.*8-alpine"; then
@@ -710,8 +731,8 @@ if command -v docker &> /dev/null; then
                             ;;
                     esac
                 else
-                    # File not found is OK (apps.tar.gz is optional)
-                    if [[ "$tarball" != *"apps.tar.gz"* ]]; then
+                    # File not found is OK for optional images
+                    if [[ "$tarball" != *"apps.tar.gz"* && "$tarball" != *"alpine.tar.gz"* ]]; then
                         echo -e "${YELLOW}Warning: $tarball not found${NC}"
                     fi
                 fi
@@ -919,13 +940,13 @@ if command -v docker &> /dev/null; then
         echo "Verifying loaded images..."
         # Required: voltageems:latest, redis:8-alpine
         # Optional: timescaledb (can configure hissrv storage later via API), voltage-apps, alpine
-        for image_name in voltageems:latest redis:8-alpine timescale/timescaledb:latest-pg16 voltage-apps:latest alpine:latest; do
+        for image_name in voltageems:latest redis:8-alpine timescale/timescaledb:latest-pg17 voltage-apps:latest alpine:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
                 echo -e "${GREEN}present${NC} (created: $CREATED)"
             else
-                if [[ "$image_name" == "timescale/timescaledb:latest-pg16" ]] || \
+                if [[ "$image_name" == "timescale/timescaledb:latest-pg17" ]] || \
                    [[ "$image_name" == "voltage-apps:latest" ]] || \
                    [[ "$image_name" == "alpine:latest" ]]; then
                     echo -e "${YELLOW}missing (optional, skipping)${NC}"
@@ -1013,8 +1034,8 @@ fi
 
 # Create certificate directory for netsrv TLS (mounted to /app/config/cert in container)
 echo "Creating certificate directory for netsrv..."
-$SUDO mkdir -p "$INSTALL_DIR/data/config/cert"
-echo -e "${GREEN}✓ Certificate directory ready: $INSTALL_DIR/data/config/cert${NC}"
+$SUDO mkdir -p "$INSTALL_DIR/data/cert"
+echo -e "${GREEN}✓ Certificate directory ready: $INSTALL_DIR/data/cert${NC}"
 
 # Create a symlink if logs are external
 if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then
@@ -1066,14 +1087,14 @@ if [[ -f "$DB_FILE" ]]; then
         case $DB_OPTION in
             1)
                 echo -e "${YELLOW}Running safe schema upgrade...${NC}"
-                # Check if monarch command is available (not available in Python-only upgrades)
+                # Check if monarch command is available (not available in partial upgrades)
                 if command -v monarch >/dev/null 2>&1; then
                     migrate_points_tables "$DB_FILE"  # Prepare tables for migration
                     monarch init  # IF NOT EXISTS ensures safety
                     restore_migrated_data "$DB_FILE"  # Restore data after schema update
                     echo -e "${GREEN}✓ Schema upgraded (existing data preserved)${NC}"
                 else
-                    echo -e "${BLUE}ℹ Monarch CLI not available (Python-only update), skipping schema upgrade${NC}"
+                    echo -e "${BLUE}ℹ Monarch CLI not available (partial update), skipping schema upgrade${NC}"
                     echo -e "${BLUE}  Note: Run 'monarch init' manually if needed${NC}"
                 fi
                 ;;
@@ -1108,7 +1129,7 @@ else
     if command -v monarch >/dev/null 2>&1; then
         monarch init
     else
-        echo -e "${BLUE}ℹ Monarch CLI not available (Python-only package), skipping database initialization${NC}"
+        echo -e "${BLUE}ℹ Monarch CLI not available (partial package), skipping database initialization${NC}"
         echo -e "${BLUE}  Note: Run 'monarch init' manually after installation${NC}"
     fi
 fi
@@ -1122,14 +1143,24 @@ if [[ -z "${ACTUAL_USER:-}" ]]; then
 fi
 
 # Check if docker group exists and get its GID
-DOCKER_GROUP=$(getent group docker 2>/dev/null)
+# Use getent if available, fall back to grep /etc/group
+_get_group_info() {
+    local name="$1"
+    if command -v getent &>/dev/null; then
+        getent group "$name" 2>/dev/null
+    elif [[ -f /etc/group ]]; then
+        grep "^${name}:" /etc/group 2>/dev/null
+    fi
+}
+
+DOCKER_GROUP=$(_get_group_info docker)
 if [[ -n "$DOCKER_GROUP" ]]; then
     DOCKER_GID=$(echo "$DOCKER_GROUP" | cut -d: -f3)
     echo "Docker group found (GID=$DOCKER_GID)"
 else
     echo "Warning: docker group not found, creating it..."
     $SUDO groupadd docker 2>/dev/null || true
-    DOCKER_GID=$(getent group docker | cut -d: -f3)
+    DOCKER_GID=$(_get_group_info docker | cut -d: -f3)
 fi
 
 # Get numeric UID and GID
@@ -1157,9 +1188,14 @@ $SUDO chmod -R 777 "$LOG_DIR" 2>/dev/null || true
 
 # Allow container (apigateway) to read/write network interface config files
 if [[ -d /etc/systemd/network ]]; then
-    $SUDO chmod a+w /etc/systemd/network 2>/dev/null || true
-    $SUDO chmod a+w /etc/systemd/network/*.network 2>/dev/null || true
-    echo -e "${GREEN}✓ Network config permissions set (/etc/systemd/network)${NC}"
+    # Only set permissions if .network files actually exist
+    if ls /etc/systemd/network/*.network &>/dev/null; then
+        $SUDO chmod a+w /etc/systemd/network 2>/dev/null || true
+        $SUDO chmod a+w /etc/systemd/network/*.network 2>/dev/null || true
+        echo -e "${GREEN}✓ Network config permissions set (/etc/systemd/network)${NC}"
+    else
+        echo -e "${BLUE}ℹ /etc/systemd/network exists but no .network files found, skipping${NC}"
+    fi
 fi
 
 # Fix symlink ownership if exists
@@ -1189,7 +1225,8 @@ if [[ -f "$ENV_FILE" ]]; then
     $SUDO sed -i '/^HOST_UID=/d' "$ENV_FILE" 2>/dev/null || true
     $SUDO sed -i '/^HOST_GID=/d' "$ENV_FILE" 2>/dev/null || true
     $SUDO sed -i '/^DEVICE_SN=/d' "$ENV_FILE" 2>/dev/null || true
-    
+    $SUDO sed -i '/^VOLTAGE_LOG_PATH=/d' "$ENV_FILE" 2>/dev/null || true
+
     # Append new values
     $SUDO tee -a "$ENV_FILE" > /dev/null << EOF
 
@@ -1197,6 +1234,7 @@ if [[ -f "$ENV_FILE" ]]; then
 HOST_UID=$ACTUAL_UID
 HOST_GID=$ACTUAL_GID
 DEVICE_SN=$DEVICE_SN
+VOLTAGE_LOG_PATH=$LOG_DIR
 EOF
 else
     # Create new .env file
@@ -1207,14 +1245,16 @@ else
 HOST_UID=$ACTUAL_UID
 HOST_GID=$ACTUAL_GID
 DEVICE_SN=$DEVICE_SN
+VOLTAGE_LOG_PATH=$LOG_DIR
 EOF
 fi
 
 $SUDO chmod 644 "$ENV_FILE"
 echo -e "${GREEN}✓ Environment variables saved to $ENV_FILE${NC}"
 
-# Also create system-wide environment file for convenience
-$SUDO tee /etc/profile.d/monarchedge.sh > /dev/null << EOF
+# Also create system-wide environment file for convenience (if profile.d exists)
+if [[ -d /etc/profile.d ]]; then
+    $SUDO tee /etc/profile.d/monarchedge.sh > /dev/null << EOF
 # VoltageEMS Docker environment variables
 # Generated by install.sh on $(date)
 # User: $ACTUAL_USER (UID=$ACTUAL_UID, GID=$ACTUAL_GID)
@@ -1222,8 +1262,12 @@ export HOST_UID=$ACTUAL_UID
 export HOST_GID=$ACTUAL_GID
 export DEVICE_SN=$DEVICE_SN
 EOF
-$SUDO chmod 644 /etc/profile.d/monarchedge.sh
-echo -e "${GREEN}✓ Environment variables exported to /etc/profile.d/monarchedge.sh${NC}"
+    $SUDO chmod 644 /etc/profile.d/monarchedge.sh
+    echo -e "${GREEN}✓ Environment variables exported to /etc/profile.d/monarchedge.sh${NC}"
+else
+    echo -e "${YELLOW}⚠ /etc/profile.d not found, skipping system-wide env export${NC}"
+    echo -e "${YELLOW}  Variables are available in $ENV_FILE${NC}"
+fi
 
 echo "Permissions configured:"
 echo "  User: $ACTUAL_USER (UID=$ACTUAL_UID)"
@@ -1355,7 +1399,7 @@ if [[ "$AUTO_MODE" != true ]]; then
     echo "     POST http://127.0.0.1:6004/hisApi/storage/reconnect"
     echo "  5. (Optional) Upload MQTT TLS certificates via API:"
     echo "     POST http://127.0.0.1:6006/netApi/certificate/upload"
-    echo "     (Files saved to $INSTALL_DIR/data/config/cert/)"
+    echo "     (Files saved to $INSTALL_DIR/data/cert/)"
     echo ""
     echo -e "${BLUE}Database Management:${NC}"
     echo "  monarch init          - Add missing tables (safe, preserves data)"
@@ -1482,6 +1526,21 @@ if [[ -n "$INSTALLER_NAME" ]]; then
     fi
 else
     echo -e "${BLUE}No installer package found in common locations.${NC}"
+fi
+
+# ── Install optional dpkg packages ──────────────────────────────────────────
+if [[ -f "./dpkg/install-awsiot-deb.sh" ]]; then
+    echo ""
+    echo -e "${BLUE}================================================${NC}"
+    echo -e "${BLUE}  Installing bundled dpkg packages${NC}"
+    echo -e "${BLUE}================================================${NC}"
+    chmod +x ./dpkg/install-awsiot-deb.sh
+    if $SUDO ./dpkg/install-awsiot-deb.sh; then
+        echo -e "${GREEN}✓ dpkg packages installed successfully${NC}"
+    else
+        echo -e "${YELLOW}Warning: dpkg install returned non-zero exit code${NC}"
+        echo -e "${YELLOW}You can retry manually: sudo ./dpkg/install-awsiot-deb.sh${NC}"
+    fi
 fi
 
 echo ""

@@ -189,14 +189,14 @@ fn draw_channel_detail(f: &mut ratatui::Frame, area: ratatui::layout::Rect, stat
         })
         .collect();
 
-    // ID(6) + Name(flex) + Value(10) + Unit(5) + Updated(9) = 30 fixed + Name
+    // ID(6) + Name(flex) + Value(10) + Unit(5) + Updated(15) = 36 fixed + Name
     // Name absorbs remaining space; ratatui auto-clips if too narrow
     let widths = [
         Constraint::Length(6),
         Constraint::Fill(1),
         Constraint::Length(10),
         Constraint::Length(5),
-        Constraint::Length(9),
+        Constraint::Length(15),
     ];
 
     let table = Table::new(rows, widths)
@@ -310,7 +310,7 @@ fn draw_instance_detail(f: &mut ratatui::Frame, area: ratatui::layout::Rect, sta
         })
         .collect();
 
-    // ID(4) + Type(2) + Name(flex) + Value(10) + Unit(5) + Routing(13) + Updated(9)
+    // ID(4) + Type(2) + Name(flex) + Value(10) + Unit(5) + Routing(13) + Updated(15)
     let widths = [
         Constraint::Length(4),
         Constraint::Length(2),
@@ -318,7 +318,7 @@ fn draw_instance_detail(f: &mut ratatui::Frame, area: ratatui::layout::Rect, sta
         Constraint::Length(10),
         Constraint::Length(5),
         Constraint::Length(13),
-        Constraint::Length(9),
+        Constraint::Length(15),
     ];
 
     let table = Table::new(rows, widths)

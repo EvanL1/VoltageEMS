@@ -8,7 +8,6 @@ pub struct GatewayConfig {
     pub jwt_secret: String,
     pub access_token_expire_minutes: i64,
     pub refresh_token_expire_days: i64,
-    pub log_dir: String,
     pub network_config_dir: String,
     pub data_fetch_interval_secs: u64,
 }
@@ -41,7 +40,6 @@ impl Default for GatewayConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(7),
-            log_dir: env::var("LOG_DIR").unwrap_or_else(|_| "logs".to_string()),
             network_config_dir: env::var("NETWORK_CONFIG_DIR")
                 .unwrap_or_else(|_| "/etc/systemd/network".to_string()),
             data_fetch_interval_secs: env::var("DATA_FETCH_INTERVAL")

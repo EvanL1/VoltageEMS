@@ -100,7 +100,7 @@ impl ShmNotifier {
     /// Minimum backoff duration (milliseconds)
     const MIN_BACKOFF_MS: u64 = 1000; // 1 second
     /// Maximum backoff duration (milliseconds)
-    const MAX_BACKOFF_MS: u64 = 30000; // 30 seconds
+    const MAX_BACKOFF_MS: u64 = 5_000; // 5 seconds — sufficient for same-host UDS
     /// Send retry count
     const MAX_RETRIES: u32 = 3;
     /// Retry interval (milliseconds)

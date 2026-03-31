@@ -4,6 +4,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::serve;
 use clap::Parser;
@@ -188,7 +189,15 @@ async fn main() -> VoltageResult<()> {
             cfg
         };
 
-        // Create UnifiedWriter from RoutingCache (automatic slot allocation)
+        // Load channel point counts for SHM layout (routing-independent)
+        let channel_points = voltage_rtdb_shm::ChannelPointCounts::load_from_db(&sqlite_pool)
+            .await
+            .unwrap_or_else(|e| {
+                warn!("Failed to load channel points: {}, using empty layout", e);
+                voltage_rtdb_shm::ChannelPointCounts::new()
+            });
+
+        // Create UnifiedWriter from channel points (automatic slot allocation)
         // is_shm_available checks if parent directory exists (Docker mount point)
         if is_shm_available(&config) {
             // Try to restore from snapshot first (if enabled and snapshot exists)
@@ -199,7 +208,7 @@ async fn main() -> VoltageResult<()> {
                         match UnifiedWriter::restore_from_snapshot(
                             &config,
                             snapshot_path,
-                            &routing_cache,
+                            &channel_points,
                         ) {
                             Ok(w) => {
                                 info!(
@@ -231,7 +240,7 @@ async fn main() -> VoltageResult<()> {
             // If restore failed or not attempted, create fresh
             let writer = match writer {
                 Some(w) => Ok(w),
-                None => UnifiedWriter::create(&config, &routing_cache),
+                None => UnifiedWriter::create(&config, &channel_points),
             };
 
             match writer {
@@ -351,12 +360,51 @@ async fn main() -> VoltageResult<()> {
     let (cleanup_handle, cleanup_token) =
         start_cleanup_task(Arc::clone(&channel_manager), configured_count);
     let warning_token = shutdown_token.clone();
-    let warning_handle = tokio::spawn(async move {
-        if let Err(e) =
-            common::warning_monitor::start_warning_monitor(redis_url, warning_token).await
-        {
-            tracing::error!("Warning monitor error: {}", e);
+    let warning_stats =
+        match common::warning_monitor::start_warning_monitor(redis_url, warning_token).await {
+            Ok(stats) => Some(stats),
+            Err(e) => {
+                tracing::warn!("Warning monitor failed to start: {}", e);
+                None
+            },
+        };
+    // Warning monitor now spawns its own task internally (stopped via CancellationToken).
+    // Provide a completed handle to satisfy shutdown_services signature.
+    let warning_handle = tokio::spawn(async {});
+
+    // Start routing cache polling task (auto-detect routing changes from SQLite)
+    let poll_pool = sqlite_pool.clone();
+    let poll_cache = Arc::clone(&channel_manager.routing_cache);
+    let poll_token = shutdown_token.clone();
+    tokio::spawn(async move {
+        let mut last_hash = poll_cache.content_hash();
+        info!(
+            "Routing poll started (2s interval, hash=0x{:016X})",
+            last_hash
+        );
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+                _ = poll_token.cancelled() => break,
+            }
+            match voltage_routing::load_routing_maps(&poll_pool).await {
+                Ok(maps) => {
+                    poll_cache.update(maps.c2m, maps.m2c, maps.c2c);
+                    let new_hash = poll_cache.content_hash();
+                    if new_hash != last_hash {
+                        info!(
+                            "Routing cache updated: 0x{:016X} → 0x{:016X}",
+                            last_hash, new_hash
+                        );
+                        last_hash = new_hash;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("Routing poll failed: {}", e);
+                },
+            }
         }
+        info!("Routing poll stopped");
     });
 
     // Start API server
@@ -366,6 +414,7 @@ async fn main() -> VoltageResult<()> {
         redis_client,
         sqlite_pool,
         Arc::clone(&command_tx_cache),
+        warning_stats,
     );
 
     #[cfg(feature = "swagger-ui")]
