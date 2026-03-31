@@ -101,7 +101,7 @@ build_and_save() {
 
 # Pull official Redis image for ARM64
 echo ""
-echo -e "${BLUE}[1/3] Pulling official Redis 8 Alpine for ARM64...${NC}"
+echo -e "${BLUE}[1/4] Pulling official Redis 8 Alpine for ARM64...${NC}"
 
 # Pull the base image
 docker pull --platform "$PLATFORM" redis:8-alpine
@@ -123,7 +123,7 @@ fi
 
 # Build VoltageEMS services
 echo ""
-echo -e "${BLUE}[2/3] Building VoltageEMS services...${NC}"
+echo -e "${BLUE}[2/4] Building VoltageEMS services...${NC}"
 
 # Use the main Dockerfile
 if [[ -f "$ROOT_DIR/Dockerfile" ]]; then
@@ -149,12 +149,10 @@ RUN rustup target add aarch64-unknown-linux-gnu
 # Copy source code
 COPY . .
 
-# Build for ARM64 (without swagger-ui for production)
+# Build all 6 services for ARM64
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 RUN cargo build --release --target aarch64-unknown-linux-gnu \
-    --no-default-features \
-    --features "modbus,redis,sqlite" \
-    -p comsrv -p modsrv
+    -p comsrv -p modsrv -p hissrv -p apigateway -p netsrv -p alarmsrv
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -166,6 +164,10 @@ RUN apt-get update && apt-get install -y \
 # Copy binaries from builder
 COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/comsrv /usr/local/bin/
 COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/modsrv /usr/local/bin/
+COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/hissrv /usr/local/bin/
+COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/apigateway /usr/local/bin/
+COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/netsrv /usr/local/bin/
+COPY --from=builder /usr/src/app/target/aarch64-unknown-linux-gnu/release/alarmsrv /usr/local/bin/
 
 RUN chmod +x /usr/local/bin/*
 

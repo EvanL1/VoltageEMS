@@ -1197,16 +1197,18 @@ $SUDO chmod 755 "$INSTALL_DIR" 2>/dev/null || true
 $SUDO chmod -R 775 "$INSTALL_DIR/data" 2>/dev/null || true
 $SUDO chmod -R 775 "$INSTALL_DIR/config" 2>/dev/null || true
 $SUDO chmod -R 775 "$INSTALL_DIR/config.template" 2>/dev/null || true
-$SUDO chmod -R 777 "$INSTALL_DIR/upgrade" 2>/dev/null || true  # 升级目录需要容器写入权限
-$SUDO chmod -R 777 "$LOG_DIR" 2>/dev/null || true
+$SUDO chmod -R 775 "$INSTALL_DIR/upgrade" 2>/dev/null || true  # 升级目录需要容器写入权限
+$SUDO chmod -R 775 "$LOG_DIR" 2>/dev/null || true
 
 # Allow container (apigateway) to read/write network interface config files
 if [[ -d /etc/systemd/network ]]; then
     # Only set permissions if .network files actually exist
     if ls /etc/systemd/network/*.network &>/dev/null; then
-        $SUDO chmod a+w /etc/systemd/network 2>/dev/null || true
-        $SUDO chmod a+w /etc/systemd/network/*.network 2>/dev/null || true
-        echo -e "${GREEN}✓ Network config permissions set (/etc/systemd/network)${NC}"
+        $SUDO chgrp docker /etc/systemd/network 2>/dev/null || true
+        $SUDO chmod g+w /etc/systemd/network 2>/dev/null || true
+        $SUDO chgrp docker /etc/systemd/network/*.network 2>/dev/null || true
+        $SUDO chmod g+w /etc/systemd/network/*.network 2>/dev/null || true
+        echo -e "${GREEN}✓ Network config permissions set (/etc/systemd/network, group=docker)${NC}"
     else
         echo -e "${BLUE}ℹ /etc/systemd/network exists but no .network files found, skipping${NC}"
     fi
