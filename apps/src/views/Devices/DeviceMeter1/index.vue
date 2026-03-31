@@ -28,7 +28,7 @@ const rightTableData = ref<RightTableItem[]>([])
 // 初始化数据：通过 API 获取点位数据（暂时使用通道 3，与 DieselGenerator 相同）
 onMounted(async () => {
   try {
-    const res = await getPointsTables(5)
+    const res = await getPointsTables(6)
     if (res?.success && res.data) {
       const data = res.data as PointInfoResponse
       leftTableData.value =
@@ -56,7 +56,7 @@ onMounted(async () => {
 useWebSocket(
   {
     source: 'comsrv',
-    channels: [5],
+    channels: [6],
     dataTypes: ['T', 'S'],
     interval: 1000,
   },
@@ -64,7 +64,7 @@ useWebSocket(
     onBatchDataUpdate: (data: any) => {
       // 处理通道3的T类型数据（左侧表格）
       const channel3TUpdate = data.updates?.find(
-        (item: any) => item.channel_id === 5 && item.data_type === 'T',
+        (item: any) => item.channel_id === 6 && item.data_type === 'T',
       )
       if (channel3TUpdate) {
         const values = channel3TUpdate.values || {}
@@ -83,7 +83,7 @@ useWebSocket(
       
       // 处理通道3的S类型数据（右侧表格）
       const channel3SUpdate = data.updates?.find(
-        (item: any) => item.channel_id === 5 && item.data_type === 'S',
+        (item: any) => item.channel_id === 6 && item.data_type === 'S',
       )
       if (channel3SUpdate) {
         const values = channel3SUpdate.values || {}

@@ -18,3 +18,17 @@ export const reconnectMqtt = () => {
 export const getMqttStatus = () => {
   return Request.get('/netApi/mqtt/status')
 }
+
+export type CertificateType = 'ca_cert' | 'client_cert' | 'client_key'
+
+export const getCertificateInfo = () => {
+  return Request.get('/netApi/certificate/info')
+}
+
+export const uploadCertificate = (certType: CertificateType, file: File) => {
+  return Request.upload('/netApi/certificate/upload', file, { cert_type: certType })
+}
+
+export const deleteCertificate = (certType: CertificateType) => {
+  return Request.delete(`/netApi/certificate/${certType}`)
+}

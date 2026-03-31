@@ -1,70 +1,68 @@
 <template>
   <div class="voltage-class data-update-setting">
-    <ModuleCard title="Data Upload">
-      <el-form
-        ref="formRef"
-        :model="formData"
-        :rules="rules"
-        class="data-update-form"
-        label-width="1.35rem"
-        label-position="right"
-      >
-        <!-- Enable 开关，仅展示，不改动原有逻辑 -->
+    <ModuleCard title="MQTT Config">
+      <el-form ref="formRef" :model="formData" :rules="rules" class="data-update-form" label-width="1.35rem"
+        label-position="right">
+        <!-- 连接状态来自 GET /netApi/mqtt/status，只读展示 -->
 
         <!-- 仅展示 Host、Port 两项（保持原始校验/数据结构不变） -->
         <div class="config-collapse">
           <div class="collapse-content">
-            <el-form-item label="Is Connected:">
+            <el-form-item label="Connected Status:">
               <div class="connection-status">
-                <el-switch
-                  v-model="connected"
-                  @change="handleEnableChange"
-                  :disabled="isConnecting"
-                  :loading="isConnecting"
+                <el-tag :type="connected ? 'success' : 'info'" effect="dark" round>
+                  {{ connected ? 'Connected' : 'Disconnected' }}
+                </el-tag>
+                <el-button
+                  class="connection-status__refresh"
+                  :icon="Refresh"
+                  circle
+                  text
+                  type="primary"
+                  :loading="statusRefreshLoading"
+                  :disabled="mqttCardActionsDisabled"
+                  title="Refresh status"
+                  @click="handleRefreshStatusClick"
                 />
-                <!-- <el-icon v-if="isConnecting" class="loading-icon">
-                  <Loading />
-                </el-icon> -->
               </div>
             </el-form-item>
-            <el-form-item label="Host:" prop="host">
-              <el-input v-model="formData.host" placeholder="Enter host address" />
+            <el-form-item label="Host:" prop="broker_host">
+              <el-input v-model="formData.broker_host" placeholder="Enter host address" />
             </el-form-item>
-            <el-form-item label="Port:" prop="port">
-              <el-input-number
-                v-model="formData.port"
-                :min="1"
-                :max="65535"
-                :controls="false"
-                align="left"
-                placeholder="Enter port number"
-                style="width: 100% !important"
-              />
+            <el-form-item label="Port:" prop="broker_port">
+              <el-input-number v-model="formData.broker_port" :min="1" :max="65535" :controls="false" align="left"
+                placeholder="Enter port number" style="width: 100% !important" />
             </el-form-item>
           </div>
         </div>
       </el-form>
       <template #footer>
         <div class="card__content-footer">
-          <!-- <IconButton
-            type="primary"
-            :icon="detailIcon"
-            text="Detail"
-            custom-class="card__content-footer-button"
-            @click="openDetail"
-          /> -->
-          <el-button type="primary" @click="openDetail">Detail</el-button>
-          <!-- <IconButton
-            type="primary"
-            :icon="submitIcon"
-            text="Submit"
-            custom-class="card__content-footer-button"
-            @click="handleSubmit"
-            :loading="submitLoading"
-          /> -->
-          <el-button type="primary" @click="handleSubmit" :loading="submitLoading"
-            >Submit</el-button
-          >
+          <el-button type="primary" :disabled="mqttCardActionsDisabled" @click="openDetail">Detail</el-button>
+          <div class="card__content-footer__right">
+            <el-button
+              v-if="connected"
+              type="danger"
+              plain
+              :disabled="mqttCardActionsDisabled"
+              :loading="mqttOperationLoading"
+              @click="handleDisconnectClick"
+            >
+              Disconnect
+            </el-button>
+            <el-button
+              type="primary"
+              plain
+              :disabled="mqttCardActionsDisabled"
+              :loading="mqttOperationLoading"
+              @click="handleReconnectClick"
+            >
+              Reconnect
+            </el-button>
+            <el-button type="primary" :disabled="mqttCardActionsDisabled" :loading="submitLoading" @click="handleSubmit">
+              Submit
+            </el-button>
+          </div>
         </div>
       </template>
     </ModuleCard>
@@ -75,10 +73,8 @@
 
 <script setup lang="ts">
 import type { FormInstance, FormRules } from 'element-plus'
-import submitIcon from '@/assets/icons/btn-submit.svg'
 import DataUploadDialog from './components/DataUploadDialog.vue'
-import { Loading } from '@element-plus/icons-vue'
-import detailIcon from '@/assets/icons/button-detail.svg'
+import { Refresh } from '@element-plus/icons-vue'
 
 import {
   getMqttConfig,
@@ -92,78 +88,187 @@ const formRef = ref<FormInstance>()
 // 保留简化后的展示，不再使用折叠面板
 
 export interface FormData {
-  port: number
-  host: string
-  username: string
-  password: string
+  alarmsrv_url: string
+  broker_host: string
+  broker_keepalive_secs: number
+  broker_port: number
   client_id: string
+  device_sn: string
+  exclude_patterns: string[]
+  product_sn: string
+  reconnect_delay_secs: number
+  reconnect_max_attempts: number
+  report_batch_size: number
+  report_interval_secs: number
+  ssl_enabled: boolean
+  subscribe_patterns: string[]
+  system_monitor_enabled: boolean
+  system_monitor_interval_secs: number
+}
+interface MqttStatusData {
+  broker?: string
+  connected?: boolean
+  device_sn?: string
+  product_sn?: string
+  ssl?: boolean
+}
 
-  ssl: {
-    enabled: boolean
-    ca_cert: {
-      path: string
-      full_path: string
-    }
-    client_cert: {
-      path: string
-      full_path: string
-    }
-    client_key: {
-      path: string
-      full_path: string
-    }
-  }
-  reconnect: {
-    enabled: boolean
-    delay: number
-    max_attempts: number
-  }
-  status: {
-    will_message_enabled: boolean
-    auto_online_message: boolean
+const connected = ref(false)
+const mqttStatusSnapshot = ref<MqttStatusData | null>(null)
+const mqttOperationLoading = ref(false)
+const statusRefreshLoading = ref(false)
+const submitLoading = ref(false)
+
+/** 重连/断开轮询中，或提交配置/重连流程中，卡片内操作按钮均不可点 */
+const mqttCardActionsDisabled = computed(() => mqttOperationLoading.value || submitLoading.value)
+
+const handleRefreshStatusClick = async () => {
+  if (statusRefreshLoading.value || mqttCardActionsDisabled.value) return
+  try {
+    statusRefreshLoading.value = true
+    await refreshMqttStatus()
+  } finally {
+    statusRefreshLoading.value = false
   }
 }
-const connected = ref(false)
-const isConnecting = ref(false)
+
+const POLL_INTERVAL_MS = 1000
+const POLL_MAX_ATTEMPTS = 10
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const stopStatusPolling = () => {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+const applyStatusPayload = (data: MqttStatusData | undefined) => {
+  if (!data) return
+  mqttStatusSnapshot.value = data
+  if (typeof data.connected === 'boolean') {
+    connected.value = data.connected
+  }
+}
+
+/** 拉取一次状态并更新 UI */
+const refreshMqttStatus = async () => {
+  const response = await getMqttStatus()
+  if (response.success && response.data) {
+    applyStatusPayload(response.data as MqttStatusData)
+  }
+}
+
+/**
+ * 在发起重连/断开后轮询，直到 connected 与期望值一致；最多请求 POLL_MAX_ATTEMPTS 次状态。
+ */
+const pollUntilConnectedIs = (expected: boolean): Promise<void> => {
+  stopStatusPolling()
+  let attempts = 0
+  let tickBusy = false
+  return new Promise((resolve) => {
+    const finish = () => {
+      stopStatusPolling()
+      resolve()
+    }
+    const tick = async () => {
+      if (tickBusy) return
+      tickBusy = true
+      try {
+        attempts += 1
+        if (attempts > POLL_MAX_ATTEMPTS) {
+          mqttOperationLoading.value = false
+          ElMessage.warning('Status synchronization timed out, please refresh the page or try again later')
+          finish()
+          return
+        }
+        try {
+          const response = await getMqttStatus()
+          if (response.success && response.data) {
+            applyStatusPayload(response.data as MqttStatusData)
+            if (connected.value === expected) {
+              mqttOperationLoading.value = false
+              finish()
+              return
+            }
+          }
+        } catch {
+          // 忽略单次失败，继续轮询
+        }
+      } finally {
+        tickBusy = false
+      }
+    }
+    void tick()
+    pollTimer = setInterval(() => void tick(), POLL_INTERVAL_MS)
+  })
+}
+
+/** 与点击 Reconnect 相同：请求重连后轮询直至已连接 */
+const executeReconnectFlow = async () => {
+  try {
+    mqttOperationLoading.value = true
+    const response = await reconnectMqtt()
+    if (!response.success) {
+      mqttOperationLoading.value = false
+      ElMessage.error(response.message || 'Reconnect failed')
+      await refreshMqttStatus()
+      return
+    }
+    if (response.message) {
+      ElMessage.success(response.message)
+    }
+    await pollUntilConnectedIs(true)
+  } catch {
+    mqttOperationLoading.value = false
+    await refreshMqttStatus()
+  }
+}
 const formData = ref<FormData>({
-  port: 1,
-  host: '127.0.0.1',
-  username: '',
-  password: '',
-  client_id: '',
-  ssl: {
-    enabled: false,
-    ca_cert: {
-      path: '',
-      full_path: '',
-    },
-    client_cert: {
-      path: '',
-      full_path: '',
-    },
-    client_key: {
-      path: '',
-      full_path: '',
-    },
-  },
-  reconnect: {
-    enabled: false,
-    delay: 0,
-    max_attempts: 0,
-  },
-  status: {
-    will_message_enabled: true,
-    auto_online_message: true,
-  },
+  alarmsrv_url: 'http://localhost:6007',
+  broker_host: '127.0.0.1',
+  broker_keepalive_secs: 120,
+  broker_port: 1883,
+  client_id: 'auto',
+  device_sn: 'auto',
+  exclude_patterns: [],
+  product_sn: '',
+  reconnect_delay_secs: 10,
+  reconnect_max_attempts: 50,
+  report_batch_size: 50,
+  report_interval_secs: 50,
+  ssl_enabled: false,
+  subscribe_patterns: [],
+  system_monitor_enabled: true,
+  system_monitor_interval_secs: 10,
 })
-const submitLoading = ref(false)
+const buildMqttConfigPayload = (raw: FormData): FormData => {
+  return {
+    alarmsrv_url: raw.alarmsrv_url,
+    broker_host: raw.broker_host,
+    broker_keepalive_secs: raw.broker_keepalive_secs,
+    broker_port: raw.broker_port,
+    client_id: raw.client_id,
+    device_sn: raw.device_sn,
+    exclude_patterns: raw.exclude_patterns || [],
+    product_sn: raw.product_sn,
+    reconnect_delay_secs: raw.reconnect_delay_secs,
+    reconnect_max_attempts: raw.reconnect_max_attempts,
+    report_batch_size: raw.report_batch_size,
+    report_interval_secs: raw.report_interval_secs,
+    ssl_enabled: raw.ssl_enabled,
+    subscribe_patterns: raw.subscribe_patterns || [],
+    system_monitor_enabled: raw.system_monitor_enabled,
+    system_monitor_interval_secs: raw.system_monitor_interval_secs,
+  }
+}
 // 表单验证规则
 const rules = ref<FormRules<FormData>>({
   client_id: [
     { required: true, message: 'Please enter client ID', trigger: 'blur' },
     { min: 1, max: 50, message: 'Client ID length should be 1-50 characters', trigger: 'blur' },
   ],
-  host: [
+  broker_host: [
     { required: true, message: 'Please enter host address', trigger: 'blur' },
     // {
     //   pattern: /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$|^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
@@ -171,7 +276,7 @@ const rules = ref<FormRules<FormData>>({
     //   trigger: 'blur'
     // }
   ],
-  port: [
+  broker_port: [
     { required: true, message: 'Please enter port number', trigger: 'blur' },
     {
       type: 'number',
@@ -181,168 +286,77 @@ const rules = ref<FormRules<FormData>>({
       trigger: 'blur',
     },
   ],
-  'ssl.enabled': [
-    { required: true, message: 'Please select SSL enable status', trigger: 'change' },
-  ],
-  'ssl.ca_cert.path': [
-    {
-      validator: (rule, value, callback) => {
-        if (formData.value.ssl.enabled && (!value || value.trim() === '')) {
-          callback(new Error('CA Certificate is required when SSL is enabled'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur',
-    },
-  ],
-  'ssl.client_cert.path': [
-    {
-      validator: (rule, value, callback) => {
-        if (formData.value.ssl.enabled && (!value || value.trim() === '')) {
-          callback(new Error('Client Certificate is required when SSL is enabled'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur',
-    },
-  ],
-  'ssl.client_key.path': [
-    {
-      validator: (rule, value, callback) => {
-        if (formData.value.ssl.enabled && (!value || value.trim() === '')) {
-          callback(new Error('Client Key is required when SSL is enabled'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur',
-    },
-  ],
-  'reconnect.enabled': [
-    { required: true, message: 'Please select reconnect enable status', trigger: 'change' },
-  ],
-  'reconnect.delay': [
-    {
-      validator: (rule, value, callback) => {
-        if (formData.value.reconnect.enabled && (!value || value < 1 || value > 360000)) {
-          callback(
-            new Error('Delay must be between 1 and 360000 seconds when reconnect is enabled'),
-          )
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur',
-    },
-  ],
-  'reconnect.max_attempts': [
-    {
-      validator: (rule, value, callback) => {
-        if (formData.value.reconnect.enabled && (!value || value < 1 || value > 10000)) {
-          callback(new Error('Max attempts must be between 1 and 10000 when reconnect is enabled'))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur',
-    },
-  ],
+  ssl_enabled: [{ required: true, message: 'Please select SSL enable status', trigger: 'change' }],
 })
 
-// 表单提交方法
+// 表单提交：成功后与点击 Reconnect 相同（重连 + 轮询）
 const handleSubmit = async () => {
   if (!formRef.value) return
-
+  const valid = await formRef.value.validate().catch(() => false)
+  if (!valid) return
   try {
     submitLoading.value = true
-    await formRef.value.validate(async (valid: boolean) => {
-      if (!valid) return
-      const params = Object.assign({}, toRaw(formData.value), {
-        ssl: {
-          ca_cert: formData.value.ssl.ca_cert.path,
-          client_cert: formData.value.ssl.client_cert.path,
-          client_key: formData.value.ssl.client_key.path,
-        },
-      })
-      const res = await updateMqttConfig({ mqtt_connection: { broker: params } })
-      if (res.status == 'success') {
-        ElMessage.success(res.message || 'Update success')
-        checkConnected()
-      } else {
-        ElMessage.error(res.message || 'Update failed')
-      }
-    })
+    const res = await updateMqttConfig(buildMqttConfigPayload(toRaw(formData.value)))
+    if (!res.success) {
+      ElMessage.error(res.message || 'Update failed')
+      return
+    }
+    ElMessage.success(res.message || 'Update success')
+    await executeReconnectFlow()
   } finally {
     submitLoading.value = false
   }
 }
 const getMqttConfigData = async () => {
   const response = await getMqttConfig()
-  formData.value = response.data.broker
+  formData.value = {
+    ...formData.value,
+    ...(response.data || {}),
+  }
 }
 const getMqttStatusData = async () => {
-  const response = await getMqttStatus()
-  connected.value = response.connected
+  await refreshMqttStatus()
 }
+
+const handleReconnectClick = () => executeReconnectFlow()
+
+const handleDisconnectClick = async () => {
+  try {
+    mqttOperationLoading.value = true
+    const response = await disconnectMqtt()
+    if (!response.success) {
+      mqttOperationLoading.value = false
+      ElMessage.error(response.message || 'Disconnect failed')
+      await refreshMqttStatus()
+      return
+    }
+    if (response.message) {
+      ElMessage.success(response.message)
+    }
+    await pollUntilConnectedIs(false)
+  } catch {
+    mqttOperationLoading.value = false
+    await refreshMqttStatus()
+  }
+}
+
 onMounted(() => {
   getMqttConfigData()
   getMqttStatusData()
 })
 
-const handleEnableChange = async (value: boolean) => {
-  try {
-    connected.value = !value
-    isConnecting.value = true
-    if (value) {
-      const response = await reconnectMqtt()
-      if (response.status == 'failed') {
-        connected.value = false
-        ElMessage.error(response.message)
-      } else {
-        connected.value = true
-        ElMessage.success(response.message)
-      }
-    } else {
-      const response = await disconnectMqtt()
-      if (response.status == 'failed') {
-        connected.value = true
-        ElMessage.error(response.message)
-      } else {
-        connected.value = false
-        ElMessage.success(response.message)
-      }
-    }
-  } finally {
-    isConnecting.value = false
-  }
-}
+onUnmounted(() => {
+  stopStatusPolling()
+})
 
 // 打开详情弹窗（仅UI交互，不改变原有业务逻辑）
 const detailDialogRef = ref()
 const openDetail = () => {
   detailDialogRef.value?.open(formData.value)
 }
-const checkConnected = async () => {
-  try {
-    if (connected.value) {
-      isConnecting.value = true
-      const response = await reconnectMqtt()
-      if (response.status == 'failed') {
-        connected.value = false
-        ElMessage.error(response.message)
-      } else {
-        ElMessage.success(response.message)
-      }
-    }
-  } finally {
-    isConnecting.value = false
-  }
-}
 const handleUpdate = async () => {
-  getMqttConfigData()
-  checkConnected()
+  await getMqttConfigData()
+  await executeReconnectFlow()
 }
 </script>
 
@@ -362,7 +376,7 @@ const handleUpdate = async () => {
       border: none;
       background: transparent;
 
-      & > div {
+      &>div {
         margin-bottom: 0.2rem;
 
         &:last-child {
@@ -428,7 +442,7 @@ const handleUpdate = async () => {
 
     // 折叠面板内容样式
     .collapse-content {
-      padding: 0.2rem;
+      padding: 0.2rem 0;
 
       .el-form-item {
         margin-bottom: 0.2rem;
@@ -449,7 +463,29 @@ const handleUpdate = async () => {
   .connection-status {
     display: flex;
     align-items: center;
-    gap: 0.1rem;
+
+    // gap: 0.08rem;
+    width: 100%;
+    justify-content: space-between;
+
+
+    .connection-status__addr {
+      display: inline-flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.06rem;
+      font-size: 0.12rem;
+      color: rgba(255, 255, 255, 0.75);
+    }
+
+    .connection-status__addr-sep {
+      color: rgba(255, 255, 255, 0.35);
+    }
+
+    .connection-status__refresh {
+      flex-shrink: 0;
+      margin-left: 0.04rem;
+    }
 
     .loading-icon {
       font-size: 0.16rem;
@@ -462,17 +498,28 @@ const handleUpdate = async () => {
     from {
       transform: rotate(0deg);
     }
+
     to {
       transform: rotate(360deg);
     }
   }
+
   .card__content-footer {
     display: flex;
     padding: 0.3rem 0 0.1rem 0;
     width: 100%;
     justify-content: space-between;
     align-items: center;
-    // gap: 0.1rem;
+    gap: 0.1rem;
+    flex-wrap: wrap;
+  }
+
+  .card__content-footer__right {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+    flex-wrap: wrap;
+    margin-left: auto;
   }
 }
 </style>

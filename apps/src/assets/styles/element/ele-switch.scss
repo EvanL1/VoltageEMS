@@ -21,7 +21,7 @@
     // 开关核心容�?
     .el-switch__core {
       position: relative;
-      display: inline-block;
+      display: flex;
       box-sizing: border-box;
       width: 0.4rem;
       height: 0.2rem;
@@ -35,8 +35,9 @@
       // 开关滑�?
       .el-switch__action {
         position: absolute;
-        top: 0.02rem;
-        left: 0.02rem;
+        top: 50%;
+        transform: translateY(-50%);
+        // left: 0.02rem;
         border-radius: $border-radius-circle;
         transition: all $transition-base;
         width: 0.16rem;
@@ -46,7 +47,7 @@
         align-items: center;
         justify-content: center;
         color: $text-color-regular;
-        font-size: 0.12rem;
+        // font-size: 0.16rem;
         box-shadow: 0 0.01rem 0.03rem rgba(0, 0, 0, 0.3);
       }
     }

@@ -29,23 +29,24 @@
 </template>
 
 <script setup lang="ts">
-import { useTableData, type TableConfig } from '@/composables/useTableData'
 import type { OperationLogRecord } from '@/types/statistics'
 
-// 表格配置
-const tableConfig: TableConfig = {
-  listUrl: '/api/operation-logs',
-  defaultPageSize: 20,
-}
+// 临时停用接口请求，后续恢复时可直接取消注释
+// import { useTableData, type TableConfig } from '@/composables/useTableData'
+// const tableConfig: TableConfig = {
+//   listUrl: '/api/operation-logs',
+//   defaultPageSize: 20,
+// }
+// const {
+//   loading,
+//   tableData,
+//   pagination: paginationData,
+//   handlePageSizeChange,
+//   handlePageChange,
+// } = useTableData<OperationLogRecord>(tableConfig)
 
-// 使用 useTableData composable
-const {
-  loading,
-  tableData,
-  pagination: paginationData,
-  handlePageSizeChange,
-  handlePageChange,
-} = useTableData<OperationLogRecord>(tableConfig)
+// 表格数据保持为空，不发送请求
+const tableData = ref<OperationLogRecord[]>([])
 
 // 本地分页状态
 const pagination = reactive({
@@ -54,142 +55,18 @@ const pagination = reactive({
   total: 0,
 })
 
-// 监听paginationData变化
-watch(
-  paginationData,
-  (newPagination) => {
-    pagination.page = newPagination.page
-    pagination.pageSize = newPagination.pageSize
-    pagination.total = newPagination.total
-  },
-  { immediate: true },
-)
-
-// 模拟数据
-const mockData: OperationLogRecord[] = [
-  {
-    id: '1',
-    user: 'Alice',
-    role: 'Admin',
-    action: 'Login',
-    device: 'Web',
-    result: 'Success',
-    time: '2024-06-01 09:00:00',
-    ip: '192.168.1.10',
-  },
-  {
-    id: '2',
-    user: 'Bob',
-    role: 'Viewer',
-    action: 'Restart Device',
-    device: 'Sensor-001',
-    result: 'Success',
-    time: '2024-06-01 09:05:00',
-    ip: '192.168.1.11',
-  },
-  {
-    id: '3',
-    user: 'Charlie',
-    role: 'Viewer',
-    action: 'View Report',
-    device: 'Web',
-    result: 'Success',
-    time: '2024-06-01 09:10:00',
-    ip: '192.168.1.12',
-  },
-  {
-    id: '4',
-    user: 'Alice',
-    role: 'Admin',
-    action: 'Modify Settings',
-    device: 'Server-005',
-    result: 'Failed',
-    time: '2024-06-01 09:15:00',
-    ip: '192.168.1.10',
-  },
-  {
-    id: '5',
-    user: 'Bob',
-    role: 'Viewer',
-    action: 'Logout',
-    device: 'Web',
-    result: 'Success',
-    time: '2024-06-01 09:20:00',
-    ip: '192.168.1.11',
-  },
-  {
-    id: '6',
-    user: 'Diana',
-    role: 'Admin',
-    action: 'Delete User',
-    device: 'Web',
-    result: 'Success',
-    time: '2024-06-01 09:25:00',
-    ip: '192.168.1.13',
-  },
-  {
-    id: '7',
-    user: 'Eve',
-    role: 'Viewer',
-    action: 'Update Firmware',
-    device: 'Device-002',
-    result: 'Success',
-    time: '2024-06-01 09:30:00',
-    ip: '192.168.1.14',
-  },
-  {
-    id: '8',
-    user: 'Frank',
-    role: 'Viewer',
-    action: 'View Log',
-    device: 'Web',
-    result: 'Success',
-    time: '2024-06-01 09:35:00',
-    ip: '192.168.1.15',
-  },
-  {
-    id: '9',
-    user: 'Grace',
-    role: 'Admin',
-    action: 'Add Device',
-    device: 'Router-001',
-    result: 'Success',
-    time: '2024-06-01 09:40:00',
-    ip: '192.168.1.16',
-  },
-  {
-    id: '10',
-    user: 'Heidi',
-    role: 'Viewer',
-    action: 'Acknowledge Alarm',
-    device: 'Sensor-002',
-    result: 'Success',
-    time: '2024-06-01 09:45:00',
-    ip: '192.168.1.17',
-  },
-]
-
-// 加载模拟数据到tableData
-const loadMockData = () => {
-  // 模拟分页
-  const start = (pagination.page - 1) * pagination.pageSize
-  const end = start + pagination.pageSize
-  tableData.value = mockData.slice(start, end)
-  pagination.total = mockData.length
+const handlePageSizeChange = (pageSize: number) => {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  pagination.total = 0
+  tableData.value = []
 }
 
-// 组件挂载时加载数�?
-onMounted(() => {
-  loadMockData()
-})
-
-// 监听分页变化，重新加载数�?
-watch(
-  () => [pagination.page, pagination.pageSize],
-  () => {
-    loadMockData()
-  },
-)
+const handlePageChange = (page: number) => {
+  pagination.page = page
+  pagination.total = 0
+  tableData.value = []
+}
 </script>
 
 <style scoped lang="scss">
