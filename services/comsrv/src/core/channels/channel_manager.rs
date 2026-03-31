@@ -191,16 +191,15 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         // 1. Send shutdown signal to unified task (non-blocking)
         entry.shutdown();
 
-        // 2. Wait for task to exit gracefully (up to 500ms)
-        let max_wait = std::time::Duration::from_millis(500);
-        let start = std::time::Instant::now();
-        while !entry.is_task_finished() && start.elapsed() < max_wait {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-
-        // 3. Force-abort if task didn't exit in time
-        if !entry.is_task_finished() {
-            entry.abort_task();
+        // 2. Await task exit with timeout (500ms), then force-abort
+        if let Some(handle) = entry.take_task_handle() {
+            if tokio::time::timeout(std::time::Duration::from_millis(500), handle)
+                .await
+                .is_err()
+            {
+                warn!("Ch{} task did not exit in 500ms, aborting", channel_id);
+                entry.abort_task();
+            }
         }
 
         // 4. Shutdown store to flush WriteBuffer to Redis

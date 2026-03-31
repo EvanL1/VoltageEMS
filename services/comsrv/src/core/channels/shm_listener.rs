@@ -83,7 +83,7 @@ impl ShmCommandListener {
             }
             // Connection failed → stale socket, safe to remove
             info!("ShmListener: removing stale socket file {}", self.uds_path);
-            if let Err(e) = std::fs::remove_file(socket_path) {
+            if let Err(e) = tokio::fs::remove_file(socket_path).await {
                 error!(
                     "ShmListener: failed to remove stale socket {}: {}",
                     self.uds_path, e
@@ -140,7 +140,7 @@ impl ShmCommandListener {
         }
 
         // Cleanup socket file
-        let _ = std::fs::remove_file(&self.uds_path);
+        let _ = tokio::fs::remove_file(&self.uds_path).await;
         Ok(())
     }
 

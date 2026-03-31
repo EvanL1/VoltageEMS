@@ -419,6 +419,11 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             true // Lock poisoned, assume finished
         }
     }
+
+    /// Take the task handle out for awaiting. Returns None if already taken.
+    pub fn take_task_handle(&self) -> Option<JoinHandle<()>> {
+        self.task_handle.lock().ok()?.take()
+    }
 }
 
 /// Parse reconnection policy from channel parameters.
