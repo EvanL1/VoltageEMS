@@ -32,7 +32,7 @@ pub enum TemplateCommands {
         channel_id: u32,
         /// Template name
         #[arg(short, long)]
-        name: Option<String>,
+        name: String,
         /// Template description
         #[arg(short, long)]
         description: Option<String>,
@@ -77,7 +77,7 @@ pub async fn handle_command(cmd: TemplateCommands, base_url: &str, json: bool) -
             name,
             description,
         } => {
-            handle_snapshot(&client, channel_id, name, description, json).await?;
+            handle_snapshot(&client, channel_id, &name, description, json).await?;
         },
         TemplateCommands::Apply {
             template_id,
@@ -120,7 +120,7 @@ async fn handle_get(client: &TemplateClient, id: i64, json: bool) -> Result<()> 
 async fn handle_snapshot(
     client: &TemplateClient,
     channel_id: u32,
-    name: Option<String>,
+    name: &str,
     description: Option<String>,
     json: bool,
 ) -> Result<()> {
@@ -231,31 +231,27 @@ impl TemplateClient {
     async fn snapshot_channel(
         &self,
         channel_id: u32,
-        name: Option<String>,
+        name: &str,
         description: Option<String>,
     ) -> Result<Value> {
-        let mut url = format!(
+        let url = format!(
             "{}/api/templates/from-channel/{}",
             self.base_url, channel_id
         );
-        let mut params = Vec::new();
-        if let Some(n) = &name {
-            params.push(format!("name={}", n));
+        let mut body = serde_json::json!({ "name": name });
+        if let Some(d) = description {
+            body["description"] = serde_json::json!(d);
         }
-        if let Some(d) = &description {
-            params.push(format!("description={}", d));
-        }
-        if !params.is_empty() {
-            url.push('?');
-            url.push_str(&params.join("&"));
-        }
-        let response = self.client.post(&url).send().await?;
+        let response = self.client.post(&url).json(&body).send().await?;
         if response.status().is_success() {
             Ok(response.json().await?)
         } else {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
             Err(anyhow::anyhow!(
-                "Failed to snapshot channel: {}",
-                response.status()
+                "Failed to snapshot channel: {} - {}",
+                status,
+                text
             ))
         }
     }
