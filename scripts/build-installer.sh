@@ -174,7 +174,7 @@ declare -A SERVICE_TO_IMAGE=(
     ["alarmsrv"]="voltageems:latest"
     ["apps"]="voltage-apps:latest"
     ["redis"]="redis:8-alpine"
-    ["timescaledb"]="timescale/timescaledb:latest-pg17"
+    ["timescaledb"]="timescale/timescaledb:2.25.2-pg17"
 )
 
 # Parse selected services
@@ -197,7 +197,7 @@ else
     BUILD_IMAGES["voltageems:latest"]=1
     BUILD_IMAGES["voltage-apps:latest"]=1
     BUILD_IMAGES["redis:8-alpine"]=1
-    BUILD_IMAGES["timescale/timescaledb:latest-pg17"]=1
+    BUILD_IMAGES["timescale/timescaledb:2.25.2-pg17"]=1
 fi
 
 # Detect CPU cores
@@ -482,8 +482,8 @@ else
     echo -e "${YELLOW}⊘ Skipping redis:8-alpine (not selected)${NC}"
 fi
 
-if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg17]:-}" ]]; then
-    pull_and_save_image "timescale/timescaledb:latest-pg17" "voltage-timescaledb.tar.gz"
+if [[ -n "${BUILD_IMAGES[timescale/timescaledb:2.25.2-pg17]:-}" ]]; then
+    pull_and_save_image "timescale/timescaledb:2.25.2-pg17" "voltage-timescaledb.tar.gz"
 else
     echo -e "${YELLOW}⊘ Skipping timescaledb (not selected)${NC}"
 fi
@@ -510,7 +510,7 @@ fi
 if [[ -n "${BUILD_IMAGES[redis:8-alpine]:-}" ]]; then
     EXPECTED_IMAGES["voltage-redis"]=1
 fi
-if [[ -n "${BUILD_IMAGES[timescale/timescaledb:latest-pg17]:-}" ]]; then
+if [[ -n "${BUILD_IMAGES[timescale/timescaledb:2.25.2-pg17]:-}" ]]; then
     EXPECTED_IMAGES["voltage-timescaledb"]=1
 fi
 

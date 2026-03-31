@@ -129,7 +129,7 @@ pub struct ApiDoc;
 async fn service_info() -> Json<Value> {
     Json(json!({
         "success": true,
-        "message": "服务运行正常",
+        "message": "Service is running",
         "data": {
             "name": "alarmsrv",
             "version": env!("CARGO_PKG_VERSION"),
@@ -141,7 +141,7 @@ async fn service_info() -> Json<Value> {
 #[utoipa::path(get, path = "/health", tag = "Meta",
     responses((status = 200, description = "健康检查")))]
 async fn health() -> Json<Value> {
-    Json(json!({ "success": true, "message": "服务运行正常" }))
+    Json(json!({ "success": true, "message": "Service is running" }))
 }
 
 // ============================================================================
@@ -623,7 +623,7 @@ async fn manual_check_rule(
             error!("manual_check_rule: {}", e);
             Json(json!({
                 "success": false,
-                "message": format!("检查失败: {}", e),
+                "message": format!("Check failed: {}", e),
                 "data": {},
             }))
             .into_response()

@@ -8,6 +8,7 @@ use chrono::Utc;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
@@ -15,12 +16,25 @@ use voltage_rtdb::Rtdb;
 
 // ── Subscription State ────────────────────────────────────────────────────────
 
+/// Cached metadata for a homepage calculated point.
+#[derive(Debug, Clone)]
+pub struct HomepagePoint {
+    pub id: i64,
+    pub name: String,
+    pub unit: String,
+    pub imgurl: String,
+    /// Redis lookup: "hash_key:field_id" → HGET hash_key field_id
+    pub formula: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Subscription {
     pub source: String,
     pub channels: Vec<i64>,
     pub data_types: Vec<String>,
     pub interval_ms: u64,
+    /// Populated once on homepage subscribe; reused for every push tick.
+    pub homepage_points: Vec<HomepagePoint>,
 }
 
 #[derive(Debug)]
@@ -37,13 +51,15 @@ struct ClientHandle {
 pub struct WsHub {
     clients: DashMap<String, Arc<ClientHandle>>,
     rtdb: Arc<voltage_rtdb::RedisRtdb>,
+    db: SqlitePool,
 }
 
 impl WsHub {
-    pub fn new(rtdb: Arc<voltage_rtdb::RedisRtdb>) -> Arc<Self> {
+    pub fn new(rtdb: Arc<voltage_rtdb::RedisRtdb>, db: SqlitePool) -> Arc<Self> {
         Arc::new(Self {
             clients: DashMap::new(),
             rtdb,
+            db,
         })
     }
 
@@ -62,6 +78,7 @@ impl WsHub {
                 channels: Vec::new(),
                 data_types: Vec::new(),
                 interval_ms: 1000,
+                homepage_points: Vec::new(),
             }),
             data_type_ws,
             connected_at: now,
@@ -84,6 +101,7 @@ impl WsHub {
         channels: Vec<i64>,
         data_types: Vec<String>,
         interval_ms: u64,
+        homepage_points: Vec<HomepagePoint>,
     ) {
         if let Some(handle) = self.clients.get(client_id) {
             if let Ok(mut sub) = handle.sub.write() {
@@ -91,6 +109,7 @@ impl WsHub {
                 sub.channels = channels;
                 sub.data_types = data_types;
                 sub.interval_ms = interval_ms;
+                sub.homepage_points = homepage_points;
             }
         }
     }
@@ -245,14 +264,7 @@ async fn push_subscribed_data(hub: &Arc<WsHub>) {
         }
 
         if source == "homepage" {
-            // Homepage data push: channels list is not used; push a generic update
-            let msg = json!({
-                "type": "homepage_batch",
-                "timestamp": Utc::now().timestamp(),
-                "data": { "updates": [] }
-            })
-            .to_string();
-            hub.send_to(&client_id, msg);
+            push_homepage_data(hub, &client_id).await;
             continue;
         }
 
@@ -260,45 +272,163 @@ async fn push_subscribed_data(hub: &Arc<WsHub>) {
         let mut all_updates = Vec::new();
         for channel_id in &channels {
             for dt in &data_types {
-                let key = format!("{}:{}:{}", source, channel_id, dt);
-                match hub.rtdb.hash_get_all(&key).await {
-                    Ok(values) if !values.is_empty() => {
-                        let values_obj: serde_json::Map<String, Value> = values
-                            .into_iter()
-                            .map(|(k, v)| {
-                                let num = String::from_utf8_lossy(&v)
-                                    .parse::<f64>()
-                                    .ok()
-                                    .and_then(serde_json::Number::from_f64)
-                                    .map(Value::Number)
-                                    .unwrap_or(Value::Null);
-                                (k, num)
-                            })
-                            .collect();
+                let val_key = format!("{}:{}:{}", source, channel_id, dt);
+                let ts_key = format!("{}:{}:{}:ts", source, channel_id, dt);
 
-                        all_updates.push(json!({
-                            "source": source,
-                            "channel_id": channel_id,
-                            "data_type": dt,
-                            "values": values_obj,
-                        }));
+                let values_raw = match hub.rtdb.hash_get_all(&val_key).await {
+                    Ok(v) if !v.is_empty() => v,
+                    Err(e) => {
+                        debug!("HGETALL {} error: {}", val_key, e);
+                        continue;
                     },
-                    Err(e) => debug!("HGETALL {}:{} error: {}", key, dt, e),
-                    _ => {},
-                }
+                    _ => continue,
+                };
+
+                let ts_raw = hub.rtdb.hash_get_all(&ts_key).await.unwrap_or_default();
+
+                let values_obj: serde_json::Map<String, Value> = values_raw
+                    .iter()
+                    .map(|(k, v)| {
+                        let num = String::from_utf8_lossy(v)
+                            .parse::<f64>()
+                            .ok()
+                            .and_then(serde_json::Number::from_f64)
+                            .map(Value::Number)
+                            .unwrap_or(Value::Null);
+                        (k.clone(), num)
+                    })
+                    .collect();
+
+                let ts_obj: serde_json::Map<String, Value> = ts_raw
+                    .iter()
+                    .map(|(k, v)| {
+                        let ts = String::from_utf8_lossy(v)
+                            .parse::<i64>()
+                            .ok()
+                            .map(serde_json::Number::from)
+                            .map(Value::Number)
+                            .unwrap_or(Value::Null);
+                        (k.clone(), ts)
+                    })
+                    .collect();
+
+                all_updates.push(json!({
+                    "source": source,
+                    "channel_id": channel_id,
+                    "data_type": dt,
+                    "values": values_obj,
+                    "ts": ts_obj,
+                }));
             }
         }
 
         if !all_updates.is_empty() {
+            let now = Utc::now().timestamp();
             let msg = json!({
                 "type": "data_batch",
-                "timestamp": Utc::now().timestamp(),
-                "data": { "updates": all_updates }
+                "id": format!("batch_{}", now),
+                "timestamp": now,
+                "data": { "updates": all_updates },
             })
             .to_string();
             hub.send_to(&client_id, msg);
         }
     }
+}
+
+/// Load calculated_points from SQLite once at subscribe time.
+async fn load_homepage_points(db: &SqlitePool) -> Vec<HomepagePoint> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+        name: String,
+        formula: Option<String>,
+        unit: Option<String>,
+        imgurl: Option<String>,
+    }
+
+    match sqlx::query_as::<_, Row>(
+        "SELECT id, name, formula, unit, imgurl FROM calculated_points ORDER BY id",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| HomepagePoint {
+                id: r.id,
+                name: r.name,
+                unit: r.unit.unwrap_or_default(),
+                imgurl: r.imgurl.unwrap_or_default(),
+                formula: r.formula.unwrap_or_default(),
+            })
+            .collect(),
+        Err(e) => {
+            error!("Failed to load calculated_points: {}", e);
+            Vec::new()
+        },
+    }
+}
+
+/// Push homepage_batch to a subscribed client.
+/// Uses the point list cached at subscribe time; only reads Redis for current values.
+///
+/// Formula format: `"hash_key:field_id"` → HGET `hash_key` field `field_id`
+/// Empty formula → value is null.
+async fn push_homepage_data(hub: &Arc<WsHub>, client_id: &str) {
+    let points = {
+        let Some(handle) = hub.clients.get(client_id) else {
+            return;
+        };
+        let Ok(sub) = handle.sub.read() else { return };
+        sub.homepage_points.clone()
+    };
+
+    if points.is_empty() {
+        return;
+    }
+
+    let mut updates = Vec::with_capacity(points.len());
+    for pt in &points {
+        let value = if !pt.formula.is_empty() {
+            let parts: Vec<&str> = pt.formula.rsplitn(2, ':').collect();
+            if parts.len() == 2 {
+                let field_id = parts[0];
+                let hash_key = parts[1];
+                match hub.rtdb.hash_get(hash_key, field_id).await {
+                    Ok(Some(bytes)) => String::from_utf8_lossy(&bytes)
+                        .parse::<f64>()
+                        .ok()
+                        .and_then(serde_json::Number::from_f64)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null),
+                    _ => Value::Null,
+                }
+            } else {
+                Value::Null
+            }
+        } else {
+            Value::Null
+        };
+
+        updates.push(json!({
+            "id": pt.id,
+            "name": pt.name,
+            "values": value,
+            "unit": pt.unit,
+            "imgurl": pt.imgurl,
+        }));
+    }
+
+    let now = Utc::now().timestamp();
+    let msg = json!({
+        "type": "homepage_batch",
+        "id": format!("homepage_batch_{}", now),
+        "timestamp": now,
+        "data": { "updates": updates }
+    })
+    .to_string();
+    hub.send_to(client_id, msg);
 }
 
 async fn push_rule_data(hub: &Arc<WsHub>, client_id: &str, rule_id: i64) {
@@ -380,7 +510,7 @@ pub async fn handle_socket(
         "timestamp": Utc::now().timestamp(),
         "data": {
             "client_id": client_id,
-            "message": "连接成功，请订阅数据通道以接收实时数据"
+            "message": "Connected. Subscribe to a data channel to receive real-time data"
         }
     })
     .to_string();
@@ -438,7 +568,7 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
     let data: Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(_) => {
-            let err = error_msg("INVALID_JSON", "无效的JSON格式", None);
+            let err = error_msg("INVALID_JSON", "Invalid JSON format", None);
             hub.send_to(client_id, err);
             return;
         },
@@ -477,12 +607,20 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
                 .unwrap_or_else(|| vec!["T".to_string()]);
             let interval_ms: u64 = data["data"]["interval"].as_u64().unwrap_or(1000);
 
+            // Load homepage points once from DB when subscribing to "homepage" source.
+            let homepage_points = if source == "homepage" {
+                load_homepage_points(&hub.db).await
+            } else {
+                Vec::new()
+            };
+
             hub.update_subscription(
                 client_id,
                 source.clone(),
                 channels.clone(),
                 data_types,
                 interval_ms,
+                homepage_points,
             );
 
             let ack = if source == "homepage" {
@@ -490,7 +628,7 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
                     "type": "subscribe_ack",
                     "id": format!("{}_ack", data["id"].as_str().unwrap_or("sub")),
                     "timestamp": Utc::now().timestamp(),
-                    "data": { "source": "homepage", "message": "首页数据订阅成功" }
+                    "data": { "source": "homepage", "message": "Homepage data subscription active" }
                 })
             } else {
                 json!({
@@ -505,7 +643,14 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
 
         "unsubscribe" => {
             let source = data["data"]["source"].as_str().unwrap_or("inst");
-            hub.update_subscription(client_id, source.to_string(), Vec::new(), Vec::new(), 1000);
+            hub.update_subscription(
+                client_id,
+                source.to_string(),
+                Vec::new(),
+                Vec::new(),
+                1000,
+                Vec::new(),
+            );
             let ack = json!({
                 "type": "unsubscribe_ack",
                 "id": format!("{}_ack", data["id"].as_str().unwrap_or("unsub")),
@@ -535,7 +680,11 @@ async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
     let value = &control["value"];
 
     if channel_id.is_none() || point_id.is_none() || command_type.is_none() || value.is_null() {
-        let err = error_msg("CONTROL_ERROR", "缺少必要的控制参数", data["id"].as_str());
+        let err = error_msg(
+            "CONTROL_ERROR",
+            "Missing required control parameters",
+            data["id"].as_str(),
+        );
         hub.send_to(client_id, err);
         return;
     }
@@ -576,7 +725,11 @@ async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
         },
         Err(e) => {
             error!("Control command publish failed: {}", e);
-            let err = error_msg("CONTROL_ERROR", "控制命令发布失败", data["id"].as_str());
+            let err = error_msg(
+                "CONTROL_ERROR",
+                "Failed to publish control command",
+                data["id"].as_str(),
+            );
             hub.send_to(client_id, err);
         },
     }

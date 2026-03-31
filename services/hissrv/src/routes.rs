@@ -301,7 +301,7 @@ async fn query_range(
             let has_more = (page * page_size) < total;
             Ok(Json(json!({
                 "success": true,
-                "message": format!("成功查询到 {} 条数据", data.len()),
+                "message": format!("Found {} record(s)", data.len()),
                 "data": data,
                 "total": total,
                 "page": page,
@@ -337,12 +337,12 @@ async fn query_latest(
     {
         Ok(Some(record)) => Ok(Json(json!({
             "success": true,
-            "message": "查询成功",
+            "message": "Query successful",
             "data": record,
         }))),
         Ok(None) => Err((
             StatusCode::NOT_FOUND,
-            Json(json!({"success": false, "message": "暂无数据"})),
+            Json(json!({"success": false, "message": "No data available"})),
         )),
         Err(e) => {
             error!("query_latest error: {}", e);
@@ -366,7 +366,7 @@ async fn data_range(
     match backend.get_stats().await {
         Ok(stats) => Ok(Json(json!({
             "success": true,
-            "message": "获取成功",
+            "message": "OK",
             "data": {
                 "earliest_timestamp": stats.earliest_timestamp,
                 "latest_timestamp":   stats.latest_timestamp,
@@ -403,7 +403,7 @@ async fn list_channels(
             let count = channels.len();
             Ok(Json(json!({
                 "success": true,
-                "message": format!("查询到 {} 个通道", count),
+                "message": format!("Found {} channel(s)", count),
                 "data": channels,
                 "count": count,
             })))
@@ -429,7 +429,7 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
 
     Json(json!({
         "success": true,
-        "message": "获取成功",
+        "message": "OK",
         "data": {
             "total_points":  stats.total_points,
             "channel_count": stats.channels.len(),
@@ -447,7 +447,7 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
     responses((status = 200, description = "当前服务配置", body = ServiceConfig)))]
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cfg = state.config.read().await.clone();
-    Json(json!({ "success": true, "message": "获取成功", "data": cfg }))
+    Json(json!({ "success": true, "message": "OK", "data": cfg }))
 }
 
 #[utoipa::path(put, path = "/hisApi/config", tag = "Config",
@@ -470,7 +470,9 @@ async fn update_config(
 
     *state.config.write().await = new_cfg;
 
-    Ok(Json(json!({ "success": true, "message": "配置已更新" })))
+    Ok(Json(
+        json!({ "success": true, "message": "Config updated" }),
+    ))
 }
 
 // ============================================================================
@@ -490,7 +492,7 @@ async fn get_storage(State(state): State<Arc<AppState>>) -> Json<Value> {
 
     Json(json!({
         "success": true,
-        "message": "获取成功",
+        "message": "OK",
         "data": {
             "enabled":        ss.enabled,
             "backend":        ss.backend,
@@ -524,7 +526,7 @@ async fn update_storage(
     if req.host.is_empty() || req.database.is_empty() || req.username.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "host、database、username 为必填项"})),
+            Json(json!({"success": false, "message": "host, database, and username are required"})),
         ));
     }
 
@@ -555,7 +557,7 @@ async fn update_storage(
 
     Ok(Json(json!({
         "success": true,
-        "message": "参数已保存，如需连接请调用 POST /hisApi/storage/reconnect"
+        "message": "Parameters saved. Call POST /hisApi/storage/reconnect to connect"
     })))
 }
 
@@ -578,7 +580,7 @@ async fn test_storage(
     match probe_backend(&req).await {
         Ok(()) => Ok(Json(json!({
             "success": true,
-            "message": format!("成功连接到 {}", addr)
+            "message": format!("Successfully connected to {}", addr)
         }))),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -609,7 +611,7 @@ async fn reconnect_storage(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(
-                json!({"success": false, "message": "存储未启用，请先通过 PUT /hisApi/storage 将 enabled 设为 true"}),
+                json!({"success": false, "message": "Storage is not enabled. Set enabled=true via PUT /hisApi/storage first"}),
             ),
         ));
     }
@@ -618,7 +620,7 @@ async fn reconnect_storage(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(
-                json!({"success": false, "message": "连接参数未配置，请先调用 PUT /hisApi/storage"}),
+                json!({"success": false, "message": "Storage parameters not configured. Call PUT /hisApi/storage first"}),
             ),
         ));
     }
@@ -629,7 +631,7 @@ async fn reconnect_storage(
             *state.storage.write().await = b;
             Ok(Json(json!({
                 "success": true,
-                "message": format!("已成功连接至 '{}' 后端，开始采集历史数据", backend_type)
+                "message": format!("Connected to '{}' backend. Historical data collection started", backend_type)
             })))
         },
         Err(e) => {

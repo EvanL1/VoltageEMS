@@ -20,7 +20,7 @@ pub async fn broadcast_message(
         Ok(s) => s,
         Err(e) => {
             error!("Serialize broadcast body error: {}", e);
-            return Json(json!({"success": false, "message": "无效的JSON数据"})).into_response();
+            return Json(json!({"success": false, "message": "Invalid JSON data"})).into_response();
         },
     };
 
@@ -28,7 +28,7 @@ pub async fn broadcast_message(
 
     Json(json!({
         "success": true,
-        "message": format!("消息已广播到 {} 个客户端", count),
+        "message": format!("Message broadcast to {} client(s)", count),
         "data": {
             "client_count": count,
             "clients": clients,
@@ -66,7 +66,7 @@ pub async fn broadcast_status(State(state): State<Arc<AppState>>) -> impl IntoRe
 
     Json(json!({
         "success": true,
-        "message": "获取成功",
+        "message": "OK",
         "data": {
             "websocket_available": true,
             "connection_count": status["connection_count"],

@@ -155,7 +155,7 @@ async fn alarm_broadcast(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     publish_json(&state, &state.topics.alarm, &body)
         .await
-        .map(|_| Json(json!({"success": true, "message": "告警已广播"})))
+        .map(|_| Json(json!({"success": true, "message": "Alarm broadcast"})))
         .map_err(|e| {
             error!("Alarm broadcast failed: {}", e);
             (
@@ -170,7 +170,7 @@ async fn alarm_broadcast(
 async fn alarm_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({
         "success": true,
-        "message": "获取成功",
+        "message": "OK",
         "data": {
             "alarm_topic":    state.topics.alarm,
             "mqtt_connected": state.mqtt_connected.load(Ordering::Relaxed),
@@ -186,7 +186,7 @@ async fn alarm_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     responses((status = 200, description = "当前 MQTT 配置", body = NetConfig)))]
 async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cfg = state.config.read().await.clone();
-    Json(json!({ "success": true, "message": "获取成功", "data": cfg }))
+    Json(json!({ "success": true, "message": "OK", "data": cfg }))
 }
 
 /// 更新 MQTT 配置并立即触发重连，无需重启服务。
@@ -210,7 +210,7 @@ async fn mqtt_update_config(
     *state.config.write().await = new_cfg;
     state.reconnect_signal.notify_one();
     Ok(Json(
-        json!({"success": true, "message": "配置已更新，正在重连"}),
+        json!({"success": true, "message": "Config updated, reconnecting"}),
     ))
 }
 
@@ -220,7 +220,7 @@ async fn mqtt_status(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cfg = state.config.read().await;
     Json(json!({
         "success": true,
-        "message": "获取成功",
+        "message": "OK",
         "data": {
             "connected":  state.mqtt_connected.load(Ordering::Relaxed),
             "broker":     format!("{}:{}", cfg.broker_host, cfg.broker_port),
@@ -244,7 +244,7 @@ async fn mqtt_disconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
         .mqtt_connected
         .store(false, std::sync::atomic::Ordering::Relaxed);
     state.reconnect_signal.notify_one();
-    Json(json!({"success": true, "message": "MQTT 已断开，自动重连已暂停"}))
+    Json(json!({"success": true, "message": "MQTT disconnected, auto-reconnect paused"}))
 }
 
 #[utoipa::path(post, path = "/netApi/mqtt/reconnect", tag = "MQTT",
@@ -255,7 +255,7 @@ async fn mqtt_reconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
         .disconnect_requested
         .store(false, std::sync::atomic::Ordering::Relaxed);
     state.reconnect_signal.notify_one();
-    Json(json!({"success": true, "message": "重连指令已发送，后台异步执行"}))
+    Json(json!({"success": true, "message": "Reconnect command sent, executing in background"}))
 }
 
 // ============================================================================
@@ -324,7 +324,7 @@ async fn cert_upload(
     // Validate cert_type.
     let cert_type = cert_type_val.ok_or_else(|| (
         StatusCode::BAD_REQUEST,
-        Json(json!({"success": false, "message": "缺少 cert_type 字段，可选值：ca_cert | client_cert | client_key"})),
+        Json(json!({"success": false, "message": "Missing cert_type field. Valid values: ca_cert | client_cert | client_key"})),
     ))?;
 
     let save_name = match cert_type.as_str() {
@@ -335,7 +335,7 @@ async fn cert_upload(
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(
-                    json!({"success": false, "message": format!("不支持的 cert_type: '{}'. 可选：ca_cert | client_cert | client_key", cert_type)}),
+                    json!({"success": false, "message": format!("Unsupported cert_type: '{}'. Valid: ca_cert | client_cert | client_key", cert_type)}),
                 ),
             ))
         },
@@ -345,14 +345,14 @@ async fn cert_upload(
     let (orig_name, data) = file_data.ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "缺少 file 字段"})),
+            Json(json!({"success": false, "message": "Missing file field"})),
         )
     })?;
 
     if orig_name.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "文件名不能为空"})),
+            Json(json!({"success": false, "message": "Filename cannot be empty"})),
         ));
     }
 
@@ -366,7 +366,7 @@ async fn cert_upload(
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "success": false,
-                "message": format!("不支持的文件格式 '{}'，支持：{}", ext, ALLOWED_EXT.join(", "))
+                "message": format!("Unsupported file format '{}'. Supported: {}", ext, ALLOWED_EXT.join(", "))
             })),
         ));
     }
@@ -374,7 +374,7 @@ async fn cert_upload(
     if data.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": "文件内容为空"})),
+            Json(json!({"success": false, "message": "File content is empty"})),
         ));
     }
     if data.len() > MAX_SIZE {
@@ -382,7 +382,7 @@ async fn cert_upload(
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "success": false,
-                "message": format!("文件超过 1MB 限制（当前 {} bytes）", data.len())
+                "message": format!("File exceeds 1MB limit (current: {} bytes)", data.len())
             })),
         ));
     }
@@ -393,7 +393,7 @@ async fn cert_upload(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
                 "success": false,
-                "message": format!("无法创建证书目录 '{}': {}（请检查路径权限）", cert_dir, e)
+                "message": format!("Cannot create cert directory '{}': {} (check path permissions)", cert_dir, e)
             })),
         )
     })?;
@@ -403,13 +403,13 @@ async fn cert_upload(
     std::fs::write(&dest, &data).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": format!("写入文件失败: {}", e)})),
+            Json(json!({"success": false, "message": format!("Failed to write file: {}", e)})),
         )
     })?;
 
     Ok(Json(json!({
         "success": true,
-        "message": "证书上传成功",
+        "message": "Certificate uploaded",
         "data": {
             "cert_type": cert_type,
             "saved_as":  save_name,
@@ -436,7 +436,7 @@ async fn cert_info(State(state): State<Arc<AppState>>) -> Json<Value> {
         .collect();
     Json(json!({
         "success": true,
-        "message": "获取成功",
+        "message": "OK",
         "data": {
             "cert_dir": cert_dir,
             "files":    info,
@@ -469,7 +469,7 @@ async fn cert_delete(
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(
-                    json!({"success": false, "message": "未知的 cert_type，可选：ca_cert | client_cert | client_key"}),
+                    json!({"success": false, "message": "Unknown cert_type. Valid: ca_cert | client_cert | client_key"}),
                 ),
             ))
         },
@@ -478,11 +478,11 @@ async fn cert_delete(
     match std::fs::remove_file(format!("{}/{}", cert_dir, filename)) {
         Ok(_) => Ok(Json(json!({
             "success": true,
-            "message": "删除成功",
+            "message": "Deleted successfully",
             "data": { "deleted": filename }
         }))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Json(
-            json!({"success": true, "message": "文件不存在，无需删除"}),
+            json!({"success": true, "message": "File does not exist, nothing to delete"}),
         )),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,

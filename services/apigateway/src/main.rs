@@ -283,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
     let rtdb = Arc::new(voltage_rtdb::RedisRtdb::from_client(redis_client));
 
     // ── App State ─────────────────────────────────────────────────────────────
-    let ws_hub = WsHub::new(Arc::clone(&rtdb));
+    let ws_hub = WsHub::new(Arc::clone(&rtdb), db_pool.clone());
 
     let state = Arc::new(AppState {
         db: db_pool,
