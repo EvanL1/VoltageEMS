@@ -46,7 +46,7 @@ const energyCardData = reactive([
   },
   //no
   {
-    pointId: 2,
+    pointId: 13,
     title: 'oil',
     icon: oilIcon,
     value: '-',
@@ -62,11 +62,11 @@ const energyCardData = reactive([
   },
   //no
   {
-    pointId: 4,
-    title: 'Coolant Temp',
+    pointId: 14,
+    title: 'Temperature',
     icon: coolantTempIcon,
     value: '-',
-    unit: '°F',
+    unit: '℃',
   },
 ])
 

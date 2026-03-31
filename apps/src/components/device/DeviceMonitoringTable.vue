@@ -47,7 +47,7 @@
               <DynamicScrollerItem :item="item" :active="true" :index="index">
                 <div class="vtable__row">
                   <div class="vtable__cell vtable__cell--name">{{ item.name }}</div>
-                  <div class="vtable__cell vtable__cell--status">{{ item.status }}</div>
+                  <div class="vtable__cell vtable__cell--status">{{ item.status ?? '-' }}</div>
                   <div class="vtable__cell vtable__cell--time">{{ formatTimestamp(item.updateTime) }}</div>
                 </div>
               </DynamicScrollerItem>

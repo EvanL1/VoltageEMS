@@ -52,7 +52,7 @@
                   <div class="home-deviceValue">
                     <div class="home-deviceValue-item" v-for="dataItem in item.data" :key="dataItem.id">
                       <span class="deviceValue-item-title">{{ dataItem.title }}:</span>
-                      <span class="deviceValue-item-value">{{ dataItem.value }}</span>
+                      <span class="deviceValue-item-value">{{ dataItem.values }}</span>
                       &nbsp;
                       <span class="deviceValue-item-unit">{{ dataItem.unit }}</span>
                     </div>
@@ -143,7 +143,7 @@ function getIconByImgurl(imgurl?: string): string {
 interface PointInfo {
   id: number
   name: string
-  value: string | number
+  values: string | number
   unit: string
   imgurl?: string
 }
@@ -185,7 +185,7 @@ const energyDashboardList = computed<EnergyCard[]>(() =>
       id,
       title: p?.name ?? def?.name,
       icon: getIconByImgurl(p?.imgurl ?? def?.imgurl),
-      value: displayValue(p?.value),
+      value: displayValue(p?.values),
       unit: (p?.unit ?? def?.unit),
     }
   }),
@@ -200,7 +200,7 @@ const stationInfoList = computed<EnergyCard[]>(() =>
       id,
       title: (p?.name ?? def?.name),
       icon: getIconByImgurl(p?.imgurl ?? def?.imgurl),
-      value: displayValue(p?.value),
+      value: displayValue(p?.values),
       unit: (p?.unit ?? def?.unit),
     }
   }),
@@ -211,7 +211,7 @@ const tuopuData = computed(() => {
   const { topology } = HOMEPAGE_POINT_IDS
   const fmt = (p: PointInfo | undefined, defaultName: string, defaultUnit: string) =>
     p
-      ? { ...p, name: p.name ?? defaultName, value: displayValue(p.value), unit: p.unit ?? defaultUnit }
+      ? { ...p, name: p.name ?? defaultName, value: displayValue(p.values), unit: p.unit ?? defaultUnit }
       : { id: undefined, name: defaultName, value: '-' as const, unit: defaultUnit }
   return {
     pv: { P: fmt(pointStore[topology.pv.P], HOMEPAGE_POINT_DEFAULTS[14].name ?? '', HOMEPAGE_POINT_DEFAULTS[14].unit ?? '') },
@@ -231,7 +231,7 @@ const tuopuData = computed(() => {
 interface DevicePointItem {
   id: number
   title: string
-  value: string | number
+  values  : string | number
   unit: string
 }
 interface DeviceSlide {
@@ -249,7 +249,7 @@ const deviceInfoList = computed<DeviceSlide[]>(() =>
       return {
         id: pointId,
         title: (p?.name ?? def?.name),
-        value: displayValue(p?.value),
+        values: displayValue(p?.values),
         unit: (p?.unit ?? def?.unit),
       }
     }),
@@ -260,14 +260,15 @@ const deviceInfoList = computed<DeviceSlide[]>(() =>
 
 /** 应用 homepage_batch 推送数据*/
 function applyHomepageBatch(data: {
-  updates?: Array<{ id: number; name: string; value?: number; unit: string; imgurl?: string }>
+  updates?: Array<{ id: number; name: string; values?: number; unit: string; imgurl?: string }>
 }) {
   const updates = data?.updates ?? []
+
   for (const u of updates) {
     pointStore[u.id] = {
       id: u.id,
       name: u.name,
-      value: u.value ?? '',
+      values: u.values ?? '-',
       unit: u.unit,
       imgurl: u.imgurl,
     }
