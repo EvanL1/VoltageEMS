@@ -123,7 +123,7 @@ ensure_shm_file() {
 declare -A TARBALL_TO_IMAGE=(
     ["voltageems.tar.gz"]="voltageems:latest"
     ["voltage-redis.tar.gz"]="redis:8-alpine"
-    ["voltage-timescaledb.tar.gz"]="timescale/timescaledb:latest-pg17"
+    ["voltage-timescaledb.tar.gz"]="timescale/timescaledb:2.25.2-pg17"
     ["apps.tar.gz"]="voltage-apps:latest"
     ["alpine.tar.gz"]="alpine:latest"
 )
@@ -131,7 +131,7 @@ declare -A TARBALL_TO_IMAGE=(
 # Image to container mapping
 declare -A IMAGE_TO_CONTAINERS=(
     ["redis:8-alpine"]="voltage-redis"
-    ["timescale/timescaledb:latest-pg17"]="voltage-timescaledb"
+    ["timescale/timescaledb:2.25.2-pg17"]="voltage-timescaledb"
     ["voltageems:latest"]="voltageems-comsrv voltageems-modsrv voltageems-hissrv voltageems-apigateway voltageems-netsrv voltageems-alarmsrv"
     ["voltage-apps:latest"]="voltage-apps"
 )
@@ -658,7 +658,7 @@ echo -e "${GREEN}[DONE] CLI tools installation${NC}"
 # Step 2: Load Docker images (Smart Update Mode)
 echo -e "${YELLOW}[2/3] Loading Docker images...${NC}"
 if command -v docker &> /dev/null; then
-    # Check if images already exist
+    # Check if images already exist (check for both :latest and :arm64 tags)
     EXISTING_IMAGES=false
     if docker images | grep -q "voltageems.*latest\|voltageems.*${INSTALLER_ARCH_SHORT}"; then
         EXISTING_IMAGES=true
@@ -940,13 +940,13 @@ if command -v docker &> /dev/null; then
         echo "Verifying loaded images..."
         # Required: voltageems:latest, redis:8-alpine
         # Optional: timescaledb (can configure hissrv storage later via API), voltage-apps, alpine
-        for image_name in voltageems:latest redis:8-alpine timescale/timescaledb:latest-pg17 voltage-apps:latest alpine:latest; do
+        for image_name in voltageems:latest redis:8-alpine timescale/timescaledb:2.25.2-pg17 voltage-apps:latest alpine:latest; do
             echo -n "  Checking $image_name... "
             if docker image inspect "$image_name" >/dev/null 2>&1; then
                 CREATED=$(docker image inspect "$image_name" --format='{{.Created}}' 2>/dev/null | cut -d'T' -f1)
                 echo -e "${GREEN}present${NC} (created: $CREATED)"
             else
-                if [[ "$image_name" == "timescale/timescaledb:latest-pg17" ]] || \
+                if [[ "$image_name" == "timescale/timescaledb:2.25.2-pg17" ]] || \
                    [[ "$image_name" == "voltage-apps:latest" ]] || \
                    [[ "$image_name" == "alpine:latest" ]]; then
                     echo -e "${YELLOW}missing (optional, skipping)${NC}"
@@ -959,6 +959,14 @@ if command -v docker &> /dev/null; then
         done
 
         echo -e "${GREEN}[DONE] Docker images loaded${NC}"
+
+        # Clean up dangling images left over from the load (no name, no tag)
+        echo -e "${BLUE}Cleaning up dangling images...${NC}"
+        if docker rmi $(docker images -f "dangling=true" -q) 2>/dev/null; then
+            echo -e "${GREEN}✓ Dangling images removed${NC}"
+        else
+            echo -e "${BLUE}⊘ No dangling images to remove${NC}"
+        fi
     fi
 else
     echo -e "${RED}Docker not installed. Please install Docker first.${NC}"
@@ -1036,6 +1044,12 @@ fi
 echo "Creating certificate directory for netsrv..."
 $SUDO mkdir -p "$INSTALL_DIR/data/cert"
 echo -e "${GREEN}✓ Certificate directory ready: $INSTALL_DIR/data/cert${NC}"
+
+# Create TimescaleDB data directory (bind-mounted to container)
+echo "Creating TimescaleDB data directory..."
+$SUDO mkdir -p "${VOLTAGE_DATA_PATH:-/extp}/timescaledb/data"
+$SUDO chown -R 70:70 "${VOLTAGE_DATA_PATH:-/extp}/timescaledb/data" 2>/dev/null || true
+echo -e "${GREEN}✓ TimescaleDB data directory ready: ${VOLTAGE_DATA_PATH:-/extp}/timescaledb/data${NC}"
 
 # Create a symlink if logs are external
 if [[ "$LOG_DIR" != "$INSTALL_DIR/logs" ]]; then

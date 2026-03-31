@@ -254,7 +254,7 @@ pub async fn manual_check_rule(
     if !rule.enabled {
         return Ok(serde_json::json!({
             "success": false,
-            "message": "规则已禁用",
+            "message": "Rule is disabled",
             "data": {},
         }));
     }
@@ -267,7 +267,7 @@ pub async fn manual_check_rule(
     let Some(raw) = value_str else {
         return Ok(serde_json::json!({
             "success": false,
-            "message": "无法从Redis获取数据",
+            "message": "Failed to retrieve data from Redis",
             "data": {
                 "redis_key": rule.redis_key(),
                 "point_id": rule.point_id,
@@ -286,7 +286,7 @@ pub async fn manual_check_rule(
 
     Ok(serde_json::json!({
         "success": true,
-        "message": "手动检查完成",
+        "message": "Manual check completed",
         "data": {
             "rule_name": rule.rule_name,
             "current_value": current_value,

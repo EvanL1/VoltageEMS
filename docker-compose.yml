@@ -31,7 +31,7 @@ services:
 
   # TimescaleDB - Time-series database for hissrv historical data
   timescaledb:
-    image: timescale/timescaledb:latest-pg17
+    image: timescale/timescaledb:2.25.2-pg17
     container_name: voltage-timescaledb
     network_mode: host
     labels:
@@ -44,7 +44,7 @@ services:
       - NO_PROXY="*"
       - no_proxy="*"
     volumes:
-      - timescaledb-data:/var/lib/postgresql/data
+      - ${VOLTAGE_DATA_PATH:-/extp}/timescaledb/data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${TIMESCALEDB_USER:-postgres}"]
@@ -274,5 +274,4 @@ services:
 volumes:
   redis-data:
   redis-socket: # Shared Unix socket volume for better performance
-  timescaledb-data:
   # Note: voltage-shm now uses host /dev/shm bind mount for external access

@@ -29,7 +29,7 @@ pub async fn check_config() -> impl IntoResponse {
     if !dir.exists() {
         return Json(json!({
             "success": false,
-            "message": format!("配置目录不存在: {}", CONFIG_DIR),
+            "message": format!("Config directory not found: {}", CONFIG_DIR),
             "data": { "exists": false, "path": CONFIG_DIR }
         }))
         .into_response();
@@ -43,7 +43,7 @@ pub async fn check_config() -> impl IntoResponse {
 
     Json(json!({
         "success": true,
-        "message": "配置目录检查完成",
+        "message": "Config directory check completed",
         "data": {
             "exists": true,
             "path": CONFIG_DIR,
@@ -64,7 +64,7 @@ pub async fn export_config() -> impl IntoResponse {
     if !dir.exists() {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"success": false, "message": "配置目录不存在"})),
+            Json(json!({"success": false, "message": "Config directory not found"})),
         )
             .into_response();
     }
@@ -86,7 +86,9 @@ pub async fn export_config() -> impl IntoResponse {
             error!("Export config error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": format!("导出配置失败: {}", e)})),
+                Json(
+                    json!({"success": false, "message": format!("Failed to export config: {}", e)}),
+                ),
             )
                 .into_response()
         },
@@ -154,7 +156,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
                     error!("Read upload error: {}", e);
                     return (
                         StatusCode::BAD_REQUEST,
-                        Json(json!({"success": false, "message": "读取上传文件失败"})),
+                        Json(json!({"success": false, "message": "Failed to read uploaded file"})),
                     )
                         .into_response();
                 },
@@ -167,7 +169,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "message": "未提供配置文件"})),
+                Json(json!({"success": false, "message": "No config file provided"})),
             )
                 .into_response();
         },
@@ -178,7 +180,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
         error!("Create config dir error: {}", e);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": format!("创建配置目录失败: {}", e)})),
+            Json(json!({"success": false, "message": format!("Failed to create config directory: {}", e)})),
         )
             .into_response();
     }
@@ -186,10 +188,47 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
     match extract_zip(&data, target) {
         Ok(count) => {
             info!("Config imported: {} files", count);
+
+            // Restart all services so they pick up the new database
+            let services = [
+                "voltageems-comsrv",
+                "voltageems-modsrv",
+                "voltageems-hissrv",
+                "voltageems-netsrv",
+                "voltageems-alarmsrv",
+            ];
+            let mut restart_results = Vec::new();
+            for svc in &services {
+                match std::process::Command::new("docker")
+                    .args(["restart", svc])
+                    .output()
+                {
+                    Ok(o) if o.status.success() => {
+                        info!("Restarted service: {}", svc);
+                        restart_results.push(json!({"service": svc, "success": true}));
+                    },
+                    Ok(o) => {
+                        let err = String::from_utf8_lossy(&o.stderr).to_string();
+                        error!("Restart {} failed: {}", svc, err);
+                        restart_results
+                            .push(json!({"service": svc, "success": false, "error": err}));
+                    },
+                    Err(e) => {
+                        error!("Docker command error for {}: {}", svc, e);
+                        restart_results.push(
+                            json!({"service": svc, "success": false, "error": e.to_string()}),
+                        );
+                    },
+                }
+            }
+
             Json(json!({
                 "success": true,
-                "message": "配置导入成功",
-                "data": { "files_extracted": count }
+                "message": "Config imported successfully, services restarted",
+                "data": {
+                    "files_extracted": count,
+                    "restart_results": restart_results,
+                }
             }))
             .into_response()
         },
@@ -197,7 +236,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
             error!("Extract zip error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": format!("解压配置失败: {}", e)})),
+                Json(json!({"success": false, "message": format!("Failed to extract config: {}", e)})),
             )
                 .into_response()
         },
@@ -240,7 +279,13 @@ fn extract_zip(data: &[u8], target: &Path) -> io::Result<usize> {
     security(("bearer_auth" = [])),
     responses((status = 200, description = "服务重启结果")))]
 pub async fn restart_services() -> impl IntoResponse {
-    let services = ["voltageems-comsrv", "voltageems-modsrv"];
+    let services = [
+        "voltageems-comsrv",
+        "voltageems-modsrv",
+        "voltageems-hissrv",
+        "voltageems-netsrv",
+        "voltageems-alarmsrv",
+    ];
     let mut results = Vec::new();
 
     for svc in &services {
@@ -288,7 +333,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
         if *running {
             return (
                 StatusCode::CONFLICT,
-                Json(json!({"success": false, "message": "升级已在运行中"})),
+                Json(json!({"success": false, "message": "Upgrade already in progress"})),
             )
                 .into_response();
         }
@@ -311,7 +356,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "message": "未提供升级包"})),
+                Json(json!({"success": false, "message": "No upgrade package provided"})),
             )
                 .into_response();
         },
@@ -321,7 +366,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
     if let Err(e) = std::fs::create_dir_all(upgrade_dir) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": format!("创建升级目录失败: {}", e)})),
+            Json(json!({"success": false, "message": format!("Failed to create upgrade directory: {}", e)})),
         )
             .into_response();
     }
@@ -330,7 +375,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
     if let Err(e) = std::fs::write(&pkg_path, &data) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": format!("保存升级包失败: {}", e)})),
+            Json(json!({"success": false, "message": format!("Failed to save upgrade package: {}", e)})),
         )
             .into_response();
     }
@@ -369,7 +414,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
 
     Json(json!({
         "success": true,
-        "message": "升级已启动",
+        "message": "Upgrade started",
         "data": { "package": pkg_name }
     }))
     .into_response()
@@ -389,9 +434,11 @@ pub async fn abort_upgrade() -> impl IntoResponse {
                 .args(["-TERM", &pid.to_string()])
                 .output();
             *UPGRADE_RUNNING.lock().unwrap() = false;
-            Json(json!({"success": true, "message": "升级已中断"})).into_response()
+            Json(json!({"success": true, "message": "Upgrade aborted"})).into_response()
         },
-        None => Json(json!({"success": false, "message": "没有正在运行的升级"})).into_response(),
+        None => {
+            Json(json!({"success": false, "message": "No upgrade in progress"})).into_response()
+        },
     }
 }
 
@@ -406,7 +453,7 @@ pub async fn upgrade_status() -> impl IntoResponse {
 
     Json(json!({
         "success": true,
-        "message": "获取成功",
+        "message": "OK",
         "data": {
             "running": running,
             "pid": pid,

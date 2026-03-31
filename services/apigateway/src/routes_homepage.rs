@@ -42,7 +42,7 @@ pub async fn list_points(
             let pages = (total + limit - 1) / limit;
             Json(json!({
                 "success": true,
-                "message": "获取计算点位列表成功",
+                "message": "Calculated points retrieved",
                 "data": {
                     "items": items,
                     "total": total,
@@ -57,7 +57,7 @@ pub async fn list_points(
             error!("List points error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "内部服务器错误"})),
+                Json(json!({"success": false, "message": "Internal server error"})),
             )
                 .into_response()
         },
@@ -77,20 +77,20 @@ pub async fn get_point(
     match db::get_calculated_point_by_id(&state.db, point_id).await {
         Ok(Some(point)) => Json(json!({
             "success": true,
-            "message": "获取计算点位详情成功",
+            "message": "Calculated point retrieved",
             "data": point,
         }))
         .into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"success": false, "message": format!("计算点位 ID {} 不存在", point_id)})),
+            Json(json!({"success": false, "message": format!("Calculated point ID {} not found", point_id)})),
         )
             .into_response(),
         Err(e) => {
             error!("Get point error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "内部服务器错误"})),
+                Json(json!({"success": false, "message": "Internal server error"})),
             )
                 .into_response()
         },
@@ -114,7 +114,7 @@ pub async fn update_point(
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"success": false, "message": format!("计算点位 ID {} 不存在", point_id)})),
+                Json(json!({"success": false, "message": format!("Calculated point ID {} not found", point_id)})),
             )
                 .into_response();
         },
@@ -122,7 +122,7 @@ pub async fn update_point(
             error!("DB error: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "内部服务器错误"})),
+                Json(json!({"success": false, "message": "Internal server error"})),
             )
                 .into_response();
         },
@@ -143,13 +143,13 @@ pub async fn update_point(
         Ok(_) => match db::get_calculated_point_by_id(&state.db, point_id).await {
             Ok(Some(updated)) => Json(json!({
                 "success": true,
-                "message": "计算点位更新成功",
+                "message": "Calculated point updated",
                 "data": updated,
             }))
             .into_response(),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "内部服务器错误"})),
+                Json(json!({"success": false, "message": "Internal server error"})),
             )
                 .into_response(),
         },
@@ -157,7 +157,7 @@ pub async fn update_point(
             error!("Update point error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "内部服务器错误"})),
+                Json(json!({"success": false, "message": "Internal server error"})),
             )
                 .into_response()
         },
@@ -173,7 +173,7 @@ pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoRespon
     match db::reset_calculated_points(&state.db).await {
         Ok(count) => Json(json!({
             "success": true,
-            "message": "已恢复默认设置",
+            "message": "Default settings restored",
             "data": {
                 "imported_count": count,
                 "note": "所有自定义点位已被删除，已导入默认点位数据",
@@ -184,7 +184,7 @@ pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoRespon
             error!("Reset points error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "内部服务器错误"})),
+                Json(json!({"success": false, "message": "Internal server error"})),
             )
                 .into_response()
         },

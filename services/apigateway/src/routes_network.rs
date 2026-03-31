@@ -231,7 +231,7 @@ pub async fn get_network_config(
     let Some(path) = lan_file(&state.config.network_config_dir, q.lan) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": format!("无效的 LAN 编号: {}，有效范围为 1-4", q.lan)})),
+            Json(json!({"success": false, "message": format!("Invalid LAN number: {}. Valid range: 1-4", q.lan)})),
         )
             .into_response();
     };
@@ -241,14 +241,14 @@ pub async fn get_network_config(
             let config = parse_config(&content);
             Json(json!({
                 "success": true,
-                "message": format!("获取 LAN{} 网络配置成功", q.lan),
+                "message": format!("LAN{} network config retrieved", q.lan),
                 "data": config,
             }))
             .into_response()
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (
             StatusCode::NOT_FOUND,
-            Json(json!({"success": false, "message": format!("LAN{} 配置文件不存在: {:?}", q.lan, path)})),
+            Json(json!({"success": false, "message": format!("LAN{} config file not found: {:?}", q.lan, path)})),
         )
             .into_response(),
         Err(e) => {
@@ -271,7 +271,7 @@ pub async fn update_network_config(
     let Some(path) = lan_file(&state.config.network_config_dir, req.lan) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": format!("无效的 LAN 编号: {}", req.lan)})),
+            Json(json!({"success": false, "message": format!("Invalid LAN number: {}", req.lan)})),
         )
             .into_response();
     };
@@ -279,7 +279,7 @@ pub async fn update_network_config(
     let Some(iface) = lan_iface(req.lan) else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"success": false, "message": format!("无效的 LAN 编号: {}", req.lan)})),
+            Json(json!({"success": false, "message": format!("Invalid LAN number: {}", req.lan)})),
         )
             .into_response();
     };
@@ -294,7 +294,7 @@ pub async fn update_network_config(
         if ip.is_empty() {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "message": "静态 IP 模式下 ip 字段不能为空"})),
+                Json(json!({"success": false, "message": "The ip field is required in static IP mode"})),
             )
                 .into_response();
         }
@@ -302,7 +302,7 @@ pub async fn update_network_config(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(
-                    json!({"success": false, "message": "静态 IP 模式下 subnet_mask 字段不能为空"}),
+                    json!({"success": false, "message": "The subnet_mask field is required in static IP mode"}),
                 ),
             )
                 .into_response();
@@ -317,7 +317,7 @@ pub async fn update_network_config(
             None => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    Json(json!({"success": false, "message": format!("无效的子网掩码: {}", mask)})),
+                    Json(json!({"success": false, "message": format!("Invalid subnet mask: {}", mask)})),
                 )
                     .into_response();
             },
@@ -329,7 +329,7 @@ pub async fn update_network_config(
     match std::fs::write(&path, content) {
         Ok(_) => Json(json!({
             "success": true,
-            "message": format!("LAN{} 网络配置更新成功", req.lan),
+            "message": format!("LAN{} network config updated", req.lan),
             "data": {
                 "lan": req.lan,
                 "interface": iface,
@@ -342,7 +342,7 @@ pub async fn update_network_config(
             error!("Write network config error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": format!("写入网络配置失败: {}", e)})),
+                Json(json!({"success": false, "message": format!("Failed to write network config: {}", e)})),
             )
                 .into_response()
         },
@@ -364,7 +364,7 @@ pub async fn apply_network_config() -> impl IntoResponse {
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
                 "success": false,
-                "message": "Docker Socket 不可用，请确认 /var/run/docker.sock 已挂载",
+                "message": "Docker socket unavailable, ensure /var/run/docker.sock is mounted",
             })),
         )
             .into_response();
@@ -396,7 +396,7 @@ pub async fn apply_network_config() -> impl IntoResponse {
     match result {
         Ok(output) if output.status.success() => Json(json!({
             "success": true,
-            "message": "网络配置已生效（systemd-networkd 重启成功）",
+            "message": "Network config applied (systemd-networkd restarted)",
         }))
         .into_response(),
         Ok(output) => {
@@ -404,7 +404,7 @@ pub async fn apply_network_config() -> impl IntoResponse {
             error!("Restart systemd-networkd failed: {}", err);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": format!("重启 systemd-networkd 失败: {}", err)})),
+                Json(json!({"success": false, "message": format!("Failed to restart systemd-networkd: {}", err)})),
             )
                 .into_response()
         },
@@ -412,7 +412,7 @@ pub async fn apply_network_config() -> impl IntoResponse {
             error!("Docker command error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": format!("执行 docker 命令失败: {}", e)})),
+                Json(json!({"success": false, "message": format!("Failed to execute docker command: {}", e)})),
             )
                 .into_response()
         },
