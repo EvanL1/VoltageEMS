@@ -247,7 +247,7 @@ smart_load_image() {
     # If no mapping found, load anyway
     if [[ -z "$image" ]]; then
         echo -n "  Loading $basename (unknown mapping)... "
-        if timeout 300 docker load < "$tarball" >/dev/null 2>&1; then
+        if timeout 300 bash -c 'gunzip -c "$1" | docker load' _ "$tarball" >/dev/null 2>&1; then
             echo -e "${GREEN}done${NC}"
             return 0
         else
@@ -264,7 +264,7 @@ smart_load_image() {
     if [[ -z "$tarball_id" ]]; then
         # Cannot extract ID, load anyway
         echo -n "  Loading $basename (cannot extract ID)... "
-        if timeout 300 docker load < "$tarball" >/dev/null 2>&1; then
+        if timeout 300 bash -c 'gunzip -c "$1" | docker load' _ "$tarball" >/dev/null 2>&1; then
             echo -e "${GREEN}done${NC}"
             return 0
         else
@@ -293,7 +293,7 @@ smart_load_image() {
     fi
 
     # Use timeout to prevent hanging (5 minutes max for docker load)
-    if timeout 300 docker load < "$tarball" >/dev/null 2>&1; then
+    if timeout 300 bash -c 'gunzip -c "$1" | docker load' _ "$tarball" >/dev/null 2>&1; then
         echo -e "${GREEN}done${NC}"
         return 0
     else
@@ -920,7 +920,7 @@ if command -v docker &> /dev/null; then
         for tarball in docker/*.tar.gz; do
             if [[ -f "$tarball" ]]; then
                 echo -n "  Loading $(basename "$tarball")... "
-                if OUTPUT=$(docker load < "$tarball" 2>&1); then
+                if OUTPUT=$(gunzip -c "$tarball" | docker load 2>&1); then
                     LOADED_NAME=$(echo "$OUTPUT" | grep "Loaded image:" | sed 's/Loaded image: //')
                     if [ -n "$LOADED_NAME" ]; then
                         FRESH_LOADED_IMAGES="$FRESH_LOADED_IMAGES $LOADED_NAME"
