@@ -102,6 +102,10 @@ pub use api_types::AppError;
 // Re-export PointRole from voltage-model (canonical location)
 pub use voltage_model::PointRole;
 
+// Startup dependency checker
+#[cfg(feature = "dependency")]
+pub mod dependency;
+
 // Bootstrap modules
 pub mod bootstrap_args;
 pub mod bootstrap_database;

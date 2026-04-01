@@ -54,6 +54,7 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "voltage-rtdb",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -156,6 +157,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "voltage-rtdb",
+ "workspace-hack",
  "zip 2.4.2",
 ]
 
@@ -804,6 +806,7 @@ dependencies = [
  "voltage-infra",
  "voltage-model",
  "voltage-schema-macro",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -869,6 +872,7 @@ dependencies = [
  "voltage_iec104",
  "voltage_j1939",
  "voltage_modbus",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -1341,6 +1345,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.17",
  "tracing",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -1691,6 +1696,7 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "voltage-rtdb",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2431,6 +2437,7 @@ dependencies = [
  "voltage-rtdb-shm",
  "voltage-rules",
  "voltage-schema-macro",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2462,6 +2469,7 @@ dependencies = [
  "voltage-rtdb",
  "voltage-rtdb-shm",
  "voltage-rules",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -2542,6 +2550,7 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "voltage-rtdb",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3837,6 +3846,7 @@ dependencies = [
  "tracing-subscriber",
  "voltage-sim",
  "voltage_j1939",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4854,6 +4864,7 @@ dependencies = [
  "tokio",
  "tracing",
  "voltage-rtdb",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4862,6 +4873,7 @@ version = "0.2.0"
 dependencies = [
  "schemars",
  "serde",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4880,6 +4892,7 @@ dependencies = [
  "tokio",
  "tracing",
  "voltage-model",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4896,6 +4909,7 @@ dependencies = [
  "tracing",
  "utoipa",
  "voltage-core",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4914,6 +4928,7 @@ dependencies = [
  "tracing",
  "voltage-model",
  "voltage-rtdb",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4934,6 +4949,7 @@ dependencies = [
  "tracing",
  "voltage-infra",
  "voltage-model",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4953,6 +4969,7 @@ dependencies = [
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4976,6 +4993,7 @@ dependencies = [
  "voltage-routing",
  "voltage-rtdb",
  "voltage-rtdb-shm",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4987,6 +5005,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -4996,6 +5015,7 @@ dependencies = [
  "memmap2",
  "tempfile",
  "voltage-core",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5005,6 +5025,7 @@ dependencies = [
  "chrono",
  "rand 0.8.5",
  "serde",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -5624,6 +5645,75 @@ name = "wit-bindgen"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
+
+[[package]]
+name = "workspace-hack"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "byteorder",
+ "cc",
+ "chrono",
+ "cipher",
+ "clap",
+ "clap_builder",
+ "const-oid",
+ "crossbeam-utils",
+ "crypto-common",
+ "digest",
+ "either",
+ "flate2",
+ "futures-channel",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-util",
+ "getrandom 0.2.16",
+ "getrandom 0.3.4",
+ "hmac",
+ "hyper",
+ "hyper-util",
+ "indexmap",
+ "inout",
+ "lazy_static",
+ "log",
+ "memchr",
+ "mio",
+ "num-traits",
+ "once_cell",
+ "parking_lot",
+ "proc-macro2",
+ "quote",
+ "rand 0.8.5",
+ "regex-automata",
+ "regex-syntax",
+ "rumqttc",
+ "scopeguard",
+ "serde",
+ "serde_core",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "simd-adler32",
+ "smallvec",
+ "sqlx",
+ "sqlx-core",
+ "sqlx-macros",
+ "sqlx-macros-core",
+ "sqlx-postgres",
+ "sqlx-sqlite",
+ "syn 2.0.114",
+ "sync_wrapper",
+ "time",
+ "tokio",
+ "tokio-stream",
+ "tower-http",
+ "tracing-core",
+ "tracing-subscriber",
+ "uuid",
+ "zeroize",
+]
 
 [[package]]
 name = "writeable"

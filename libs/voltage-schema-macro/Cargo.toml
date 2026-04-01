@@ -19,6 +19,7 @@ darling = "0.20"
 
 # String case conversion (snake_case, etc.)
 heck = "0.5"
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 

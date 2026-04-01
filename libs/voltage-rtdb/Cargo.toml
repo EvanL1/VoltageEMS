@@ -25,6 +25,7 @@ voltage-model = { path = "../voltage-model" }
 # Optional dependencies
 voltage-infra = { path = "../voltage-infra", optional = true, default-features = false, features = ["redis"] }
 redis = { workspace = true, optional = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [features]
 default = ["redis-backend", "memory-backend"]

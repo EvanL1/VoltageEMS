@@ -31,6 +31,7 @@ tracing = { workspace = true }
 # Real-time database abstraction (for RtdbStateStore)
 voltage-rtdb = { path = "../voltage-rtdb", default-features = false }
 bytes = { workspace = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 # No dev dependencies needed

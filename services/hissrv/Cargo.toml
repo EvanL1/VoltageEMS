@@ -52,6 +52,7 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 urlencoding = "2.1.3"
 url = "2.5.8"
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [lints]
 workspace = true

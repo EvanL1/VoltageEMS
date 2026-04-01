@@ -453,6 +453,19 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
     // Initialize environment
     init_environment(service_info)?;
 
+    // Wait for comsrv to be healthy before opening SHM (comsrv must create the SHM file first)
+    let comsrv_base = common::comsrv_url();
+    let comsrv_health = format!("{comsrv_base}/health");
+    if let Err(e) = common::dependency::wait_for_dependency(
+        "comsrv",
+        &comsrv_health,
+        std::time::Duration::from_secs(30),
+    )
+    .await
+    {
+        warn!("comsrv health check failed: {e}. Continuing startup (SHM may be unavailable).");
+    }
+
     // Check system requirements
     let requirements = SystemRequirements {
         min_cpu_cores: 2,

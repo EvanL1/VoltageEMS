@@ -1,9 +1,10 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 # Firmware is excluded because it targets ARM embedded (thumbv7em-none-eabihf)
 # and cannot share the same workspace with x86_64 Linux targets
 exclude = ["firmware"]
 members = [
+    "workspace-hack",
     "libs/common",
     "libs/errors",
     "libs/voltage-calc",

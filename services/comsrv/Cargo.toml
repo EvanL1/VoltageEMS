@@ -79,6 +79,7 @@ uuid = { workspace = true }
 
 # SQLite for configuration
 sqlx = { workspace = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 # Linux-only dependencies
 [target.'cfg(target_os = "linux")'.dependencies]

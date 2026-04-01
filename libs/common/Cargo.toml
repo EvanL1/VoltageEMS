@@ -9,6 +9,7 @@ default = ["redis", "sqlite", "axum", "openapi"]
 redis = ["voltage-infra/redis", "dep:redis"]
 sqlite = ["voltage-infra/sqlite", "dep:sqlx"]
 cli = ["dep:clap", "dep:reqwest"]
+dependency = ["dep:reqwest"]
 axum = ["dep:axum"]
 openapi = ["dep:utoipa"]
 schema = ["dep:schemars"]
@@ -51,6 +52,7 @@ sqlx = { workspace = true, optional = true }
 
 # Schema generation
 schemars = { version = "0.8", optional = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 

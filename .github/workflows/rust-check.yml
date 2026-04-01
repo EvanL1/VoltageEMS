@@ -37,6 +37,25 @@ jobs:
             fi
           '
 
+  # Job 0.5: Scan for ignored tests and surface them as warnings
+  ignored-tests:
+    name: Ignored Tests Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find ignored tests
+        run: |
+          IGNORED=$(grep -rn '#\[ignore\]' --include='*.rs' . | grep -v 'target/')
+          COUNT=$(echo "$IGNORED" | grep -c '#\[ignore\]' || true)
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::warning::Found $COUNT ignored test(s)"
+            echo "$IGNORED"
+          else
+            echo "No ignored tests found."
+          fi
+
   # Job 1: Code Quality Checks (fastest, no Redis needed)
   quality-check:
     name: Quality Check
@@ -62,6 +81,11 @@ jobs:
 
       - name: Check Compilation
         run: cargo check --workspace
+
+      - name: Verify workspace-hack is up-to-date
+        run: |
+          cargo install cargo-hakari --locked
+          cargo hakari verify
 
   # Job 2: Unit Tests (no Redis instance needed)
   unit-tests:

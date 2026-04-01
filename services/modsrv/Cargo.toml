@@ -17,7 +17,7 @@ test = false
 
 [dependencies]
 # Local dependencies
-common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum"] }
+common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum", "dependency"] }
 errors = { path = "../../libs/errors", features = ["axum-support"] }
 voltage-model = { path = "../../libs/voltage-model" }
 voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
@@ -50,6 +50,7 @@ dashmap = { workspace = true }  # For high-performance concurrent name→id cach
 parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
 itoa = { workspace = true }  # Stack-allocated u32→str formatting
 tower = { workspace = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 # criterion removed - no benchmarks
