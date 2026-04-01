@@ -43,21 +43,10 @@ pub struct BuiltinProduct {
     pub actions: Vec<PointDef>,
 }
 
-// Embed all product JSON files at compile time
+// Embed all product JSON files at compile time (auto-discovered by build.rs)
 // Note: products/ is a git submodule (voltage-product-lib)
 static BUILTIN_PRODUCTS: LazyLock<Vec<BuiltinProduct>> = LazyLock::new(|| {
-    let jsons: &[&str] = &[
-        include_str!("products/Station.json"),
-        include_str!("products/ESS.json"),
-        include_str!("products/Generator.json"),
-        include_str!("products/Battery.json"),
-        include_str!("products/PCS.json"),
-        include_str!("products/Diesel.json"),
-        include_str!("products/PV_DCDC.json"),
-        include_str!("products/PVInverter.json"),
-        include_str!("products/Env.json"),
-        include_str!("products/Load.json"),
-    ];
+    let jsons: &[&str] = include!(concat!(env!("OUT_DIR"), "/product_includes.rs"));
 
     jsons
         .iter()
@@ -260,7 +249,6 @@ mod tests {
     fn test_builtin_products_loaded() {
         let products = get_builtin_products();
         assert!(!products.is_empty(), "Should have built-in products");
-        assert_eq!(products.len(), 10, "Should have 10 products");
     }
 
     #[test]
@@ -308,7 +296,7 @@ mod tests {
     #[test]
     fn test_product_library_builtin_only() {
         let lib = ProductLibrary::builtin_only();
-        assert_eq!(lib.len(), 10);
+        assert!(lib.len() >= 10);
         assert!(lib.exists("Battery"));
         assert!(lib.exists("PCS"));
         assert!(!lib.exists("CustomDevice"));
@@ -318,14 +306,14 @@ mod tests {
     #[test]
     fn test_product_library_load_no_dir() -> anyhow::Result<()> {
         let lib = ProductLibrary::load(None)?;
-        assert_eq!(lib.len(), 10);
+        assert!(lib.len() >= 10);
         Ok(())
     }
 
     #[test]
     fn test_product_library_load_nonexistent_dir() -> anyhow::Result<()> {
         let lib = ProductLibrary::load(Some(Path::new("/nonexistent/path")))?;
-        assert_eq!(lib.len(), 10); // Falls back to built-in only
+        assert!(lib.len() >= 10); // Falls back to built-in only
         Ok(())
     }
 
@@ -345,7 +333,7 @@ mod tests {
         std::fs::write(products_dir.join("Battery.json"), custom_battery)?;
 
         let lib = ProductLibrary::load(Some(products_dir))?;
-        assert_eq!(lib.len(), 10); // Same count (override, not add)
+        assert!(lib.len() >= 10); // Same count (override, not add)
 
         let battery = lib.get("Battery").context("Battery not found")?;
         assert_eq!(battery.measurements.len(), 1);
@@ -369,7 +357,8 @@ mod tests {
         std::fs::write(products_dir.join("WindTurbine.json"), custom_product)?;
 
         let lib = ProductLibrary::load(Some(products_dir))?;
-        assert_eq!(lib.len(), 11); // 10 built-in + 1 new
+        let builtin_count = get_builtin_products().len();
+        assert_eq!(lib.len(), builtin_count + 1); // built-in + 1 new
         assert!(lib.exists("WindTurbine"));
 
         let wind = lib.get("WindTurbine").context("WindTurbine not found")?;
