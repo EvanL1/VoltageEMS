@@ -120,14 +120,21 @@ pub async fn health_check(
         errors.push("shm_dispatch: writer unavailable (comsrv may have restarted)".to_string());
         "degraded"
     };
-    checks.insert(
-        "shm_dispatch".to_string(),
-        json!({
-            "status": shm_status,
-            "writer_available": shm_writer_available,
-            "uds_notifier_configured": uds_notifier_configured
-        }),
-    );
+    let mut shm_value = serde_json::json!({
+        "status": shm_status,
+        "writer_available": shm_writer_available,
+        "uds_notifier_configured": uds_notifier_configured
+    });
+
+    if let Some(stats) = state.instance_manager.slot_bitmap_stats() {
+        if let Some(obj) = shm_value.as_object_mut() {
+            obj.insert("total_slots".to_string(), json!(stats.total_slots));
+            obj.insert("allocated".to_string(), json!(stats.allocated_slots));
+            obj.insert("free".to_string(), json!(stats.free_slots));
+        }
+    }
+
+    checks.insert("shm_dispatch".to_string(), shm_value);
 
     // Collect system metrics (CPU, memory)
     let metrics = SystemMetrics::collect();

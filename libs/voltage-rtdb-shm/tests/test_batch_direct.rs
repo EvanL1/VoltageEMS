@@ -12,7 +12,6 @@ use tempfile::tempdir;
 use voltage_model::PointType;
 use voltage_routing::batch::ChannelPointUpdate;
 use voltage_routing::RoutingCache;
-use voltage_rtdb::{WriteBuffer, WriteBufferConfig};
 use voltage_rtdb_shm::{
     batch_direct::write_channel_batch_direct, ChannelPointCounts, ChannelToSlotIndex, SharedConfig,
     UnifiedReader, UnifiedWriter,
@@ -158,16 +157,12 @@ fn test_single_point_direct_write() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
-
     let updates = vec![make_update(1001, PointType::Telemetry, 0, 123.456)];
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, updates);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
-    // Should have 1 channel write (SHM) and 1 C2M write (Redis backup)
+    // Should have 1 channel write (SHM); C2M is now handled by ShmRedisSync
     assert_eq!(result.channel_writes, 1, "Expected 1 SHM write");
-    assert_eq!(result.c2m_writes, 1, "Expected 1 C2M Redis backup write");
     assert_eq!(result.c2c_forwards, 0, "No C2C expected");
     assert_eq!(result.cycles_detected, 0, "No cycles expected");
 
@@ -195,7 +190,6 @@ fn test_batch_write_100_points() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
     // Create 10 telemetry points × 1 channel + 5 signal points × 1 channel = 15 mapped points
     // Plus 5 telemetry from channel 1002 = 20 total mapped
@@ -217,11 +211,12 @@ fn test_batch_write_100_points() {
     }
 
     let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, updates);
+        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // All 20 points should be written to SHM
     assert_eq!(result.channel_writes, 20, "Expected 20 SHM writes");
-    assert!(result.c2m_writes > 0, "Expected C2M Redis backup writes");
+    // C2M writes are now handled by ShmRedisSync background task
+    assert_eq!(result.c2m_writes, 0);
 
     // Verify data integrity via reader
     writer.flush().unwrap();
@@ -253,13 +248,12 @@ fn test_c2c_routing_forward() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
     // Write to channel 1001:T:0 which has C2C → 1002:T:0
     let updates = vec![make_update(1001, PointType::Telemetry, 0, 42.0)];
 
     let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, updates);
+        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // Should see the original write + C2C forward
     assert!(result.channel_writes >= 1, "Expected at least 1 SHM write");
@@ -292,13 +286,12 @@ fn test_c2c_cycle_detection() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
     // Write to 1001:T:0 → C2C to 1002:T:0 → C2C back to 1001:T:0 (cycle!)
     let updates = vec![make_update(1001, PointType::Telemetry, 0, 99.0)];
 
     let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, updates);
+        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // Should detect the cycle and stop
     assert!(
@@ -330,10 +323,9 @@ fn test_empty_batch_no_panic() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
     let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, vec![]);
+        write_channel_batch_direct(&writer, &channel_index, &routing, vec![]);
 
     assert_eq!(result.channel_writes, 0);
     assert_eq!(result.c2m_writes, 0);
@@ -354,13 +346,12 @@ fn test_unmapped_channel_no_shm_write() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
     // Channel 9999 doesn't exist in routing
     let updates = vec![make_update(9999, PointType::Telemetry, 0, 1.0)];
 
     let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, updates);
+        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // No SHM write (channel not in index), no C2M (not in routing)
     assert_eq!(
@@ -386,7 +377,6 @@ fn test_raw_value_propagation() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
     // Write with explicit raw value
     let updates = vec![make_update_with_raw(
@@ -398,7 +388,7 @@ fn test_raw_value_propagation() {
     )];
 
     let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, updates);
+        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
     assert_eq!(result.channel_writes, 1);
 
     // Verify SHM stores the engineering value
@@ -421,7 +411,6 @@ fn test_mixed_channels_single_batch() {
 
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
-    let write_buffer = WriteBuffer::new(WriteBufferConfig::default());
 
     // Mix updates from different channels and point types
     let updates = vec![
@@ -433,7 +422,7 @@ fn test_mixed_channels_single_batch() {
     ];
 
     let result =
-        write_channel_batch_direct(&writer, &channel_index, &write_buffer, &routing, updates);
+        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     assert_eq!(result.channel_writes, 5, "All 5 points should write to SHM");
 

@@ -514,6 +514,18 @@ impl UnifiedWriter {
         self.mmap.flush().context("Failed to flush mmap")
     }
 
+    /// Read current heartbeat timestamp (ms since epoch)
+    #[inline]
+    pub fn writer_heartbeat(&self) -> u64 {
+        self.header().writer_heartbeat.load(Ordering::Relaxed)
+    }
+
+    /// Read-only access to a slot by index.
+    #[inline]
+    pub fn slot(&self, index: usize) -> &crate::vec_impl::PointSlot {
+        self.slot_at(index)
+    }
+
     /// Update heartbeat timestamp
     #[inline]
     pub fn update_heartbeat(&self, timestamp_ms: u64) {

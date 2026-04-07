@@ -151,6 +151,11 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         self.dynamic_channel_index.as_ref()
     }
 
+    /// Get slot bitmap stats (total/allocated/free)
+    pub fn slot_bitmap_stats(&self) -> Option<voltage_rtdb_shm::BitmapStats> {
+        self.slot_bitmap.as_ref().map(|b| b.read().stats())
+    }
+
     // ========================================================================
     // Channel Lifecycle
     // ========================================================================

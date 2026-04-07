@@ -261,7 +261,6 @@ impl<R: Rtdb> RedisDataStore<R> {
                 voltage_rtdb_shm::write_channel_batch_direct(
                     writer,
                     index,
-                    &self.write_buffer,
                     &self.routing_cache,
                     updates,
                 )
