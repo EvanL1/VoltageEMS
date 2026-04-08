@@ -27,6 +27,7 @@ benchmarks
 !.gitmodules
 !.clippy.toml
 !.github/
+!.guppy/
 !.dockerignore
 !.prettierrc.json
 
