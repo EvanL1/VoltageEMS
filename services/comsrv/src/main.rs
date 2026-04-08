@@ -315,14 +315,18 @@ async fn main() -> VoltageResult<()> {
             .writer()
             .and_then(|g| g.as_ref().map(|w| w.slot_count()))
             .unwrap_or(0);
-        let forward_index = handle
-            .index_arc()
-            .unwrap_or_else(|| Arc::new(ChannelToSlotIndex::from_unified_writer(
+        let forward_index = handle.index_arc().unwrap_or_else(|| {
+            Arc::new(ChannelToSlotIndex::from_unified_writer(
                 handle.writer().unwrap().as_ref().unwrap(),
-            )));
+            ))
+        });
         let reverse = ReverseSlotIndex::from_forward(&forward_index, slot_count);
         let reverse_swap = Arc::new(arc_swap::ArcSwap::new(Arc::new(reverse)));
-        info!("ReverseSlotIndex: {} mapped slots out of {}", forward_index.len(), slot_count);
+        info!(
+            "ReverseSlotIndex: {} mapped slots out of {}",
+            forward_index.len(),
+            slot_count
+        );
 
         let sync = comsrv::store::ShmRedisSync::new(
             Arc::clone(&rtdb),

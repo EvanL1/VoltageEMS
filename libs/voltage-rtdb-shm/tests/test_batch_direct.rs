@@ -210,8 +210,7 @@ fn test_batch_write_100_points() {
         updates.push(make_update(1002, PointType::Telemetry, i, (i as f64) * 5.0));
     }
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // All 20 points should be written to SHM
     assert_eq!(result.channel_writes, 20, "Expected 20 SHM writes");
@@ -252,8 +251,7 @@ fn test_c2c_routing_forward() {
     // Write to channel 1001:T:0 which has C2C → 1002:T:0
     let updates = vec![make_update(1001, PointType::Telemetry, 0, 42.0)];
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // Should see the original write + C2C forward
     assert!(result.channel_writes >= 1, "Expected at least 1 SHM write");
@@ -290,8 +288,7 @@ fn test_c2c_cycle_detection() {
     // Write to 1001:T:0 → C2C to 1002:T:0 → C2C back to 1001:T:0 (cycle!)
     let updates = vec![make_update(1001, PointType::Telemetry, 0, 99.0)];
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // Should detect the cycle and stop
     assert!(
@@ -324,8 +321,7 @@ fn test_empty_batch_no_panic() {
     let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
     let channel_index = ChannelToSlotIndex::from_unified_writer(&writer);
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &routing, vec![]);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, vec![]);
 
     assert_eq!(result.channel_writes, 0);
     assert_eq!(result.c2m_writes, 0);
@@ -350,8 +346,7 @@ fn test_unmapped_channel_no_shm_write() {
     // Channel 9999 doesn't exist in routing
     let updates = vec![make_update(9999, PointType::Telemetry, 0, 1.0)];
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     // No SHM write (channel not in index), no C2M (not in routing)
     assert_eq!(
@@ -387,8 +382,7 @@ fn test_raw_value_propagation() {
         2305.0,
     )];
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, updates);
     assert_eq!(result.channel_writes, 1);
 
     // Verify SHM stores the engineering value
@@ -421,8 +415,7 @@ fn test_mixed_channels_single_batch() {
         make_update(1002, PointType::Telemetry, 1, 250.0),
     ];
 
-    let result =
-        write_channel_batch_direct(&writer, &channel_index, &routing, updates);
+    let result = write_channel_batch_direct(&writer, &channel_index, &routing, updates);
 
     assert_eq!(result.channel_writes, 5, "All 5 points should write to SHM");
 

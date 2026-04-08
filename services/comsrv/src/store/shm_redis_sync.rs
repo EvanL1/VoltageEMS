@@ -31,10 +31,10 @@ use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::{debug, info, trace, warn};
 
 use voltage_model::KeySpaceConfig;
+use voltage_routing::RoutingCache;
 use voltage_rtdb::numfmt::{f64_to_bytes, i64_to_bytes};
 use voltage_rtdb::Rtdb;
 use voltage_rtdb_shm::{ReverseSlotIndex, ShmHandle};
-use voltage_routing::RoutingCache;
 
 /// seq == 0 means the slot has never been written. Skip on scan to avoid
 /// flooding Redis with zero-value placeholders on startup.
@@ -106,7 +106,7 @@ impl<R: Rtdb> ShmRedisSync<R> {
             None => {
                 trace!("ShmRedisSync: SHM writer not available, skipping");
                 return;
-            }
+            },
         };
         let writer = match writer_guard.as_ref() {
             Some(w) => w,
@@ -155,7 +155,7 @@ impl<R: Rtdb> ShmRedisSync<R> {
                 None => {
                     self.last_seq[slot_idx] = seq;
                     continue;
-                }
+                },
             };
 
             let field: Arc<str> = Arc::from(origin.point_id.to_string().as_str());
@@ -163,12 +163,22 @@ impl<R: Rtdb> ShmRedisSync<R> {
             let ts_bytes = i64_to_bytes(ts as i64);
             let raw_bytes = f64_to_bytes(raw);
 
-            let val_key = self.key_space.channel_key(origin.channel_id, origin.point_type);
-            let ts_key = self.key_space.channel_ts_key(origin.channel_id, origin.point_type);
-            let raw_key = self.key_space.channel_raw_key(origin.channel_id, origin.point_type);
+            let val_key = self
+                .key_space
+                .channel_key(origin.channel_id, origin.point_type);
+            let ts_key = self
+                .key_space
+                .channel_ts_key(origin.channel_id, origin.point_type);
+            let raw_key = self
+                .key_space
+                .channel_raw_key(origin.channel_id, origin.point_type);
 
-            ops.entry(val_key).or_default().push((Arc::clone(&field), val_bytes));
-            ops.entry(ts_key).or_default().push((Arc::clone(&field), ts_bytes));
+            ops.entry(val_key)
+                .or_default()
+                .push((Arc::clone(&field), val_bytes));
+            ops.entry(ts_key)
+                .or_default()
+                .push((Arc::clone(&field), ts_bytes));
             ops.entry(raw_key).or_default().push((field, raw_bytes));
 
             // C2M routing → inst:{id}:M
@@ -179,7 +189,9 @@ impl<R: Rtdb> ShmRedisSync<R> {
             ) {
                 let inst_key = self.key_space.instance_measurement_key(target.instance_id);
                 let inst_field: Arc<str> = Arc::from(target.point_id.to_string().as_str());
-                ops.entry(inst_key).or_default().push((inst_field, f64_to_bytes(value)));
+                ops.entry(inst_key)
+                    .or_default()
+                    .push((inst_field, f64_to_bytes(value)));
             }
 
             self.last_seq[slot_idx] = seq;
@@ -195,7 +207,10 @@ impl<R: Rtdb> ShmRedisSync<R> {
             self.ttl_keys.insert(key.clone());
         }
 
-        debug!(keys = ops.len(), "ShmRedisSync: flushing dirty slots to Redis");
+        debug!(
+            keys = ops.len(),
+            "ShmRedisSync: flushing dirty slots to Redis"
+        );
 
         let hash_ops: voltage_rtdb::traits::HashMsetOps = ops.into_iter().collect();
         if let Err(e) = self.rtdb.pipeline_hash_mset(hash_ops).await {
@@ -220,7 +235,10 @@ impl<R: Rtdb> ShmRedisSync<R> {
                 warn!(key = %key, error = %e, "ShmRedisSync: EXPIRE failed");
             }
         }
-        debug!(keys = count, "ShmRedisSync: refreshed TTL on {} keys", count);
+        debug!(
+            keys = count,
+            "ShmRedisSync: refreshed TTL on {} keys", count
+        );
     }
 
     /// Background loop — runs until `shutdown` fires or sender is dropped.
