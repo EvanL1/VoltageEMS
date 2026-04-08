@@ -56,6 +56,9 @@ docker-compose.override.yml
 **/dist/
 release/
 bin/
+e2e-artifacts/
+variables.env
+release_notes.md
 
 # Offline deployment packages and installers
 offline-bundle/

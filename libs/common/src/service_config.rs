@@ -861,13 +861,14 @@ impl LogRotationConfig {
 pub use voltage_model::PointRole;
 
 /// Instance status enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub enum InstanceStatus {
     /// Instance is running normally
     Running,
     /// Instance is stopped
+    #[default]
     Stopped,
     /// Instance has encountered an error
     Error,
@@ -916,18 +917,13 @@ impl fmt::Display for InstanceStatus {
     }
 }
 
-impl Default for InstanceStatus {
-    fn default() -> Self {
-        Self::Stopped
-    }
-}
-
 /// Comparison operator for rules engine
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 pub enum ComparisonOperator {
     /// Equal to (==)
     #[serde(rename = "eq")]
+    #[default]
     Equal,
     /// Not equal to (!=)
     #[serde(rename = "ne")]
@@ -1041,12 +1037,6 @@ impl FromStr for ComparisonOperator {
 impl fmt::Display for ComparisonOperator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.symbol())
-    }
-}
-
-impl Default for ComparisonOperator {
-    fn default() -> Self {
-        Self::Equal
     }
 }
 

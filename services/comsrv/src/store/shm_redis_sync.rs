@@ -219,7 +219,7 @@ impl<R: Rtdb> ShmRedisSync<R> {
 
         // Refresh TTL periodically (~60s at default interval).
         self.tick_count += 1;
-        if self.tick_count % TTL_REFRESH_INTERVAL == 0 {
+        if self.tick_count.is_multiple_of(TTL_REFRESH_INTERVAL) {
             self.refresh_ttl().await;
         }
     }

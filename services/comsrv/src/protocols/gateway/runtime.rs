@@ -101,18 +101,13 @@ pub trait ChannelRuntime: Send + Sync {
 }
 
 /// Channel communication mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelMode {
     /// Polling mode: data is fetched periodically via `poll_once()`.
+    #[default]
     Polling,
     /// Event-driven mode: data is pushed via `subscribe()`.
     EventDriven,
     /// Hybrid mode: both polling and event-driven.
     Hybrid,
-}
-
-impl Default for ChannelMode {
-    fn default() -> Self {
-        Self::Polling
-    }
 }
