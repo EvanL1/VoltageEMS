@@ -48,6 +48,8 @@ libs/
   voltage-core    — no_std 核心类型（固件共用）
   voltage-shm     — 平台抽象 SHM（含 embedded RawPtrShm）
   voltage-infra   — Redis/SQLite 连接池封装
+  voltage-schema-macro — proc-macro，从 Rust struct 自动生成 SQL DDL
+  voltage-sim     — 波形生成库（simulator 用）
 services/
   comsrv, modsrv, apigateway, hissrv, netsrv, alarmsrv
 tools/
@@ -83,7 +85,7 @@ workspace-hack/ — cargo-hakari 生成，统一 feature flags（勿手动编辑
 comsrv 协议通过 `ChannelRuntime` trait（object-safe，`#[async_trait]`）+ 编译时 feature gates：
 1. 在 `services/comsrv/src/protocols/adapters/` 加适配器模块
 2. 实现 `ChannelRuntime` trait
-3. 在 `protocols/gateway/factory.rs` 加 `#[cfg(feature = "...")]` 分支
+3. 在 `services/comsrv/src/protocols/gateway/factory.rs` 加 `#[cfg(feature = "...")]` 分支
 4. 在 `services/comsrv/Cargo.toml` 声明 feature
 
 当前 13 个协议：Modbus、IEC 104、OPC UA、MQTT、HTTP、DL/T 645、CAN/J1939、GPIO、BLE、Zigbee、Matter、Voltage-485、Virtual。
@@ -110,7 +112,7 @@ sqlx::query_as::<_, Row>("SELECT * FROM t WHERE id = ?").bind(id)     // SQLx（
 
 ## SHM 架构
 
-**文件**: `/shm/rtdb/voltage-rtdb.shm`（Docker tmpfs），`UnifiedHeader(64B) + PointSlot[N](32B each)`
+**文件**: `VOLTAGE_SHM_PATH` → `/shm/rtdb/voltage-rtdb.shm`（Docker）→ `/dev/shm/...`（Linux）→ `/tmp/...`（macOS），`UnifiedHeader(64B) + PointSlot[N](32B each)`
 
 **写者所有权**: comsrv 拥有 T/S 槽，modsrv 拥有 C/A 槽。**永远不要交叉写入。**
 
@@ -144,8 +146,8 @@ config/*.yaml → monarch sync → SQLite(voltage.db) → 服务启动时加载
 
 ## 错误处理
 
-`errors` crate: `VoltageError`（~35 variants）→ `ErrorCategory`（16 variants）→ HTTP status。
-`VoltageErrorTrait` 定义统一接口（`error_code()`、`is_retryable()`、`http_status()`）。
+`errors` crate: `VoltageError`（~42 variants）→ `ErrorCategory`（17 variants）→ HTTP status。
+`VoltageErrorTrait` 定义统一接口（`error_code()`、`is_retryable()`）。HTTP status 通过 `VoltageError::status_code()` 映射。
 
 - **comsrv**: `ComSrvError`（15 variants）实现 `VoltageErrorTrait`，有完整错误链
 - **modsrv/hissrv/netsrv/alarmsrv**: 用 `anyhow::Result`（内部服务，不直接面向前端）
@@ -156,8 +158,8 @@ API 响应统一格式：`{ success, data, error: { code, message, details }, me
 ## 测试
 
 - `common::test_utils::schema` — 共享 DDL 常量（`init_comsrv_schema()`、`init_modsrv_schema()`、`init_rules_schema()`）
-- `create_test_rtdb()` → `Arc<MemoryRtdb>`（单元测试不需要 Redis）
-- `noop_dispatch()` → `Arc<NoopDispatch>`（无 SHM 的 InstanceManager 测试）
+- `create_test_rtdb()`（`voltage-rtdb` crate）→ `Arc<MemoryRtdb>`（单元测试不需要 Redis）
+- `noop_dispatch()`（`modsrv/src/infra/shm_dispatch.rs`）→ `Arc<NoopDispatch>`（无 SHM 的 InstanceManager 测试）
 - 集成测试需 Redis，用 `tempfile::TempDir` 做 SQLite
 - hissrv `StorageBackend` trait 有 4 个实现（Null/Pg/Timescale/Influx），支持运行时热切换
 

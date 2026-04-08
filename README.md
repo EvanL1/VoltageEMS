@@ -1,6 +1,6 @@
 # VoltageEMS
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
 
 [中文版本](README-CN.md) | [Documentation](docs/README.md)
@@ -9,7 +9,7 @@ Industrial IoT energy management system built with Rust. Multi-protocol data acq
 
 ## Features
 
-- **Multi-Protocol Support** — Modbus TCP/RTU, IEC 60870-5-104, OPC UA, MQTT, HTTP, DL/T 645, CAN, J1939, GPIO
+- **Multi-Protocol Support** — Modbus TCP/RTU, IEC 60870-5-104, OPC UA, MQTT, HTTP, DL/T 645, CAN/J1939, GPIO, BLE, Zigbee, Matter, Voltage-485, Virtual (13 protocols)
 - **Zero-Copy Shared Memory** — High-performance data path between services via `/dev/shm`, bypassing serialization overhead
 - **Rule Engine** — Visual rule editing (Vue Flow) with real-time execution, expression evaluation, and scheduling
 - **Pluggable Time-Series Storage** — Runtime-configurable backend (PostgreSQL / TimescaleDB) for historical data persistence
@@ -18,24 +18,23 @@ Industrial IoT energy management system built with Rust. Multi-protocol data acq
 ## Architecture
 
 ```
-                        ┌─────────────────────────────────────────────┐
-                        │              voltage-redis(:6379)           │
-                        │          Real-time Data Store + Routing     │
-                        └──────┬──────────────────────┬───────────────┘
-                               │                      │
-  Devices ─────► comsrv(:6001) ┤                      ├─► modsrv(:6002)
-   Modbus        Communication │    SHM + UDS         │   Rules / Calc
-   IEC104        & Collection  ◄──────────────────────┘   Instances
-   OPC UA                      │
-   MQTT/HTTP                   │
-   DL645/CAN          apigateway(:6005) ──── apps(:8080)
-   J1939/GPIO            API Gateway          Vue.js Frontend
-                               │
-                       hissrv(:6004) ◄── PostgreSQL/TimescaleDB
-                       Historical Data       Pluggable Backend
-                               │
-                     alarmsrv(:6007)    netsrv(:6006)
-                     Alarm Management   MQTT Networking
+  Devices ─────► comsrv(:6001) ──── SHM (hot path, ~10ns/point)
+   13 protocols   Communication      │
+                  & Collection       ├── ShmRedisSync (100ms async)
+                                     │         │
+                                     │   voltage-redis(:6379)
+                        SHM + UDS    │   Data Mirror + Routing
+                  ◄──────────────────┤         │
+                                     │   ┌─────┴─────────────────┐
+                              modsrv(:6002)                      │
+                              Rules / Calc          apigateway(:6005) ── apps(:8080)
+                              Instances                API Gateway      Vue.js Frontend
+                                                             │
+                                                     hissrv(:6004) ◄── PostgreSQL/TimescaleDB
+                                                     Historical Data
+                                                             │
+                                                   alarmsrv(:6007)    netsrv(:6006)
+                                                   Alarm Management   MQTT Networking
 ```
 
 ### Service Ports
@@ -49,7 +48,7 @@ Industrial IoT energy management system built with Rust. Multi-protocol data acq
 | netsrv | 6006 | Rust | Network service — MQTT broker integration |
 | alarmsrv | 6007 | Rust | Alarm service — alarm rules and notifications |
 | apps | 8080 | Vue.js | Frontend — ECharts dashboards, Vue Flow rule editor |
-| voltage-redis | 6379 | — | Real-time data store and message routing |
+| voltage-redis | 6379 | — | Data mirror (async from SHM) and routing tables |
 | TimescaleDB | 5432 | — | Time-series database for historical data (optional, runtime-configured) |
 
 ## Quick Start
@@ -97,7 +96,7 @@ VoltageEMS/
 │   ├── apigateway/          # API gateway (Rust)
 │   ├── netsrv/              # MQTT networking (Rust)
 │   └── alarmsrv/            # Alarm management (Rust)
-├── libs/                    # 13 shared Rust libraries
+├── libs/                    # 14 shared Rust libraries
 ├── tools/
 │   ├── monarch/             # CLI config & service manager
 │   └── simulator/           # Modbus TCP/RTU slave simulator
@@ -114,7 +113,7 @@ VoltageEMS/
 | Library | Description |
 |---------|-------------|
 | voltage-core | Core types and codecs — `no_std` compatible for embedded firmware |
-| voltage-model | Model layer — calculations, product definitions, instance management |
+| voltage-model | Model layer — PointType, KeySpaceConfig, compile-time product constants |
 | voltage-infra | Infrastructure — Redis and SQLite integration |
 | common | Service bootstrap, config management, and shared utilities |
 | errors | Unified error types across all services |
@@ -152,7 +151,7 @@ Device → comsrv → SHM (set_direct, ~10ns/point)
 Primary: modsrv → SHM + UDS notify → comsrv ShmCommandListener → Device
 ```
 
-The primary path uses shared memory (`/dev/shm/voltage-rtdb.shm`) with Unix Domain Socket notifications for minimal latency. UDS reconnects automatically with exponential backoff (1-30s) if comsrv restarts.
+The primary path uses shared memory (path resolved via `VOLTAGE_SHM_PATH` env, defaults to `/shm/rtdb/voltage-rtdb.shm` in Docker) with Unix Domain Socket notifications for minimal latency. UDS reconnects automatically with exponential backoff (1–5s) if comsrv restarts.
 
 ## Monarch CLI
 
@@ -163,9 +162,6 @@ Monarch is the unified management tool for VoltageEMS — configuration, monitor
 ```bash
 # One-line install (Linux / macOS / WSL)
 curl -fsSL https://raw.githubusercontent.com/EvanL1/VoltageEMS/develop/tools/monarch/install.sh | bash
-
-# Via Bun/npm (cross-platform including Windows)
-bun install -g @voltage/monarch
 
 # From source
 cargo install --path tools/monarch
@@ -250,7 +246,8 @@ monarch shm top                # Local shared memory TUI
 | `VOLTAGE_COMSRV_URL` | Comsrv URL | `http://localhost:6001` |
 | `VOLTAGE_MODSRV_URL` | Modsrv URL | `http://localhost:6002` |
 | `VOLTAGE_CONFIG_PATH` | Config directory | Auto-detect |
-| `VOLTAGE_DATA_PATH` | Data directory | Auto-detect |
+| `VOLTAGE_DATA_PATH` | SQLite data directory | Auto-detect |
+| `VOLTAGE_SHM_PATH` | SHM file path | `/shm/rtdb/voltage-rtdb.shm` |
 | `MONARCH_JSON` | Force JSON output | — |
 
 ## Development
@@ -268,7 +265,7 @@ cargo test --workspace
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+MIT OR Apache-2.0 — see [LICENSE](LICENSE)
 
 ## Links
 
