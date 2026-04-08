@@ -142,9 +142,8 @@ VoltageEMS/
 ### Upstream (Device → Cloud)
 
 ```
-Device → comsrv → Redis (route:c2m) → modsrv
-                   channel data         rule execution
-                   "comsrv:{ch_id}:T"   instance calc
+Device → comsrv → SHM (set_direct, ~10ns/point)
+                → ShmRedisSync (100ms async) → Redis pipeline → downstream services
 ```
 
 ### Downstream (Cloud → Device)

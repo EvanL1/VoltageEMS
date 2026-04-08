@@ -59,7 +59,7 @@ workspace-hack/ — cargo-hakari 生成，统一 feature flags（勿手动编辑
 
 | 路径 | 机制 | 延迟 |
 |------|------|------|
-| comsrv → all（数据） | Redis HSET | ~1–5ms |
+| comsrv → all（数据） | SHM 直写 + 后台异步 Redis 同步 | <1ms（SHM），~100ms（Redis） |
 | comsrv → modsrv（读数） | SHM mmap 零拷贝 | <1ms |
 | modsrv → comsrv（M2C 命令） | SHM write + UDS notify | ~1–2ms |
 | alarmsrv → apigateway/netsrv | HTTP POST (reqwest) | ~5ms |
@@ -98,10 +98,15 @@ sqlx::query_as::<_, Row>("SELECT * FROM t WHERE id = ?").bind(id)     // SQLx（
 ## 数据流
 
 ```
-上行: Device → comsrv → SHM(T/S slots) + Redis → route:c2m → inst:{id}:M
+上行: Device → comsrv → SHM(T/S slots) [热路径, ~10ns/点]
+                      → ShmRedisSync (100ms) → Redis pipeline → comsrv:{ch}:{T|S} + inst:{id}:M
 下行: modsrv → SHM(C/A slots) write + UDS notify → comsrv ShmCommandListener → Device
      （路由配置来自 route:m2c 表，运行时数据不经 Redis）
 ```
+
+**ShmRedisSync**: 后台任务扫描 SHM 脏槽（seq 变化检测），pipeline 批量写 Redis。
+包含 C2M 路由（channel → inst:{id}:M）、24h TTL 刷新（~60s 一次）、routing reload 自动 reset。
+`ReverseSlotIndex`（slot → channel/point 反向映射）支撑脏槽到 Redis key 的还原。
 
 ## SHM 架构
 
