@@ -84,7 +84,7 @@ jobs:
 
       - name: Verify workspace-hack is up-to-date
         run: |
-          cargo install cargo-hakari --locked --force
+          command -v cargo-hakari || cargo install cargo-hakari --locked
           cargo hakari verify
 
   # Job 2: Unit Tests (no Redis instance needed)
