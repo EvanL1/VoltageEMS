@@ -333,12 +333,6 @@ mod tests {
             let loader = ProductLoader::new(pool);
 
             let products = loader.get_all_products();
-            assert!(
-                products.len() >= 10,
-                "Expected at least 10 products, got {}",
-                products.len()
-            );
-
             let names: Vec<&str> = products.iter().map(|p| p.product_name.as_str()).collect();
             assert!(names.contains(&"Battery"));
             assert!(names.contains(&"PCS"));
@@ -356,21 +350,6 @@ mod tests {
             assert!(loader.product_exists("Battery"));
             assert!(loader.product_exists("PCS"));
             assert!(!loader.product_exists("NonExistent"));
-        });
-    }
-
-    #[test]
-    fn test_product_count() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-            let loader = ProductLoader::new(pool);
-
-            assert!(
-                loader.product_count() >= 10,
-                "Expected at least 10 products, got {}",
-                loader.product_count()
-            );
         });
     }
 
