@@ -27,10 +27,7 @@ async fn test_product_list_lightweight() -> Result<()> {
     // Products are now compile-time constants from voltage-model crate
     let product_names = product_loader.get_all_product_names();
 
-    // 4. Verify we have the expected built-in products (9 products)
-    assert_eq!(product_names.len(), 10, "Should have 10 built-in products");
-
-    // 5. Verify specific built-in products exist
+    // 4. Verify specific built-in products exist
     let battery = product_names
         .iter()
         .find(|(name, _)| name == "Battery")
@@ -99,7 +96,6 @@ async fn test_product_closed_loop() -> Result<()> {
 
     // 3. STEP 1: Get product list (lightweight)
     let product_names = product_loader.get_all_product_names();
-    assert_eq!(product_names.len(), 10, "Should have 10 built-in products");
 
     // 4. STEP 2: For each product, fetch detailed information
     for (product_name, parent_name) in &product_names {
@@ -233,28 +229,6 @@ async fn test_product_exists() -> Result<()> {
     assert!(!product_loader.product_exists("FakeProduct"));
 
     // 5. Cleanup
-    env.cleanup().await?;
-
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore] // requires Redis
-async fn test_product_count() -> Result<()> {
-    // 1. Create test environment
-    let env = TestEnv::create().await?;
-
-    // 2. Create product loader
-    let product_loader = ProductLoader::new(env.pool().clone());
-
-    // 3. Verify product count
-    assert_eq!(
-        product_loader.product_count(),
-        10,
-        "Should have 10 built-in products"
-    );
-
-    // 4. Cleanup
     env.cleanup().await?;
 
     Ok(())

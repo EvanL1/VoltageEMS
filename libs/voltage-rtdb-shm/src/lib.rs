@@ -36,6 +36,8 @@ pub mod snapshot;
 
 pub mod shared_config;
 
+pub mod reverse_index;
+
 pub mod shm_handle;
 
 pub mod batch_direct;
@@ -68,6 +70,9 @@ pub use shared_config::{
     default_shm_path, is_shm_available, timestamp_ms, ChannelToSlotIndex, SharedConfig,
     DEFAULT_SHM_PATH, SHARED_MAGIC,
 };
+
+// Reverse slot index: slot → (channel_id, point_type, point_id)
+pub use reverse_index::{ReverseSlotIndex, SlotOrigin};
 
 // Runtime-swappable SHM handle
 pub use shm_handle::ShmHandle;

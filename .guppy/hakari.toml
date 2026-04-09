@@ -1,0 +1,5 @@
+# cargo-hakari configuration
+hakari-package = "workspace-hack"
+resolver = "v3"
+dep-format-version = "4"
+platforms = []

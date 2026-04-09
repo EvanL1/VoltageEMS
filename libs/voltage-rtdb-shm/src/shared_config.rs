@@ -305,6 +305,27 @@ impl ChannelToSlotIndex {
         self.mapped_count == 0
     }
 
+    /// Iterate all (key, slot) pairs — used by [`ReverseSlotIndex`]
+    pub fn iter(&self) -> impl Iterator<Item = (&(u32, PointType, u32), &usize)> {
+        self.index.iter()
+    }
+
+    /// Create an empty index (test helper)
+    #[cfg(test)]
+    pub fn new_empty() -> Self {
+        Self {
+            index: FxHashMap::default(),
+            mapped_count: 0,
+        }
+    }
+
+    /// Insert a single mapping (test helper)
+    #[cfg(test)]
+    pub fn insert(&mut self, channel_id: u32, point_type: PointType, point_id: u32, slot: usize) {
+        self.index.insert((channel_id, point_type, point_id), slot);
+        self.mapped_count = self.index.len();
+    }
+
     /// Build from UnifiedWriter's channel_layouts
     ///
     /// This method creates a ChannelToSlotIndex from the unified shared memory format.

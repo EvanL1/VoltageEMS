@@ -2,15 +2,13 @@
 //!
 //! Provides `write_channel_batch_direct` which combines:
 //! - Direct SHM slot writes via ChannelToSlotIndex (~10ns per point)
-//! - Redis backup via WriteBuffer
 //! - C2C routing with cycle detection
+//!
+//! Redis sync is handled asynchronously by `ShmRedisSync` (comsrv background task).
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
 use tracing::{debug, warn};
 use voltage_model::PointType;
-use voltage_rtdb::numfmt::{f64_to_bytes, precomputed};
-use voltage_rtdb::{KeySpaceConfig, WriteBuffer};
 
 use crate::{ChannelToSlotIndex, UnifiedWriter};
 use voltage_routing::batch::{BatchRoutingResult, ChannelPointUpdate};
@@ -38,7 +36,6 @@ type C2CVisited = FxHashSet<(u32, PointType, u32)>;
 /// # Arguments
 /// * `shared_writer` - UnifiedWriter for direct memory writes
 /// * `channel_index` - Pre-computed channel-to-slot mapping
-/// * `write_buffer` - WriteBuffer for deferred Redis writes (backup path)
 /// * `routing_cache` - Routing cache for C2C lookups
 /// * `updates` - Point updates to process
 ///
@@ -47,7 +44,6 @@ type C2CVisited = FxHashSet<(u32, PointType, u32)>;
 pub fn write_channel_batch_direct(
     shared_writer: &UnifiedWriter,
     channel_index: &ChannelToSlotIndex,
-    write_buffer: &WriteBuffer,
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
 ) -> BatchRoutingResult {
@@ -55,7 +51,6 @@ pub fn write_channel_batch_direct(
     write_channel_batch_direct_impl(
         shared_writer,
         channel_index,
-        write_buffer,
         routing_cache,
         updates,
         &mut visited,
@@ -66,7 +61,6 @@ pub fn write_channel_batch_direct(
 fn write_channel_batch_direct_impl(
     shared_writer: &UnifiedWriter,
     channel_index: &ChannelToSlotIndex,
-    write_buffer: &WriteBuffer,
     routing_cache: &RoutingCache,
     updates: Vec<ChannelPointUpdate>,
     visited: &mut C2CVisited,
@@ -81,10 +75,9 @@ fn write_channel_batch_direct_impl(
         .unwrap_or(std::time::Duration::ZERO)
         .as_millis() as u64;
 
-    let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
 
-    // Group updates by (channel_id, point_type) for efficient buffer writes - FxHashMap
+    // Group updates by (channel_id, point_type) for C2C tracking
     let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
         grouped
@@ -93,50 +86,21 @@ fn write_channel_batch_direct_impl(
             .push(update);
     }
 
-    // Cache point_id -> Arc<str> using precomputed pool - FxHashMap
-    let mut point_id_str_cache: FxHashMap<u32, Arc<str>> = FxHashMap::default();
-
     for ((channel_id, point_type), updates) in grouped {
-        // Clone visited per-group to prevent cross-group false cycle detection
-        // while preserving intra-chain cycle detection (A→B→A)
         let mut group_visited = visited.clone();
-
-        // Prepare 3-layer data for Redis backup
-        let mut points_3layer = Vec::with_capacity(updates.len());
-        // Instance writes for C2M routing (Redis backup) - FxHashMap
-        let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> =
-            FxHashMap::default();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
         for update in &updates {
             let raw_value = update.raw_value.unwrap_or(update.value);
-            points_3layer.push((update.point_id, update.value, raw_value));
 
             // Track source point for cycle detection
-            let source_key = (channel_id, point_type, update.point_id);
-            group_visited.insert(source_key);
+            group_visited.insert((channel_id, point_type, update.point_id));
 
-            // Direct shared memory write (fastest path)
-            // Single write - UnifiedReader builds both channel and instance indexes from SlotMeta
+            // Direct shared memory write — the only hot-path write.
+            // Redis sync is handled by ShmRedisSync background task.
             if let Some(slot) = channel_index.lookup(channel_id, point_type, update.point_id) {
                 shared_writer.set_direct(slot, update.value, raw_value, timestamp_ms);
                 result.channel_writes += 1;
-            }
-
-            // C2M routing for Redis backup
-            if let Some(target) =
-                routing_cache.lookup_c2m_by_parts(channel_id, point_type, update.point_id)
-            {
-                // Use precomputed pool (0-255) or itoa, O(1) Arc clone
-                let point_id_str = point_id_str_cache
-                    .entry(target.point_id)
-                    .or_insert_with(|| precomputed::get_point_id_str_or_alloc(target.point_id))
-                    .clone();
-
-                instance_writes
-                    .entry(target.instance_id)
-                    .or_default()
-                    .push((point_id_str, f64_to_bytes(update.value)));
             }
 
             // C2C routing lookup
@@ -146,7 +110,6 @@ fn write_channel_batch_direct_impl(
                 {
                     let target_key = (target.channel_id, target.point_type, target.point_id);
 
-                    // Cycle detection: check if target is in the forwarding chain
                     if group_visited.contains(&target_key) {
                         warn!(
                             "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
@@ -172,22 +135,6 @@ fn write_channel_batch_direct_impl(
             }
         }
 
-        // Buffer 3-layer channel data to WriteBuffer (Redis backup)
-        let channel_key = config.channel_key(channel_id, point_type);
-        voltage_rtdb::helpers::buffer_channel_points(
-            write_buffer,
-            &channel_key,
-            points_3layer,
-            timestamp_ms as i64,
-        );
-
-        // Buffer instance data (C2M results for Redis)
-        for (instance_id, values) in instance_writes {
-            let instance_key = config.instance_measurement_key(instance_id);
-            write_buffer.buffer_hash_mset(&instance_key, values);
-            result.c2m_writes += 1;
-        }
-
         // Process C2C forwards recursively (per-group)
         if !c2c_forwards.is_empty() {
             let forward_count = c2c_forwards.len();
@@ -198,7 +145,6 @@ fn write_channel_batch_direct_impl(
             let sub_result = write_channel_batch_direct_impl(
                 shared_writer,
                 channel_index,
-                write_buffer,
                 routing_cache,
                 c2c_forwards,
                 &mut group_visited,

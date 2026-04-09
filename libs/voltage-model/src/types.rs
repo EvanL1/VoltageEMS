@@ -90,12 +90,13 @@ mod point_type_tests {
 /// let role = PointRole::Measurement;
 /// assert_eq!(role.as_str(), "M");
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[repr(u8)]
 pub enum PointRole {
     /// Measurement point (M) - data flows from device to model
     #[serde(rename = "M")]
+    #[default]
     Measurement = 0,
     /// Action point (A) - data flows from model to device
     #[serde(rename = "A")]
@@ -127,12 +128,6 @@ impl std::str::FromStr for PointRole {
 impl fmt::Display for PointRole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for PointRole {
-    fn default() -> Self {
-        Self::Measurement
     }
 }
 

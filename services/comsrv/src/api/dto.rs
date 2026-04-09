@@ -560,17 +560,12 @@ pub struct MappingBatchUpdateResult {
 }
 
 /// Mapping update mode
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MappingUpdateMode {
     Replace,
+    #[default]
     Merge,
-}
-
-impl Default for MappingUpdateMode {
-    fn default() -> Self {
-        Self::Merge
-    }
 }
 
 /// Mapping list response (for batch read)

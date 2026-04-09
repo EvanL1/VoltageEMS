@@ -223,6 +223,36 @@ pub async fn health_check<R: Rtdb>(
         );
     }
 
+    // SHM stats: slot occupancy + writer heartbeat
+    if let Some(handle) = manager.shm_handle() {
+        let mut parts = Vec::new();
+
+        if let Some(guard) = handle.writer() {
+            if let Some(writer) = guard.as_ref() {
+                parts.push(format!("total={}", writer.slot_count()));
+                parts.push(format!("heartbeat_ms={}", writer.writer_heartbeat()));
+            }
+        }
+
+        if let Some(stats) = manager.slot_bitmap_stats() {
+            parts.push(format!("allocated={}", stats.allocated_slots));
+            parts.push(format!("free={}", stats.free_slots));
+        }
+
+        checks.insert(
+            "shm".to_string(),
+            ComponentHealth {
+                status: HealthServiceStatus::Healthy,
+                message: Some(if parts.is_empty() {
+                    "unavailable".to_string()
+                } else {
+                    parts.join(", ")
+                }),
+                duration_ms: None,
+            },
+        );
+    }
+
     // Collect system metrics (CPU, memory)
     let metrics = SystemMetrics::collect();
 
