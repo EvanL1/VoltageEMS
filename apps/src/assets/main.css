@@ -2,6 +2,10 @@
 @import './styles/element/index.scss';
 @import './styles/vueflow.scss';
 @import './styles/device-monitoring-scroller.scss';
+
+:root {
+  --el-input-text-color: #fff;
+}
 *,
 *::before,
 *::after {
