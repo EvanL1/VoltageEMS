@@ -220,6 +220,9 @@ pub fn create_can_channel(
     let config = CanConfig {
         can_interface: can_interface.to_string(),
         bitrate: 250000,
+        connect_timeout_ms: 3000,
+        read_timeout_ms: 3000,
+        retry_interval_ms: 2000,
         rx_poll_interval_ms: 50,
         data_read_interval_ms: 1000,
     };
