@@ -11,6 +11,7 @@ use axum::{
 use serde_json::{json, Value};
 use tracing::error;
 use utoipa::OpenApi;
+#[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::db_config;
@@ -45,7 +46,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/admin/logs/view", get(common::admin_api::view_log_file))
         .with_state(state);
 
-    api.merge(
+    #[cfg(feature = "swagger-ui")]
+    let api = api.merge(
         SwaggerUi::new("/docs")
             .url("/openapi.json", ApiDoc::openapi())
             .config(
@@ -53,13 +55,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                     .default_model_rendering("model")
                     .default_models_expand_depth(1),
             ),
-    )
+    );
+
+    api
 }
 
 // ============================================================================
-// OpenAPI document
+// OpenAPI document (only consumed when swagger-ui feature is enabled)
 // ============================================================================
 
+#[cfg_attr(not(feature = "swagger-ui"), allow(dead_code))]
 #[derive(OpenApi)]
 #[openapi(
     paths(
