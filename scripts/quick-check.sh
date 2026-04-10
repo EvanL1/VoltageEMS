@@ -50,9 +50,22 @@ cargo fmt --all -- --check
 echo -e "${YELLOW}Running Clippy...${NC}"
 cargo clippy --all-targets --all-features -- -D warnings
 
+# Prefer cargo-nextest when available (2-3x faster, per-test process isolation).
+# Falls back to cargo test so developers who haven't installed nextest are
+# not blocked. Install with: curl -LsSf https://get.nexte.st/latest/mac | tar zxf - -C ~/.cargo/bin
+if command -v cargo-nextest &> /dev/null; then
+    TEST_RUNNER=(cargo nextest run)
+    INT_TEST_SELECTOR=(-E 'kind(test)')
+    echo -e "${GREEN}Using cargo-nextest (faster)${NC}"
+else
+    TEST_RUNNER=(cargo test)
+    INT_TEST_SELECTOR=(--test '*')
+    echo -e "${YELLOW}Hint: install cargo-nextest for faster tests${NC}"
+fi
+
 # Run unit tests (no external dependencies required)
 echo -e "${YELLOW}Running unit tests...${NC}"
-cargo test --workspace --lib
+"${TEST_RUNNER[@]}" --workspace --lib
 
 # Check command line arguments
 RUN_INTEGRATION=false
@@ -72,7 +85,7 @@ done
 # Run integration tests (optional - requires Redis)
 if [ "$RUN_INTEGRATION" = true ]; then
     echo -e "${YELLOW}Running integration tests...${NC}"
-    cargo test --workspace --test '*'
+    "${TEST_RUNNER[@]}" --workspace "${INT_TEST_SELECTOR[@]}"
 else
     echo -e "${YELLOW}Skipping integration tests (use --with-integration to run)${NC}"
     echo -e "${YELLOW}Integration tests require Redis${NC}"

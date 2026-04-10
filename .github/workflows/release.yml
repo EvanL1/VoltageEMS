@@ -46,11 +46,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Quick Quality Check
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace -- -D warnings
-          cargo test --workspace --lib --bins
+          cargo nextest run --workspace --lib --bins
 
   # ============================================================================
   # Job 2: Build Multi-Arch Installers (Parallel Matrix)
