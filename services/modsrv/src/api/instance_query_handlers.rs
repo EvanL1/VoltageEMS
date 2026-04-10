@@ -599,17 +599,31 @@ pub async fn set_instance_measurement(
     // Get RTDB reference from instance manager
     let rtdb = &state.instance_manager.rtdb;
 
-    // Build M value Hash key: inst:{id}:M
-    let key = KeySpaceConfig::production_cached().instance_measurement_key(id);
+    // Build M value Hash key: inst:{id}:M (+ sidecar inst:{id}:M:ts)
+    let keyspace = KeySpaceConfig::production_cached();
+    let key = keyspace.instance_measurement_key(id);
+    let ts_key = keyspace.instance_measurement_ts_key(id);
 
-    // Write to Redis Hash
+    // Write value + timestamp so apigateway WebSocket can surface `ts`.
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
     rtdb.hash_set(&key, &req.point_id, Bytes::from(req.value.to_string()))
         .await
         .map_err(|e| ModSrvError::RedisError(e.to_string()))?;
+    rtdb.hash_set(
+        &ts_key,
+        &req.point_id,
+        Bytes::from(timestamp_ms.to_string()),
+    )
+    .await
+    .map_err(|e| ModSrvError::RedisError(e.to_string()))?;
 
     info!(
-        "Set measurement inst:{}:M[{}] = {}",
-        id, req.point_id, req.value
+        "Set measurement inst:{}:M[{}] = {} (ts={})",
+        id, req.point_id, req.value, timestamp_ms
     );
 
     Ok(Json(SuccessResponse::new(json!({

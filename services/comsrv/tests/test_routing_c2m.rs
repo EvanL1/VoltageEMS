@@ -155,6 +155,27 @@ async fn assert_instance_measurement_not_exists<R: Rtdb>(
     assert!(value.is_none(), "Instance measurement should not exist");
 }
 
+/// Helper: Asserts instance measurement timestamp sidecar is populated.
+/// Guards the apigateway WebSocket `ts` field populated from inst:{id}:M:ts.
+async fn assert_instance_measurement_timestamp_exists<R: Rtdb>(
+    rtdb: &R,
+    instance_id: u16,
+    point_id: u32,
+) {
+    let config = KeySpaceConfig::production();
+    let instance_ts_key = config.instance_measurement_ts_key(instance_id.into());
+
+    let ts = rtdb
+        .hash_get(&instance_ts_key, &point_id.to_string())
+        .await
+        .expect("Failed to get instance measurement timestamp")
+        .expect("instance_measurement_ts_key should have a timestamp entry");
+
+    let ts_str = String::from_utf8(ts.to_vec()).expect("Invalid UTF-8");
+    let ts_i64: i64 = ts_str.parse().expect("Invalid timestamp");
+    assert!(ts_i64 > 0, "Instance timestamp should be positive");
+}
+
 #[tokio::test]
 async fn test_c2m_basic_routing() {
     // Given: Routing config 1001:T:1 -> inst:23:M:1
@@ -178,8 +199,9 @@ async fn test_c2m_basic_routing() {
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 230.5).await;
     assert_channel_timestamp_exists(rtdb.as_ref(), 1001, "T", 1).await;
 
-    // Then: Verify instance data routed successfully
+    // Then: Verify instance data routed successfully (+ sidecar ts for WebSocket)
     assert_instance_measurement(rtdb.as_ref(), 23, 1, 230.5).await;
+    assert_instance_measurement_timestamp_exists(rtdb.as_ref(), 23, 1).await;
 }
 
 #[tokio::test]
@@ -213,6 +235,7 @@ async fn test_c2m_three_layer_architecture() {
 
     // Then: Verify instance data routed successfully (uses engineering value)
     assert_instance_measurement(rtdb.as_ref(), 23, 1, 230.5).await;
+    assert_instance_measurement_timestamp_exists(rtdb.as_ref(), 23, 1).await;
 }
 
 #[tokio::test]

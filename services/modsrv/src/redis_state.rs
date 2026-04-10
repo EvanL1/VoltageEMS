@@ -290,20 +290,26 @@ where
     // ========================================================================
 
     // 1. Initialize inst:{id}:M Hash with all measurement points set to 0
+    //    Sidecar inst:{id}:M:ts is pre-seeded with 0 so apigateway WebSocket
+    //    never returns an empty `ts` map for an active instance (parity with
+    //    the comsrv:{ch}:{T|S}:ts convention).
     let m_key = keyspace.instance_measurement_key(instance_id);
+    let m_ts_key = keyspace.instance_measurement_ts_key(instance_id);
     for point in measurements {
-        redis
-            .hash_set(&m_key, &point.measurement_id.to_string(), Bytes::from("0"))
-            .await?;
+        let field = point.measurement_id.to_string();
+        redis.hash_set(&m_key, &field, Bytes::from("0")).await?;
+        redis.hash_set(&m_ts_key, &field, Bytes::from("0")).await?;
     }
 
     // 2. Initialize inst:{id}:A Hash with all action points set to 0
-    // Consistent with M points: pre-initialize at startup for queries and M2C routing validation
+    //    Consistent with M points: pre-initialize at startup for queries and
+    //    M2C routing validation. Sidecar :A:ts follows the same convention.
     let a_key = keyspace.instance_action_key(instance_id);
+    let a_ts_key = keyspace.instance_action_ts_key(instance_id);
     for action in actions {
-        redis
-            .hash_set(&a_key, &action.action_id.to_string(), Bytes::from("0"))
-            .await?;
+        let field = action.action_id.to_string();
+        redis.hash_set(&a_key, &field, Bytes::from("0")).await?;
+        redis.hash_set(&a_ts_key, &field, Bytes::from("0")).await?;
     }
 
     // 3. Set inst:{id}:name for bidirectional lookup and aggregation queries
@@ -337,7 +343,9 @@ where
     // Delete real-time data keys (Redis = real-time data only)
     let keys_to_delete = vec![
         keyspace.instance_measurement_key(instance_id), // inst:{id}:M
+        keyspace.instance_measurement_ts_key(instance_id), // inst:{id}:M:ts
         keyspace.instance_action_key(instance_id),      // inst:{id}:A
+        keyspace.instance_action_ts_key(instance_id),   // inst:{id}:A:ts
         keyspace.instance_name_key(instance_id),        // inst:{id}:name
     ];
 
@@ -802,6 +810,21 @@ mod tests {
                 key
             );
         }
+
+        // Verify sidecar :ts hashes are pre-seeded so the apigateway WebSocket
+        // never sees an empty `ts` map on first subscribe.
+        let m_ts_key = keyspace.instance_measurement_ts_key(instance_id);
+        let m_ts_data = rtdb.hash_get_all(&m_ts_key).await.unwrap();
+        assert_eq!(m_ts_data.len(), 2, "M:ts sidecar should mirror M fields");
+        assert!(m_ts_data.contains_key("1"));
+        assert!(m_ts_data.contains_key("2"));
+
+        let a_ts_key = keyspace.instance_action_ts_key(instance_id);
+        let a_ts_data = rtdb.hash_get_all(&a_ts_key).await.unwrap();
+        assert_eq!(a_ts_data.len(), 3, "A:ts sidecar should mirror A fields");
+        assert!(a_ts_data.contains_key("1"));
+        assert!(a_ts_data.contains_key("2"));
+        assert!(a_ts_data.contains_key("3"));
 
         // Verify inst:{id}:name was set
         let name_key = keyspace.instance_name_key(instance_id);

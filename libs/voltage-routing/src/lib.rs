@@ -128,22 +128,36 @@ where
         routing_cache.lookup_m2c(&route_key)
     };
 
+    // Timestamp (epoch-ms) is computed up-front so the same value is written
+    // to both the instance sidecar (inst:{id}:A:ts) and the downstream channel
+    // hash (comsrv:{ch}:{A|...}:ts). Needed by the apigateway WebSocket which
+    // pulls `ts` from the sidecar for `source='inst'` subscriptions.
+    use voltage_rtdb::{SystemTimeProvider, TimeProvider};
+    let timestamp_ms = SystemTimeProvider.now_millis();
+
     let routed = if let Some(target) = target_opt {
         // M2CTarget is now a structured type - no parsing needed
         let channel_id = target.channel_id;
         let point_type_enum = target.point_type;
         let comsrv_point_id = target.point_id;
 
-        // Step 1: Write to instance Action Hash (state storage)
+        // Step 1: Write to instance Action Hash (state storage) + sidecar ts
         let instance_action_key = config.instance_action_key(instance_id);
         redis
             .hash_set_f64(&instance_action_key, point_id, value)
             .await
             .context("Failed to write instance action point")?;
+        let instance_action_ts_key = config.instance_action_ts_key(instance_id);
+        redis
+            .hash_set(
+                &instance_action_ts_key,
+                point_id,
+                voltage_rtdb::numfmt::i64_to_bytes(timestamp_ms),
+            )
+            .await
+            .context("Failed to write instance action point timestamp")?;
 
         // Step 2: Write to channel Hash
-        use voltage_rtdb::{SystemTimeProvider, TimeProvider};
-        let timestamp_ms = SystemTimeProvider.now_millis();
 
         voltage_rtdb::helpers::write_channel_hash_only(
             redis,
@@ -178,12 +192,21 @@ where
             route_context: Some(route_context),
         })
     } else {
-        // No routing found - write to instance Hash only
+        // No routing found - write to instance Hash only (+ sidecar ts)
         let instance_action_key = config.instance_action_key(instance_id);
         redis
             .hash_set_f64(&instance_action_key, point_id, value)
             .await
             .context("Failed to write instance action point")?;
+        let instance_action_ts_key = config.instance_action_ts_key(instance_id);
+        redis
+            .hash_set(
+                &instance_action_ts_key,
+                point_id,
+                voltage_rtdb::numfmt::i64_to_bytes(timestamp_ms),
+            )
+            .await
+            .context("Failed to write instance action point timestamp")?;
 
         Ok(ActionRouteOutcome {
             status: STATUS_SUCCESS.to_string(),
@@ -319,6 +342,39 @@ mod tests {
         assert!(stored_value.is_some(), "Instance hash should have value");
         let value_str = String::from_utf8(stored_value.unwrap().to_vec()).unwrap();
         assert_eq!(value_str, "123.456");
+
+        // Sidecar inst:{id}:A:ts must be populated (needed by apigateway WebSocket)
+        let instance_ts_key = config.instance_action_ts_key(5001);
+        let stored_ts = rtdb
+            .hash_get(&instance_ts_key, "42")
+            .await
+            .unwrap()
+            .expect("instance_action_ts_key should have ts for point 42");
+        let ts_str = String::from_utf8(stored_ts.to_vec()).unwrap();
+        let ts_i64: i64 = ts_str.parse().expect("ts should parse as i64");
+        assert!(ts_i64 > 0, "timestamp should be positive, got {}", ts_i64);
+    }
+
+    #[tokio::test]
+    async fn test_set_action_point_no_route_writes_ts() {
+        // No-route branch must also populate the sidecar ts hash.
+        let rtdb = create_test_rtdb();
+        let routing_cache = RoutingCache::new(); // empty: no M2C route
+
+        set_action_point(&*rtdb, &routing_cache, 9999, "7", 42.0)
+            .await
+            .unwrap();
+
+        let config = voltage_rtdb::KeySpaceConfig::production_cached();
+        let instance_ts_key = config.instance_action_ts_key(9999);
+        let stored_ts = rtdb
+            .hash_get(&instance_ts_key, "7")
+            .await
+            .unwrap()
+            .expect("no-route branch should still write instance action ts");
+        let ts_str = String::from_utf8(stored_ts.to_vec()).unwrap();
+        let ts_i64: i64 = ts_str.parse().expect("ts should parse as i64");
+        assert!(ts_i64 > 0, "timestamp should be positive, got {}", ts_i64);
     }
 
     // ========================================================================

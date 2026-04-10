@@ -181,17 +181,23 @@ impl<R: Rtdb> ShmRedisSync<R> {
                 .push((Arc::clone(&field), ts_bytes));
             ops.entry(raw_key).or_default().push((field, raw_bytes));
 
-            // C2M routing → inst:{id}:M
+            // C2M routing → inst:{id}:M (+ sidecar inst:{id}:M:ts)
             if let Some(target) = self.routing_cache.lookup_c2m_by_parts(
                 origin.channel_id,
                 origin.point_type,
                 origin.point_id,
             ) {
                 let inst_key = self.key_space.instance_measurement_key(target.instance_id);
+                let inst_ts_key = self
+                    .key_space
+                    .instance_measurement_ts_key(target.instance_id);
                 let inst_field: Arc<str> = Arc::from(target.point_id.to_string().as_str());
                 ops.entry(inst_key)
                     .or_default()
-                    .push((inst_field, f64_to_bytes(value)));
+                    .push((Arc::clone(&inst_field), f64_to_bytes(value)));
+                ops.entry(inst_ts_key)
+                    .or_default()
+                    .push((inst_field, i64_to_bytes(ts as i64)));
             }
 
             self.last_seq[slot_idx] = seq;
