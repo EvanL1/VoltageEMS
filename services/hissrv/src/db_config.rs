@@ -50,15 +50,19 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     // ── Storage connection ────────────────────────────────────────────────────
     (
         "storage_enabled",
-        "false",
+        "true",
         "Whether the storage backend is active",
     ),
     (
         "storage_backend",
-        "postgres",
+        "timescaledb",
         "Backend type: postgres | timescaledb",
     ),
-    ("storage_url", "", "PostgreSQL DSN (assembled internally)"),
+    (
+        "storage_url",
+        "postgres://postgres:postgres@127.0.0.1:5432/hissrv",
+        "PostgreSQL DSN (assembled internally)",
+    ),
 ];
 
 pub async fn create_config_table(pool: &SqlitePool) -> anyhow::Result<()> {

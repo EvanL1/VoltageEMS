@@ -183,9 +183,15 @@ fn build_router(state: Arc<AppState>) -> Router {
     let config_routes = Router::new()
         .route("/check", get(routes_config::check_config))
         .route("/export", get(routes_config::export_config))
-        .route("/import", post(routes_config::import_config))
+        .route(
+            "/import",
+            post(routes_config::import_config).layer(DefaultBodyLimit::max(64 * 1024 * 1024)), // 64 MB for config ZIP
+        )
         .route("/restart-services", post(routes_config::restart_services))
-        .route("/upgrade", post(routes_config::start_upgrade))
+        .route(
+            "/upgrade",
+            post(routes_config::start_upgrade).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)), // 1024 MB for firmware
+        )
         .route("/upgrade/abort", post(routes_config::abort_upgrade))
         .route("/upgrade/status", get(routes_config::upgrade_status));
 

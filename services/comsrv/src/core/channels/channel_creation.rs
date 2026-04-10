@@ -191,6 +191,11 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 self.create_voltage_485_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
+            #[cfg(feature = "iec61850")]
+            "iec61850" => {
+                self.create_iec61850_channel_impl(channel_id, runtime_config, base_config)
+                    .await
+            },
             _ => {
                 #[allow(unused_mut)]
                 let mut supported = String::from("virtual");
@@ -202,6 +207,8 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 supported.push_str(", can");
                 #[cfg(feature = "voltage_485")]
                 supported.push_str(", voltage_485");
+                #[cfg(feature = "iec61850")]
+                supported.push_str(", iec61850");
 
                 Err(anyhow::anyhow!(
                     "Unsupported protocol '{}' for channel {}. Supported: {}",
@@ -604,6 +611,129 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             store,
             base_config,
             "voltage_485".to_string(),
+            poll_interval_ms,
+            log_handler,
+        ))
+    }
+
+    /// Create IEC 61850 MMS channel entry.
+    #[cfg(feature = "iec61850")]
+    async fn create_iec61850_channel_impl(
+        &self,
+        channel_id: u32,
+        runtime_config: &Arc<RuntimeChannelConfig>,
+        base_config: Arc<ChannelConfig>,
+    ) -> Result<ChannelEntry<R>> {
+        use crate::protocols::adapters::iec61850::{Iec61850Channel, Iec61850ParamsConfig};
+        use crate::protocols::core::point::{
+            Iec61850Address, PointConfig, ProtocolAddress, TransformConfig,
+        };
+
+        debug!("Ch{} creating IEC 61850 MMS channel", channel_id);
+
+        let store = self.create_data_store();
+        let params = &runtime_config.base.parameters;
+
+        // Build Iec61850ParamsConfig from the channel's `parameters` block.
+        let address = params
+            .get("address")
+            .and_then(|v| v.as_str())
+            .unwrap_or("127.0.0.1:102")
+            .to_string();
+        let connect_timeout_ms = params
+            .get("connect_timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10_000);
+        let request_timeout_ms = params
+            .get("request_timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5_000);
+        let poll_interval_ms = params
+            .get("poll_interval_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1_000);
+
+        let iec61850_params = Iec61850ParamsConfig {
+            address,
+            connect_timeout_ms,
+            request_timeout_ms,
+        };
+
+        // Convert points: parse protocol_mappings JSON → Iec61850Address.
+        // Expected protocol_mappings format: {"address": "domain/item$..."}
+        let mut point_configs: Vec<PointConfig> = Vec::new();
+
+        let parse_iec61850_point = |protocol_mappings: &Option<String>| -> Option<Iec61850Address> {
+            let json_str = protocol_mappings.as_deref()?;
+            let obj: serde_json::Value = serde_json::from_str(json_str).ok()?;
+            let addr_str = obj.get("address")?.as_str()?;
+            Iec61850Address::parse(addr_str).ok()
+        };
+
+        for tp in &runtime_config.telemetry_points {
+            if let Some(addr) = parse_iec61850_point(&tp.base.protocol_mappings) {
+                point_configs.push(PointConfig {
+                    id: tp.base.point_id,
+                    point_type: voltage_model::PointType::Telemetry,
+                    name: Some(tp.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(addr),
+                    transform: TransformConfig {
+                        scale: tp.scale,
+                        offset: tp.offset,
+                        reverse: tp.reverse,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            } else {
+                warn!(
+                    "Ch{} telemetry point {} has no valid IEC 61850 address in protocol_mappings",
+                    channel_id, tp.base.point_id
+                );
+            }
+        }
+
+        for sp in &runtime_config.signal_points {
+            if let Some(addr) = parse_iec61850_point(&sp.base.protocol_mappings) {
+                point_configs.push(PointConfig {
+                    id: sp.base.point_id,
+                    point_type: voltage_model::PointType::Signal,
+                    name: Some(sp.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(addr),
+                    transform: TransformConfig {
+                        reverse: sp.reverse,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            }
+        }
+
+        store.set_point_configs(channel_id, point_configs.clone());
+        store.start_flush_task().await;
+
+        let mut protocol: Box<dyn crate::protocols::gateway::ChannelRuntime> =
+            Box::new(Iec61850Channel::new(
+                channel_id,
+                runtime_config.name(),
+                &iec61850_params,
+                point_configs,
+            ));
+
+        let log_handler = Self::configure_channel_logging(
+            &mut protocol,
+            channel_id,
+            runtime_config.name(),
+            &base_config.logging,
+        );
+
+        Ok(ChannelEntry::new(
+            protocol,
+            store,
+            base_config,
+            "iec61850".to_string(),
             poll_interval_ms,
             log_handler,
         ))
