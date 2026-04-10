@@ -1216,6 +1216,7 @@ async fn test_create_channel_handler_returns_response() {
         protocol: "virtual".to_string(),
         enabled: Some(true),
         parameters: params,
+        logging: None,
     };
 
     let request = Request::builder()

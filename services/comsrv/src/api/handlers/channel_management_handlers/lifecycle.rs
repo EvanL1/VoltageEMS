@@ -2,7 +2,7 @@
 
 use super::helpers::*;
 use crate::api::routes::AppState;
-use crate::core::config::{ChannelCore, ChannelLoggingConfig};
+use crate::core::config::ChannelCore;
 use crate::dto::{AppError, SuccessResponse};
 use axum::{
     extract::{Path, State},
@@ -44,7 +44,7 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
         load_channel_from_db(&state.sqlite_pool, id).await?;
 
     // 2. Parse config for runtime (before early return so we can populate description correctly)
-    let (description, parameters, _logging) = parse_channel_config(id, config_str)?;
+    let (description, parameters, logging) = parse_channel_config(id, config_str)?;
 
     // 3. Check if state actually changed
     if current_enabled == req.enabled {
@@ -81,7 +81,7 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
                 enabled: true,
             },
             parameters,
-            logging: ChannelLoggingConfig::default(),
+            logging,
         };
 
         // Direct access without RwLock (lock-free)

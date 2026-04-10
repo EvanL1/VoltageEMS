@@ -74,6 +74,10 @@ export interface updateChannelDetail extends ChannelBasic {
   parameters: {
     [key: string]: any
   }
+  logging?: {
+    enabled: boolean
+    level: 'info' | 'debug'
+  }
 }
 export type PointType = 'T' | 'S' | 'C' | 'A'
 // 点位信息

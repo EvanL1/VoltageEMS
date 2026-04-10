@@ -3,7 +3,7 @@
 use super::helpers::*;
 use crate::api::routes::AppState;
 use crate::core::channels::ChannelManager;
-use crate::core::config::{ChannelCore, ChannelLoggingConfig};
+use crate::core::config::ChannelCore;
 use crate::dto::{AppError, SuccessResponse};
 use axum::{extract::State, response::Json};
 use std::sync::Arc;
@@ -101,7 +101,7 @@ pub async fn reload_configuration_handler<R: Rtdb>(
                 })?
                 .flatten();
 
-        let (description, parameters, _logging) = parse_channel_config(id, config_str)?;
+        let (description, parameters, logging) = parse_channel_config(id, config_str)?;
 
         if is_update {
             if let Err(e) = manager.remove_channel(id).await {
@@ -125,7 +125,7 @@ pub async fn reload_configuration_handler<R: Rtdb>(
                     enabled: *enabled,
                 },
                 parameters,
-                logging: ChannelLoggingConfig::default(),
+                logging,
             };
 
             match manager.create_channel(Arc::new(channel_config)).await {
