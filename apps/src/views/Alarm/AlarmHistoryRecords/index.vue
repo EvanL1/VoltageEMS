@@ -10,7 +10,7 @@
                 v-model="filters.warning_level"
                 :append-to="toolbarLeftRef"
                 clearable
-                placeholder="select alarm level"
+                placeholder="Please select alarm level"
               >
                 <el-option label="Critical Alarm" :value="1" />
                 <el-option label="Warning Alarm" :value="2" />
@@ -21,7 +21,7 @@
               <el-date-picker
                 v-model="filters.start_time"
                 type="datetime"
-                placeholder="Select start time"
+                placeholder="Please select start time"
                 format="YYYY-MM-DD HH:mm:ss"
                 :disabled-date="disableStartDate"
                 :disabled-time="disableStartTime"
@@ -34,7 +34,7 @@
               <el-date-picker
                 v-model="filters.end_time"
                 type="datetime"
-                placeholder="Select end time"
+                placeholder="Please select end time"
                 format="YYYY-MM-DD HH:mm:ss"
                 :disabled-date="disableEndDate"
                 :disabled-time="disableEndTime"
