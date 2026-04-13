@@ -215,6 +215,23 @@ impl KeySpaceConfig {
         format!("{}:{}:A", self.inst_prefix, instance_id)
     }
 
+    /// Build instance measurement timestamp key: inst:{instance_id}:M:ts
+    ///
+    /// Sidecar hash storing per-point epoch-ms timestamps, parallel to the
+    /// value hash at `instance_measurement_key()`. Fields are point_id strings,
+    /// values are i64 epoch-ms encoded as UTF-8 strings (matches `channel_ts_key`).
+    pub fn instance_measurement_ts_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:M:ts", self.inst_prefix, instance_id)
+    }
+
+    /// Build instance action timestamp key: inst:{instance_id}:A:ts
+    ///
+    /// Sidecar hash storing per-point epoch-ms timestamps, parallel to the
+    /// value hash at `instance_action_key()`.
+    pub fn instance_action_ts_key(&self, instance_id: u32) -> String {
+        format!("{}:{}:A:ts", self.inst_prefix, instance_id)
+    }
+
     /// Build instance name key: inst:{instance_id}:name
     pub fn instance_name_key(&self, instance_id: u32) -> String {
         format!("{}:{}:name", self.inst_prefix, instance_id)
@@ -489,16 +506,23 @@ mod tests {
 
         assert_eq!(config.instance_measurement_key(1), "inst:1:M");
         assert_eq!(config.instance_action_key(1), "inst:1:A");
+        assert_eq!(config.instance_measurement_ts_key(1), "inst:1:M:ts");
+        assert_eq!(config.instance_action_ts_key(1), "inst:1:A:ts");
         assert_eq!(config.instance_name_key(1), "inst:1:name");
         assert_eq!(config.instance_pattern(1), "inst:1:*");
         assert_eq!(config.instance_name_index_key(), "inst:name:index");
 
-        // Test environment
+        // Test environment — prefix must apply to sidecar ts keys too
         let test_config = KeySpaceConfig::test();
         assert_eq!(
             test_config.instance_name_index_key(),
             "test:inst:name:index"
         );
+        assert_eq!(
+            test_config.instance_measurement_ts_key(1),
+            "test:inst:1:M:ts"
+        );
+        assert_eq!(test_config.instance_action_ts_key(1), "test:inst:1:A:ts");
     }
 
     #[test]

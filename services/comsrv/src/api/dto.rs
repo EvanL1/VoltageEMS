@@ -276,8 +276,12 @@ pub struct ChannelCreateRequest {
     pub enabled: Option<bool>,
 
     /// Protocol-specific parameters (see OpenAPI schema for per-protocol fields)
-    #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502}))]
+    #[schema(value_type = Object, example = json!({"host": "192.168.1.100", "port": 502, "connect_timeout_ms": 5000, "max_batch_size": 64}))]
     pub parameters: HashMap<String, serde_json::Value>,
+
+    /// Logging configuration (optional, defaults to disabled)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logging: Option<ChannelLoggingConfig>,
 }
 
 /// Channel configuration update request (PATCH semantics, null fields unchanged)

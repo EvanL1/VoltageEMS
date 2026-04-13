@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 use utoipa::OpenApi;
+#[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
 mod auth;
@@ -42,7 +43,12 @@ use crate::state::AppState;
 use crate::ws::WsHub;
 
 // ── OpenAPI / Swagger UI ──────────────────────────────────────────────────────
+// ApiDoc / SecurityAddon are only consumed by the Swagger UI merge in
+// `build_router`, which is feature-gated. Silence dead_code when the feature
+// is off rather than cfg-gating the struct (avoids a cascade of unused
+// imports from the `components(schemas(...))` list).
 
+#[cfg_attr(not(feature = "swagger-ui"), allow(dead_code))]
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -104,7 +110,9 @@ use crate::ws::WsHub;
 )]
 struct ApiDoc;
 
+#[cfg_attr(not(feature = "swagger-ui"), allow(dead_code))]
 struct SecurityAddon;
+#[cfg_attr(not(feature = "swagger-ui"), allow(dead_code))]
 impl utoipa::Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         if let Some(components) = openapi.components.as_mut() {
@@ -175,9 +183,15 @@ fn build_router(state: Arc<AppState>) -> Router {
     let config_routes = Router::new()
         .route("/check", get(routes_config::check_config))
         .route("/export", get(routes_config::export_config))
-        .route("/import", post(routes_config::import_config))
+        .route(
+            "/import",
+            post(routes_config::import_config).layer(DefaultBodyLimit::max(64 * 1024 * 1024)), // 64 MB for config ZIP
+        )
         .route("/restart-services", post(routes_config::restart_services))
-        .route("/upgrade", post(routes_config::start_upgrade))
+        .route(
+            "/upgrade",
+            post(routes_config::start_upgrade).layer(DefaultBodyLimit::max(1024 * 1024 * 1024)), // 1024 MB for firmware
+        )
         .route("/upgrade/abort", post(routes_config::abort_upgrade))
         .route("/upgrade/status", get(routes_config::upgrade_status));
 
@@ -194,7 +208,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let app = Router::new()
         .route("/", get(|| async { "VoltageEMS API Gateway" }))
         .route("/health", get(|| async { "ok" }))
         .route("/ws", get(ws_handler))
@@ -211,21 +225,25 @@ fn build_router(state: Arc<AppState>) -> Router {
             "/api/admin/logs/view",
             get(common::admin_api::view_log_file),
         )
-        .merge(
-            SwaggerUi::new("/docs")
-                .url("/openapi.json", ApiDoc::openapi())
-                .config(
-                    Config::default()
-                        .default_model_rendering("model")
-                        .default_models_expand_depth(1),
-                ),
-        )
         .with_state(state)
         .layer(axum::middleware::from_fn(
             common::logging::http_request_logger,
         ))
         .layer(DefaultBodyLimit::max(1024 * 1024))
-        .layer(cors)
+        .layer(cors);
+
+    #[cfg(feature = "swagger-ui")]
+    let app = app.merge(
+        SwaggerUi::new("/docs")
+            .url("/openapi.json", ApiDoc::openapi())
+            .config(
+                Config::default()
+                    .default_model_rendering("model")
+                    .default_models_expand_depth(1),
+            ),
+    );
+
+    app
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────

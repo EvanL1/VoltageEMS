@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build multi-architecture installer package for VoltageEMS
-# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...]
+# Usage: build-installer.sh [VERSION] [ARCH] [TARGET] [--services=...] [--enable-swagger]
 #   VERSION: Version string (default: YYYYMMDD)
 #   ARCH: arm64 | amd64 (default: arm64)
 #   TARGET: Rust target triple (default based on ARCH)
 #   --services: Comma-separated list of services to include (optional, default: all)
+#   --enable-swagger: Enable Swagger UI for feature-gated Rust services
 #
 # Service names: comsrv, modsrv, hissrv, apigateway, netsrv, alarmsrv, apps, redis, timescaledb
 # Service groups: rust (all Rust services), py (alarmsrv, apigateway, hissrv, netsrv)
@@ -13,6 +14,7 @@
 #   ./build-installer.sh                                    # Build all services (ARM64, today's date)
 #   ./build-installer.sh v1.2.0 arm64                       # Build all services (ARM64, v1.2.0)
 #   ./build-installer.sh v1.2.0 arm64 -s rust               # All Rust services
+#   ./build-installer.sh v1.2.0 arm64 -s rust --enable-swagger
 #   ./build-installer.sh v1.2.0 arm64 -s netsrv,hissrv      # Specific services
 
 set -euo pipefail
@@ -20,6 +22,13 @@ set -euo pipefail
 # Disable macOS resource fork files
 export COPYFILE_DISABLE=1
 export COPY_EXTENDED_ATTRIBUTES_DISABLE=1
+
+# Docker Desktop on macOS ships credential helpers outside the default PATH.
+if [[ "$OSTYPE" == "darwin"* ]] \
+    && ! command -v docker-credential-desktop &> /dev/null \
+    && [[ -x "/Applications/Docker.app/Contents/Resources/bin/docker-credential-desktop" ]]; then
+    export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -39,6 +48,7 @@ VERSION=""
 ARCH=""
 TARGET=""
 SELECTED_SERVICES=""
+ENABLE_SWAGGER=0
 
 # Parse all arguments
 while [[ $# -gt 0 ]]; do
@@ -50,6 +60,10 @@ while [[ $# -gt 0 ]]; do
         -s|--services)
             SELECTED_SERVICES="$2"
             shift 2
+            ;;
+        --enable-swagger)
+            ENABLE_SWAGGER=1
+            shift
             ;;
         *)
             if [[ -z "$VERSION" ]]; then
@@ -85,6 +99,7 @@ case "$ARCH" in
 esac
 
 FOLDER_NAME="MonarchEdge"
+ARCH_LABEL=$(printf '%s' "$ARCH" | tr '[:lower:]' '[:upper:]')
 
 # All Rust services bundled into the voltageems image
 RUST_SERVICES="comsrv,modsrv,hissrv,apigateway,netsrv,alarmsrv"
@@ -164,40 +179,68 @@ else
     PACKAGE_NAME="MonarchEdge-${ARCH}-${VERSION}"
 fi
 
+if [[ "$ENABLE_SWAGGER" == "1" ]]; then
+    PACKAGE_NAME="${PACKAGE_NAME}-swagger"
+fi
+
 # Service to image mapping – all services now use the unified voltageems image
-declare -A SERVICE_TO_IMAGE=(
-    ["comsrv"]="voltageems:latest"
-    ["modsrv"]="voltageems:latest"
-    ["hissrv"]="voltageems:latest"
-    ["apigateway"]="voltageems:latest"
-    ["netsrv"]="voltageems:latest"
-    ["alarmsrv"]="voltageems:latest"
-    ["apps"]="voltage-apps:latest"
-    ["redis"]="redis:8-alpine"
-    ["timescaledb"]="timescale/timescaledb:2.25.2-pg17"
-)
+service_to_image() {
+    case "$1" in
+        comsrv|modsrv|hissrv|apigateway|netsrv|alarmsrv)
+            echo "voltageems:latest"
+            ;;
+        apps)
+            echo "voltage-apps:latest"
+            ;;
+        redis)
+            echo "redis:8-alpine"
+            ;;
+        timescaledb)
+            echo "timescale/timescaledb:2.25.2-pg17"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+add_csv_item() {
+    local current="$1"
+    local item="$2"
+
+    if [[ -z "$current" ]]; then
+        echo "$item"
+    elif [[ ",$current," == *",$item,"* ]]; then
+        echo "$current"
+    else
+        echo "$current,$item"
+    fi
+}
+
+csv_contains() {
+    local current="$1"
+    local item="$2"
+
+    [[ ",$current," == *",$item,"* ]]
+}
 
 # Parse selected services
-declare -A BUILD_IMAGES
+BUILD_IMAGES=""
 if [[ -n "$SELECTED_SERVICES" ]]; then
     IFS=',' read -ra SERVICES_ARRAY <<< "$SELECTED_SERVICES"
     for service in "${SERVICES_ARRAY[@]}"; do
         service=$(echo "$service" | xargs)  # trim whitespace
-        if [[ -n "${SERVICE_TO_IMAGE[$service]:-}" ]]; then
-            image="${SERVICE_TO_IMAGE[$service]}"
-            BUILD_IMAGES["$image"]=1
+        if image=$(service_to_image "$service"); then
+            BUILD_IMAGES=$(add_csv_item "$BUILD_IMAGES" "$image")
         else
             echo -e "${RED}Error: Unknown service '$service'${NC}"
-            echo "Available services: ${!SERVICE_TO_IMAGE[@]}"
+            echo "Available services: comsrv modsrv hissrv apigateway netsrv alarmsrv apps redis timescaledb"
             exit 1
         fi
     done
 else
     # Build all images
-    BUILD_IMAGES["voltageems:latest"]=1
-    BUILD_IMAGES["voltage-apps:latest"]=1
-    BUILD_IMAGES["redis:8-alpine"]=1
-    BUILD_IMAGES["timescale/timescaledb:2.25.2-pg17"]=1
+    BUILD_IMAGES="voltageems:latest,voltage-apps:latest,redis:8-alpine,timescale/timescaledb:2.25.2-pg17"
 fi
 
 # Detect CPU cores
@@ -210,7 +253,7 @@ else
 fi
 
 echo -e "${BLUE}================================================${NC}"
-echo -e "${BLUE}    MonarchEdge ${ARCH^^} Installer Builder     ${NC}"
+echo -e "${BLUE}    MonarchEdge ${ARCH_LABEL} Installer Builder     ${NC}"
 echo -e "${BLUE}================================================${NC}"
 echo ""
 echo -e "Version:      ${GREEN}$VERSION${NC}"
@@ -218,14 +261,18 @@ echo -e "Architecture: ${GREEN}$ARCH${NC}"
 echo -e "Target:       ${GREEN}$TARGET${NC}"
 echo -e "Platform:     ${GREEN}$DOCKER_PLATFORM${NC}"
 echo -e "CPU Cores:    ${GREEN}$CPU_CORES${NC}"
-echo -e "Swagger UI:   ${GREEN}ENABLED (built-in)${NC}"
+if [[ "$ENABLE_SWAGGER" == "1" ]]; then
+    echo -e "Swagger UI:   ${GREEN}ENABLED (--enable-swagger)${NC}"
+else
+    echo -e "Swagger UI:   ${YELLOW}DISABLED${NC}"
+fi
 if [[ -n "$DEV_SERVICE" ]]; then
     echo -e "Mode:         ${YELLOW}DEV — shared test machine, voltageems:latest untouched${NC}"
     echo -e "Dev tag:      ${YELLOW}voltageems:dev-${DEV_SERVICE}${NC}"
     echo -e "Containers:   ${YELLOW}${DEV_SERVICES_LIST}${NC}"
 elif [[ -n "$SELECTED_SERVICES" ]]; then
     echo -e "Services:     ${YELLOW}$SELECTED_SERVICES (partial build)${NC}"
-    echo -e "Images:       ${YELLOW}${!BUILD_IMAGES[@]}${NC}"
+    echo -e "Images:       ${YELLOW}${BUILD_IMAGES}${NC}"
 else
     echo -e "Services:     ${GREEN}ALL (full build)${NC}"
 fi
@@ -372,7 +419,7 @@ mkdir -p "$OUTPUT_DIR"
 
 # Step 1+2: Build Rust binaries and Docker images
 echo ""
-if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
+if csv_contains "$BUILD_IMAGES" "voltageems:latest"; then
     echo -e "${BLUE}[1/5] Building all Rust binaries for $ARCH...${NC}"
 
     # Check for cargo-zigbuild
@@ -388,8 +435,18 @@ if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
     fi
 
     # Build monarch CLI + all 6 service binaries in one pass
+    CARGO_FEATURE_ARGS=()
+    if [[ "$ENABLE_SWAGGER" == "1" ]]; then
+        # Explicitly enable Swagger UI where it is feature-gated.
+        CARGO_FEATURE_ARGS+=(
+            --features
+            "comsrv/swagger-ui,modsrv/swagger-ui,apigateway/swagger-ui,alarmsrv/swagger-ui,hissrv/swagger-ui,netsrv/swagger-ui"
+        )
+    fi
+
     CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
-        -p monarch -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv
+        -p monarch -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv \
+        "${CARGO_FEATURE_ARGS[@]}"
 
     if [[ -f "$ROOT_DIR/target/$TARGET/release/monarch" ]]; then
         cp "$ROOT_DIR/target/$TARGET/release/monarch" "$BUILD_DIR/tools/"
@@ -450,7 +507,7 @@ else
 fi
 
 # Build Frontend if needed
-if [[ -n "${BUILD_IMAGES[voltage-apps:latest]:-}" ]]; then
+if csv_contains "$BUILD_IMAGES" "voltage-apps:latest"; then
     echo -e "${BLUE}Building Frontend (Vue.js)...${NC}"
     FRONTEND_DOCKERFILE="$ROOT_DIR/apps/Dockerfile"
     if [[ -f "$FRONTEND_DOCKERFILE" ]]; then
@@ -476,13 +533,13 @@ fi
 
 # Pull official images if needed
 echo -e "${BLUE}Pulling official images...${NC}"
-if [[ -n "${BUILD_IMAGES[redis:8-alpine]:-}" ]]; then
+if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
     pull_and_save_image "redis:8-alpine" "voltage-redis.tar.gz"
 else
     echo -e "${YELLOW}⊘ Skipping redis:8-alpine (not selected)${NC}"
 fi
 
-if [[ -n "${BUILD_IMAGES[timescale/timescaledb:2.25.2-pg17]:-}" ]]; then
+if csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"; then
     pull_and_save_image "timescale/timescaledb:2.25.2-pg17" "voltage-timescaledb.tar.gz"
 else
     echo -e "${YELLOW}⊘ Skipping timescaledb (not selected)${NC}"
@@ -500,22 +557,23 @@ fi
 echo -e "${YELLOW}Verifying Docker images...${NC}"
 
 # Build list of expected images based on what was selected
-declare -A EXPECTED_IMAGES
-if [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
-    EXPECTED_IMAGES["voltageems"]=1
+EXPECTED_IMAGES=""
+if csv_contains "$BUILD_IMAGES" "voltageems:latest"; then
+    EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "voltageems")
 fi
-if [[ -n "${BUILD_IMAGES[voltage-apps:latest]:-}" ]]; then
-    EXPECTED_IMAGES["apps"]=1
+if csv_contains "$BUILD_IMAGES" "voltage-apps:latest"; then
+    EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "apps")
 fi
-if [[ -n "${BUILD_IMAGES[redis:8-alpine]:-}" ]]; then
-    EXPECTED_IMAGES["voltage-redis"]=1
+if csv_contains "$BUILD_IMAGES" "redis:8-alpine"; then
+    EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "voltage-redis")
 fi
-if [[ -n "${BUILD_IMAGES[timescale/timescaledb:2.25.2-pg17]:-}" ]]; then
-    EXPECTED_IMAGES["voltage-timescaledb"]=1
+if csv_contains "$BUILD_IMAGES" "timescale/timescaledb:2.25.2-pg17"; then
+    EXPECTED_IMAGES=$(add_csv_item "$EXPECTED_IMAGES" "voltage-timescaledb")
 fi
 
 # Verify only the images that should exist
-for img in "${!EXPECTED_IMAGES[@]}"; do
+IFS=',' read -ra EXPECTED_IMAGES_ARRAY <<< "$EXPECTED_IMAGES"
+for img in "${EXPECTED_IMAGES_ARRAY[@]}"; do
     if [[ ! -f "$BUILD_DIR/docker/$img.tar.gz" ]]; then
         echo -e "${RED}✗ $img.tar.gz not found!${NC}"
         exit 1
@@ -528,9 +586,9 @@ done
 echo ""
 echo -e "${GREEN}[DONE] Docker images prepared${NC}"
 if [[ -n "$SELECTED_SERVICES" ]]; then
-    echo -e "${YELLOW}Built ${#EXPECTED_IMAGES[@]} image(s) for selected services${NC}"
+    echo -e "${YELLOW}Built ${#EXPECTED_IMAGES_ARRAY[@]} image(s) for selected services${NC}"
 else
-    echo -e "${GREEN}Built all ${#EXPECTED_IMAGES[@]} image(s)${NC}"
+    echo -e "${GREEN}Built all ${#EXPECTED_IMAGES_ARRAY[@]} image(s)${NC}"
 fi
 
 # Step 3: Copy configuration templates
@@ -556,7 +614,7 @@ if [[ -f "$ROOT_DIR/scripts/install.sh" ]]; then
 
     # Customize script for target architecture by setting variables
     if [[ "$ARCH" != "arm64" ]]; then
-        echo -e "${YELLOW}Customizing install.sh for ${ARCH^^}...${NC}"
+        echo -e "${YELLOW}Customizing install.sh for ${ARCH_LABEL}...${NC}"
         case "$ARCH" in
             amd64)
                 sed -i.bak \
@@ -649,7 +707,7 @@ echo -e "  Stop: \${YELLOW}\$_COMPOSE -f \$COMPOSE_FILE stop \$DEV_SERVICES\${NC
 DEPLOY_EOF
     chmod +x "$TEMP_PKG_DIR/deploy.sh"
 
-    INSTALLER_DESC="VoltageEMS DEV ${ARCH^^} — ${DEV_SERVICE} ${VERSION}"
+    INSTALLER_DESC="VoltageEMS DEV ${ARCH_LABEL} — ${DEV_SERVICE} ${VERSION}"
     makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \
         "$INSTALLER_DESC" \
         bash ./deploy.sh
@@ -664,7 +722,7 @@ else
     if [[ -f "$BUILD_DIR/tools/monarch" ]]; then
         cp "$BUILD_DIR/tools/monarch" "$TEMP_PKG_DIR/tools/"
         echo -e "${GREEN}✓ Included monarch CLI${NC}"
-    elif [[ -n "${BUILD_IMAGES[voltageems:latest]:-}" ]]; then
+    elif csv_contains "$BUILD_IMAGES" "voltageems:latest"; then
         echo -e "${RED}Error: monarch binary not found but Rust services are selected${NC}"
         rm -rf "$TEMP_PKG_DIR"
         exit 1
@@ -682,9 +740,9 @@ else
     fi
 
     if [[ -n "$SELECTED_SERVICES" ]]; then
-        INSTALLER_DESC="VoltageEMS ${ARCH^^} Partial Update ($SELECTED_SERVICES) $VERSION"
+        INSTALLER_DESC="VoltageEMS ${ARCH_LABEL} Partial Update ($SELECTED_SERVICES) $VERSION"
     else
-        INSTALLER_DESC="VoltageEMS ${ARCH^^} Full Installer $VERSION"
+        INSTALLER_DESC="VoltageEMS ${ARCH_LABEL} Full Installer $VERSION"
     fi
 
     makeself --gzip "$TEMP_PKG_DIR" "$OUTPUT_DIR/${PACKAGE_NAME}.run" \
@@ -710,7 +768,7 @@ if [[ -n "$DEV_SERVICE" ]]; then
 elif [[ -n "$SELECTED_SERVICES" ]]; then
     echo -e "Type:    ${YELLOW}Partial Update${NC}"
     echo -e "Services: ${YELLOW}$SELECTED_SERVICES${NC}"
-    echo -e "Images:   ${YELLOW}${!BUILD_IMAGES[@]}${NC}"
+    echo -e "Images:   ${YELLOW}${BUILD_IMAGES}${NC}"
 else
     echo -e "Type:    ${GREEN}Full Installation${NC}"
 fi

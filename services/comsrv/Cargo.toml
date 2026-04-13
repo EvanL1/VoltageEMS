@@ -92,9 +92,10 @@ tempfile = { workspace = true }
 tower = { workspace = true }
 http-body-util = "0.1"
 redis = { workspace = true }
+hex = "0.4"
 
 [features]
-default = ["modbus", "gpio", "voltage_485", "openapi"]
+default = ["modbus", "gpio", "voltage_485", "openapi", "iec61850"]
 modbus = ["dep:voltage_modbus"]
 iec104 = ["dep:voltage_iec104"]
 opcua = ["dep:async-opcua"]
@@ -109,6 +110,7 @@ http = ["json-mapping", "dep:reqwest"]  # HTTP protocol (polling + webhook, JSON
 ble = ["dep:btleplug"]  # BLE GATT protocol (hybrid: notify + read/write)
 zigbee = []  # Zigbee protocol via TCP gateway (Raw ZCL, ZNP, EZSP)
 matter = []  # Matter smart home protocol (UDP transport, self-implemented framing)
+iec61850 = []  # IEC 61850 MMS protocol (TCP/ISO transport, pure Rust implementation)
 tracing-support = []
 swagger-ui = ["utoipa-swagger-ui"]
 openapi = []

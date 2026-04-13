@@ -13,9 +13,44 @@ use axum::{
     extract::{Path, Query, State},
     response::Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use voltage_rtdb::Rtdb;
+
+/// Deserialize a u32 that may arrive as either a JSON number or a hex string like "0x351".
+fn deserialize_u32_hex<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    use serde::de::{self, Visitor};
+    use std::fmt;
+
+    struct U32HexVisitor;
+
+    impl<'de> Visitor<'de> for U32HexVisitor {
+        type Value = u32;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "a u32 integer or a hex string like \"0x351\"")
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<u32, E> {
+            u32::try_from(v).map_err(|_| E::custom(format!("u32 out of range: {v}")))
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<u32, E> {
+            u32::try_from(v).map_err(|_| E::custom(format!("negative or out-of-range: {v}")))
+        }
+
+        fn visit_str<E: de::Error>(self, s: &str) -> Result<u32, E> {
+            let s = s.trim();
+            if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                u32::from_str_radix(hex, 16).map_err(E::custom)
+            } else {
+                s.parse::<u32>().map_err(E::custom)
+            }
+        }
+    }
+
+    deserializer.deserialize_any(U32HexVisitor)
+}
 
 // ============================================================================
 // Validator Structures - Strong typing for runtime validation
@@ -68,6 +103,34 @@ struct VirtualMappingValidator {
 struct GpioMappingValidator {
     /// GPIO pin number (e.g., 496, 504 for ECU-1170)
     gpio_number: u32,
+}
+
+/// CAN mapping validator
+///
+/// Validates CAN bus point mapping configuration.
+/// Fields align with `CanPoint` in the CAN adapter's config.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct CanMappingValidator {
+    /// CAN frame ID — accepts either a JSON number (849) or a hex string ("0x351")
+    #[serde(deserialize_with = "deserialize_u32_hex")]
+    can_id: u32,
+    /// Byte offset within the 8-byte CAN data field (0-7)
+    byte_offset: u8,
+    /// Bit start position within the byte (0-7, LSB=0)
+    #[serde(default)]
+    bit_position: Option<u8>,
+    /// Bit length (1/8/16/32/64)
+    bit_length: u8,
+    /// Data type (uint8, uint16, int16, uint32, int32, float32, ascii)
+    #[serde(default)]
+    data_type: Option<String>,
+    /// Scale factor: value = raw * scale + offset (default 1.0)
+    #[serde(default)]
+    scale: Option<f64>,
+    /// Offset for linear transformation (default 0.0)
+    #[serde(default)]
+    offset: Option<f64>,
 }
 
 // ============================================================================
@@ -417,6 +480,43 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
                     ],
                     "validate_only": false,
                     "reload_channel": false,
+                    "mode": "replace"
+                })
+            )),
+            ("CAN Bus - Telemetry Mapping" = (
+                summary = "CAN Bus point mapping (Discover LYNK Serial CAN)",
+                description = "Map CAN points using can_id + byte_offset + bit_length. `data_type` defaults to uint16, `scale`/`offset` default to 1.0/0.0. value = raw * scale + offset.",
+                value = json!({
+                    "mappings": [
+                        {
+                            "point_id": 101,
+                            "four_remote": "T",
+                            "protocol_data": {
+                                "can_id": 854,
+                                "byte_offset": 0,
+                                "bit_position": 0,
+                                "bit_length": 16,
+                                "data_type": "uint16",
+                                "scale": 0.1,
+                                "offset": 0.0
+                            }
+                        },
+                        {
+                            "point_id": 102,
+                            "four_remote": "T",
+                            "protocol_data": {
+                                "can_id": 854,
+                                "byte_offset": 2,
+                                "bit_position": 0,
+                                "bit_length": 16,
+                                "data_type": "int16",
+                                "scale": 0.1,
+                                "offset": 0.0
+                            }
+                        }
+                    ],
+                    "validate_only": false,
+                    "reload_channel": true,
                     "mode": "replace"
                 })
             )),
@@ -823,6 +923,58 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
                     },
                 }
             },
+            "can" => {
+                match serde_json::from_value::<CanMappingValidator>(mapping.protocol_data.clone()) {
+                    Ok(validated) => {
+                        // 1. byte_offset range (0-7 for standard CAN 8-byte frame)
+                        if validated.byte_offset > 7 {
+                            errors.push(format!(
+                                "Point {}: byte_offset {} out of range (0-7)",
+                                mapping.point_id, validated.byte_offset
+                            ));
+                        }
+
+                        // 2. bit_position range (0-7)
+                        if let Some(bp) = validated.bit_position {
+                            if bp > 7 {
+                                errors.push(format!(
+                                    "Point {}: bit_position {} out of range (0-7)",
+                                    mapping.point_id, bp
+                                ));
+                            }
+                        }
+
+                        // 3. bit_length must be non-zero and reasonable
+                        if validated.bit_length == 0 {
+                            errors.push(format!(
+                                "Point {}: bit_length must be > 0",
+                                mapping.point_id
+                            ));
+                        }
+
+                        // 4. data_type enumeration
+                        if let Some(ref dt) = validated.data_type {
+                            let valid_types = [
+                                "uint8", "uint16", "int16", "uint32", "int32", "float32", "ascii",
+                            ];
+                            if !valid_types.contains(&dt.as_str()) {
+                                errors.push(format!(
+                                    "Point {}: data_type '{}' invalid (valid: {})",
+                                    mapping.point_id,
+                                    dt,
+                                    valid_types.join(", ")
+                                ));
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        errors.push(format!(
+                            "Point {}: CAN mapping validation failed - {}",
+                            mapping.point_id, e
+                        ));
+                    },
+                }
+            },
             other => {
                 errors.push(format!("Unsupported protocol: {}", other));
                 break; // Protocol error affects all mappings
@@ -902,6 +1054,14 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
             "bit_position",
         ],
         "di_do" | "gpio" | "dido" => &["gpio_number"],
+        "can" => &[
+            "can_id",
+            "byte_offset",
+            "bit_position",
+            "bit_length",
+            "scale",
+            "offset",
+        ],
         _ => {
             // Virtual or unknown protocol: no normalization needed
             return value.clone();

@@ -17,7 +17,7 @@ pub use lifecycle::*;
 pub use reload::*;
 
 use crate::api::routes::AppState;
-use crate::core::config::{ChannelCore, ChannelLoggingConfig};
+use crate::core::config::ChannelCore;
 use crate::dto::{AppError, ParameterChangeType, SuccessResponse};
 use axum::{
     extract::{Path, State},
@@ -69,8 +69,10 @@ use voltage_rtdb::Rtdb;
                     "parameters": {
                         "host": "192.168.1.101",
                         "port": 502,
-                        "timeout_ms": 5000,
-                        "retry_count": 3
+                        "connect_timeout_ms": 5000,
+                        "read_timeout_ms": 3000,
+                        "polling_interval_ms": 1000,
+                        "max_batch_size": 64
                     }
                 })
             )),
@@ -85,12 +87,9 @@ use voltage_rtdb::Rtdb;
                     "parameters": {
                         "device": "/dev/ttyUSB0",
                         "baud_rate": 9600,
-                        "data_bits": 8,
-                        "stop_bits": 1,
-                        "parity": "None",
-                        "timeout_ms": 1000,
-                        "retry_count": 3,
-                        "poll_interval_ms": 500
+                        "connect_timeout_ms": 5000,
+                        "io_timeout_ms": 3000,
+                        "max_batch_size": 64
                     }
                 })
             )),
@@ -121,6 +120,25 @@ use voltage_rtdb::Rtdb;
                         "driver": "gpiod",
                         "gpio_chip": "gpiochip6",
                         "poll_interval_ms": 200
+                    }
+                })
+            )),
+            ("CAN Bus" = (
+                summary = "CAN Bus channel (Discover LYNK Serial CAN)",
+                description = "Standard CAN 2.0B channel via SocketCAN. `device` is the host SocketCAN interface name (e.g. can0, vcan0). All timeout/interval fields are optional and fall back to the shown defaults.",
+                value = json!({
+                    "name": "lynk_serial_can",
+                    "description": "Discover LYNK Serial CAN 协议示例",
+                    "protocol": "can",
+                    "enabled": true,
+                    "parameters": {
+                        "device": "can0",
+                        "bitrate": 250000,
+                        "connect_timeout_ms": 3000,
+                        "read_timeout_ms": 3000,
+                        "retry_interval_ms": 2000,
+                        "rx_poll_interval_ms": 50,
+                        "data_read_interval_ms": 1000
                     }
                 })
             )),
@@ -204,7 +222,7 @@ pub async fn create_channel_handler<R: Rtdb>(
             enabled,
         },
         parameters: req.parameters.clone(),
-        logging: ChannelLoggingConfig::default(),
+        logging: req.logging.clone().unwrap_or_default(),
     };
 
     // Determine runtime status based on enabled flag
@@ -239,7 +257,7 @@ pub async fn create_channel_handler<R: Rtdb>(
 
     // 3. Runtime successful, now write to database
     // Build config JSON in structured format
-    let logging = ChannelLoggingConfig::default();
+    let logging = req.logging.clone().unwrap_or_default();
     let config_json =
         build_channel_config_json(req.description.as_ref(), &req.parameters, &logging)
             .map_err(|e| AppError::internal_error(format!("Failed to build config JSON: {}", e)))?;

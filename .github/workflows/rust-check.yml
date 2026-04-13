@@ -103,9 +103,15 @@ jobs:
         with:
           install-protoc: 'true'
 
-      # Run all unit tests
+      # Use cargo-nextest for ~2-3x speedup over stock cargo test.
+      # Installed from prebuilt binary (no compilation).
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # Run all unit tests (nextest runs each test in its own process,
+      # so thread-unsafe globals and tempfile contention are naturally isolated)
       - name: Run Unit Tests
-        run: cargo test --workspace --lib --bins
+        run: cargo nextest run --workspace --lib --bins
         env:
           RUST_LOG: warn # Reduce noise in unit tests
 
@@ -257,6 +263,9 @@ jobs:
         with:
           install-protoc: 'true'
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       # Clean Monarch Binary Cache (prevent schema mismatch)
       - name: Clean Monarch Binary Cache
         run: |
@@ -283,7 +292,10 @@ jobs:
           docker compose logs voltage-redis
           exit 1
 
-      # Run integration tests (sequential execution to avoid race conditions)
+      # Run integration tests (sequential execution to avoid race conditions).
+      # nextest's `-E 'kind(test)'` selects only integration test targets
+      # (equivalent to `cargo test --test '*'`), `--run-ignored all` matches
+      # `--include-ignored`, and `-j 1` matches `--test-threads=1`.
       - name: Run Integration Tests
         env:
           REDIS_URL: redis://localhost:6379
@@ -293,7 +305,7 @@ jobs:
           # Clean Redis test database
           docker compose exec -T voltage-redis redis-cli FLUSHDB
           # Run integration tests (single-threaded to avoid race conditions)
-          cargo test --workspace --test '*' -- --include-ignored --test-threads=1
+          cargo nextest run --workspace -E 'kind(test)' --run-ignored all -j 1
 
       # Cleanup Docker resources
       - name: Stop Redis

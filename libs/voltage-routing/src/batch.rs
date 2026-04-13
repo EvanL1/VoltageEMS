@@ -9,7 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::{debug, warn};
 use voltage_model::PointType;
-use voltage_rtdb::numfmt::{f64_to_bytes, precomputed};
+use voltage_rtdb::numfmt::{f64_to_bytes, i64_to_bytes, precomputed};
 use voltage_rtdb::{KeySpaceConfig, Rtdb, WriteBuffer};
 
 use crate::RoutingCache;
@@ -123,6 +123,8 @@ where
         .duration_since(std::time::UNIX_EPOCH)
         .context("Failed to get timestamp")?
         .as_millis() as i64;
+    // Encode once; Bytes clone is O(1) (ref-counted).
+    let ts_bytes = i64_to_bytes(timestamp_ms);
 
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
@@ -138,6 +140,11 @@ where
         // Prepare 3-layer data
         let mut points_3layer = Vec::with_capacity(updates.len());
         let mut instance_writes: FxHashMap<u32, Vec<(String, bytes::Bytes)>> = FxHashMap::default();
+        // Sidecar ts hash writes, parallel to instance_writes. Written to
+        // `inst:{id}:M:ts` so the apigateway WebSocket can populate the `ts`
+        // field for `source='inst'` subscriptions.
+        let mut instance_ts_writes: FxHashMap<u32, Vec<(String, bytes::Bytes)>> =
+            FxHashMap::default();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
         for update in &updates {
@@ -156,11 +163,16 @@ where
                 let point_id_arc = point_id_str_cache
                     .entry(target.point_id)
                     .or_insert_with(|| precomputed::get_point_id_str_or_alloc(target.point_id));
+                let point_id_string = point_id_arc.to_string();
 
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
-                    .push((point_id_arc.to_string(), f64_to_bytes(update.value)));
+                    .push((point_id_string.clone(), f64_to_bytes(update.value)));
+                instance_ts_writes
+                    .entry(target.instance_id)
+                    .or_default()
+                    .push((point_id_string, ts_bytes.clone()));
             }
 
             // C2C routing lookup - zero-allocation using structured key
@@ -209,13 +221,19 @@ where
         .context("Failed to write channel points")?;
         result.channel_writes += written;
 
-        // Write instance data (C2M results)
+        // Write instance data (C2M results) + sidecar ts hash
         for (instance_id, values) in instance_writes {
             let instance_key = config.instance_measurement_key(instance_id);
             rtdb.hash_mset(&instance_key, values)
                 .await
                 .context("Failed to write instance measurements")?;
             result.c2m_writes += 1;
+        }
+        for (instance_id, ts_values) in instance_ts_writes {
+            let instance_ts_key = config.instance_measurement_ts_key(instance_id);
+            rtdb.hash_mset(&instance_ts_key, ts_values)
+                .await
+                .context("Failed to write instance measurement timestamps")?;
         }
 
         // Process C2C forwards recursively
@@ -283,6 +301,8 @@ fn write_channel_batch_buffered_impl(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or(std::time::Duration::ZERO)
         .as_millis() as i64;
+    // Encode once; Bytes clone is O(1) (ref-counted).
+    let ts_bytes = i64_to_bytes(timestamp_ms);
 
     let config = KeySpaceConfig::production_cached();
     let mut result = BatchRoutingResult::default();
@@ -299,6 +319,10 @@ fn write_channel_batch_buffered_impl(
         let mut points_3layer = Vec::with_capacity(updates.len());
         // Use Arc<str> for field names to match WriteBuffer signature - FxHashMap
         let mut instance_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> =
+            FxHashMap::default();
+        // Sidecar ts hash writes, parallel to instance_writes. See the async
+        // variant for the rationale (inst:{id}:M:ts for WebSocket `ts` field).
+        let mut instance_ts_writes: FxHashMap<u32, Vec<(Arc<str>, bytes::Bytes)>> =
             FxHashMap::default();
         let mut c2c_forwards: Vec<ChannelPointUpdate> = Vec::new();
 
@@ -323,7 +347,11 @@ fn write_channel_batch_buffered_impl(
                 instance_writes
                     .entry(target.instance_id)
                     .or_default()
-                    .push((point_id_str, f64_to_bytes(update.value)));
+                    .push((Arc::clone(&point_id_str), f64_to_bytes(update.value)));
+                instance_ts_writes
+                    .entry(target.instance_id)
+                    .or_default()
+                    .push((point_id_str, ts_bytes.clone()));
             }
 
             // C2C routing lookup - zero-allocation using structured key
@@ -371,11 +399,15 @@ fn write_channel_batch_buffered_impl(
         );
         result.channel_writes += buffered;
 
-        // Buffer instance data (C2M results)
+        // Buffer instance data (C2M results) + sidecar ts hash
         for (instance_id, values) in instance_writes {
             let instance_key = config.instance_measurement_key(instance_id);
             write_buffer.buffer_hash_mset(&instance_key, values);
             result.c2m_writes += 1;
+        }
+        for (instance_id, ts_values) in instance_ts_writes {
+            let instance_ts_key = config.instance_measurement_ts_key(instance_id);
+            write_buffer.buffer_hash_mset(&instance_ts_key, ts_values);
         }
 
         // Process C2C forwards recursively (also buffered)

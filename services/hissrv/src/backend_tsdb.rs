@@ -6,7 +6,8 @@
 /// `time`.  If the TimescaleDB extension is absent the call is silently skipped
 /// and the table behaves like plain PostgreSQL.
 use async_trait::async_trait;
-use sqlx::PgPool;
+use chrono::Utc;
+use sqlx::{PgPool, Row};
 use tracing::{info, warn};
 
 use crate::backend_pg::PostgresBackend;
@@ -35,17 +36,69 @@ impl StorageBackend for TimescaleDbBackend {
         // Reuse the plain-PG schema creation (table + indexes).
         self.inner.init_schema().await?;
 
-        // Attempt hypertable conversion.  This is a no-op if TimescaleDB is
-        // not installed; we log a warning and continue.
-        match sqlx::query("SELECT create_hypertable('history', 'time', if_not_exists => TRUE)")
-            .execute(&self.inner.pool)
-            .await
+        // Step 1: Convert to hypertable (partitioned by time).
+        // This is a no-op if TimescaleDB is not installed; we log a warning and continue.
+        let hypertable_ok =
+            match sqlx::query("SELECT create_hypertable('history', 'time', if_not_exists => TRUE)")
+                .execute(&self.inner.pool)
+                .await
+            {
+                Ok(_) => {
+                    info!("TimescaleDB hypertable created (or already existed)");
+                    true
+                },
+                Err(e) => {
+                    warn!(
+                        "create_hypertable failed – is the TimescaleDB extension installed? ({}). \
+                     Falling back to plain PostgreSQL behaviour.",
+                        e
+                    );
+                    false
+                },
+            };
+
+        if !hypertable_ok {
+            return Ok(());
+        }
+
+        // Step 2: Enable chunk-level compression.
+        // Segment by (redis_key, point_id) so that compressed chunks align with
+        // the most common query filters.  Order by time DESC to match read patterns.
+        // Re-running this on an already-compressed table is harmless.
+        match sqlx::query(
+            "ALTER TABLE history SET (
+                timescaledb.compress,
+                timescaledb.compress_segmentby = 'redis_key,point_id',
+                timescaledb.compress_orderby   = 'time DESC'
+            )",
+        )
+        .execute(&self.inner.pool)
+        .await
         {
-            Ok(_) => info!("TimescaleDB hypertable created (or already existed)"),
+            Ok(_) => info!("TimescaleDB compression enabled on history table"),
             Err(e) => {
                 warn!(
-                    "create_hypertable failed – is the TimescaleDB extension installed? ({}). \
-                     Falling back to plain PostgreSQL behaviour.",
+                    "Failed to enable compression on history table ({}). \
+                     Compression policy will not be active.",
+                    e
+                );
+                return Ok(());
+            },
+        }
+
+        // Step 3: Automatically compress chunks older than 7 days.
+        // if_not_exists => TRUE makes this idempotent across restarts.
+        match sqlx::query(
+            "SELECT add_compression_policy('history', INTERVAL '7 days', if_not_exists => TRUE)",
+        )
+        .execute(&self.inner.pool)
+        .await
+        {
+            Ok(_) => info!("TimescaleDB compression policy set (compress after 7 days)"),
+            Err(e) => {
+                warn!(
+                    "Failed to add compression policy: {}. \
+                     Run manually: SELECT add_compression_policy('history', INTERVAL '7 days');",
                     e
                 );
             },
@@ -93,8 +146,39 @@ impl StorageBackend for TimescaleDbBackend {
         self.inner.list_channels().await
     }
 
+    /// TimescaleDB-optimised cleanup: use `drop_chunks` instead of row-level DELETE.
+    ///
+    /// `drop_chunks` discards entire chunk files atomically, which is orders of
+    /// magnitude faster than `DELETE … WHERE time < $1` – especially when the
+    /// chunks are already compressed (DELETE would first decompress the chunk).
+    ///
+    /// Falls back to the PG `DELETE` path if `drop_chunks` is unavailable.
     async fn cleanup_old_data(&self, older_than_days: i32) -> anyhow::Result<u64> {
-        self.inner.cleanup_old_data(older_than_days).await
+        let cutoff = Utc::now() - chrono::Duration::days(older_than_days as i64);
+
+        let result = sqlx::query("SELECT count(*) FROM drop_chunks('history', $1::timestamptz)")
+            .bind(cutoff)
+            .fetch_one(&self.inner.pool)
+            .await;
+
+        match result {
+            Ok(row) => {
+                let dropped: i64 = row.try_get::<i64, _>(0).unwrap_or(0);
+                info!(
+                    "TimescaleDB cleanup: dropped {} chunk(s) older than {} days",
+                    dropped, older_than_days
+                );
+                // drop_chunks reports chunk count, not row count; return as-is.
+                Ok(dropped as u64)
+            },
+            Err(e) => {
+                warn!(
+                    "drop_chunks failed ({}), falling back to row-level DELETE",
+                    e
+                );
+                self.inner.cleanup_old_data(older_than_days).await
+            },
+        }
     }
 
     async fn health_check(&self) -> bool {

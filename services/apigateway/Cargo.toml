@@ -59,8 +59,11 @@ zip = "2"
 
 # OpenAPI / Swagger UI
 utoipa = { workspace = true }
-utoipa-swagger-ui = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[features]
+swagger-ui = ["utoipa-swagger-ui"]
 
 [lints]
 workspace = true
