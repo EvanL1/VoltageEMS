@@ -91,6 +91,10 @@ pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
         if protocol.eq_ignore_ascii_case("matter") {
             return parse_matter_address(address);
         }
+        #[cfg(feature = "iec61850")]
+        if protocol.eq_ignore_ascii_case("iec61850") {
+            return parse_iec61850_address(address);
+        }
         Err(GatewayError::Config(format!(
             "Unknown protocol: {}",
             protocol
@@ -833,6 +837,52 @@ mod tests {
 
             let c = MatterAddress::new(2, 0x0006, 0x0000);
             assert_ne!(a, c);
+        }
+    }
+}
+
+// ── IEC 61850 ────────────────────────────────────────────────────────────────
+
+/// Parse an IEC 61850 MMS address string.
+///
+/// Accepted formats:
+/// - `"domain/item"` — e.g. `"simpleIOGenericIO/GGIO1$MX$AnIn1$mag$f"`
+///   (slash separates domain from MMS item ID)
+/// - `"domain:item"` — colon separator, already in MMS form
+///
+/// The item may contain `$` separators (MMS form) or `.` separators which
+/// are converted to `$` automatically.
+#[cfg(feature = "iec61850")]
+fn parse_iec61850_address(address: &str) -> Result<ProtocolAddress> {
+    use crate::protocols::core::point::Iec61850Address;
+
+    let addr = Iec61850Address::parse(address)?;
+    Ok(ProtocolAddress::Iec61850(addr))
+}
+
+#[cfg(all(test, feature = "iec61850"))]
+mod iec61850_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_slash_format() {
+        let addr = parse_iec61850_address("simpleIOGenericIO/GGIO1$MX$AnIn1$mag$f").unwrap();
+        if let ProtocolAddress::Iec61850(a) = addr {
+            assert_eq!(a.domain, "simpleIOGenericIO");
+            assert_eq!(a.item, "GGIO1$MX$AnIn1$mag$f");
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_parse_colon_format() {
+        let addr = parse_iec61850_address("LD0:LN0$MX$Val$mag$f").unwrap();
+        if let ProtocolAddress::Iec61850(a) = addr {
+            assert_eq!(a.domain, "LD0");
+            assert_eq!(a.item, "LN0$MX$Val$mag$f");
+        } else {
+            panic!("wrong variant");
         }
     }
 }

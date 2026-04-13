@@ -14,10 +14,25 @@ use tracing::{error, info};
 
 const CONFIG_DIR: &str = "/opt/MonarchEdge/data";
 const UPGRADE_DIR: &str = "/opt/MonarchEdge/upgrade";
+const UPGRADE_STATUS_FILE: &str = "/opt/MonarchEdge/upgrade/upgrade_status.json";
+const UPGRADE_LOG_FILE: &str = "/opt/MonarchEdge/upgrade/upgrade.log";
 
-// Upgrade state shared between start/abort/status handlers
+// In-memory upgrade state (also mirrored to UPGRADE_STATUS_FILE for persistence across restarts)
 static UPGRADE_PID: Mutex<Option<u32>> = Mutex::new(None);
 static UPGRADE_RUNNING: Mutex<bool> = Mutex::new(false);
+
+fn write_upgrade_status(data: &serde_json::Value) {
+    if let Ok(s) = serde_json::to_string_pretty(data) {
+        let _ = std::fs::write(UPGRADE_STATUS_FILE, s);
+    }
+}
+
+fn read_upgrade_status() -> serde_json::Value {
+    std::fs::read_to_string(UPGRADE_STATUS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({"status": "idle"}))
+}
 
 // ── GET /api/v1/config/check ──────────────────────────────────────────────────
 
@@ -147,20 +162,35 @@ fn walkdir_simple(dir: &Path) -> Vec<std::path::PathBuf> {
 pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
     let mut zip_data: Option<Vec<u8>> = None;
 
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or("").to_string();
-        if name == "file" || name == "zip" || zip_data.is_none() {
-            match field.bytes().await {
-                Ok(data) => zip_data = Some(data.to_vec()),
-                Err(e) => {
-                    error!("Read upload error: {}", e);
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({"success": false, "message": "Failed to read uploaded file"})),
-                    )
-                        .into_response();
-                },
-            }
+    loop {
+        match multipart.next_field().await {
+            Ok(None) => break,
+            Err(e) => {
+                let msg = classify_upload_error(&e.to_string(), 64);
+                error!("Multipart parse error: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"success": false, "message": msg})),
+                )
+                    .into_response();
+            },
+            Ok(Some(field)) => {
+                let name = field.name().unwrap_or("").to_string();
+                if name == "file" || name == "zip" || zip_data.is_none() {
+                    match field.bytes().await {
+                        Ok(data) => zip_data = Some(data.to_vec()),
+                        Err(e) => {
+                            let msg = classify_upload_error(&e.to_string(), 64);
+                            error!("Read upload error: {}", e);
+                            return (
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({"success": false, "message": msg})),
+                            )
+                                .into_response();
+                        },
+                    }
+                }
+            },
         }
     }
 
@@ -169,7 +199,7 @@ pub async fn import_config(mut multipart: Multipart) -> impl IntoResponse {
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "message": "No config file provided"})),
+                Json(json!({"success": false, "message": "No config file received. Please select a ZIP file and try again."})),
             )
                 .into_response();
         },
@@ -342,12 +372,35 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
     let mut pkg_data: Option<Vec<u8>> = None;
     let mut pkg_name = "upgrade.tar.gz".to_string();
 
-    while let Ok(Some(field)) = multipart.next_field().await {
-        if let Some(fname) = field.file_name() {
-            pkg_name = fname.to_string();
-        }
-        if let Ok(data) = field.bytes().await {
-            pkg_data = Some(data.to_vec());
+    loop {
+        match multipart.next_field().await {
+            Ok(None) => break,
+            Err(e) => {
+                let msg = classify_upload_error(&e.to_string(), 1024);
+                error!("Upgrade multipart parse error: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"success": false, "message": msg})),
+                )
+                    .into_response();
+            },
+            Ok(Some(field)) => {
+                if let Some(fname) = field.file_name() {
+                    pkg_name = fname.to_string();
+                }
+                match field.bytes().await {
+                    Ok(data) => pkg_data = Some(data.to_vec()),
+                    Err(e) => {
+                        let msg = classify_upload_error(&e.to_string(), 1024);
+                        error!("Read upgrade error: {}", e);
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"success": false, "message": msg})),
+                        )
+                            .into_response();
+                    },
+                }
+            },
         }
     }
 
@@ -356,11 +409,25 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "message": "No upgrade package provided"})),
+                Json(json!({"success": false, "message": "No upgrade package received. Please select an upgrade file and try again."})),
             )
                 .into_response();
         },
     };
+
+    // Docker Socket must be mounted so the upgrade container can call docker commands on the host
+    let docker_socket = Path::new("/var/run/docker.sock");
+    if !docker_socket.exists() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "success": false,
+                "message": "Docker Socket unavailable — ensure /var/run/docker.sock is mounted in docker-compose.yml",
+                "hint": "volumes:\\n  - /var/run/docker.sock:/var/run/docker.sock"
+            })),
+        )
+            .into_response();
+    }
 
     let upgrade_dir = Path::new(UPGRADE_DIR);
     if let Err(e) = std::fs::create_dir_all(upgrade_dir) {
@@ -380,32 +447,159 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
             .into_response();
     }
 
-    // Spawn upgrade script in background
-    tokio::spawn(async move {
-        *UPGRADE_RUNNING.lock().unwrap() = true;
+    // Prepare upgrade: chmod +x so the .run file is executable
+    let pkg_name_lower = pkg_name.to_lowercase();
+    if pkg_name_lower.ends_with(".run") || pkg_name_lower.ends_with(".sh") {
+        let _ = std::process::Command::new("chmod")
+            .args(["+x"])
+            .arg(&pkg_path)
+            .output();
+    }
 
-        let script = upgrade_dir.join("upgrade.sh");
-        let result = if script.exists() {
-            std::process::Command::new("bash")
-                .arg(&script)
+    // Set UPGRADE_RUNNING=true and write status file BEFORE spawning the blocking task.
+    // If we set it inside spawn_blocking, the tokio thread pool may not schedule the task
+    // immediately — a status poll arriving in that window would incorrectly see running=false.
+    *UPGRADE_RUNNING.lock().unwrap() = true;
+
+    let size_mb = data.len() as f64 / (1024.0 * 1024.0);
+    write_upgrade_status(&json!({
+        "status": "running",
+        "filename": pkg_name,
+        "size_mb": format!("{:.2}", size_mb),
+        "started_at": chrono::Utc::now().to_rfc3339(),
+    }));
+    let log_header = format!(
+        "=== VoltageEMS Upgrade Log ===\nStarted at: {}\nPackage: {}\nFile size: {:.2} MB\n{}\n\n",
+        chrono::Utc::now().to_rfc3339(),
+        pkg_name,
+        size_mb,
+        "=".repeat(60)
+    );
+    let _ = std::fs::write(UPGRADE_LOG_FILE, log_header);
+
+    tokio::task::spawn_blocking(move || {
+        // UPGRADE_RUNNING is already true (set before this task was spawned)
+
+        // Remove any leftover upgrader container before starting a new one.
+        // This handles the case where a previous run was killed mid-flight or the container
+        // name is still registered after the last session.
+        let _ = std::process::Command::new("docker")
+            .args(["rm", "-f", "voltageems-upgrader"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        // Build the upgrade command first, then attach log redirection before spawning.
+        // This ensures ALL output (stdout + stderr) from the upgrade process is captured
+        // into upgrade.log so the status API can return meaningful progress to the frontend.
+        //
+        // IMPORTANT: do NOT use -d (detached). We run synchronously so that child.wait()
+        // tracks the real upgrade completion and UPGRADE_RUNNING stays true throughout.
+        let mut cmd = if pkg_name_lower.ends_with(".run") || pkg_name_lower.ends_with(".sh") {
+            let docker_available = std::process::Command::new("docker")
+                .args(["info"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+
+            if docker_available {
+                let mut c = std::process::Command::new("docker");
+                c.args([
+                    "run",
+                    "--rm",
+                    "--name",
+                    "voltageems-upgrader",
+                    "--pid",
+                    "host",
+                    "--privileged",
+                    "-v",
+                    "/opt/MonarchEdge:/opt/MonarchEdge",
+                    "alpine:latest",
+                    "nsenter",
+                    "--target",
+                    "1",
+                    "--mount",
+                    "--uts",
+                    "--ipc",
+                    "--net",
+                    "--pid",
+                    "--",
+                    "bash",
+                ])
                 .arg(&pkg_path)
-                .spawn()
+                .args(["--", "--auto"]);
+                c
+            } else {
+                info!("Docker unavailable; running upgrade directly in container");
+                let mut c = std::process::Command::new("bash");
+                c.arg(&pkg_path).args(["--", "--auto"]);
+                c
+            }
+        } else if pkg_name_lower.ends_with(".tar.gz")
+            || pkg_name_lower.ends_with(".tgz")
+            || pkg_name_lower.ends_with(".tar.bz2")
+            || pkg_name_lower.ends_with(".tar.xz")
+        {
+            let mut c = std::process::Command::new("tar");
+            c.args(["-xaf"]).arg(&pkg_path).arg("-C").arg(upgrade_dir);
+            c
         } else {
-            // No script: just extract
-            std::process::Command::new("tar")
-                .args(["-xzf"])
-                .arg(&pkg_path)
-                .arg("-C")
-                .arg(upgrade_dir)
-                .spawn()
+            let mut c = std::process::Command::new("bash");
+            c.arg(&pkg_path);
+            c
         };
+
+        // Redirect stdout + stderr → upgrade.log (append mode)
+        // Both handles must be separate File objects (can't share one fd for stdout+stderr).
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(UPGRADE_LOG_FILE)
+        {
+            Ok(log_out) => match log_out.try_clone() {
+                Ok(log_err) => {
+                    cmd.stdout(std::process::Stdio::from(log_out))
+                        .stderr(std::process::Stdio::from(log_err));
+                },
+                Err(e) => error!("Failed to clone log fd: {}", e),
+            },
+            Err(e) => error!("Failed to open upgrade log for writing: {}", e),
+        }
+
+        let result = cmd.spawn();
 
         match result {
             Ok(mut child) => {
                 *UPGRADE_PID.lock().unwrap() = Some(child.id());
-                let _ = child.wait();
+                let exit_code = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
+                if exit_code == 0 {
+                    info!("Upgrade completed successfully");
+                    write_upgrade_status(&json!({
+                        "status": "completed",
+                        "finished_at": chrono::Utc::now().to_rfc3339(),
+                        "exit_code": 0,
+                        "message": "Upgrade successful"
+                    }));
+                } else {
+                    error!("Upgrade failed with exit code {}", exit_code);
+                    write_upgrade_status(&json!({
+                        "status": "failed",
+                        "finished_at": chrono::Utc::now().to_rfc3339(),
+                        "exit_code": exit_code,
+                        "message": format!("Upgrade failed (exit code {})", exit_code)
+                    }));
+                }
             },
-            Err(e) => error!("Upgrade command error: {}", e),
+            Err(e) => {
+                error!("Upgrade command error: {}", e);
+                write_upgrade_status(&json!({
+                    "status": "failed",
+                    "finished_at": chrono::Utc::now().to_rfc3339(),
+                    "message": format!("Failed to start upgrade: {}", e)
+                }));
+            },
         }
 
         *UPGRADE_RUNNING.lock().unwrap() = false;
@@ -427,19 +621,35 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
     responses((status = 200, description = "升级已中断")))]
 pub async fn abort_upgrade() -> impl IntoResponse {
     let pid = UPGRADE_PID.lock().unwrap().take();
-    match pid {
-        Some(pid) => {
-            // Send SIGTERM
-            let _ = std::process::Command::new("kill")
-                .args(["-TERM", &pid.to_string()])
-                .output();
-            *UPGRADE_RUNNING.lock().unwrap() = false;
-            Json(json!({"success": true, "message": "Upgrade aborted"})).into_response()
-        },
-        None => {
-            Json(json!({"success": false, "message": "No upgrade in progress"})).into_response()
-        },
+    let running = *UPGRADE_RUNNING.lock().unwrap();
+
+    if !running && pid.is_none() {
+        return Json(json!({"success": false, "message": "No upgrade in progress"}))
+            .into_response();
     }
+
+    // Stop the nsenter upgrader container if it's running
+    let _ = std::process::Command::new("docker")
+        .args(["stop", "voltageems-upgrader"])
+        .output();
+
+    // Also kill the direct child process if any
+    if let Some(pid) = pid {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .output();
+    }
+
+    *UPGRADE_RUNNING.lock().unwrap() = false;
+    *UPGRADE_PID.lock().unwrap() = None;
+
+    write_upgrade_status(&json!({
+        "status": "aborted",
+        "aborted_at": chrono::Utc::now().to_rfc3339(),
+        "message": "Upgrade aborted by user"
+    }));
+
+    Json(json!({"success": true, "message": "Upgrade aborted"})).into_response()
 }
 
 // ── GET /api/v1/config/upgrade/status ────────────────────────────────────────
@@ -448,16 +658,125 @@ pub async fn abort_upgrade() -> impl IntoResponse {
     security(("bearer_auth" = [])),
     responses((status = 200, description = "升级状态")))]
 pub async fn upgrade_status() -> impl IntoResponse {
-    let running = *UPGRADE_RUNNING.lock().unwrap();
-    let pid = *UPGRADE_PID.lock().unwrap();
+    let file_status = read_upgrade_status();
+    let mem_running = *UPGRADE_RUNNING.lock().unwrap();
+    let mem_pid = *UPGRADE_PID.lock().unwrap();
+
+    // Cross-check: if memory says not running but status file says "running",
+    // verify whether the upgrader container is actually still alive on the host.
+    let container_running = std::process::Command::new("docker")
+        .args(["inspect", "-f", "{{.State.Running}}", "voltageems-upgrader"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim() == "true")
+        .unwrap_or(false);
+
+    let running = mem_running || container_running;
+
+    let log_content = std::fs::read_to_string(UPGRADE_LOG_FILE)
+        .map(|raw| clean_log(&raw))
+        .unwrap_or_default();
 
     Json(json!({
         "success": true,
         "message": "OK",
         "data": {
             "running": running,
-            "pid": pid,
+            "pid": mem_pid,
+            "log": log_content,
+            "detail": file_status,
         }
     }))
     .into_response()
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Strip ANSI escape sequences and collapse backspace-based progress-bar overwriting.
+///
+/// Makeself progress bars work by writing e.g. "  0% \b\b\b\b\b  1% \b\b\b\b\b  2%"
+/// which looks correct in a terminal (each % overwrites the previous) but produces
+/// garbage when captured to a file.  This function simulates the terminal rendering
+/// so each "line" only keeps the final visible content.
+fn clean_log(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            // ANSI escape: ESC '[' <params> <final-byte>
+            0x1b if i + 1 < bytes.len() && bytes[i + 1] == b'[' => {
+                i += 2;
+                while i < bytes.len() && !bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                i += 1; // skip the final letter
+            },
+            // Backspace: erase the last character written on this line
+            0x08 => {
+                let trim_to = out
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| *c != '\n')
+                    .map(|(idx, _)| idx);
+                if let Some(t) = trim_to {
+                    out.truncate(t);
+                }
+                i += 1;
+            },
+            // Carriage return without newline: reset to start of line
+            0x0d if i + 1 < bytes.len() && bytes[i + 1] != 0x0a => {
+                if let Some(nl) = out.rfind('\n') {
+                    out.truncate(nl + 1);
+                } else {
+                    out.clear();
+                }
+                i += 1;
+            },
+            // Normal byte: append as-is
+            _ => {
+                // Preserve multi-byte UTF-8 sequences intact
+                let ch_len = if bytes[i] < 0x80 {
+                    1
+                } else if bytes[i] < 0xE0 {
+                    2
+                } else if bytes[i] < 0xF0 {
+                    3
+                } else {
+                    4
+                };
+                let end = (i + ch_len).min(bytes.len());
+                if let Ok(s) = std::str::from_utf8(&bytes[i..end]) {
+                    out.push_str(s);
+                    i = end;
+                } else {
+                    i += 1;
+                }
+            },
+        }
+    }
+    out
+}
+
+/// Map a multipart/body read error to a user-facing Chinese message.
+/// `limit_mb` is the configured limit for this endpoint (for display only).
+fn classify_upload_error(err: &str, limit_mb: usize) -> String {
+    let lower = err.to_lowercase();
+    if lower.contains("length limit")
+        || lower.contains("too large")
+        || lower.contains("size exceeded")
+        || lower.contains("payload too large")
+        || lower.contains("body limit")
+    {
+        format!(
+            "File too large. Maximum upload size is {} MB. Please compress the file and try again.",
+            limit_mb
+        )
+    } else {
+        format!("Failed to parse uploaded file: {}", err)
+    }
 }

@@ -88,6 +88,8 @@ pub enum ProtocolAddress {
     Zigbee(ZigbeeAddress),
     #[cfg(feature = "matter")]
     Matter(MatterAddress),
+    #[cfg(feature = "iec61850")]
+    Iec61850(Iec61850Address),
 }
 
 /// Virtual channel address (no physical device).
@@ -282,6 +284,59 @@ impl MatterAddress {
             cluster_id,
             attribute_id,
         }
+    }
+}
+
+/// IEC 61850 MMS variable address.
+///
+/// Identifies a data attribute on an IEC 61850 server via its MMS path.
+///
+/// # Format
+///
+/// ```yaml
+/// protocol: Iec61850
+/// params:
+///   domain: "simpleIOGenericIO"
+///   item: "GGIO1$MX$AnIn1$mag$f"
+/// ```
+///
+/// The `domain` is the IED logical device name and `item` is the MMS item ID
+/// using `$` as separator with the functional constraint embedded (e.g., `$MX$`).
+#[cfg(feature = "iec61850")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Iec61850Address {
+    /// Logical device name (MMS domain), e.g. "simpleIOGenericIO"
+    pub domain: String,
+    /// MMS item ID with functional constraint, e.g. "GGIO1$MX$AnIn1$mag$f"
+    pub item: String,
+}
+
+#[cfg(feature = "iec61850")]
+impl Iec61850Address {
+    pub fn new(domain: impl Into<String>, item: impl Into<String>) -> Self {
+        Self {
+            domain: domain.into(),
+            item: item.into(),
+        }
+    }
+
+    /// Parse from IEC 61850 object reference string.
+    ///
+    /// Accepts formats:
+    /// - `"LD/LNname.DOname.DAname[FC]"` → converts dots to `$` and inserts FC
+    /// - `"domain:item"` → split by colon, already in MMS form
+    pub fn parse(s: &str) -> Result<Self, GatewayError> {
+        if let Some((domain, item)) = s.split_once(':') {
+            return Ok(Self::new(domain.trim(), item.trim()));
+        }
+        if let Some((domain, rest)) = s.split_once('/') {
+            let item = rest.replace('.', "$");
+            return Ok(Self::new(domain.trim(), item));
+        }
+        Err(GatewayError::Config(format!(
+            "Invalid IEC 61850 address: '{}'. Expected 'domain/item' or 'domain:item$...'",
+            s
+        )))
     }
 }
 

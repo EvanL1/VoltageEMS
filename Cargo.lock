@@ -840,6 +840,7 @@ dependencies = [
  "dashmap 6.1.0",
  "errors",
  "futures",
+ "hex",
  "http-body-util",
  "itoa",
  "parking_lot",

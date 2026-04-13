@@ -123,6 +123,25 @@ use voltage_rtdb::Rtdb;
                     }
                 })
             )),
+            ("CAN Bus" = (
+                summary = "CAN Bus channel (Discover LYNK Serial CAN)",
+                description = "Standard CAN 2.0B channel via SocketCAN. `device` is the host SocketCAN interface name (e.g. can0, vcan0). All timeout/interval fields are optional and fall back to the shown defaults.",
+                value = json!({
+                    "name": "lynk_serial_can",
+                    "description": "Discover LYNK Serial CAN 协议示例",
+                    "protocol": "can",
+                    "enabled": true,
+                    "parameters": {
+                        "device": "can0",
+                        "bitrate": 250000,
+                        "connect_timeout_ms": 3000,
+                        "read_timeout_ms": 3000,
+                        "retry_interval_ms": 2000,
+                        "rx_poll_interval_ms": 50,
+                        "data_read_interval_ms": 1000
+                    }
+                })
+            )),
             ("Virtual - Test" = (
                 summary = "Virtual test channel",
                 value = json!({

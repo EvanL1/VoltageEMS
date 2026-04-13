@@ -66,7 +66,7 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro
-      - /dev/shm/voltage-rtdb.shm:/shm/rtdb/voltage-rtdb.shm:rw  # Shared memory (writer) - bind mount for host access
+      - /dev/shm:/shm/rtdb:rw  # Shared memory dir (writer) — mount the dir so Docker never auto-creates a stale file entry
     environment:
       - SERVICE_NAME=comsrv
       - SERVICE_PORT=6001
@@ -113,7 +113,7 @@ services:
       - ${VOLTAGE_BASE_PATH:-./data}:/app/data:rw
       - ${VOLTAGE_LOG_PATH:-./logs}:/app/logs
       - redis-socket:/run/redis:ro # Read-only access to Unix socket
-      - /dev/shm/voltage-rtdb.shm:/shm/rtdb/voltage-rtdb.shm:ro  # Shared memory (reader) - bind mount for host access
+      - /dev/shm:/shm/rtdb:ro  # Shared memory dir (reader) — mount the dir so Docker never auto-creates a stale file entry
     logging:
       driver: json-file
       options:

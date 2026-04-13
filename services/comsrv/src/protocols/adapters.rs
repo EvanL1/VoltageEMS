@@ -75,3 +75,6 @@ pub mod matter;
 
 #[cfg(feature = "matter")]
 pub mod matter_config;
+
+#[cfg(feature = "iec61850")]
+pub mod iec61850;

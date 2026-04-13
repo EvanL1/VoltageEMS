@@ -74,6 +74,11 @@ pub fn create_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>>
         return create_matter_channel(config);
     }
 
+    #[cfg(feature = "iec61850")]
+    if protocol.eq_ignore_ascii_case("iec61850") {
+        return create_iec61850_channel(config);
+    }
+
     if protocol.eq_ignore_ascii_case("virtual") {
         return create_virtual_channel(config);
     }
@@ -383,6 +388,20 @@ fn create_matter_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntim
         config.name.clone(),
     )
     .with_points(points);
+
+    Ok(Box::new(channel))
+}
+
+#[cfg(feature = "iec61850")]
+fn create_iec61850_channel(config: &ChannelConfig) -> Result<Box<dyn ChannelRuntime>> {
+    use crate::protocols::adapters::iec61850::{Iec61850Channel, Iec61850ParamsConfig};
+
+    let params: Iec61850ParamsConfig = serde_json::from_value(config.parameters.clone())
+        .map_err(|e| GatewayError::Config(format!("Invalid IEC 61850 parameters: {}", e)))?;
+
+    let points = build_point_configs(config)?;
+
+    let channel = Iec61850Channel::new(config.id, config.name.clone(), &params, points);
 
     Ok(Box::new(channel))
 }

@@ -13,6 +13,15 @@ pub struct CanConfig {
     /// CAN bitrate (bits per second).
     pub bitrate: u32,
 
+    /// Connection/open timeout in milliseconds.
+    pub connect_timeout_ms: u64,
+
+    /// Read (frame receive) timeout in milliseconds.
+    pub read_timeout_ms: u64,
+
+    /// Reconnect interval in milliseconds.
+    pub retry_interval_ms: u64,
+
     /// RX polling interval in milliseconds.
     pub rx_poll_interval_ms: u64,
 
@@ -25,6 +34,9 @@ impl Default for CanConfig {
         Self {
             can_interface: "can0".to_string(),
             bitrate: 250000,
+            connect_timeout_ms: 3000,
+            read_timeout_ms: 3000,
+            retry_interval_ms: 2000,
             rx_poll_interval_ms: 50,
             data_read_interval_ms: 1000,
         }
@@ -89,21 +101,36 @@ fn default_scale() -> f64 {
 /// # Example JSON
 /// ```json
 /// {
-///     "interface": "can0",
+///     "device": "can0",
 ///     "bitrate": 250000,
-///     "rx_poll_interval_ms": 50,
-///     "data_read_interval_ms": 1000
+///     "connect_timeout_ms": 3000,
+///     "read_timeout_ms": 3000,
+///     "retry_interval_ms": 2000,
+///     "rx_poll_interval_ms": 50
 /// }
 /// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct CanChannelParamsConfig {
-    /// CAN interface name (e.g., "can0").
-    #[serde(default = "default_can_interface")]
-    pub interface: String,
+    /// CAN device name (e.g., "can0", "vcan0").
+    /// Also accepts the legacy key "interface".
+    #[serde(default = "default_can_device", alias = "interface")]
+    pub device: String,
 
     /// CAN bitrate in bits per second.
     #[serde(default = "default_bitrate")]
     pub bitrate: u32,
+
+    /// Connection/open timeout in milliseconds.
+    #[serde(default = "default_connect_timeout")]
+    pub connect_timeout_ms: u64,
+
+    /// Read (frame receive) timeout in milliseconds.
+    #[serde(default = "default_read_timeout")]
+    pub read_timeout_ms: u64,
+
+    /// Reconnect interval in milliseconds.
+    #[serde(default = "default_retry_interval")]
+    pub retry_interval_ms: u64,
 
     /// RX polling interval in milliseconds.
     #[serde(default = "default_rx_poll_interval")]
@@ -114,12 +141,24 @@ pub struct CanChannelParamsConfig {
     pub data_read_interval_ms: u64,
 }
 
-fn default_can_interface() -> String {
+fn default_can_device() -> String {
     "can0".to_string()
 }
 
 fn default_bitrate() -> u32 {
     250000
+}
+
+fn default_connect_timeout() -> u64 {
+    3000
+}
+
+fn default_read_timeout() -> u64 {
+    3000
+}
+
+fn default_retry_interval() -> u64 {
+    2000
 }
 
 fn default_rx_poll_interval() -> u64 {
@@ -134,8 +173,11 @@ impl CanChannelParamsConfig {
     /// Convert to CanConfig.
     pub fn to_config(&self) -> CanConfig {
         CanConfig {
-            can_interface: self.interface.clone(),
+            can_interface: self.device.clone(),
             bitrate: self.bitrate,
+            connect_timeout_ms: self.connect_timeout_ms,
+            read_timeout_ms: self.read_timeout_ms,
+            retry_interval_ms: self.retry_interval_ms,
             rx_poll_interval_ms: self.rx_poll_interval_ms,
             data_read_interval_ms: self.data_read_interval_ms,
         }
