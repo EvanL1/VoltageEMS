@@ -1,7 +1,19 @@
 //! Data models for the alarm service
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use utoipa::{IntoParams, ToSchema};
+
+/// Serialize a stored JSON string as a parsed JSON value.
+/// If the string is not valid JSON, it falls back to the raw string.
+fn serialize_json_str<S>(s: &String, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match serde_json::from_str::<serde_json::Value>(s) {
+        Ok(v) => v.serialize(ser),
+        Err(_) => s.serialize(ser),
+    }
+}
 
 // ============================================================================
 // Core domain models (map 1:1 to database tables)
@@ -15,9 +27,9 @@ pub struct AlertRule {
     pub data_type: String,
     pub point_id: i64,
     pub rule_name: String,
-    /// 告警等级：1=低, 2=中, 3=高
+    /// Warning level: 1=low, 2=medium, 3=high
     pub warning_level: i64,
-    /// 运算符：>, <, >=, <=, ==, !=
+    /// Operator: >, <, >=, <=, ==, !=
     pub operator: String,
     pub value: f64,
     pub enabled: bool,
@@ -74,6 +86,7 @@ impl AlertRule {
 pub struct Alert {
     pub id: i64,
     pub rule_id: i64,
+    #[serde(serialize_with = "serialize_json_str")]
     pub rule_snapshot: String,
     pub service_type: String,
     pub channel_id: i64,
@@ -84,7 +97,7 @@ pub struct Alert {
     pub operator: String,
     pub threshold_value: f64,
     pub current_value: f64,
-    /// Always "active" – resolved alerts are deleted and moved to alert_event
+    /// Always "active" — resolved alerts are deleted and moved to alert_event
     pub status: String,
     pub triggered_at: i64,
 }
@@ -93,6 +106,7 @@ pub struct Alert {
 pub struct AlertEvent {
     pub id: i64,
     pub rule_id: i64,
+    #[serde(serialize_with = "serialize_json_str")]
     pub rule_snapshot: String,
     pub service_type: String,
     pub channel_id: i64,
@@ -122,12 +136,12 @@ pub struct AlertEvent {
     "channel_id": 1001,
     "data_type": "M",
     "point_id": 1,
-    "rule_name": "过压告警",
+    "rule_name": "Overvoltage Alarm",
     "warning_level": 2,
     "operator": ">",
     "value": 260.0,
     "enabled": true,
-    "description": "电压超过 260V 触发告警"
+    "description": "Trigger alarm when voltage exceeds 260V"
 }))]
 pub struct CreateRuleRequest {
     pub service_type: String,
@@ -135,13 +149,13 @@ pub struct CreateRuleRequest {
     pub data_type: String,
     pub point_id: i64,
     pub rule_name: String,
-    /// 告警等级（默认 2）
+    /// Warning level (default: 2)
     #[serde(default = "default_warning_level")]
     pub warning_level: i64,
-    /// 运算符：>, <, >=, <=, ==, !=
+    /// Operator: >, <, >=, <=, ==, !=
     pub operator: String,
     pub value: f64,
-    /// 是否启用（默认 true）
+    /// Whether enabled (default: true)
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub description: Option<String>,
@@ -172,8 +186,14 @@ pub struct RuleQueryParams {
     pub data_type: Option<String>,
     pub enabled: Option<bool>,
     pub warning_level: Option<i64>,
+    /// Page number (1-based; takes priority over skip when set)
+    pub page: Option<i64>,
+    /// Page size (used with page; takes priority over limit when set)
+    pub page_size: Option<i64>,
+    /// Offset rows (legacy; ignored when page is present)
     #[serde(default)]
     pub skip: i64,
+    /// Max rows to return (legacy; ignored when page_size is present)
     #[serde(default = "default_limit")]
     pub limit: i64,
 }
@@ -184,8 +204,14 @@ pub struct AlertQueryParams {
     pub service_type: Option<String>,
     pub channel_id: Option<i64>,
     pub keyword: Option<String>,
+    /// Page number (1-based; takes priority over skip when set)
+    pub page: Option<i64>,
+    /// Page size (used with page; takes priority over limit when set)
+    pub page_size: Option<i64>,
+    /// Offset rows (legacy)
     #[serde(default)]
     pub skip: i64,
+    /// Max rows to return (legacy)
     #[serde(default = "default_limit")]
     pub limit: i64,
 }
@@ -193,17 +219,50 @@ pub struct AlertQueryParams {
 #[derive(Debug, Deserialize, Default, IntoParams)]
 pub struct EventQueryParams {
     pub rule_id: Option<i64>,
-    /// "trigger" 或 "recovery"
+    /// "trigger" or "recovery"
     pub event_type: Option<String>,
     pub service_type: Option<String>,
     pub warning_level: Option<i64>,
-    /// Unix 时间戳（秒）
+    /// Unix timestamp (seconds)
     pub start_time: Option<i64>,
     pub end_time: Option<i64>,
+    /// Page number (1-based; takes priority over skip when set)
+    pub page: Option<i64>,
+    /// Page size (used with page; takes priority over limit when set)
+    pub page_size: Option<i64>,
+    /// Offset rows (legacy)
     #[serde(default)]
     pub skip: i64,
+    /// Max rows to return (legacy)
     #[serde(default = "default_limit")]
     pub limit: i64,
+}
+
+/// 统一计算分页参数：返回 `(effective_limit, offset, resolved_page, resolved_page_size)`。
+///
+/// 优先使用 `page`/`page_size`；若未提供则回退到 `skip`/`limit`。
+pub fn resolve_pagination(
+    page: Option<i64>,
+    page_size: Option<i64>,
+    skip: i64,
+    limit: i64,
+) -> (i64, i64, i64, i64) {
+    const MAX_PAGE_SIZE: i64 = 200;
+    match page {
+        Some(p) => {
+            let p = p.max(1);
+            let ps = page_size.unwrap_or(limit).clamp(1, MAX_PAGE_SIZE);
+            let offset = (p - 1) * ps;
+            (ps, offset, p, ps)
+        },
+        None => {
+            let ps = page_size.unwrap_or(limit).clamp(1, MAX_PAGE_SIZE);
+            let offset = skip.max(0);
+            // Convert skip/limit back to a logical page number (best-effort)
+            let p = if ps > 0 { offset / ps + 1 } else { 1 };
+            (ps, offset, p, ps)
+        },
+    }
 }
 
 // ============================================================================
@@ -231,6 +290,10 @@ impl<T: Serialize> ApiResponse<T> {
 pub struct PagedData<T: Serialize> {
     pub total: i64,
     pub list: Vec<T>,
+    /// Current page number (1-based)
+    pub page: i64,
+    /// Page size used for this query
+    pub page_size: i64,
 }
 
 // ============================================================================

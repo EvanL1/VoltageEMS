@@ -226,10 +226,10 @@ fn build_router(state: Arc<AppState>) -> Router {
             get(common::admin_api::view_log_file),
         )
         .with_state(state)
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::from_fn(
             common::logging::http_request_logger,
         ))
-        .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(cors);
 
     #[cfg(feature = "swagger-ui")]
@@ -266,6 +266,10 @@ async fn main() -> anyhow::Result<()> {
     info!("apigateway starting on port {}", cfg.api_port);
     info!("Redis: {}", cfg.redis_url);
     info!("DB:    {}", cfg.db_path);
+
+    // Reconcile upgrade status: if a previous upgrade was interrupted by a
+    // container restart, fix the stale "running" status in the status file.
+    routes_config::reconcile_upgrade_status_on_startup();
 
     // ── SQLite ────────────────────────────────────────────────────────────────
     let db_dir = std::path::Path::new(&cfg.db_path)

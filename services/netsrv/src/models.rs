@@ -34,57 +34,78 @@ pub struct StatusPayload {
 // ── MQTT command payloads (incoming) ─────────────────────────────────────────
 
 /// Incoming single-point read request on `read/{productSN}/{deviceSN}`.
+/// Field name in JSON is `key` (matching Python netsrv protocol); `msgId` is the
+/// correlation ID echoed back in the reply.
 #[derive(Debug, Deserialize)]
 pub struct ReadRequest {
     pub source: String,
     pub device: String,
     pub data_type: String,
-    /// If absent, return all fields.
+    /// If absent, return all hash fields.
+    #[serde(rename = "key")]
     pub field: Option<String>,
-    pub request_id: Option<String>,
+    #[serde(rename = "msgId")]
+    pub msg_id: Option<String>,
 }
 
-/// Reply to `read-reply/{productSN}/{deviceSN}`.
+/// Single entry inside a `read-reply` property array.
 #[derive(Serialize)]
-pub struct ReadReply {
+pub struct ReadReplyProperty {
     pub source: String,
     pub device: String,
     pub data_type: String,
-    pub field: Option<String>,
+    /// For a keyed read: `{ key: value }`.  For a full-hash read: all field→value pairs.
     pub value: serde_json::Value,
+}
+
+/// Reply to `read-reply/{productSN}/{deviceSN}`.
+/// Format matches Python netsrv: `{ timestamp, property: [...], msgId }`.
+#[derive(Serialize)]
+pub struct ReadReply {
     pub timestamp: i64,
-    pub request_id: Option<String>,
-    pub success: bool,
-    pub error: Option<String>,
+    pub property: Vec<ReadReplyProperty>,
+    #[serde(rename = "msgId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msg_id: Option<String>,
 }
 
 /// Incoming single-point write request on `write/{productSN}/{deviceSN}`.
+/// Field name in JSON is `key`; `msgId` is the correlation ID.
 #[derive(Debug, Deserialize)]
 pub struct WriteRequest {
     pub source: String,
     pub device: String,
     pub data_type: String,
+    #[serde(rename = "key")]
     pub field: String,
     pub value: serde_json::Value,
-    pub request_id: Option<String>,
+    #[serde(rename = "msgId")]
+    pub msg_id: Option<String>,
 }
 
 /// Reply to `write-reply/{productSN}/{deviceSN}`.
+/// Format matches Python netsrv: `{ result: "success"|"fail", msgId }`.
 #[derive(Serialize)]
 pub struct WriteReply {
-    pub success: bool,
-    pub error: Option<String>,
-    pub request_id: Option<String>,
-    pub timestamp: i64,
+    pub result: String,
+    #[serde(rename = "msgId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msg_id: Option<String>,
 }
 
 /// Generic command-acknowledgement reply (call-data-reply, call-alarm-reply).
+/// Format matches Python netsrv: `{ result, message, timestamp, msgId }`.
+/// `call-alarm-reply` may use `result: "warning"` when alarmsrv returns a non-2xx status.
 #[derive(Serialize)]
 pub struct CommandReply {
-    pub success: bool,
-    pub error: Option<String>,
-    pub request_id: Option<String>,
+    pub result: String,
+    pub message: String,
     pub timestamp: i64,
+    #[serde(rename = "msgId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msg_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // ── Dynamic service configuration ────────────────────────────────────────────
@@ -100,6 +121,8 @@ pub struct CommandReply {
     "broker_port": 8883,
     "broker_keepalive_secs": 120,
     "client_id": "auto",
+    "username": null,
+    "password": null,
     "ssl_enabled": false,
     "reconnect_delay_secs": 10,
     "reconnect_max_attempts": 50,
@@ -138,6 +161,17 @@ pub struct NetConfig {
     /// MQTT 客户端 ID。填 `"auto"` 时使用已解析的 `device_sn`。
     #[schema(example = "auto")]
     pub client_id: String,
+
+    // -- Auth --
+    /// MQTT 用户名（可选，为空则不发送认证信息）
+    #[schema(example = json!(null))]
+    #[serde(default)]
+    pub username: Option<String>,
+
+    /// MQTT 密码（可选，与 username 配合使用）
+    #[schema(example = json!(null))]
+    #[serde(default)]
+    pub password: Option<String>,
 
     // -- TLS --
     /// 是否启用 TLS/SSL 加密连接。
@@ -201,6 +235,8 @@ impl Default for NetConfig {
             broker_port: 8883,
             broker_keepalive_secs: 120,
             client_id: "auto".to_string(),
+            username: None,
+            password: None,
             ssl_enabled: false,
             reconnect_delay_secs: 10,
             reconnect_max_attempts: 50,

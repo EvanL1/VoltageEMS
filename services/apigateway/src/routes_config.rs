@@ -1,11 +1,12 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use axum::{
     body::Body,
     extract::Multipart,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -21,14 +22,45 @@ const UPGRADE_LOG_FILE: &str = "/opt/MonarchEdge/upgrade/upgrade.log";
 static UPGRADE_PID: Mutex<Option<u32>> = Mutex::new(None);
 static UPGRADE_RUNNING: Mutex<bool> = Mutex::new(false);
 
+// Upload progress tracking (reset on each new upload attempt)
+static UPLOAD_RECEIVED_BYTES: AtomicU64 = AtomicU64::new(0);
+static UPLOAD_TOTAL_BYTES: AtomicU64 = AtomicU64::new(0);
+// Set while an upload stream is in progress; cleared when it ends (success or error).
+static UPLOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+// Set by abort_upgrade to signal the streaming loop to stop early.
+static UPLOAD_ABORT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 fn write_upgrade_status(data: &serde_json::Value) {
     if let Ok(s) = serde_json::to_string_pretty(data) {
         let _ = std::fs::write(UPGRADE_STATUS_FILE, s);
     }
 }
 
-fn read_upgrade_status() -> serde_json::Value {
-    std::fs::read_to_string(UPGRADE_STATUS_FILE)
+/// Called once at apigateway startup.
+///
+/// If the status file shows `"running"` but `UPGRADE_RUNNING` is false (fresh
+/// process), the previous upgrade was interrupted by a container restart — most
+/// likely because the installer replaced the voltageems image and brought the
+/// service back up.  Mark the status as "completed_or_restarted" so the status
+/// endpoint never returns the contradictory `running=false` + `status="running"`.
+pub fn reconcile_upgrade_status_on_startup() {
+    if let Ok(content) = std::fs::read_to_string(UPGRADE_STATUS_FILE) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+            if v.get("status").and_then(|s| s.as_str()) == Some("running") {
+                write_upgrade_status(&json!({
+                    "status": "completed_or_restarted",
+                    "message": "Service was restarted during upgrade (likely by the installer). Check the upgrade log for the actual outcome.",
+                    "recovered_at": chrono::Utc::now().to_rfc3339(),
+                }));
+                info!("Recovered stale upgrade status: 'running' → 'completed_or_restarted'");
+            }
+        }
+    }
+}
+
+async fn read_upgrade_status() -> serde_json::Value {
+    tokio::fs::read_to_string(UPGRADE_STATUS_FILE)
+        .await
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| json!({"status": "idle"}))
@@ -357,7 +389,13 @@ pub async fn restart_services() -> impl IntoResponse {
     security(("bearer_auth" = [])),
     request_body(content_type = "multipart/form-data", description = "上传升级包"),
     responses((status = 200, description = "升级已启动"), (status = 409, description = "升级正在进行中")))]
-pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
+pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl IntoResponse {
+    use tokio::io::AsyncWriteExt;
+
+    // Log immediately so that even if the connection is later dropped mid-upload,
+    // there is a record that this handler was invoked.
+    info!("Upgrade upload request received");
+
     {
         let running = UPGRADE_RUNNING.lock().unwrap();
         if *running {
@@ -369,53 +407,8 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
         }
     }
 
-    let mut pkg_data: Option<Vec<u8>> = None;
-    let mut pkg_name = "upgrade.tar.gz".to_string();
-
-    loop {
-        match multipart.next_field().await {
-            Ok(None) => break,
-            Err(e) => {
-                let msg = classify_upload_error(&e.to_string(), 1024);
-                error!("Upgrade multipart parse error: {}", e);
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({"success": false, "message": msg})),
-                )
-                    .into_response();
-            },
-            Ok(Some(field)) => {
-                if let Some(fname) = field.file_name() {
-                    pkg_name = fname.to_string();
-                }
-                match field.bytes().await {
-                    Ok(data) => pkg_data = Some(data.to_vec()),
-                    Err(e) => {
-                        let msg = classify_upload_error(&e.to_string(), 1024);
-                        error!("Read upgrade error: {}", e);
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(json!({"success": false, "message": msg})),
-                        )
-                            .into_response();
-                    },
-                }
-            },
-        }
-    }
-
-    let data = match pkg_data {
-        Some(d) if !d.is_empty() => d,
-        _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"success": false, "message": "No upgrade package received. Please select an upgrade file and try again."})),
-            )
-                .into_response();
-        },
-    };
-
-    // Docker Socket must be mounted so the upgrade container can call docker commands on the host
+    // Run all prerequisite checks before touching the request body so that
+    // obvious failures are reported immediately without streaming any bytes.
     let docker_socket = Path::new("/var/run/docker.sock");
     if !docker_socket.exists() {
         return (
@@ -438,14 +431,258 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
             .into_response();
     }
 
+    // Clean up any leftover upgrade packages from previous runs before writing a
+    // new one.  Without this, multiple 500 MB .run files accumulate on disk,
+    // rapidly filling the partition and causing the next upload to slow to a crawl
+    // or fail with ENOSPC mid-transfer.
+    match std::fs::read_dir(upgrade_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if ext == "run" || ext == "sh" {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        error!("Failed to remove old upgrade package {:?}: {}", path, e);
+                    } else {
+                        info!("Removed old upgrade package: {:?}", path);
+                    }
+                }
+            }
+        },
+        Err(e) => {
+            error!("Failed to list upgrade directory for cleanup: {}", e);
+        },
+    }
+
+    // Refuse early if there is less than 2 GB of free space on the upgrade
+    // partition — a typical .run package is ~500 MB and the installer needs
+    // additional headroom for Docker image layers and extraction.  2 GB gives
+    // comfortable margin even when the previous upgrade left temporary files.
+    {
+        let df_out = std::process::Command::new("df")
+            .args(["--output=avail", "-B1", UPGRADE_DIR])
+            .output();
+        if let Ok(out) = df_out {
+            // df output: header line + data line, avail is in bytes (-B1)
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Some(avail_bytes) = stdout
+                .lines()
+                .nth(1)
+                .and_then(|l| l.trim().parse::<u64>().ok())
+            {
+                const MIN_FREE: u64 = 2_000 * 1024 * 1024; // 2 GB
+                info!(
+                    "Disk space check (after cleanup): {:.1} MB free on {}",
+                    avail_bytes as f64 / (1024.0 * 1024.0),
+                    UPGRADE_DIR
+                );
+                if avail_bytes < MIN_FREE {
+                    return (
+                        StatusCode::INSUFFICIENT_STORAGE,
+                        Json(json!({
+                            "success": false,
+                            "message": format!(
+                                "Insufficient disk space: {:.1} MB free, at least 2 GB required",
+                                avail_bytes as f64 / (1024.0 * 1024.0)
+                            )
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
+
+    // Get the upload field.
+    let field = match multipart.next_field().await {
+        Ok(None) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"success": false, "message": "No upgrade package received. Please select an upgrade file and try again."})),
+            )
+                .into_response();
+        },
+        Err(e) => {
+            let msg = classify_upload_error(&e.to_string(), 1024);
+            error!("Upgrade multipart parse error: {}", e);
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"success": false, "message": msg})),
+            )
+                .into_response();
+        },
+        Ok(Some(f)) => f,
+    };
+
+    let pkg_name = field.file_name().unwrap_or("upgrade.run").to_string();
     let pkg_path = upgrade_dir.join(&pkg_name);
-    if let Err(e) = std::fs::write(&pkg_path, &data) {
+
+    // Extract Content-Length from the request headers for progress tracking.
+    // This is the full multipart body size (slightly larger than the file itself
+    // due to multipart boundaries), but accurate enough for a progress indicator.
+    let total_bytes = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    UPLOAD_RECEIVED_BYTES.store(0, Ordering::Relaxed);
+    UPLOAD_TOTAL_BYTES.store(total_bytes, Ordering::Relaxed);
+    UPLOAD_ABORT_REQUESTED.store(false, Ordering::Relaxed);
+    UPLOAD_IN_PROGRESS.store(true, Ordering::Relaxed);
+
+    write_upgrade_status(&json!({
+        "status": "uploading",
+        "filename": pkg_name,
+        "total_bytes": total_bytes,
+        "started_at": chrono::Utc::now().to_rfc3339(),
+    }));
+
+    info!(
+        "Streaming upgrade package to disk: {} → {:?}",
+        pkg_name, pkg_path
+    );
+
+    // Create the output file wrapped in a 4 MB BufWriter. Multipart chunks from
+    // the network are typically 8–64 KB; without buffering each chunk triggers
+    // a separate write syscall. On slow eMMC / SD storage that creates severe
+    // I/O backpressure which stalls the TCP receive window and makes the upload
+    // appear "slow". The 4 MB buffer batches ~64–512 chunks into one large
+    // write, dramatically reducing syscall overhead.
+    let mut out_file = match tokio::fs::File::create(&pkg_path).await {
+        Ok(f) => tokio::io::BufWriter::with_capacity(4 * 1024 * 1024, f),
+        Err(e) => {
+            error!("Failed to create upgrade file: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": format!("Failed to create upgrade file: {}", e)})),
+            )
+                .into_response();
+        },
+    };
+
+    // Stream the upload directly to disk chunk-by-chunk instead of buffering
+    // the entire file in memory.  A 30-minute absolute deadline handles even
+    // very slow links; the same deadline is reused across iterations so the
+    // total allowed time is capped, not the per-chunk time.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30 * 60);
+    let mut received_bytes: u64 = 0;
+    let mut field = field;
+
+    // Macro to consolidate the repeated cleanup on error paths inside the loop.
+    macro_rules! upload_abort_cleanup {
+        ($pkg_path:expr) => {{
+            UPLOAD_IN_PROGRESS.store(false, Ordering::Relaxed);
+            UPLOAD_ABORT_REQUESTED.store(false, Ordering::Relaxed);
+            UPLOAD_RECEIVED_BYTES.store(0, Ordering::Relaxed);
+            UPLOAD_TOTAL_BYTES.store(0, Ordering::Relaxed);
+            drop(out_file);
+            let _ = std::fs::remove_file(&$pkg_path);
+        }};
+    }
+
+    loop {
+        // Check for a user-initiated abort before requesting the next chunk.
+        if UPLOAD_ABORT_REQUESTED.load(Ordering::Relaxed) {
+            upload_abort_cleanup!(pkg_path);
+            write_upgrade_status(&json!({
+                "status": "aborted",
+                "aborted_at": chrono::Utc::now().to_rfc3339(),
+                "message": "Upload aborted by user"
+            }));
+            info!(
+                "Upgrade upload aborted by user after {} bytes",
+                received_bytes
+            );
+            return (
+                StatusCode::GONE,
+                Json(json!({"success": false, "message": "Upload aborted by user"})),
+            )
+                .into_response();
+        }
+
+        match tokio::time::timeout_at(deadline, field.chunk()).await {
+            Err(_elapsed) => {
+                upload_abort_cleanup!(pkg_path);
+                write_upgrade_status(&json!({"status": "idle"}));
+                error!("Upgrade upload timed out after 30 minutes");
+                return (
+                    StatusCode::REQUEST_TIMEOUT,
+                    Json(json!({
+                        "success": false,
+                        "message": "Upload timed out after 30 minutes. Please check your network connection and retry."
+                    })),
+                )
+                    .into_response();
+            },
+            Ok(Err(e)) => {
+                upload_abort_cleanup!(pkg_path);
+                write_upgrade_status(&json!({"status": "idle"}));
+                let msg = classify_upload_error(&e.to_string(), 1024);
+                error!("Upgrade upload read error: {}", e);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"success": false, "message": msg})),
+                )
+                    .into_response();
+            },
+            Ok(Ok(None)) => break,
+            Ok(Ok(Some(chunk))) => {
+                if let Err(e) = out_file.write_all(&chunk).await {
+                    upload_abort_cleanup!(pkg_path);
+                    write_upgrade_status(&json!({"status": "idle"}));
+                    error!("Upgrade file write error: {}", e);
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"success": false, "message": format!("Failed to write upgrade package: {}", e)})),
+                    )
+                        .into_response();
+                }
+                received_bytes += chunk.len() as u64;
+                UPLOAD_RECEIVED_BYTES.store(received_bytes, Ordering::Relaxed);
+            },
+        }
+    }
+
+    UPLOAD_IN_PROGRESS.store(false, Ordering::Relaxed);
+
+    if let Err(e) = out_file.flush().await {
+        drop(out_file);
+        let _ = std::fs::remove_file(&pkg_path);
+        UPLOAD_RECEIVED_BYTES.store(0, Ordering::Relaxed);
+        UPLOAD_TOTAL_BYTES.store(0, Ordering::Relaxed);
+        error!("Upgrade file flush error: {}", e);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "message": format!("Failed to save upgrade package: {}", e)})),
+            Json(json!({"success": false, "message": format!("Failed to flush upgrade package: {}", e)})),
         )
             .into_response();
     }
+    drop(out_file);
+
+    if received_bytes == 0 {
+        let _ = std::fs::remove_file(&pkg_path);
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "message": "No upgrade package received. Please select an upgrade file and try again."})),
+        )
+            .into_response();
+    }
+
+    info!(
+        "Upgrade package received: {} ({:.2} MB)",
+        pkg_name,
+        received_bytes as f64 / (1024.0 * 1024.0)
+    );
+
+    // Lock upload counters at 100% so the status endpoint shows the completed
+    // upload size during the install phase (instead of confusing 0/0 values).
+    UPLOAD_RECEIVED_BYTES.store(received_bytes, Ordering::Relaxed);
+    UPLOAD_TOTAL_BYTES.store(received_bytes, Ordering::Relaxed);
 
     // Prepare upgrade: chmod +x so the .run file is executable
     let pkg_name_lower = pkg_name.to_lowercase();
@@ -461,7 +698,7 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
     // immediately — a status poll arriving in that window would incorrectly see running=false.
     *UPGRADE_RUNNING.lock().unwrap() = true;
 
-    let size_mb = data.len() as f64 / (1024.0 * 1024.0);
+    let size_mb = received_bytes as f64 / (1024.0 * 1024.0);
     write_upgrade_status(&json!({
         "status": "running",
         "filename": pkg_name,
@@ -602,6 +839,35 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
             },
         }
 
+        // Delete the .run / .sh package now that the installer has finished.
+        // Leaving it on disk is the primary cause of slow subsequent uploads:
+        // the next upload's pre-upload cleanup still has to contend with a
+        // nearly-full disk during the actual transfer.  Deleting it here frees
+        // ~500 MB immediately, well before the user starts the next upgrade.
+        match std::fs::read_dir(UPGRADE_DIR) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if ext == "run" || ext == "sh" {
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            error!(
+                                "Failed to delete upgrade package after install {:?}: {}",
+                                path, e
+                            );
+                        } else {
+                            info!("Deleted upgrade package after install: {:?}", path);
+                        }
+                    }
+                }
+            },
+            Err(e) => error!("Post-install cleanup read_dir failed: {}", e),
+        }
+
         *UPGRADE_RUNNING.lock().unwrap() = false;
         *UPGRADE_PID.lock().unwrap() = None;
     });
@@ -620,34 +886,49 @@ pub async fn start_upgrade(mut multipart: Multipart) -> impl IntoResponse {
     security(("bearer_auth" = [])),
     responses((status = 200, description = "升级已中断")))]
 pub async fn abort_upgrade() -> impl IntoResponse {
+    let uploading = UPLOAD_IN_PROGRESS.load(Ordering::Relaxed);
     let pid = UPGRADE_PID.lock().unwrap().take();
-    let running = *UPGRADE_RUNNING.lock().unwrap();
+    let installing = *UPGRADE_RUNNING.lock().unwrap();
 
-    if !running && pid.is_none() {
+    if !uploading && !installing && pid.is_none() {
         return Json(json!({"success": false, "message": "No upgrade in progress"}))
             .into_response();
     }
 
-    // Stop the nsenter upgrader container if it's running
-    let _ = std::process::Command::new("docker")
-        .args(["stop", "voltageems-upgrader"])
-        .output();
-
-    // Also kill the direct child process if any
-    if let Some(pid) = pid {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .output();
+    // ── Phase 1: abort an in-progress upload ──────────────────────────────────
+    // Setting this flag causes the streaming loop in start_upgrade to break on
+    // its next iteration, clean up the partial file, and write "aborted" status.
+    if uploading {
+        UPLOAD_ABORT_REQUESTED.store(true, Ordering::Relaxed);
+        info!("Abort requested: signalled upload streaming loop to stop");
+        // Give the streaming loop a moment to honour the flag and clean up,
+        // then return immediately — the status endpoint will reflect "aborted".
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
-    *UPGRADE_RUNNING.lock().unwrap() = false;
-    *UPGRADE_PID.lock().unwrap() = None;
+    // ── Phase 2: abort an in-progress install ─────────────────────────────────
+    if installing || pid.is_some() {
+        let _ = tokio::process::Command::new("docker")
+            .args(["stop", "voltageems-upgrader"])
+            .output()
+            .await;
 
-    write_upgrade_status(&json!({
-        "status": "aborted",
-        "aborted_at": chrono::Utc::now().to_rfc3339(),
-        "message": "Upgrade aborted by user"
-    }));
+        if let Some(pid) = pid {
+            let _ = tokio::process::Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output()
+                .await;
+        }
+
+        *UPGRADE_RUNNING.lock().unwrap() = false;
+        *UPGRADE_PID.lock().unwrap() = None;
+
+        write_upgrade_status(&json!({
+            "status": "aborted",
+            "aborted_at": chrono::Utc::now().to_rfc3339(),
+            "message": "Upgrade aborted by user"
+        }));
+    }
 
     Json(json!({"success": true, "message": "Upgrade aborted"})).into_response()
 }
@@ -658,27 +939,63 @@ pub async fn abort_upgrade() -> impl IntoResponse {
     security(("bearer_auth" = [])),
     responses((status = 200, description = "升级状态")))]
 pub async fn upgrade_status() -> impl IntoResponse {
-    let file_status = read_upgrade_status();
+    let file_status = read_upgrade_status().await;
     let mem_running = *UPGRADE_RUNNING.lock().unwrap();
     let mem_pid = *UPGRADE_PID.lock().unwrap();
 
     // Cross-check: if memory says not running but status file says "running",
     // verify whether the upgrader container is actually still alive on the host.
-    let container_running = std::process::Command::new("docker")
-        .args(["inspect", "-f", "{{.State.Running}}", "voltageems-upgrader"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim() == "true")
-        .unwrap_or(false);
+    // Use tokio::process::Command (non-blocking) with a 3-second timeout so that
+    // a slow or unavailable docker daemon never stalls the status response.
+    let container_running = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::process::Command::new("docker")
+            .args(["inspect", "-f", "{{.State.Running}}", "voltageems-upgrader"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .and_then(|o| String::from_utf8(o.stdout).ok())
+    .map(|s| s.trim() == "true")
+    .unwrap_or(false);
 
     let running = mem_running || container_running;
 
-    let log_content = std::fs::read_to_string(UPGRADE_LOG_FILE)
+    // If the status file still says "running" but we can confirm nothing is
+    // actually running (not in memory, no upgrader container), the previous
+    // run was cut short by a service restart.  Fix the file now so subsequent
+    // queries and the current response are consistent.
+    let file_status = if !running
+        && file_status.get("status").and_then(|s| s.as_str()) == Some("running")
+    {
+        let recovered = json!({
+            "status": "completed_or_restarted",
+            "message": "Service was restarted during upgrade (likely by the installer). Check the upgrade log for the actual outcome.",
+            "recovered_at": chrono::Utc::now().to_rfc3339(),
+        });
+        write_upgrade_status(&recovered);
+        info!("Status inconsistency detected: status file was 'running' but no upgrade in progress; corrected to 'completed_or_restarted'");
+        recovered
+    } else {
+        file_status
+    };
+
+    let log_content = tokio::fs::read_to_string(UPGRADE_LOG_FILE)
+        .await
         .map(|raw| clean_log(&raw))
         .unwrap_or_default();
+
+    // Upload progress (only meaningful while detail.status == "uploading")
+    let received = UPLOAD_RECEIVED_BYTES.load(Ordering::Relaxed);
+    let total = UPLOAD_TOTAL_BYTES.load(Ordering::Relaxed);
+    let upload_progress_pct: Option<f64> = if total > 0 {
+        Some((received as f64 / total as f64 * 100.0).min(100.0))
+    } else {
+        None
+    };
 
     Json(json!({
         "success": true,
@@ -688,6 +1005,11 @@ pub async fn upgrade_status() -> impl IntoResponse {
             "pid": mem_pid,
             "log": log_content,
             "detail": file_status,
+            "upload": {
+                "received_bytes": received,
+                "total_bytes": total,
+                "progress_pct": upload_progress_pct,
+            }
         }
     }))
     .into_response()
