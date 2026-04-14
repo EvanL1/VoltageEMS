@@ -13,7 +13,11 @@ import autoprefixer from 'autoprefixer'
 import pxtorem from 'postcss-pxtorem'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  // 生产构建时移除 console.* 和 debugger，开发模式保留
+  esbuild: {
+    drop: mode === 'production' ? ['console', 'debugger'] : [],
+  },
   plugins: [
     vue(),
     vueDevTools(),
@@ -155,11 +159,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     // 压缩配置 - 使用 esbuild（更快且更稳定）
     minify: 'esbuild',
-    // esbuild 默认不会移除 console，且压缩更安全
-    // 如果需要移除 console，可以添加：
-    // esbuildOptions: {
-    //   drop: ['console', 'debugger'],
-    // },
     // Rollup 配置 - 代码分割优化
     rollupOptions: {
       output: {
@@ -204,4 +203,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

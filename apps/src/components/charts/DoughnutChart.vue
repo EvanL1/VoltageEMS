@@ -13,8 +13,14 @@
         </el-icon>
       </div>
     </div>
-    <FullSceenDialog ref="fullScreenDialogRef" title="Doughnut Chart Full Screen" fullscreen :append-to-body="true"
-      :modal-append-to-body="true" :close-on-click-modal="false">
+    <FullSceenDialog
+      ref="fullScreenDialogRef"
+      title="Doughnut Chart Full Screen"
+      fullscreen
+      :append-to-body="true"
+      :modal-append-to-body="true"
+      :close-on-click-modal="false"
+    >
       <template #dialog-body>
         <div class="doughnut-chart-full-screen">
           <div class="doughnut-chart-full-screen__container" ref="fullScreenChartRef"></div>
@@ -71,37 +77,40 @@ interface GridConfig {
   bottom?: number
 }
 
-const props = withDefaults(defineProps<{
-  series: SeriesData[]
-  title?: string
-  radius?: [string, string] // 内半径和外半径，如 ['40%', '70%']
-  center?: [string, string] // 圆心位置，如 ['50%', '50%']
-  // Grid配置参数
-  gridConfig?: GridConfig
-  // 全屏模式Grid配置参数
-  fullScreenGridConfig?: GridConfig
-  // 按钮显示控制
-  showToolbox?: boolean
-  showFullScreen?: boolean
-  showDownload?: boolean
-}>(), {
-  // 默认值
-  gridConfig: () => ({
-    left: 0,
-    right: 0,
-    top: 55,
-    bottom: 10
-  }),
-  fullScreenGridConfig: () => ({
-    left: 50,
-    right: 50,
-    top: 80,
-    bottom: 50
-  }),
-  showToolbox: true,
-  showFullScreen: true,
-  showDownload: true
-})
+const props = withDefaults(
+  defineProps<{
+    series: SeriesData[]
+    title?: string
+    radius?: [string, string] // 内半径和外半径，如 ['40%', '70%']
+    center?: [string, string] // 圆心位置，如 ['50%', '50%']
+    // Grid配置参数
+    gridConfig?: GridConfig
+    // 全屏模式Grid配置参数
+    fullScreenGridConfig?: GridConfig
+    // 按钮显示控制
+    showToolbox?: boolean
+    showFullScreen?: boolean
+    showDownload?: boolean
+  }>(),
+  {
+    // 默认值
+    gridConfig: () => ({
+      left: 0,
+      right: 0,
+      top: 55,
+      bottom: 10,
+    }),
+    fullScreenGridConfig: () => ({
+      left: 50,
+      right: 50,
+      top: 80,
+      bottom: 50,
+    }),
+    showToolbox: true,
+    showFullScreen: true,
+    showDownload: true,
+  },
+)
 
 const chartRef = ref<HTMLDivElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
@@ -124,7 +133,7 @@ function customTooltipFormatter(
   const value = params.value || 0
   const percent = params.percent || 0
 
-  let html = `
+  const html = `
     <div style="
       max-width:${width}px;
       min-height:${minHeight}px;
@@ -183,18 +192,19 @@ function customTooltipFormatter(
 }
 
 function getGridConfig(isFullScreen: boolean) {
-  return isFullScreen ? {
-    left: pxToResponsive(props.gridConfig.left || 0),
-    right: pxToResponsive(props.gridConfig.right || 0),
-    top: pxToResponsive(props.gridConfig.top || 45),
-    bottom: pxToResponsive(props.gridConfig.bottom || 15),
-  }
+  return isFullScreen
+    ? {
+        left: pxToResponsive(props.gridConfig.left || 0),
+        right: pxToResponsive(props.gridConfig.right || 0),
+        top: pxToResponsive(props.gridConfig.top || 45),
+        bottom: pxToResponsive(props.gridConfig.bottom || 15),
+      }
     : {
-      left: pxToResponsive(props.fullScreenGridConfig.left || 0),
-      right: pxToResponsive(props.fullScreenGridConfig.right || 0),
-      top: pxToResponsive(props.fullScreenGridConfig.top || 45),
-      bottom: pxToResponsive(props.fullScreenGridConfig.bottom || 15),
-    }
+        left: pxToResponsive(props.fullScreenGridConfig.left || 0),
+        right: pxToResponsive(props.fullScreenGridConfig.right || 0),
+        top: pxToResponsive(props.fullScreenGridConfig.top || 45),
+        bottom: pxToResponsive(props.fullScreenGridConfig.bottom || 15),
+      }
 }
 
 // 统一生成option的方法
@@ -213,133 +223,133 @@ function getChartOption({
   // Tooltip样式参数
   const tooltipSize = isFullScreen
     ? {
-      width: pxToResponsive(300),
-      minHeight: pxToResponsive(120),
-      fontSize: pxToResponsive(32),
-      itemFontSize: pxToResponsive(24),
-      itemLineHeight: pxToResponsive(32),
-      dotSize: pxToResponsive(20),
-      gap: pxToResponsive(16),
-    }
+        width: pxToResponsive(300),
+        minHeight: pxToResponsive(120),
+        fontSize: pxToResponsive(32),
+        itemFontSize: pxToResponsive(24),
+        itemLineHeight: pxToResponsive(32),
+        dotSize: pxToResponsive(20),
+        gap: pxToResponsive(16),
+      }
     : {
-      width: pxToResponsive(220),
-      minHeight: pxToResponsive(100),
-      fontSize: pxToResponsive(14),
-      itemFontSize: pxToResponsive(12),
-      itemLineHeight: pxToResponsive(18),
-      dotSize: pxToResponsive(8),
-      gap: pxToResponsive(8),
-    }
+        width: pxToResponsive(220),
+        minHeight: pxToResponsive(100),
+        fontSize: pxToResponsive(14),
+        itemFontSize: pxToResponsive(12),
+        itemLineHeight: pxToResponsive(18),
+        dotSize: pxToResponsive(8),
+        gap: pxToResponsive(8),
+      }
 
   // legend/grid/axis样式参数
   const legend = isFullScreen
     ? {
-      show: true,
-      type: 'plain',
-      orient: 'horizontal',
-      right: pxToResponsive(50),
-      top: pxToResponsive(30),
-      itemWidth: pxToResponsive(20),
-      itemHeight: pxToResponsive(20),
-      itemGap: pxToResponsive(40),
-      textStyle: {
-        color: 'rgba(255, 255, 255, 0.6)',
-        fontSize: pxToResponsive(18),
-        fontFamily: 'Arimo',
-        fontWeight: 400,
-      },
-      data: props.series.map((s: SeriesData) => s.name),
-    }
+        show: true,
+        type: 'plain',
+        orient: 'horizontal',
+        right: pxToResponsive(50),
+        top: pxToResponsive(30),
+        itemWidth: pxToResponsive(20),
+        itemHeight: pxToResponsive(20),
+        itemGap: pxToResponsive(40),
+        textStyle: {
+          color: 'rgba(255, 255, 255, 0.6)',
+          fontSize: pxToResponsive(18),
+          fontFamily: 'Arimo',
+          fontWeight: 400,
+        },
+        data: props.series.map((s: SeriesData) => s.name),
+      }
     : {
-      show: true,
-      type: 'plain',
-      orient: 'horizontal',
-      right: 0,
-      top: pxToResponsive(10),
-      itemWidth: pxToResponsive(12),
-      itemHeight: pxToResponsive(12),
-      itemGap: pxToResponsive(25),
-      textStyle: {
-        color: 'rgba(255, 255, 255, 0.6)',
-        fontSize: pxToResponsive(12),
-        fontFamily: 'Arimo',
-        fontWeight: 400,
-      },
-      data: props.series.map((s: SeriesData) => s.name),
-    }
+        show: true,
+        type: 'plain',
+        orient: 'horizontal',
+        right: 0,
+        top: pxToResponsive(10),
+        itemWidth: pxToResponsive(12),
+        itemHeight: pxToResponsive(12),
+        itemGap: pxToResponsive(25),
+        textStyle: {
+          color: 'rgba(255, 255, 255, 0.6)',
+          fontSize: pxToResponsive(12),
+          fontFamily: 'Arimo',
+          fontWeight: 400,
+        },
+        data: props.series.map((s: SeriesData) => s.name),
+      }
 
   const grid = getGridConfig(isFullScreen)
 
   // tooltip
   const tooltip = isFullScreen
     ? {
-      trigger: 'item',
-      confine: true,
-      backgroundColor: '#3f4f75',
-      borderColor: 'rgba(255,255,255,0.12)',
-      borderWidth: pxToResponsive(2),
-      padding: [pxToResponsive(30), pxToResponsive(40), pxToResponsive(30), pxToResponsive(40)],
-      extraCssText: `
+        trigger: 'item',
+        confine: true,
+        backgroundColor: '#3f4f75',
+        borderColor: 'rgba(255,255,255,0.12)',
+        borderWidth: pxToResponsive(2),
+        padding: [pxToResponsive(30), pxToResponsive(40), pxToResponsive(30), pxToResponsive(40)],
+        extraCssText: `
           border-radius: ${pxToResponsive(24)}px;
           box-shadow: 0 ${pxToResponsive(16)}px ${pxToResponsive(32)}px 0 rgba(0,0,0,0.15);
           max-width: ${pxToResponsive(500)}px;
           min-height: ${pxToResponsive(120)}px;
         `,
-      textStyle: {
-        fontFamily: 'Arimo',
-        fontWeight: 400,
-        fontSize: pxToResponsive(24),
-        color: 'rgba(255,255,255,0.85)',
-        lineHeight: pxToResponsive(32),
-      },
-      formatter: (params: any) => customTooltipFormatter(params, tooltipSize),
-    }
+        textStyle: {
+          fontFamily: 'Arimo',
+          fontWeight: 400,
+          fontSize: pxToResponsive(24),
+          color: 'rgba(255,255,255,0.85)',
+          lineHeight: pxToResponsive(32),
+        },
+        formatter: (params: any) => customTooltipFormatter(params, tooltipSize),
+      }
     : {
-      trigger: 'item',
-      confine: true,
-      backgroundColor: '#3f4f75',
-      borderColor: 'rgba(255,255,255,0.12)',
-      borderWidth: pxToResponsive(1),
-      padding: [pxToResponsive(10), pxToResponsive(16), pxToResponsive(10), pxToResponsive(16)],
-      extraCssText: `
+        trigger: 'item',
+        confine: true,
+        backgroundColor: '#3f4f75',
+        borderColor: 'rgba(255,255,255,0.12)',
+        borderWidth: pxToResponsive(1),
+        padding: [pxToResponsive(10), pxToResponsive(16), pxToResponsive(10), pxToResponsive(16)],
+        extraCssText: `
           border-radius: ${pxToResponsive(8)}px;
           box-shadow: 0 ${pxToResponsive(4)}px ${pxToResponsive(16)}px 0 rgba(0,0,0,0.12);
           max-width: ${pxToResponsive(220)}px;
           min-height: ${pxToResponsive(100)}px;
         `,
-      textStyle: {
-        fontFamily: 'Arimo',
-        fontWeight: 400,
-        fontSize: pxToResponsive(12),
-        color: 'rgba(255,255,255,0.85)',
-        lineHeight: pxToResponsive(18),
-      },
-      formatter: (params: any) => customTooltipFormatter(params, tooltipSize),
-    }
+        textStyle: {
+          fontFamily: 'Arimo',
+          fontWeight: 400,
+          fontSize: pxToResponsive(12),
+          color: 'rgba(255,255,255,0.85)',
+          lineHeight: pxToResponsive(18),
+        },
+        formatter: (params: any) => customTooltipFormatter(params, tooltipSize),
+      }
 
   const titleConfig = isFullScreen
     ? {
-      text: title,
-      left: 'center',
-      top: pxToResponsive(20),
-      textStyle: {
-        color: 'rgba(255, 255, 255, 0.8)',
-        fontFamily: 'Arimo',
-        fontWeight: 500,
-        fontSize: pxToResponsive(24),
-      },
-    }
+        text: title,
+        left: 'center',
+        top: pxToResponsive(20),
+        textStyle: {
+          color: 'rgba(255, 255, 255, 0.8)',
+          fontFamily: 'Arimo',
+          fontWeight: 500,
+          fontSize: pxToResponsive(24),
+        },
+      }
     : {
-      text: title,
-      left: 'center',
-      top: pxToResponsive(10),
-      textStyle: {
-        color: 'rgba(255, 255, 255, 0.8)',
-        fontFamily: 'Arimo',
-        fontWeight: 500,
-        fontSize: pxToResponsive(14),
-      },
-    }
+        text: title,
+        left: 'center',
+        top: pxToResponsive(10),
+        textStyle: {
+          color: 'rgba(255, 255, 255, 0.8)',
+          fontFamily: 'Arimo',
+          fontWeight: 500,
+          fontSize: pxToResponsive(14),
+        },
+      }
 
   const series = [
     {

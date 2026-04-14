@@ -1,8 +1,14 @@
 <template>
   <div class="voltage-class data-update-setting">
     <ModuleCard title="MQTT Config">
-      <el-form ref="formRef" :model="formData" :rules="rules" class="data-update-form" label-width="1.35rem"
-        label-position="right">
+      <el-form
+        ref="formRef"
+        :model="formData"
+        :rules="rules"
+        class="data-update-form"
+        label-width="1.35rem"
+        label-position="right"
+      >
         <!-- 连接状态来自 GET /netApi/mqtt/status，只读展示 -->
 
         <!-- 仅展示 Host、Port 两项（保持原始校验/数据结构不变） -->
@@ -30,20 +36,27 @@
               <el-input v-model="formData.broker_host" placeholder="Enter host address" />
             </el-form-item>
             <el-form-item label="Port:" prop="broker_port">
-              <el-input-number v-model="formData.broker_port" :min="1" :max="65535" :controls="false" align="left"
-                placeholder="Enter port number" style="width: 100% !important" />
+              <el-input-number
+                v-model="formData.broker_port"
+                :min="1"
+                :max="65535"
+                :controls="false"
+                align="left"
+                class="data-update-form__full-field"
+                placeholder="Enter port number"
+              />
             </el-form-item>
           </div>
         </div>
       </el-form>
       <template #footer>
         <div class="card__content-footer">
-          <el-button type="primary" :disabled="mqttCardActionsDisabled" @click="openDetail">Detail</el-button>
+          <el-button type="primary" :disabled="mqttCardActionsDisabled" @click="openDetail"
+            >Detail</el-button
+          >
           <div class="card__content-footer__right">
             <el-button
               v-if="connected"
-              type="danger"
-              plain
               :disabled="mqttCardActionsDisabled"
               :loading="mqttOperationLoading"
               @click="handleDisconnectClick"
@@ -52,14 +65,18 @@
             </el-button>
             <el-button
               type="primary"
-              plain
               :disabled="mqttCardActionsDisabled"
               :loading="mqttOperationLoading"
               @click="handleReconnectClick"
             >
               Reconnect
             </el-button>
-            <el-button type="primary" :disabled="mqttCardActionsDisabled" :loading="submitLoading" @click="handleSubmit">
+            <el-button
+              type="primary"
+              :disabled="mqttCardActionsDisabled"
+              :loading="submitLoading"
+              @click="handleSubmit"
+            >
               Submit
             </el-button>
           </div>
@@ -178,7 +195,9 @@ const pollUntilConnectedIs = (expected: boolean): Promise<void> => {
         attempts += 1
         if (attempts > POLL_MAX_ATTEMPTS) {
           mqttOperationLoading.value = false
-          ElMessage.warning('Status synchronization timed out, please refresh the page or try again later')
+          ElMessage.warning(
+            'Status synchronization timed out, please refresh the page or try again later',
+          )
           finish()
           return
         }
@@ -376,13 +395,13 @@ const handleUpdate = async () => {
       border: none;
       background: transparent;
 
-      &>div {
-        margin-bottom: 0.2rem;
+      // &>div {
+      //   margin-bottom: 0.4rem;
 
-        &:last-child {
-          margin-bottom: 0;
-        }
-      }
+      //   &:last-child {
+      //     margin-bottom: 0;
+      //   }
+      // }
 
       // :deep(.el-collapse-item) {
       //   margin-bottom: 0.2rem;
@@ -445,7 +464,7 @@ const handleUpdate = async () => {
       padding: 0.2rem 0;
 
       .el-form-item {
-        margin-bottom: 0.2rem;
+        // margin-bottom: 0.2rem;
 
         &:last-child {
           margin-bottom: 0;
@@ -455,7 +474,11 @@ const handleUpdate = async () => {
 
     // 输入框样式优化
     :deep(.el-input) {
-      width: 100% !important;
+      width: 100%;
+    }
+
+    :deep(.data-update-form__full-field) {
+      width: 100%;
     }
   }
 
@@ -467,7 +490,6 @@ const handleUpdate = async () => {
     // gap: 0.08rem;
     width: 100%;
     justify-content: space-between;
-
 
     .connection-status__addr {
       display: inline-flex;

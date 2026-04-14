@@ -1,9 +1,9 @@
 import { Request } from '@/utils/request'
 import type { CurrentAlarmResponse, HistoryAlarmResponse } from '@/types/alarm'
-import type { RuleResponse } from '@/types/ruleManagement'
-import type { RuleFormModel, RuleInfo } from '@/types/ruleManagement'
+import type { RuleDetailResponse, RuleFormModel } from '@/types/ruleManagement'
 import type { ApiResponse } from '@/types/user'
-export const getRuleDetail = (id: string): Promise<ApiResponse<RuleResponse>> => {
+
+export const getRuleDetail = (id: string | number): Promise<ApiResponse<RuleDetailResponse>> => {
   return Request.get(`/alarmApi/rules/${id}`)
 }
 

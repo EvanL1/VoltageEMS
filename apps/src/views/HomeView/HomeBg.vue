@@ -166,7 +166,6 @@
             <div class="no-rem__card-title">PV</div>
             <div class="no-rem__card-content">
               <div class="no-rem__card-content-item">
-              
                 <span class="no-rem__name">{{ props.data.pv.P?.name }}:</span>
                 <span class="no-rem__value">{{ props.data.pv.P?.value }}</span>
                 <span class="no-rem__unit">{{ props.data.pv.P?.unit }}</span>
@@ -689,7 +688,6 @@
       </defs>
     </svg>
   </div>
-
 </template>
 <script setup lang="ts">
 import jiantou from '@/assets/images/jiantou.png'

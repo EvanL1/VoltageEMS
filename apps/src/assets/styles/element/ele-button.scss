@@ -1,237 +1,170 @@
-/* Element Plus Button 组件样式重写 */
-
-// 引入主题变量
 @use './theme-vars.scss' as *;
 
-// 基础按钮样式
-.el-button {
-  // 重置默认样式
-  height: 0.32rem !important;
-  font-size: 0.14rem !important;
-  padding: 0.05rem 0.16rem !important;
-  border: none !important;
-  outline: none !important;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  position: relative;
-  overflow: hidden;
-  font-family: Arimo, sans-serif;
-  font-weight: 400 !important;
-  vertical-align: middle;
-  color: #fff !important;
-  border-radius: 0 !important;
-  background: rgba(255, 255, 255, 0.1) !important;
-  &:hover {
-    background: #505f79 !important;
-  }
-  &:active {
-    background: rgba(255, 255, 255, 0.1) !important;
-  }
-  &:focus {
-    box-shadow: none !important;
-  }
-
-  // 主要按钮
-  &.el-button--primary,
-  &.el-picker-panel__link-btn {
-    background: rgba(255, 105, 0, 1) !important;
-    color: rgba(255, 255, 255, 1);
-    box-shadow: none;
+.voltage-class {
+  .el-button {
+    min-height: $button-height-base;
+    padding: $button-padding-base;
+    border: none;
+    border-radius: 0;
+    outline: none;
+    overflow: hidden;
+    position: relative;
+    vertical-align: middle;
+    cursor: pointer;
+    font-family: var(--vt-font-family-base);
+    font-size: $button-font-size-base;
+    font-weight: $font-weight-normal;
+    line-height: $button-line-height-base;
+    color: $text-color-primary;
+    background: rgba(255, 255, 255, 0.1);
+    transition:
+      background-color $transition-fast,
+      border-color $transition-fast,
+      color $transition-fast,
+      box-shadow $transition-fast,
+      transform $transition-fast;
 
     &:hover {
-      background: #ff8733 !important;
-      color: rgba(255, 255, 255, 1) !important;
+      background: #505f79;
+      color: #fff;
     }
 
     &:active {
-      background: #ff8733 !important;
-      color: rgba(255, 255, 255, 1) !important;
+      background: rgba(255, 255, 255, 0.12);
+      transform: translateY(0.01rem);
     }
 
-    &:focus {
-      box-shadow: none !important;
+    &:focus-visible {
+      box-shadow: 0 0 0 0.02rem rgba(255, 105, 0, 0.2);
+    }
+
+    &.el-button--primary,
+    &.el-picker-panel__link-btn {
+      background: $primary-color;
+      color: $text-color-primary;
+
+      &:hover {
+        background: $primary-color-hover;
+        color: $text-color-primary;
+      }
+
+      &:active {
+        background: $primary-color-active;
+        color: $text-color-primary;
+      }
+
+      &.is-disabled {
+        background: rgba(255, 255, 255, 0.08);
+        color: $text-color-disabled;
+      }
+    }
+
+    &.el-button--warning,
+    &.is-text {
+      background: rgba(255, 255, 255, 0.1);
+      &:hover {
+        background: #505f79;
+      }
+    }
+
+    &.el-button--default {
+      border: none;
+    }
+
+    &.el-button--info {
+      background: linear-gradient(135deg, $info-color 0%, #096dd9 100%);
+      box-shadow: 0 0.02rem 0.08rem rgba(24, 144, 255, 0.3);
+
+      &:hover {
+        background: linear-gradient(135deg, $info-color-hover 0%, #0050b3 100%);
+        box-shadow: 0 0.04rem 0.12rem rgba(24, 144, 255, 0.4);
+        transform: translateY(-0.01rem);
+      }
+
+      &:active {
+        background: linear-gradient(135deg, $info-color-active 0%, #003a8c 100%);
+        box-shadow: 0 0.02rem 0.04rem rgba(24, 144, 255, 0.3);
+        transform: translateY(0);
+      }
+    }
+
+    &.is-link {
+      padding: 0.05rem 0.08rem;
+      background: transparent;
+      border: none;
+      text-decoration: underline;
+
+      &:hover,
+      &:active {
+        background: transparent;
+      }
+    }
+
+    &.is-circle {
+      padding: 0;
+      border-radius: 0;
+
+      &.el-button--default {
+        width: $button-height-base;
+        height: $button-height-base;
+      }
+
+      &.el-button--small {
+        width: $button-height-small;
+        height: $button-height-small;
+      }
+
+      &.el-button--large {
+        width: $button-height-large;
+        height: $button-height-large;
+      }
+    }
+
+    &.is-round {
+      border-radius: 0;
+    }
+
+    &.is-loading {
+      pointer-events: none;
+      opacity: $opacity-loading;
     }
 
     &.is-disabled {
-      background: $bg-color-page !important;
-      color: $text-color-disabled !important;
-      box-shadow: none !important;
       cursor: not-allowed;
+      opacity: $opacity-disabled;
+      box-shadow: none;
 
-      &:hover {
-        background: $bg-color-page !important;
+      &:hover,
+      &:active {
         transform: none;
-        box-shadow: none;
+        background: rgba(255, 255, 255, 0.08);
       }
     }
-  }
 
-  // 普通按钮
-  &,
-  &.el-button--warning,
-  &.is-text {
-    background: rgba(255, 255, 255, 0.1) !important;
-    color: #ffffff;
-
-    &:hover {
-      background: #505f79 !important;
-    }
-
-    &:active {
-      background: #505f79 !important;
-    }
-
-    &:focus {
-      box-shadow: none !important;
+    & + .el-button {
+      margin-left: $spacing-sm;
     }
   }
 
-  // 信息按钮
-  &.el-button--info {
-    background: linear-gradient(135deg, $info-color 0%, #096dd9 100%);
-    color: #ffffff;
-    box-shadow: 0 0.02rem 0.08rem rgba(24, 144, 255, 0.3);
+  .el-button-group {
+    display: inline-flex;
 
-    &:hover {
-      background: linear-gradient(135deg, $info-color-hover 0%, #0050b3 100%);
-      box-shadow: 0 0.04rem 0.12rem rgba(24, 144, 255, 0.4);
-      transform: translateY(-0.01rem);
+    .el-button {
+      margin-left: 0;
+      border-radius: 0;
+
+      &:not(:first-child) {
+        margin-left: -0.01rem;
+      }
+
+      &:hover,
+      &:focus-visible {
+        z-index: 1;
+      }
     }
-
-    &:active {
-      background: linear-gradient(135deg, $info-color-active 0%, #003a8c 100%);
-      box-shadow: 0 0.02rem 0.04rem rgba(24, 144, 255, 0.3);
-      transform: translateY(0);
-    }
-
-    &:focus {
-      box-shadow: 0 0 0 0.02rem rgba(24, 144, 255, 0.2);
-    }
-  }
-
-  // 默认按钮
-  &.el-button--default {
-    background: rgba(255, 255, 255, 0.1);
-    color: #ffffff;
-    border: 0.01rem solid rgba(255, 255, 255, 0.2);
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.2);
-      border-color: rgba(255, 255, 255, 0.3);
-      transform: translateY(-0.01rem);
-    }
-
-    &:active {
-      background: rgba(255, 255, 255, 0.15);
-      border-color: rgba(255, 255, 255, 0.25);
-      transform: translateY(0);
-    }
-
-    &:focus {
-      box-shadow: 0 0 0 0.02rem rgba(255, 255, 255, 0.2);
-    }
-  }
-
-  // 链接按钮
-  &.is-link {
-    background: transparent !important;
-    padding: 0.05rem 0.08rem !important;
-    text-decoration: underline;
-
-    &:hover {
-      background: transparent !important;
-      // padding: 0.05rem 0.08rem !important;
-    }
-
-    &:focus {
-      box-shadow: 0 0 0 0.02rem rgba(24, 144, 255, 0.2);
-    }
-  }
-
-  // 圆形按钮
-  &.is-circle {
-    border-radius: $border-radius-circle;
-    padding: 0;
-
-    &.el-button--default {
-      width: $button-height-base;
-      height: $button-height-base;
-    }
-
-    &.el-button--small {
-      width: $button-height-small;
-      height: $button-height-small;
-    }
-
-    &.el-button--large {
-      width: $button-height-large;
-      height: $button-height-large;
-    }
-  }
-
-  // 圆角按钮
-  &.is-round {
-    border-radius: 0.04rem;
-  }
-
-  // 加载状态
-  &.is-loading {
-    pointer-events: none;
-    opacity: $opacity-loading;
 
     .el-icon {
-      animation: rotating 2s linear infinite;
+      font-size: $font-size-base;
     }
-  }
-
-  // 禁用状态
-  &.is-disabled {
-    cursor: not-allowed;
-    opacity: $opacity-disabled;
-
-    &:hover {
-      transform: none;
-      box-shadow: none;
-    }
-  }
-
-  // 按钮间距
-  & + .el-button {
-    margin-left: 0.08rem !important;
-  }
-}
-
-// 按钮组样式
-.el-button-group {
-  display: inline-flex;
-
-  .el-button {
-    border-radius: 0;
-    margin-left: 0;
-
-    &:first-child {
-      border-top-left-radius: 0.04rem;
-      border-bottom-left-radius: 0.04rem;
-    }
-
-    &:last-child {
-      border-top-right-radius: 0.04rem;
-      border-bottom-right-radius: 0.04rem;
-    }
-
-    &:not(:first-child) {
-      margin-left: -0.01rem;
-    }
-
-    &:hover {
-      z-index: 1;
-    }
-
-    &:focus {
-      z-index: 1;
-    }
-  }
-  .el-icon {
-    font-size: 0.14rem !important;
   }
 }

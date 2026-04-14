@@ -51,7 +51,7 @@ useWebSocket(
           }
         })
       }
-      
+
       // 处理通道3的S类型数据（右侧表格）
       const channel3SUpdate = data.updates?.find(
         (item: any) => item.channel_id === 3 && item.data_type === 'S',

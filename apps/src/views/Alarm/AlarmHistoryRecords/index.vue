@@ -4,7 +4,7 @@
       <!-- 表格工具�?-->
       <div class="alarm-records__toolbar">
         <div class="alarm-records__toolbar-left" ref="toolbarLeftRef">
-          <el-form :model="filters" inline>
+          <el-form :model="filters" inline class="alarm-records__toolbar-form">
             <el-form-item label="Alarm Level:">
               <el-select
                 v-model="filters.warning_level"
@@ -78,14 +78,12 @@
             prop="rule_name"
             label="Name"
             min-width="1.2rem"
-            show-overflow-tooltip
             class-name="table-ellipsis"
           />
           <el-table-column
             prop="channel_id"
             label="Channel ID"
             min-width="1.2rem"
-            show-overflow-tooltip
             class-name="table-ellipsis"
           />
           <el-table-column prop="warning_level" label="Level" min-width="1rem">
@@ -102,7 +100,6 @@
             prop="triggered_at"
             label="Start Time"
             min-width="1.6rem"
-            show-overflow-tooltip
             class-name="table-ellipsis"
           >
             <template #default="{ row }">
@@ -113,7 +110,6 @@
             prop="recovered_at"
             label="End Time"
             min-width="1.6rem"
-            show-overflow-tooltip
             class-name="table-ellipsis"
           >
             <template #default="{ row }">
@@ -192,7 +188,7 @@ const handleStartTimeChange = (value: Date | null) => {
 // 处理结束时间变化
 const handleEndTimeChange = (value: Date | null) => {
   // 记录原始 Date 以便禁用规则计算
-  let adjusted: Date | null = value ? new Date(value) : null
+  const adjusted: Date | null = value ? new Date(value) : null
   // 若时间未指定（00:00:00），默认设置到当天 23:59:59
   if (
     adjusted &&
@@ -260,12 +256,13 @@ const disableEndTime = (date: Date, type: string) => {
   return {}
 }
 
-// 格式化时间
-const formatDateTime = (dateTime: string | null | undefined): string => {
-  if (!dateTime) return '-'
+// 格式化时间（支持 Unix 秒时间戳和日期字符串）
+const formatDateTime = (dateTime: number | string | null | undefined): string => {
+  if (dateTime === null || dateTime === undefined || dateTime === '') return '-'
   try {
-    const date = new Date(dateTime)
-    if (isNaN(date.getTime())) return dateTime
+    // Unix 时间戳为秒，需转换为毫秒
+    const date = typeof dateTime === 'number' ? new Date(dateTime * 1000) : new Date(dateTime)
+    if (isNaN(date.getTime())) return String(dateTime)
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
@@ -274,7 +271,7 @@ const formatDateTime = (dateTime: string | null | undefined): string => {
     const seconds = String(date.getSeconds()).padStart(2, '0')
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
   } catch {
-    return dateTime
+    return String(dateTime)
   }
 }
 
@@ -304,6 +301,7 @@ const formatDateTime = (dateTime: string | null | undefined): string => {
     .alarm-records__toolbar-right {
       display: flex;
       align-items: center;
+      gap: 0.1rem;
 
       .alarm-records__export-btn {
         display: flex;
@@ -344,11 +342,11 @@ const formatDateTime = (dateTime: string | null | undefined): string => {
     }
   }
 
-  :deep(.el-form.el-form--inline .el-form-item) {
+  :deep(.alarm-records__toolbar-form.el-form--inline .el-form-item) {
     margin-bottom: 0;
   }
 
-  :deep(.el-table .table-ellipsis .cell) {
+  :deep(.alarm-records__table-content .table-ellipsis .cell) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -373,8 +371,4 @@ const formatDateTime = (dateTime: string | null | undefined): string => {
     color: #fe9900;
   }
 }
-
-// :deep(.el-select__popper.el-popper) {
-//   top: 0.44rem !important;
-// }
 </style>

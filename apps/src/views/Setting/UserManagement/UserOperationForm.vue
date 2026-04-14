@@ -244,11 +244,17 @@ defineExpose({ open, close })
 
 <style scoped lang="scss">
 .voltage-class {
+  // .user-form {
+  //   &.el-form--inline .el-form-item{
+  //     margin-right: 0 !important;
+  //   }
+  // }
   .monitor-data-group,
   .role-group,
   .condition-group {
-    display: flex;
-    gap: 0.16rem;
+    width: 100%;
+    // display: flex;
+    // gap: 0.16rem;
   }
 
   .status-group {
@@ -269,9 +275,5 @@ defineExpose({ open, close })
       width: 6.6rem;
     }
   }
-
-  // :deep(.el-select__popper.el-popper) {
-  //   top: 0.44rem !important;
-  // }
 }
 </style>

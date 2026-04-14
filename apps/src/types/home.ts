@@ -13,7 +13,11 @@ export const HOMEPAGE_POINT_IDS = {
   /** Station information: 5-7 */
   stationInfo: [5, 6, 7] as const,
   /** Device information - PV: 8(P), 9(U); Diesel: 10(P), 11(U); ESS: 12(P), 19(SOC) */
-  deviceInfo: [[8, 9], [10, 11], [12, 13]] as const,
+  deviceInfo: [
+    [8, 9],
+    [10, 11],
+    [12, 13],
+  ] as const,
   /** 拓朴图: pv.P=5, load.P=14, diesel.p=6, diesel.oil=17, ess.p=12, ess.soc=19 */
   topology: {
     pv: { P: 14 },

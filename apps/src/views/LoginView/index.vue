@@ -8,7 +8,13 @@
     <div ref="loginFormContainer" class="loginPage__form">
       <ModuleCard title="Monarch">
         <div class="loginPage__form-content">
-          <el-form :model="form" label-position="top" ref="formRef" :rules="formRules">
+          <el-form
+            :model="form"
+            label-position="top"
+            ref="formRef"
+            :rules="formRules"
+            class="loginPage__form-panel"
+          >
             <el-form-item label="Username" prop="username">
               <el-input v-model="form.username" />
             </el-form-item>
@@ -19,7 +25,11 @@
                 @keyup.enter="handleLogin(formRef)"
               />
             </el-form-item>
-            <el-button type="primary" @click="handleLogin(formRef)" :loading="globalStore.loading"
+            <el-button
+              type="primary"
+              class="loginPage__submit-btn"
+              @click="handleLogin(formRef)"
+              :loading="globalStore.loading"
               >Login</el-button
             >
           </el-form>
@@ -159,21 +169,17 @@ const handleLogin = async (formEl: FormInstance | undefined) => {
   }
 }
 
-:deep(.el-button.el-button--primary) {
+:deep(.loginPage__submit-btn.el-button--primary) {
   height: 0.32rem;
   width: 2.4rem;
   margin-top: 0.2rem;
 }
 
-:deep(.el-form-item__label::before) {
-  display: none !important;
+:deep(.loginPage__form-panel .el-form-item__label::before) {
+  display: none;
 }
 
-// :deep(.el-select__popper.el-popper) {
-//   top: 1.66rem !important;
-// }
-
-:deep(.el-form-item .el-form-item__label) {
-  height: 0.22rem !important;
+:deep(.loginPage__form-panel .el-form-item .el-form-item__label) {
+  height: 0.22rem;
 }
 </style>

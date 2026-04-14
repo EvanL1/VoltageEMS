@@ -5,22 +5,48 @@
     </div>
 
     <nav class="sidebar__nav">
-      <el-menu :collapse="globalStore.isCollapse" class="sidebar__menu" :default-active="activeMenuPath" router
-        background-color="transparent" text-color="#fff" active-text-color="#fff" :unique-opened="true">
+      <el-menu
+        :collapse="globalStore.isCollapse"
+        class="sidebar__menu"
+        :default-active="activeMenuPath"
+        router
+        background-color="transparent"
+        text-color="#fff"
+        active-text-color="#fff"
+        :unique-opened="true"
+      >
         <template v-for="item in filterRoutesList" :key="item.path">
-          <el-sub-menu v-if="item.meta.isSubMenu" :index="item.meta.activeNav" class="sidebar__subMenu">
+          <el-sub-menu
+            v-if="item.meta.isSubMenu"
+            :index="item.meta.activeNav"
+            class="sidebar__subMenu"
+          >
             <template #title>
-              <img v-if="item.meta.icon" :src="item.meta.icon" class="sidebar__subMenu-img"
-                :class="{ collapse: globalStore.isCollapse }" alt="" />
+              <img
+                v-if="item.meta.icon"
+                :src="item.meta.icon"
+                class="sidebar__subMenu-img"
+                :class="{ collapse: globalStore.isCollapse }"
+                alt=""
+              />
               <span class="sidebar__subMenu-title">{{ item.meta.title }}</span>
             </template>
-            <el-menu-item v-for="child in item.children" :key="child.path" :index="child.meta.activeNav">
+            <el-menu-item
+              v-for="child in item.children"
+              :key="child.path"
+              :index="child.meta.activeNav"
+            >
               <span>{{ child.meta.title }}</span>
             </el-menu-item>
           </el-sub-menu>
           <el-menu-item v-else :index="item.meta.activeNav" class="sidebar__menu-item">
-            <img v-if="item.meta.icon" :src="item.meta.icon" class="sidebar__subMenu-img"
-              :class="{ collapse: globalStore.isCollapse }" alt="" />
+            <img
+              v-if="item.meta.icon"
+              :src="item.meta.icon"
+              class="sidebar__subMenu-img"
+              :class="{ collapse: globalStore.isCollapse }"
+              alt=""
+            />
             <span class="sidebar__menu-text">{{ item.meta.title }}</span>
           </el-menu-item>
         </template>
@@ -28,7 +54,11 @@
     </nav>
 
     <div class="sidebar__footer" :class="{ collapse: globalStore.isCollapse }">
-      <div class="sidebar__footer-shrink" :class="{ collapse: globalStore.isCollapse }" @click="handleShrink"></div>
+      <div
+        class="sidebar__footer-shrink"
+        :class="{ collapse: globalStore.isCollapse }"
+        @click="handleShrink"
+      ></div>
     </div>
   </div>
 </template>
@@ -64,10 +94,12 @@ const handleShrink = () => {
   padding: 0.2rem 0;
   background: rgba(84, 98, 140, 0.4);
   border-right: 0.01rem solid;
-  border-image-source: linear-gradient(147.24deg,
-      rgba(148, 166, 197, 0.72) 39.16%,
-      rgba(148, 166, 197, 0.36) 66.27%,
-      rgba(148, 166, 197, 0.72) 98.58%);
+  border-image-source: linear-gradient(
+    147.24deg,
+    rgba(148, 166, 197, 0.72) 39.16%,
+    rgba(148, 166, 197, 0.36) 66.27%,
+    rgba(148, 166, 197, 0.72) 98.58%
+  );
   backdrop-filter: blur(0.1rem);
   display: flex;
   flex-direction: column;
@@ -119,7 +151,8 @@ const handleShrink = () => {
     flex: 1;
     padding: 0.2rem;
 
-    .sidebar__menu-item {}
+    .sidebar__menu-item {
+    }
   }
 
   .sidebar__subMenu-img {

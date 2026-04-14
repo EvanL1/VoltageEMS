@@ -307,9 +307,5 @@ const exampleSeries = [
       height: calc((100% - 0.4rem) / 3);
     }
   }
-
-  // :deep(.el-select__popper.el-popper) {
-  //   top: 1.49rem !important;
-  // }
 }
 </style>

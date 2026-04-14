@@ -13,7 +13,7 @@ export interface RuleSnapshot {
 export interface CurrentAlarmData {
   id: number
   rule_id: number
-  rule_snapshot: RuleSnapshot
+  rule_snapshot: string // API 返回 JSON 字符串
   service_type: string
   channel_id: number
   data_type: string
@@ -31,7 +31,7 @@ export interface CurrentAlarmData {
 export interface HistoryAlarmData {
   id: number
   rule_id: number
-  rule_snapshot: RuleSnapshot
+  rule_snapshot: string // API 返回 JSON 字符串
   service_type: string
   channel_id: number
   data_type: string

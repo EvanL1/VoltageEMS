@@ -3,8 +3,15 @@
     <!-- <EnergyBgCopy></EnergyBgCopy> -->
     <div class="home-left">
       <div class="home-left-top">
-        <EnergyCard class="home-left-top-item" v-for="item in energyDashboardList" :key="item.id" :title="item.title"
-          :icon="item.icon" :value="item.value" :unit="item.unit" />
+        <EnergyCard
+          class="home-left-top-item"
+          v-for="item in energyDashboardList"
+          :key="item.id"
+          :title="item.title"
+          :icon="item.icon"
+          :value="item.value"
+          :unit="item.unit"
+        />
       </div>
       <div class="home-left-middle">
         <!-- <img :src="tuopuSvg" alt="">
@@ -14,12 +21,20 @@
       <div class="home-left-bottom">
         <div class="home-left-LineChart">
           <ModuleCard title="Power Curve">
-            <LineChart :xAxiosOption="xAxiosOption" :yAxiosOption="lineChartYAxiosOption" :series="lineChartSeries" />
+            <LineChart
+              :xAxiosOption="xAxiosOption"
+              :yAxiosOption="lineChartYAxiosOption"
+              :series="lineChartSeries"
+            />
           </ModuleCard>
         </div>
         <div class="home-left-EnergyChart">
           <ModuleCard title="Energy Chart">
-            <StackedBarChart :xAxiosOption="xAxiosOption" :yAxiosOption="yAxiosOption" :series="exampleSeries" />
+            <StackedBarChart
+              :xAxiosOption="xAxiosOption"
+              :yAxiosOption="yAxiosOption"
+              :series="exampleSeries"
+            />
           </ModuleCard>
         </div>
       </div>
@@ -29,7 +44,12 @@
         <ModuleCard title="Station infomation">
           <div class="home-stationList">
             <div v-for="item in stationInfoList" :key="item.id" class="home-stationItem">
-              <EnergyCard :title="item.title" :icon="item.icon" :value="item.value" :unit="item.unit" />
+              <EnergyCard
+                :title="item.title"
+                :icon="item.icon"
+                :value="item.value"
+                :unit="item.unit"
+              />
             </div>
           </div>
         </ModuleCard>
@@ -45,12 +65,25 @@
               </div>
             </div> -->
           <div class="home-decice-Carousel">
-            <el-carousel ref="carouselRef" :autoplay="false" arrow="never" indicator-position="none"
-              style="width: 100%; height: 100%">
-              <el-carousel-item v-for="(item, index) in deviceInfoList" :key="index" style="width: 100%; height: 100%">
+            <el-carousel
+              ref="carouselRef"
+              :autoplay="false"
+              arrow="never"
+              indicator-position="none"
+              class="home-device-carousel"
+            >
+              <el-carousel-item
+                v-for="(item, index) in deviceInfoList"
+                :key="index"
+                class="home-device-carousel__item"
+              >
                 <div class="home-decice-Carousel-item">
                   <div class="home-deviceValue">
-                    <div class="home-deviceValue-item" v-for="dataItem in item.data" :key="dataItem.id">
+                    <div
+                      class="home-deviceValue-item"
+                      v-for="dataItem in item.data"
+                      :key="dataItem.id"
+                    >
                       <span class="deviceValue-item-title">{{ dataItem.title }}:</span>
                       <span class="deviceValue-item-value">{{ dataItem.values }}</span>
                       &nbsp;
@@ -80,9 +113,21 @@
           <div class="home-altersList">
             <div class="home-altersItem" v-for="item in alterInfoList" :key="item.id">
               <div class="alters__item-name">{{ item.deviceName }}</div>
-              <img v-if="item.alterLevel == 'Critical Alarm'" :src="alterL1" class="alters__item-icon" />
-              <img v-else-if="item.alterLevel == 'Warning Alarm'" :src="alterL2" class="alters__item-icon" />
-              <img v-else-if="item.alterLevel == 'Info Alarm'" :src="alterL3" class="alters__item-icon" />
+              <img
+                v-if="item.alterLevel == 'Critical Alarm'"
+                :src="alterL1"
+                class="alters__item-icon"
+              />
+              <img
+                v-else-if="item.alterLevel == 'Warning Alarm'"
+                :src="alterL2"
+                class="alters__item-icon"
+              />
+              <img
+                v-else-if="item.alterLevel == 'Info Alarm'"
+                :src="alterL3"
+                class="alters__item-icon"
+              />
               <div class="alters__item-msg">{{ item.alterMsg }}</div>
             </div>
           </div>
@@ -96,6 +141,7 @@
 import type { EnergyCard } from '@/types/home'
 import { HOMEPAGE_POINT_IDS } from '@/types/home'
 import useWebSocket from '@/composables/useWebSocket'
+import { formatNumber } from '@/utils/common'
 
 import ModuleCard from '@/components/card/ModuleCard.vue'
 import StackedBarChart from '@/components/charts/StackedBarChart.vue'
@@ -149,12 +195,13 @@ interface PointInfo {
 }
 const pointStore = reactive<Record<number, PointInfo>>({})
 
-/** 无数据时展示 '-' */
-function displayValue(v: string | number): string | number {
-  return v ?? '-'
+/** 无数据时展示 '-'，有数据时限制最多三位小数 */
+function displayValue(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return '-'
+  return formatNumber(v)
 }
 /** Energy Card / Station 点位默认 name/unit（无 WebSocket 数据时的占位） */
-const HOMEPAGE_POINT_DEFAULTS: Record<number, { name: string; unit: string, imgurl?: string }> = {
+const HOMEPAGE_POINT_DEFAULTS: Record<number, { name: string; unit: string; imgurl?: string }> = {
   1: { name: 'PV Energy', unit: 'kWh', imgurl: 'icon-pv-energy' },
   2: { name: 'Diesel Energy', unit: 'kWh', imgurl: 'icon-diesel-energy' },
   3: { name: 'Energy Used', unit: 'kWh', imgurl: 'icon-energy-used' },
@@ -186,7 +233,7 @@ const energyDashboardList = computed<EnergyCard[]>(() =>
       title: p?.name ?? def?.name,
       icon: getIconByImgurl(p?.imgurl ?? def?.imgurl),
       value: displayValue(p?.values),
-      unit: (p?.unit ?? def?.unit),
+      unit: p?.unit ?? def?.unit,
     }
   }),
 )
@@ -198,10 +245,10 @@ const stationInfoList = computed<EnergyCard[]>(() =>
     const def = HOMEPAGE_POINT_DEFAULTS[id]
     return {
       id,
-      title: (p?.name ?? def?.name),
+      title: p?.name ?? def?.name,
       icon: getIconByImgurl(p?.imgurl ?? def?.imgurl),
       value: displayValue(p?.values),
-      unit: (p?.unit ?? def?.unit),
+      unit: p?.unit ?? def?.unit,
     }
   }),
 )
@@ -211,18 +258,51 @@ const tuopuData = computed(() => {
   const { topology } = HOMEPAGE_POINT_IDS
   const fmt = (p: PointInfo | undefined, defaultName: string, defaultUnit: string) =>
     p
-      ? { ...p, name: p.name ?? defaultName, value: displayValue(p.values), unit: p.unit ?? defaultUnit }
+      ? {
+          ...p,
+          name: p.name ?? defaultName,
+          value: displayValue(p.values),
+          unit: p.unit ?? defaultUnit,
+        }
       : { id: undefined, name: defaultName, value: '-' as const, unit: defaultUnit }
   return {
-    pv: { P: fmt(pointStore[topology.pv.P], HOMEPAGE_POINT_DEFAULTS[14].name ?? '', HOMEPAGE_POINT_DEFAULTS[14].unit ?? '') },
-    load: { P: fmt(pointStore[topology.load.P], HOMEPAGE_POINT_DEFAULTS[15].name ?? '', HOMEPAGE_POINT_DEFAULTS[15].unit ?? 'kW') },
+    pv: {
+      P: fmt(
+        pointStore[topology.pv.P],
+        HOMEPAGE_POINT_DEFAULTS[14].name ?? '',
+        HOMEPAGE_POINT_DEFAULTS[14].unit ?? '',
+      ),
+    },
+    load: {
+      P: fmt(
+        pointStore[topology.load.P],
+        HOMEPAGE_POINT_DEFAULTS[15].name ?? '',
+        HOMEPAGE_POINT_DEFAULTS[15].unit ?? 'kW',
+      ),
+    },
     diesel: {
-      p: fmt(pointStore[topology.diesel.p], HOMEPAGE_POINT_DEFAULTS[16].name ?? '', HOMEPAGE_POINT_DEFAULTS[16].unit ?? ''),
-      oil: fmt(pointStore[topology.diesel.oil], HOMEPAGE_POINT_DEFAULTS[17].name ?? '', HOMEPAGE_POINT_DEFAULTS[17].unit ?? '%'),
+      p: fmt(
+        pointStore[topology.diesel.p],
+        HOMEPAGE_POINT_DEFAULTS[16].name ?? '',
+        HOMEPAGE_POINT_DEFAULTS[16].unit ?? '',
+      ),
+      oil: fmt(
+        pointStore[topology.diesel.oil],
+        HOMEPAGE_POINT_DEFAULTS[17].name ?? '',
+        HOMEPAGE_POINT_DEFAULTS[17].unit ?? '%',
+      ),
     },
     ess: {
-      p: fmt(pointStore[topology.ess.p], HOMEPAGE_POINT_DEFAULTS[18].name ?? '', HOMEPAGE_POINT_DEFAULTS[18].unit ?? 'kW'),
-      soc: fmt(pointStore[topology.ess.soc], HOMEPAGE_POINT_DEFAULTS[19].name ?? '', HOMEPAGE_POINT_DEFAULTS[19].unit ?? '%'),
+      p: fmt(
+        pointStore[topology.ess.p],
+        HOMEPAGE_POINT_DEFAULTS[18].name ?? '',
+        HOMEPAGE_POINT_DEFAULTS[18].unit ?? 'kW',
+      ),
+      soc: fmt(
+        pointStore[topology.ess.soc],
+        HOMEPAGE_POINT_DEFAULTS[19].name ?? '',
+        HOMEPAGE_POINT_DEFAULTS[19].unit ?? '%',
+      ),
     },
   }
 })
@@ -231,7 +311,7 @@ const tuopuData = computed(() => {
 interface DevicePointItem {
   id: number
   title: string
-  values  : string | number
+  values: string | number
   unit: string
 }
 interface DeviceSlide {
@@ -248,9 +328,9 @@ const deviceInfoList = computed<DeviceSlide[]>(() =>
       const def = HOMEPAGE_POINT_DEFAULTS[pointId]
       return {
         id: pointId,
-        title: (p?.name ?? def?.name),
+        title: p?.name ?? def?.name,
         values: displayValue(p?.values),
-        unit: (p?.unit ?? def?.unit),
+        unit: p?.unit ?? def?.unit,
       }
     }),
     icon: deviceIcons[idx],
@@ -268,7 +348,7 @@ function applyHomepageBatch(data: {
     pointStore[u.id] = {
       id: u.id,
       name: u.name,
-      values: u.values ?? '-',
+      values: u.values !== null && u.values !== undefined ? formatNumber(u.values) : '-',
       unit: u.unit,
       imgurl: u.imgurl,
     }
@@ -643,15 +723,14 @@ const handleNext = () => {
   }
 }
 
-:deep(.el-carousel, .el-carousel .el-carousel__container) {
-  height: 100% !important;
+:deep(.home-device-carousel.el-carousel),
+:deep(.home-device-carousel .el-carousel__container),
+:deep(.home-device-carousel__item.el-carousel__item) {
+  height: 100%;
 }
 
-:deep(.el-carousel .el-carousel__container) {
-  height: 100% !important;
-}
-
-:deep(.el-carousel__item) {
+:deep(.home-device-carousel__item.el-carousel__item) {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;

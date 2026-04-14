@@ -53,12 +53,12 @@
         }
       }
       .vue-recycle-scroller__item-wrapper {
-        overflow: visible !important;
+        overflow: visible;
       }
 
       // 让带有这个类名的元素的z-index依次减少
       .vue-recycle-scroller__item-view {
-        overflow: visible !important;
+        overflow: visible;
         // 通过 nth-child 实现递减 z-index
         z-index: 100;
         @for $i from 1 through 40 {
@@ -85,8 +85,8 @@
       // justify-content: center;
       // transition: all 0.3s ease-in-out;
       &:last-child {
-        flex: 1 !important;
-        width: unset !important;
+        flex: 1;
+        width: unset;
       }
       &.vtable__cell--name {
         width: 25%;
@@ -105,15 +105,15 @@
       }
     }
   }
-  .device__table--right{
-    .vtable__cell--name{
-      width: 30% !important;
+  .device__table--right {
+    .vtable__cell--name {
+      width: 30%;
     }
-    .vtable__cell--status{
-      width: 30% !important;
+    .vtable__cell--status {
+      width: 30%;
     }
-    .vtable__cell--time{
-      width: 40% !important;
+    .vtable__cell--time {
+      width: 40%;
     }
   }
 }

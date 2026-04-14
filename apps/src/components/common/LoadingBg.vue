@@ -22,6 +22,7 @@ const openLoading = () => {
   if (rootRef.value && !loadingInstance.value) {
     loadingInstance.value = ElLoading.service({
       target: rootRef.value,
+      customClass: 'loading-bg__mask',
       lock: true,
       background: 'rgba(0,0,0,0.3)',
       text: '',
@@ -67,7 +68,7 @@ onBeforeUnmount(() => {
   // z-index: 999;
 }
 
-:deep(.el-loading-mask) {
+:deep(.loading-bg__mask) {
   width: 100%;
   height: 100%;
   position: absolute;
@@ -79,14 +80,14 @@ onBeforeUnmount(() => {
   z-index: 9;
 }
 
-:deep(.el-loading-spinner) {
+:deep(.loading-bg__mask .el-loading-spinner) {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
 }
 
-:deep(.circular) {
+:deep(.loading-bg__mask .circular) {
   height: 0.3rem;
   width: 0.3rem;
   animation: loading-rotate 1.2s linear infinite;
@@ -98,8 +99,8 @@ onBeforeUnmount(() => {
   }
 }
 
-:deep(.el-loading-text) {
-  color: #ff6900 !important;
+:deep(.loading-bg__mask .el-loading-text) {
+  color: #ff6900;
   font-size: 0.12rem;
   margin: 0.03rem 0;
 }
