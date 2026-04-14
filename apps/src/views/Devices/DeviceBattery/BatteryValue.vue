@@ -65,7 +65,7 @@ useWebSocket(
           }
         })
       }
-      
+
       // 处理通道2的S类型数据（Battery右侧表格）
       const channel2SUpdate = data.updates?.find(
         (item: any) => item.channel_id === 2 && item.data_type === 'S',
@@ -84,7 +84,7 @@ useWebSocket(
           }
         })
       }
-      
+
       // 处理通道1的S类型数据（PCS右侧表格）
       const channel1SUpdate = data.updates?.find(
         (item: any) => item.channel_id === 1 && item.data_type === 'S',
@@ -103,7 +103,7 @@ useWebSocket(
           }
         })
       }
-      
+
       // 处理通道1的T类型数据（PCS左侧表格）
       const channel1TUpdate = data.updates?.find(
         (item: any) => item.channel_id === 1 && item.data_type === 'T',
@@ -189,15 +189,11 @@ const activeTab = ref<'battery' | 'pcs'>('battery')
   }
 }
 
-:deep(.el-tabs) {
-  height: 100% !important;
+:deep(.devices-pv__tabs.el-tabs) {
+  height: 100%;
 }
 
-// :deep(.el-tabs__content) {
-//   height: calc(100% - 0.55rem) !important;
-// }
-
-:deep(.el-tab-pane) {
-  height: 100% !important;
+:deep(.devices-pv__tabs .el-tab-pane) {
+  height: 100%;
 }
 </style>

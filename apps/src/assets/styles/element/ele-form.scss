@@ -1,107 +1,80 @@
-/* Element Plus Form 组件样式 */
-
 @use './theme-vars.scss' as *;
+
 .voltage-class {
-  // Form 基础样式
   .el-form {
     .el-form-item {
-      margin-bottom: $spacing-lg;
       display: flex;
       align-items: flex-start;
       margin-bottom: 0.2rem;
-      // &:last-child {
-      //   margin-bottom: 0;
-      // }
-      // 标签
-      .el-form-item__label {
-        color: $text-color-primary;
-        font-size: 0.14rem;
-        font-family: Arimo sans-serif;
-        padding: 0;
-        margin-bottom: 0;
-        margin-right: 0.16rem;
-        display: block;
-        text-align: left;
-        font-weight: 400;
-        line-height: 0.32rem;
-        height: 0.32rem;
 
-        // 必填标记
+      .el-form-item__label {
+        display: block;
+        height: $button-height-base;
+        margin-right: $spacing-md;
+        margin-bottom: 0;
+        padding: 0;
+        color: $text-color-primary;
+        font-family: var(--vt-font-family-base);
+        font-size: $font-size-base;
+        font-weight: $font-weight-normal;
+        line-height: $button-height-base;
+        text-align: left;
+
         &::before {
-          // display: none !important;
-          margin-right: 0.04rem !important;
+          margin-right: $spacing-xs;
         }
       }
 
-      // 内容区域
       .el-form-item__content {
+        position: relative;
         flex: 1;
-        min-width: 2.4rem;
+        min-width: var(--vt-field-width);
         display: flex;
         align-items: center;
-        line-height: 0.32rem;
+        line-height: $button-height-base;
 
-        // 验证错误信息
         .el-form-item__error {
-          color: $danger-color;
-          padding-top: 0.02rem;
-          font-size: 0.1rem;
-          line-height: $line-height-normal;
-          margin-top: $spacing-xs;
-          display: block;
           position: absolute;
           top: 100%;
           left: 0;
           z-index: 1;
+          display: block;
+          margin-top: $spacing-xs;
+          padding-top: 0;
+          color: $danger-color;
+          // font-size: 0.1rem;
+          line-height: $line-height-normal;
         }
 
-        // 帮助文本
         .el-form-item__help {
+          display: block;
+          margin-top: $spacing-xs;
           color: $text-color-secondary;
           font-size: $font-size-small;
           line-height: $line-height-normal;
-          margin-top: $spacing-xs;
-          display: block;
         }
       }
-
-      // 验证状态（不改变label颜色和输入框边框�?
     }
 
-    &.is-success {
+    .el-form-item.is-error {
       .el-form-item__label {
-        color: $text-color-primary !important;
+        color: $text-color-primary;
       }
 
       .el-input__wrapper,
       .el-textarea__inner {
-        // border-color: initial !important;
-      }
-    }
-    &.is-error {
-      .el-form-item__label {
-        color: $text-color-primary !important;
-      }
-
-      .el-input__wrapper,
-      .el-textarea__inner {
+        border-color: $danger-color;
         box-shadow: none;
-        border-width: 0.01rem;
-        border-color: #f56c6c !important;
       }
     }
-    &.is-warning {
+
+    .el-form-item.is-success,
+    .el-form-item.is-warning {
       .el-form-item__label {
-        color: $text-color-primary !important;
-      }
-
-      .el-input__wrapper,
-      .el-textarea__inner {
-        border-color: initial !important;
+        color: $text-color-primary;
       }
     }
 
-    // 禁用状�?
     &.is-disabled {
       .el-form-item__label {
         color: $text-color-disabled;
@@ -112,41 +85,37 @@
         cursor: not-allowed;
       }
     }
+
     &.el-form--label-right {
-      .el-form-item {
-        .el-form-item__label {
-          text-align: right;
-          padding-right: 0;
-        }
+      .el-form-item__label {
+        padding-right: 0;
+        text-align: right;
       }
     }
-    // 行内表单
+
     &.el-form--inline {
       .el-form-item {
         display: inline-flex;
-        align-items: flex-start;
-        margin-bottom: 0.4rem;
         margin-right: 0.4rem;
+        margin-bottom: 0.2rem;
+
         .el-form-item__label {
           margin-bottom: 0;
-          margin-right: 0.16rem;
           white-space: nowrap;
         }
-
-        // .el-form-item__content {
-        //   // flex: none;
-        // }
       }
     }
-    // 标签顶部对齐
+
     &.el-form--label-top {
       .el-form-item {
         flex-direction: column;
         align-items: flex-start;
 
         .el-form-item__label {
-          line-height: 0.22rem;
+          height: auto;
+          margin-right: 0;
           margin-bottom: 0.09rem;
+          line-height: 0.22rem;
         }
 
         .el-form-item__content {
@@ -154,20 +123,13 @@
         }
       }
     }
-  }
 
-  // 标签右对�?
-
-  // Form 尺寸变体
-  .el-form {
-    // 小尺�?
     &.el-form--small {
       .el-form-item {
         margin-bottom: $spacing-md;
 
         .el-form-item__label {
           font-size: $font-size-small;
-          margin-bottom: $spacing-xs;
         }
 
         .el-form-item__content {
@@ -179,56 +141,57 @@
       }
     }
 
-    // Form 验证规则样式
-    .el-form {
-      // 验证中状�?
-      .el-form-item.is-validating {
-        .el-form-item__content {
-          position: relative;
-
-          &::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            right: $spacing-sm;
-            transform: translateY(-50%);
-            width: 0.16rem;
-            height: 0.16rem;
-            border-top-color: $primary-color;
-            border-radius: 50%;
-            animation: form-loading 1s linear infinite;
-          }
+    .el-form-item.is-validating {
+      .el-form-item__content {
+        &::after {
+          content: '';
+          position: absolute;
+          top: 50%;
+          right: $spacing-sm;
+          width: 0.16rem;
+          height: 0.16rem;
+          transform: translateY(-50%);
+          border-top: 0.02rem solid $primary-color;
+          border-right: 0.02rem solid transparent;
+          border-radius: 50%;
+          animation: form-loading 1s linear infinite;
         }
       }
     }
+  }
 
-    // 表单操作区域
-    .el-form-actions {
-      margin-top: $spacing-xl;
-      padding-top: $spacing-lg;
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: $spacing-sm;
+  .el-form-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: $spacing-sm;
+    margin-top: $spacing-xl;
+    padding-top: $spacing-lg;
 
-      .el-button {
-        min-width: 0.8rem;
-      }
-
-      // 左对齐操�?
-      &.el-form-actions--left {
-        justify-content: flex-start;
-      }
-
-      // 居中对齐操作
-      &.el-form-actions--center {
-        justify-content: center;
-      }
-
-      // 两端对齐操作
-      &.el-form-actions--space-between {
-        justify-content: space-between;
-      }
+    .el-button {
+      min-width: 0.8rem;
     }
+
+    &.el-form-actions--left {
+      justify-content: flex-start;
+    }
+
+    &.el-form-actions--center {
+      justify-content: center;
+    }
+
+    &.el-form-actions--space-between {
+      justify-content: space-between;
+    }
+  }
+}
+
+@keyframes form-loading {
+  0% {
+    transform: translateY(-50%) rotate(0deg);
+  }
+
+  100% {
+    transform: translateY(-50%) rotate(360deg);
   }
 }

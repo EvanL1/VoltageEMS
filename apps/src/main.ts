@@ -1,6 +1,4 @@
-import './assets/main.css'
-
-import { createApp, type DirectiveBinding } from 'vue'
+import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 // import vFitColumns from 'v-fit-columns'
@@ -9,6 +7,7 @@ import 'element-plus/dist/index.css'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
+import './assets/main.css'
 import App from './App.vue'
 import router from './router'
 import './router/guard' // 注册路由守卫
@@ -30,7 +29,7 @@ pinia.use(piniaPluginPersistedstate)
 
 app.use(pinia)
 app.use(router)
-// app.use(ElementPlus)
+app.use(ElementPlus)
 // app.use(vFitColumns)
 // 注册自定义指令 v-permission
 app.directive('permission', permissionDirective)

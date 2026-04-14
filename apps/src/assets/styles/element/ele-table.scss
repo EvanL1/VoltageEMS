@@ -1,31 +1,23 @@
-/**
- * Element Plus Table 组件样式定制
- * 统一表格样式，提供现代化的视觉效�? */
-
-// 表格主体样式
 .voltage-class {
   .el-table {
-    background-color: transparent !important; // 使el-table背景透明，优先级提升
+    background-color: transparent;
+
     .el-table__inner-wrapper {
       &::before {
         height: 0.01rem;
         background-color: rgba(255, 255, 255, 0.1);
       }
-      // 表头样式
+
       .el-table__header-wrapper,
       .el-table__body-header {
         background: rgba(84, 98, 140, 0.2);
 
         th {
           background: transparent;
-
           color: rgba(255, 255, 255, 0.6);
           font-weight: 400;
           font-size: 0.14rem;
           line-height: 0.22rem;
-
-          // border-bottom: 0.01rem solid #e5e7eb;
-          // text-align: center !important;
 
           &:first-child {
             border-left: none;
@@ -34,17 +26,15 @@
           &:last-child {
             border-right: none;
           }
+
           &.el-table-fixed-column--right {
             background-color: #243b65;
             box-shadow: 0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
           }
+
           .cell {
             padding: 0;
             line-height: 0.22rem;
-            // text-align: center !important;
-            // justify-content: center;
-            // display: flex;
-            // align-items: center;
           }
         }
 
@@ -55,24 +45,24 @@
         }
       }
 
-      // 表格主体样式
       .el-table__body-wrapper {
-        // background-color: transparent !important; // 保证表格内容区背景透明
         .el-scrollbar__bar.is-horizontal {
-          height: 0.06rem;
           left: 0.02rem;
+          height: 0.06rem;
         }
+
         .el-scrollbar__bar.is-vertical {
           top: 0.02rem;
           width: 0.06rem;
         }
+
         td {
-          border-color: rgba(255, 255, 255, 0.1);
+          padding: 0.09rem 0.2rem;
           color: #fff;
           font-size: 0.14rem;
           line-height: 0.4rem;
-          // background-color: transparent !important; // 保证每个单元格背景透明
-          padding: 0.09rem 0.2rem;
+          border-color: rgba(255, 255, 255, 0.1);
+
           &:first-child {
             border-left: none;
           }
@@ -80,57 +70,57 @@
           &:last-child {
             border-right: none;
           }
+
           &.el-table__cell {
-            border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
             background: transparent;
+            border-bottom: 0.01rem solid rgba(255, 255, 255, 0.1);
           }
+
           &.el-table-fixed-column--right {
             background-color: #243b65;
             box-shadow: 0.03rem 0 0.06rem rgba(0, 0, 0, 0.06);
           }
+
           .cell {
-            padding: 0;
-            height: 0.4rem;
-            line-height: 0.4rem;
             display: block;
-            // text-align: center;
+            height: 0.4rem;
+            padding: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+            line-height: 0.4rem;
+
             &.el-tooltip {
-              // width: 100% !important;
-              padding-right: 0.4rem;
+              // padding-right: 0.4rem;
+
               span {
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
-                // width: 100%;
               }
             }
           }
         }
+
         .el-table__row {
           transition:
             background 0.2s,
             box-shadow 0.2s,
             color 0.2s;
-          // 鼠标悬停时的行样式增�?
+
           &:hover {
-            background: #283f69 !important;
-            // cursor: pointer;
+            background: #283f69;
+
             .el-table-fixed-column--right {
               background: #283f69;
             }
-            // td {
-            //   color: #3b82f6;
-            //   font-weight: 500;
-            //   transition: color 0.2s;
-            // }
           }
+
           .el-table__expand-icon {
+            height: 0.2rem;
             color: #fff;
             font-size: 0.14rem;
-            height: 0.2rem;
+
             & > .el-icon {
               font-size: 0.14rem;
             }
@@ -138,9 +128,8 @@
         }
       }
 
-      // 空数据状�?
       .el-table__empty-block {
-        background-color: transparent; // 空数据时背景也透明
+        background-color: transparent;
 
         .el-table__empty-text {
           color: #9ca3af;
@@ -148,19 +137,11 @@
         }
       }
 
-      // 固定列样�?
       .el-table__fixed {
-        background-color: transparent; // 固定列背景透明
-        // background-color: red !important;
+        background-color: transparent;
         box-shadow: 0.02rem 0 0.06rem rgba(0, 0, 0, 0.06);
-
-        &.el-table__fixed--right {
-          // box-shadow: -0.02rem 0 0.06rem rgba(0, 0, 0, 0.06);
-          // background-color: red !important;
-        }
       }
 
-      // 排序图标样式
       .el-table__column-filter-trigger,
       .el-table__column-resize-proxy {
         border-color: #d1d5db;
@@ -179,6 +160,7 @@
           }
         }
       }
+
       th,
       tr,
       td {
@@ -186,106 +168,102 @@
       }
     }
   }
+
   .el-popper {
-    // padding: 0.05rem 0.11rem;
     font-size: 0.12rem;
     line-height: 0.2rem;
+
     .el-popper__arrow,
-    .el-popper__arrow:before {
-      height: 0.1rem;
+    .el-popper__arrow::before {
       width: 0.1rem;
+      height: 0.1rem;
     }
+
     &.is-dark,
-    &.is-dark > .el-popper__arrow:before {
+    &.is-dark > .el-popper__arrow::before {
       border: 0.01rem solid #303133;
     }
   }
+
   .el-pagination {
     display: flex;
-    justify-content: flex-end;
     align-items: center;
+    justify-content: flex-end;
     height: 0.32rem;
     margin-top: 0.2rem;
+
     button {
-      height: 0.32rem;
-      font-size: 0.14rem;
-      padding: 0 0.04rem;
       min-width: 0.32rem;
-      &.btn-prev {
-        margin-left: 0.16rem;
-        &:disabled {
-          background-color: transparent;
-        }
-      }
-      &.btn-next {
-        margin-right: 0.16rem;
-        &:disabled {
-          background-color: transparent;
-        }
-      }
+      height: 0.32rem;
+      padding: 0 0.04rem;
+      font-size: 0.14rem;
+
       .el-icon {
         font-size: 0.12rem;
       }
+
+      &.btn-prev {
+        margin-left: 0.16rem;
+      }
+
+      &.btn-next {
+        margin-right: 0.16rem;
+      }
+
+      &:disabled {
+        background-color: transparent;
+      }
     }
+
     .el-pagination__total {
+      margin-right: 0.16rem;
       color: #fff;
       font-size: 0.14rem;
-      margin-right: 0.16rem;
     }
 
     .el-pagination__sizes {
-      margin-left: 0.16rem;
       display: flex;
+      margin-left: 0.16rem;
+
       .el-select {
         width: 1.28rem;
-        .el-select__input-wrapper {
-          height: 0.32rem;
-        }
-        .el-input__inner {
-          height: 0.32rem;
-        }
-        .el-select__input {
-          height: 0.24rem;
-        }
       }
     }
+
     .el-pager {
       li {
-        background-color: transparent;
-        border-radius: 0;
+        min-width: 0.32rem;
+        height: 0.32rem;
         margin: 0 0.02rem;
+        padding: 0 0.04rem;
         color: #fff;
         font-weight: 500;
         font-size: 0.14rem;
-        padding: 0 0.04rem;
-        height: 0.32rem;
         line-height: 0.32rem;
-        min-width: 0.32rem;
+        background-color: transparent;
+        border-radius: 0;
 
         &:hover {
+          color: #ff6900;
           background-color: transparent;
         }
 
         &.is-active {
           color: #ffffff;
           background-color: rgba(255, 255, 255, 0.1);
-
-          &:hover {
-            background-color: rgba(255, 255, 255, 0.1);
-          }
         }
       }
     }
 
     .btn-prev,
     .btn-next {
-      border-radius: 0;
-      background-color: transparent;
       color: #fff;
+      background-color: transparent;
+      border-radius: 0;
 
       &:hover {
-        color: #3b82f6;
-        background-color: #f3f4f6;
+        color: #ff6900;
+        // background-color: #f3f4f6;
       }
 
       &:disabled {
@@ -303,22 +281,20 @@
       font-size: 0.14rem;
 
       .el-input__inner {
-        border-radius: 0.06rem;
         border-color: #d1d5db;
-        // text-align: center;
+        border-radius: 0.06rem;
 
         &:hover {
           border-color: #9ca3af;
         }
 
-        &:focus {
-          border-color: #3b82f6;
-        }
+        // &:focus {
+        //   border-color: #3b82f6;
+        // }
       }
     }
   }
 
-  // 表格操作按钮样式
   .table-actions {
     display: flex;
     align-items: center;
@@ -340,8 +316,9 @@
         }
       }
     }
-    .el-table__expanded-cell {
-      background-color: transparent !important;
-    }
+  }
+
+  .el-table__expanded-cell {
+    background-color: transparent;
   }
 }

@@ -1,6 +1,13 @@
 <template>
-  <el-dialog v-model="dialogVisible" :title="null" :modal="true" :close-on-click-modal="false" :append-to-body="true"
-    :modal-append-to-body="true" fullscreen>
+  <el-dialog
+    v-model="dialogVisible"
+    :title="null"
+    :modal="true"
+    :close-on-click-modal="false"
+    :append-to-body="true"
+    :modal-append-to-body="true"
+    fullscreen
+  >
     <!-- dialog-head插槽，默认显示标题 -->
     <template #header>
       <slot name="dialog-head">

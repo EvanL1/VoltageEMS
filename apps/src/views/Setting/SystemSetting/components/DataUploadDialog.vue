@@ -32,11 +32,11 @@
         <!-- 2. Broker connection -->
         <div class="config-title">Broker connection</div>
         <div class="config-collapse">
-          <el-form-item label="Host:" prop="broker_host" style="width: 100% !important">
+          <el-form-item label="Host:" prop="broker_host" class="data-upload-dialog__full-row">
             <el-input
               v-model="formData.broker_host"
               placeholder="Enter host address"
-              style="width: 100% !important"
+              class="data-upload-dialog__full-field"
             />
           </el-form-item>
           <el-form-item label="Port:" prop="broker_port">
@@ -49,7 +49,7 @@
               placeholder="Enter port number"
             />
           </el-form-item>
-          <el-form-item label="SSL Enabled:" prop="ssl_enabled" >
+          <el-form-item label="SSL Enabled:" prop="ssl_enabled">
             <el-switch v-model="formData.ssl_enabled" />
           </el-form-item>
           <el-form-item label="Keepalive(s):" prop="broker_keepalive_secs">
@@ -62,8 +62,8 @@
               placeholder="Enter keepalive seconds"
             />
           </el-form-item>
-          <el-form-item label="AlarmSrv URL:" prop="alarmsrv_url" >
-            <el-input v-model="formData.alarmsrv_url" placeholder="Enter alarmsrv url"  />
+          <el-form-item label="AlarmSrv URL:" prop="alarmsrv_url">
+            <el-input v-model="formData.alarmsrv_url" placeholder="Enter alarmsrv url" />
           </el-form-item>
         </div>
 
@@ -110,7 +110,11 @@
               placeholder="Enter report batch size"
             />
           </el-form-item>
-          <el-form-item label="Subscribe Patterns:" prop="subscribe_patterns" style="width: 100% !important">
+          <el-form-item
+            label="Subscribe Patterns:"
+            prop="subscribe_patterns"
+            class="data-upload-dialog__full-row"
+          >
             <el-input
               v-model="subscribePatternsText"
               type="textarea"
@@ -118,7 +122,7 @@
               placeholder="inst:*:M, inst:*:A"
             />
           </el-form-item>
-          <el-form-item label="Exclude Patterns:" style="width: 100% !important">
+          <el-form-item label="Exclude Patterns:" class="data-upload-dialog__full-row">
             <el-input
               v-model="excludePatternsText"
               type="textarea"
@@ -131,10 +135,7 @@
         <!-- 4. System monitor -->
         <div class="config-title">System monitor</div>
         <div class="config-collapse">
-          <el-form-item
-            label="Monitor Enabled:"
-            prop="system_monitor_enabled"
-          >
+          <el-form-item label="Monitor Enabled:" prop="system_monitor_enabled">
             <el-switch v-model="formData.system_monitor_enabled" />
           </el-form-item>
           <el-form-item label="Monitor Interval(s):" prop="system_monitor_interval_secs">
@@ -156,7 +157,9 @@
         <el-button type="primary" plain @click="openTlsDialog">TLS Certificate Config</el-button>
         <div class="dialog-footer__right">
           <el-button @click="close">Cancel</el-button>
-          <el-button type="primary" @click="submitDialog" :loading="submitLoading">Submit</el-button>
+          <el-button type="primary" @click="submitDialog" :loading="submitLoading"
+            >Submit</el-button
+          >
         </div>
       </div>
     </template>
@@ -203,11 +206,11 @@ const rules = ref<FormRules<FormData>>({
     { required: true, message: 'Please enter client ID', trigger: 'blur' },
     { min: 1, max: 50, message: 'Client ID length should be 1-50 characters', trigger: 'blur' },
   ],
-  broker_host: [
-    { required: true, message: 'Please enter host address', trigger: 'blur' },
-  ],
+  broker_host: [{ required: true, message: 'Please enter host address', trigger: 'blur' }],
   alarmsrv_url: [{ required: true, message: 'Please enter alarmsrv url', trigger: 'blur' }],
-  broker_keepalive_secs: [{ required: true, message: 'Please enter keepalive seconds', trigger: 'blur' }],
+  broker_keepalive_secs: [
+    { required: true, message: 'Please enter keepalive seconds', trigger: 'blur' },
+  ],
   broker_port: [
     { required: true, message: 'Please enter port number', trigger: 'blur' },
     {
@@ -218,11 +221,13 @@ const rules = ref<FormRules<FormData>>({
       trigger: 'blur',
     },
   ],
-  ssl_enabled: [
-    { required: true, message: 'Please select SSL enable status', trigger: 'change' },
+  ssl_enabled: [{ required: true, message: 'Please select SSL enable status', trigger: 'change' }],
+  report_interval_secs: [
+    { required: true, message: 'Please enter report interval', trigger: 'blur' },
   ],
-  report_interval_secs: [{ required: true, message: 'Please enter report interval', trigger: 'blur' }],
-  report_batch_size: [{ required: true, message: 'Please enter report batch size', trigger: 'blur' }],
+  report_batch_size: [
+    { required: true, message: 'Please enter report batch size', trigger: 'blur' },
+  ],
   system_monitor_enabled: [
     { required: true, message: 'Please select monitor status', trigger: 'change' },
   ],
@@ -372,16 +377,19 @@ defineExpose({ open })
     border: none;
     display: flex;
     flex-wrap: wrap;
-    // gap: 0.2rem;
-    // flex-direction: column;
-    // :deep(.el-input) {
-    //   width: 100% !important;
-    // }
     :deep(.el-form-item) {
       position: relative;
-      margin-right: 0 !important;
-      margin-bottom: 0.2rem !important;
+      margin-right: 0;
+      margin-bottom: 0.2rem;
     }
+  }
+
+  :deep(.data-upload-dialog__full-row) {
+    width: 100%;
+  }
+
+  :deep(.data-upload-dialog__full-field) {
+    width: 100%;
   }
 
   .upload-hint {

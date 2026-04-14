@@ -3,13 +3,19 @@
     <!-- 页面头部 -->
     <div class="devices-diesel__header">
       <div class="devices-diesel__tabs">
-        <el-button :type="activeTab === 'overview' ? 'primary' : 'warning'" @click="handleTabClick('overview')"
-          class="devices-diesel__tab-btn">
+        <el-button
+          :type="activeTab === 'overview' ? 'primary' : 'warning'"
+          @click="handleTabClick('overview')"
+          class="devices-diesel__tab-btn"
+        >
           <img :src="alarmCurrentIcon" class="devices-diesel__tab-icon" />
           Overview
         </el-button>
-        <el-button :type="activeTab === 'monitoring' ? 'primary' : 'warning'" @click="handleTabClick('monitoring')"
-          class="devices-diesel__tab-btn">
+        <el-button
+          :type="activeTab === 'monitoring' ? 'primary' : 'warning'"
+          @click="handleTabClick('monitoring')"
+          class="devices-diesel__tab-btn"
+        >
           <img :src="alarmHistoryIcon" class="devices-diesel__tab-icon" />
           Value Monitoring
         </el-button>

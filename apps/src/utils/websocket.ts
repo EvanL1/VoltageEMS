@@ -227,12 +227,16 @@ class WebSocketManager {
   }
 
   /** 订阅入口 */
-  public subscribe(config: SubscriptionConfig, listeners: Partial<ListenerConfig> = {}, pageId?: string): string {
+  public subscribe(
+    config: SubscriptionConfig,
+    listeners: Partial<ListenerConfig> = {},
+    pageId?: string,
+  ): string {
     const normalizedConfig = this.cloneConfig(config)
     let subscriptionId = ''
     if (pageId) {
       subscriptionId = pageId
-    }else{
+    } else {
       subscriptionId = this.generateMessageId()
     }
     // 检查是否已存在相同的订阅
@@ -311,7 +315,6 @@ class WebSocketManager {
   public unsubscribe(subscriptionId: string): void {
     const record = this.subscriptions.get(subscriptionId)
     if (!record) {
-      
       // 如果订阅不存在，尝试从待订阅队列中删除
       for (const [messageId, subInfo] of this.pendingSubscriptionsMap) {
         if (subInfo.subscriptionId === subscriptionId) {
@@ -333,7 +336,6 @@ class WebSocketManager {
 
     // 如果已连接，发送取消订阅消息
     if (this.isConnected.value) {
-      
       const messageId = this.generateMessageId()
       this.sendUnsubscribeMessage(record.config, messageId)
     }

@@ -1,7 +1,7 @@
 <template>
   <div class="voltage-class running-log">
     <div class="running-log__content">
-      <!-- 表格工具�?-->
+      <!-- 表格工具�?-->
       <div class="running-log__toolbar">
         <IconButton
           type="primary"
@@ -21,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-// 正确引入SVG图标，避免部署后图片加载不出�?
+// 正确引入SVG图标，避免部署后图片加载不出�?
 import alarmExportIcon from '@/assets/icons/alarm-export.svg'
 
 const handleExport = () => {
@@ -176,4 +176,3 @@ const runningLog = ref([
   }
 }
 </style>
-

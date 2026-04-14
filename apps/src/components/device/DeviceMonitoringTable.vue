@@ -22,7 +22,9 @@
                   <div class="vtable__cell vtable__cell--name">{{ item.name }}</div>
                   <div class="vtable__cell vtable__cell--value">{{ formatNumber(item.value) }}</div>
                   <div class="vtable__cell vtable__cell--unit">{{ item.unit }}</div>
-                  <div class="vtable__cell vtable__cell--time">{{ formatTimestamp(item.updateTime) }}</div>
+                  <div class="vtable__cell vtable__cell--time">
+                    {{ formatTimestamp(item.updateTime) }}
+                  </div>
                 </div>
               </DynamicScrollerItem>
             </template>
@@ -48,7 +50,9 @@
                 <div class="vtable__row">
                   <div class="vtable__cell vtable__cell--name">{{ item.name }}</div>
                   <div class="vtable__cell vtable__cell--status">{{ item.status ?? '-' }}</div>
-                  <div class="vtable__cell vtable__cell--time">{{ formatTimestamp(item.updateTime) }}</div>
+                  <div class="vtable__cell vtable__cell--time">
+                    {{ formatTimestamp(item.updateTime) }}
+                  </div>
                 </div>
               </DynamicScrollerItem>
             </template>

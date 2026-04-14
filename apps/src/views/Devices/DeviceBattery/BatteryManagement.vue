@@ -240,7 +240,6 @@ const contentItemData2 = [
     value: '96',
     unit: '℉',
   },
-
 ]
 </script>
 
@@ -306,11 +305,14 @@ const contentItemData2 = [
           padding: 0.2rem;
           background: rgba(84, 98, 140, 0.5);
           border: 0.01rem solid;
-          border-image: linear-gradient(117.64deg,
+          border-image: linear-gradient(
+              117.64deg,
               #94a6c5 2.73%,
               rgba(148, 166, 197, 0) 31.73%,
               rgba(148, 166, 197, 0.344221) 71.62%,
-              #94a6c5 97.67%) 1;
+              #94a6c5 97.67%
+            )
+            1;
           backdrop-filter: blur(0.1rem);
           display: flex;
           flex-direction: column;

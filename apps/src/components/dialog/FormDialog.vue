@@ -75,17 +75,4 @@ defineExpose({
     color: rgba(245, 247, 255, 1);
   }
 }
-
-:deep(.el-dialog) {
-  position: absolute !important;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-}
-
-:deep(.el-overlay) {
-  position: absolute !important;
-  top: -0.2rem;
-  left: -0.2rem;
-}
 </style>

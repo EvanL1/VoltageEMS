@@ -17,7 +17,6 @@ export interface RuleFormModel {
   enabled: boolean
 }
 
-
 // 规则信息类型
 export interface RuleInfo {
   id: number

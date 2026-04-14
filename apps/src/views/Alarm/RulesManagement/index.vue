@@ -1,9 +1,9 @@
 <template>
-  <div class="voltage-class rule-management">
+  <div class="voltage-class rule-management" ref="ruleManagementRef">
     <LoadingBg :loading="loading">
       <div class="rule-management__header">
         <div class="rule-management__search-form" ref="levelSelectRef">
-          <el-form :model="filters" :inline="true" class="test-form">
+          <el-form :model="filters" :inline="true" class="test-form rule-management__toolbar-form">
             <el-form-item label="Keyword:">
               <el-input v-model="filters.keyword" placeholder="Please enter keyword" />
             </el-form-item>
@@ -26,8 +26,8 @@
                 clearable
                 :append-to="levelSelectRef"
               >
-                <el-option label="On" :value="true" />
-                <el-option label="Off" :value="false" />
+                <el-option label="Enabled" :value="true" />
+                <el-option label="Disabled" :value="false" />
               </el-select>
             </el-form-item>
           </el-form>
@@ -58,26 +58,15 @@
         </div>
       </div>
       <div class="rule-management__table">
-        <el-table
-          :data="tableData"
-          class="rule-management__table-content"
-          align="left"
-        >
-          <el-table-column
-            prop="id"
-            label="ID"
-            show-overflow-tooltip
-            class-name="table-ellipsis"
-            width="80"
-          />
+        <el-table :data="tableData" class="rule-management__table-content" align="left">
+          <el-table-column prop="id" label="ID" class-name="table-ellipsis" width="80" />
           <el-table-column
             prop="rule_name"
             label="Rule Name"
-            show-overflow-tooltip
             class-name="table-ellipsis"
             min-width="120"
           />
-          <el-table-column prop="warning_level" label="Alarm Level" show-overflow-tooltip>
+          <el-table-column prop="warning_level" label="Alarm Level">
             <template #default="{ row }">
               <span
                 class="rule-management__table-level-text"
@@ -90,7 +79,6 @@
           <el-table-column
             prop="monitor_data"
             label="Monitor Data"
-            show-overflow-tooltip
             class-name="table-ellipsis"
             min-width="100"
           >
@@ -128,7 +116,6 @@
           <el-table-column
             prop="created_at"
             label="Created At"
-            show-overflow-tooltip
             class-name="table-ellipsis"
             min-width="120"
           >
@@ -136,7 +123,7 @@
               <span class="table-ellipsis__text">{{ formatDateTime(row.created_at) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="enabled" label="Enabled" show-overflow-tooltip min-width="80">
+          <el-table-column prop="enabled" label="Enabled" min-width="80">
             <template #default="{ row }">
               <el-switch :model-value="row.enabled" @change="handleSwitchChange(row)" />
             </template>
@@ -191,6 +178,7 @@ import type { RuleInfo } from '@/types/ruleManagement'
 import { useTableData, type TableConfig } from '@/composables/useTableData'
 import { enableRule, disableRule } from '@/api/alarm'
 
+const ruleManagementRef = ref<HTMLElement | null>(null)
 const tableConfig: TableConfig = {
   listUrl: '/alarmApi/rules',
   deleteUrl: '/alarmApi/rules/{id}',
@@ -210,6 +198,7 @@ const {
   filters,
   handlePageChange,
   reloadFilters,
+  deleteRow,
 } = useTableData<RuleInfo>(tableConfig)
 
 filters.keyword = ''
@@ -233,12 +222,13 @@ const formatCondition = (row: RuleInfo) => {
   return `${row.operator} ${row.value}`
 }
 
-// 格式化时间
-const formatDateTime = (dateTime: string | null | undefined): string => {
-  if (!dateTime) return '-'
+// 格式化时间（支持 Unix 秒时间戳和日期字符串）
+const formatDateTime = (dateTime: number | string | null | undefined): string => {
+  if (dateTime === null || dateTime === undefined || dateTime === '') return '-'
   try {
-    const date = new Date(dateTime)
-    if (isNaN(date.getTime())) return dateTime
+    // Unix 时间戳为秒，需转换为毫秒
+    const date = typeof dateTime === 'number' ? new Date(dateTime * 1000) : new Date(dateTime)
+    if (isNaN(date.getTime())) return String(dateTime)
     const year = date.getFullYear()
     const month = String(date.getMonth() + 1).padStart(2, '0')
     const day = String(date.getDate()).padStart(2, '0')
@@ -247,7 +237,7 @@ const formatDateTime = (dateTime: string | null | undefined): string => {
     const seconds = String(date.getSeconds()).padStart(2, '0')
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
   } catch {
-    return dateTime
+    return String(dateTime)
   }
 }
 
@@ -263,20 +253,11 @@ const handleEdit = (row: RuleInfo) => {
 
 // 删除规则
 const handleDelete = async (row: RuleInfo) => {
-  await ElMessageBox.confirm(
+  deleteRow(
+    row.id,
     `Are you sure you want to delete rule "${row.rule_name}"?`,
-    'Delete Rule',
-    {
-      confirmButtonText: 'Delete',
-      cancelButtonText: 'Cancel',
-      type: 'warning',
-    },
+    ruleManagementRef.value,
   )
-
-  const index = tableData.value.findIndex((item: RuleInfo) => item.id === row.id)
-  if (index > -1) {
-    tableData.value.splice(index, 1)
-  }
 }
 const handleSwitchChange = async (row: RuleInfo) => {
   if (!row.enabled) {
@@ -299,7 +280,7 @@ const handleRuleCancel = () => {
 </script>
 
 <style scoped lang="scss">
-.voltage-class .rule-management {
+.voltage-class.rule-management {
   position: relative;
   height: 100%;
   width: 100%;
@@ -379,23 +360,15 @@ const handleRuleCancel = () => {
     }
   }
 
-  :deep(.el-switch) {
+  :deep(.rule-management__table-content .el-switch) {
     height: 0.22rem;
   }
 
-  // :deep(.el-select__popper.el-popper) {
-  //   top: 0.44rem !important;
-  // }
-
-  :deep(.test-form.el-form--inline .el-form-item) {
-    margin-bottom: 0rem !important;
+  :deep(.rule-management__toolbar-form.el-form--inline .el-form-item) {
+    margin-bottom: 0;
   }
 
-  :deep(.el-form--inline .el-form-item) {
-    margin-bottom: 0.4rem !important;
-  }
-
-  :deep(.el-table .table-ellipsis .cell) {
+  :deep(.rule-management__table-content .table-ellipsis .cell) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

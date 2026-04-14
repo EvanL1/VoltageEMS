@@ -45,11 +45,11 @@
 </template>
 
 <script setup lang="ts">
-// 正确引入SVG图标，避免部署后图片加载不出�?
+// 正确引入SVG图标，避免部署后图片加载不出�?
 import alarmCurrentIcon from '@/assets/icons/alarm-current.svg'
 import alarmHistoryIcon from '@/assets/icons/alarm-history.svg'
 
-// 响应式数�?
+// 响应式数�?
 const route = useRoute()
 const router = useRouter()
 
@@ -159,4 +159,3 @@ const handleTabClick = (tab: 'overview' | 'curves' | 'operationLog' | 'runingLog
   }
 }
 </style>
-

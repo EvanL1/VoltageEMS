@@ -56,11 +56,14 @@ const props = defineProps({
   align-items: center;
   border: 0.01rem solid;
 
-  border-image: linear-gradient(116.72deg,
+  border-image: linear-gradient(
+      116.72deg,
       rgba(148, 166, 197, 0.3) 2.77%,
       rgba(148, 166, 197, 0) 32.16%,
       rgba(148, 166, 197, 0.103266) 72.59%,
-      rgba(148, 166, 197, 0.3) 98.99%) 1;
+      rgba(148, 166, 197, 0.3) 98.99%
+    )
+    1;
   backdrop-filter: blur(0.1rem);
 
   .card__container {

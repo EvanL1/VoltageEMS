@@ -1,5 +1,5 @@
 <template>
-  <div class="voltage-class user-management">
+  <div class="voltage-class user-management" ref="userManagementRef">
     <div class="user-management__header">
       <IconButton
         type="primary"
@@ -19,7 +19,6 @@
           class="user-management__table-content"
           table-layout="auto"
           align="left"
-          style="width: 100%"
         >
           <el-table-column prop="id" label="ID" />
           <el-table-column prop="username" label="UserName">
@@ -102,6 +101,7 @@ import type { UserManagementInfo } from '@/types/user'
 import { useTableData, type TableConfig } from '@/composables/useTableData'
 import UserOperationForm from './UserOperationForm.vue'
 
+const userManagementRef = ref<HTMLElement | null>(null)
 // 表格配置
 const tableConfig: TableConfig = {
   listUrl: '/api/v1/auth/users',
@@ -157,14 +157,14 @@ const handleEdit = (row: UserManagementInfo) => {
 }
 
 // 删除用户
-const handleDelete = async (row: UserManagementInfo) => {
-  ElMessageBox.confirm('Are you sure you want to delete this record?', 'Delete Confirmation', {
-    confirmButtonText: 'Confirm',
-    cancelButtonText: 'Cancel',
-    type: 'warning',
-  }).then(async () => {
-    await deleteRow(row.id)
-  })
+const handleDelete = (row: UserManagementInfo) => {
+  // ElMessageBox.confirm('Are you sure you want to delete this record?', 'Delete Confirmation', {
+  //   confirmButtonText: 'Confirm',
+  //   cancelButtonText: 'Cancel',
+  //   type: 'warning',
+  // }).then(async () => {
+  deleteRow(row.id, 'Are you sure you want to delete this record?', userManagementRef.value)
+  // })
 }
 /**
  * 获取用户名头像缩写：名和姓的首字母（如"张三"->"张三"，"John Smith"->"JS"，"王"->"王"）
@@ -182,7 +182,7 @@ const getAvatarName = (name: string): string => {
 </script>
 
 <style scoped lang="scss">
-.voltage-class .user-management {
+.voltage-class.user-management {
   position: relative;
   width: 100%;
   height: 100%;
@@ -270,15 +270,11 @@ const getAvatarName = (name: string): string => {
   }
 }
 
-:deep(.el-form.el-form--inline .el-form-item) {
-  margin-bottom: 0.4rem !important;
-}
-
-:deep(.el-table .el-table__inner-wrapper .el-table__body-wrapper td .cell) {
-  height: 0.4rem !important;
+:deep(.user-management__table-content .el-table__body-wrapper td .cell) {
+  height: 0.4rem;
 }
 .user-management__operation-column {
-  width: 1.2rem !important;
+  width: 1.2rem;
 }
 
 .status-enabled {

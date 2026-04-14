@@ -75,4 +75,3 @@ const propNumber = computed(() => {
   }
 }
 </style>
-

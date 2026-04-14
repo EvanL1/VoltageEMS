@@ -7,13 +7,20 @@
     "dev": "vite",
     "build": "vite build",
     "build:type-check": "run-p type-check \"build-only {@}\" --",
+    "build:check": "vite build",
     "preview": "vite preview",
     "test:unit": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test:run": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "quality:report": "node scripts/quality-report.mjs",
+    "quality:check": "node scripts/quality-report.mjs --out reports/quality/quality-report.md",
     "type-check": "vue-tsc --build",
     "type-check:only": "vue-tsc --noEmit",
     "lint": "eslint . --fix",
-    "format": "prettier --write src/"
+    "lint:check": "eslint . --max-warnings=0",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check .",
+    "audit:check": "npm audit --audit-level=moderate"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.5",

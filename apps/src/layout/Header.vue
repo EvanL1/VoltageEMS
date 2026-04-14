@@ -18,7 +18,7 @@
       </div>
 
       <div class="header__right-avatar">
-        <el-dropdown @command="handleUserCommand" trigger="click" :teleported="false">
+        <el-dropdown @command="handleUserCommand" trigger="click">
           <div class="header__user">
             <!-- 头像图片无法显示的常见原因有：路径写法不对、图片未被正确引入、打包后路径丢失等。推荐用import方式引入图片资源。 -->
             <!-- <el-avatar  :src="userStore.userInfo?.avatar" class="header__user-avatar" /> -->
@@ -46,7 +46,11 @@
       </div>
       <div class="header__right-notice">
         <el-button link class="header__right-noticeBtn" @click="toggleNotifications">
-          <el-badge :value="globalStore.alarmNum" :hidden="globalStore.alarmNum === 0">
+          <el-badge
+            :value="globalStore.alarmNum"
+            :hidden="globalStore.alarmNum === 0"
+            class="header__right-noticeBadge"
+          >
             <img :src="noticeIcon" class="header__right-noticeIcon" />
           </el-badge>
         </el-button>
@@ -217,7 +221,10 @@ const getAvatarName = (name: string): string => {
 
     .header__right-notice {
       .header__right-noticeBtn {
-        padding: 0.2rem 0.1rem 0.13rem 0;
+        // padding: 0.2rem 0.1rem 0.13rem 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         transition: all 0.3s ease;
 
         :deep(.el-badge__content) {
@@ -290,8 +297,12 @@ const getAvatarName = (name: string): string => {
   font-size: 0.12rem;
   color: #909399;
 }
-
-:deep(.el-badge__content.is-fixed) {
+.header__right-noticeBadge{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+:deep(.header__right-noticeBadge .el-badge__content.is-fixed) {
   right: 0.1rem;
   top: 0.04rem;
   padding: 0;

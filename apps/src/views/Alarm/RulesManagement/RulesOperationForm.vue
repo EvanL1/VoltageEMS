@@ -16,7 +16,7 @@
 
         <!-- 拆分Monitor Data为三个el-form-item，分别校�?-->
         <div class="monitor-data-group" ref="monitorDataGroupRef">
-          <el-form-item label="Monitor Data:" prop="channel_id" style="margin-right: 0">
+          <el-form-item label="Monitor Data:" prop="channel_id" class="rules-form__compact-item">
             <el-select
               v-model="form.channel_id"
               placeholder="Select Channel"
@@ -33,7 +33,7 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item prop="data_type" style="margin-right: 0">
+          <el-form-item prop="data_type" class="rules-form__compact-item">
             <el-select
               v-model="form.data_type"
               placeholder="Select Point Type"
@@ -50,7 +50,7 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item prop="point_id" style="margin-right: 0">
+          <el-form-item prop="point_id" class="rules-form__compact-item">
             <el-select
               v-model="form.point_id"
               placeholder="Select Point"
@@ -67,9 +67,8 @@
             </el-select>
           </el-form-item>
         </div>
-
-        <el-form-item label="Alarm Level:" prop="warning_level">
-          <div class="alarm-level-group" ref="alarmLevelGroupRef">
+        <div class="alarm-level-group" ref="alarmLevelGroupRef">
+          <el-form-item label="Alarm Level:" prop="warning_level">
             <el-select
               v-model="form.warning_level"
               placeholder="Select level"
@@ -83,12 +82,11 @@
                 :value="item.value"
               />
             </el-select>
-          </div>
-        </el-form-item>
-
+          </el-form-item>
+        </div>
         <!-- 拆分Condition为两个el-form-item，分别校�?-->
         <div class="condition-group" ref="conditionGroupRef">
-          <el-form-item prop="operator" label="Condition:" style="margin-right: 0">
+          <el-form-item prop="operator" label="Condition:" class="rules-form__compact-item">
             <el-select
               v-model="form.operator"
               placeholder="Operator"
@@ -102,24 +100,24 @@
               <el-option label="=" value="=" />
             </el-select>
           </el-form-item>
-          <el-form-item prop="value" style="margin-right: 0">
+          <el-form-item prop="value" class="rules-form__compact-item">
             <el-input-number
               v-model="form.value"
               :min="0"
               :max="999999"
               :controls="false"
               placeholder="Value"
-              style="width: 4.96rem !important"
+              class="rules-form__value-input"
               align="left"
             />
           </el-form-item>
         </div>
 
-        <el-form-item label="Enabled:" prop="enabled" style="width: 100%; margin-right: 0">
+        <el-form-item label="Enabled:" prop="enabled" class="rules-form__full-row">
           <el-switch v-model="form.enabled" />
         </el-form-item>
 
-        <el-form-item label="Description:" prop="description" style="width: 100%">
+        <el-form-item label="Description:" prop="description" class="rules-form__full-row">
           <el-input
             v-model="form.description"
             type="textarea"
@@ -143,8 +141,7 @@
 import type { FormInstance } from 'element-plus'
 import { getRuleDetail, createRule, updateRule } from '@/api/alarm'
 import { getAllChannels, getPointsTables } from '@/api/channelsManagement'
-import type { RuleFormModel, DialogExpose } from '@/types/ruleManagement'
-import type { Operator } from '@/types/ruleManagement'
+import type { RuleFormModel, DialogExpose, Operator } from '@/types/ruleManagement'
 import type { PointType } from '@/types/channelConfiguration'
 
 const formRef = ref<FormInstance>()
@@ -173,7 +170,9 @@ const channelList = ref<Array<{ label: string; value: number }>>([])
 const loadingChannels = ref(false)
 
 // 所有点位数据（包含T和S类型）
-const allPointsData = ref<Array<{ point_id: number; signal_name: string; point_type?: PointType }>>([])
+const allPointsData = ref<Array<{ point_id: number; signal_name: string; point_type?: PointType }>>(
+  [],
+)
 // 筛选后的点位列表（用于显示）
 const points = computed(() => {
   if (!form.value.data_type) {
@@ -249,9 +248,9 @@ const loadAllPoints = async (channelId: number) => {
     loadingPoints.value = true
     // 不传type参数，获取所有类型的点位
     const res = await getPointsTables(channelId)
-    
+
     const allPoints: Array<{ point_id: number; signal_name: string; point_type: PointType }> = []
-    
+
     if (res.success && res.data) {
       // 处理T类型点位（telemetry）
       const tPointsData = Array.isArray(res.data.telemetry) ? res.data.telemetry : []
@@ -262,7 +261,7 @@ const loadAllPoints = async (channelId: number) => {
           point_type: 'T' as PointType,
         })),
       )
-      
+
       // 处理S类型点位（signal）
       const sPointsData = Array.isArray(res.data.signal) ? res.data.signal : []
       allPoints.push(
@@ -273,7 +272,7 @@ const loadAllPoints = async (channelId: number) => {
         })),
       )
     }
-    
+
     allPointsData.value = allPoints
   } catch (error) {
     console.error('Failed to load points:', error)
@@ -306,24 +305,25 @@ async function open(rulesId?: string, openMode: 'create' | 'edit' = 'create') {
     mode.value = openMode
     form.value = getDefaultForm()
     rules_id.value = rulesId || ''
-    
+
     // 加载通道列表
     await loadChannels()
-    
+
     if (rulesId) {
       const res = await getRuleDetail(rules_id.value)
-      if (res.success) {
-        form.value.rule_name = res.data.list[0].rule_name
-        form.value.service_type = 'comsrv' // 固定为 comsrv
-        form.value.channel_id = res.data.list[0].channel_id
-        form.value.point_id = res.data.list[0].point_id
-        form.value.data_type = res.data.list[0].data_type as 'T' | 'S'
-        form.value.warning_level = res.data.list[0].warning_level
-        form.value.operator = res.data.list[0].operator as Operator
-        form.value.value = res.data.list[0].value
-        form.value.description = res.data.list[0].description || ''
-        form.value.enabled = res.data.list[0].enabled
-        
+      if (res.success && res.data.list?.length) {
+        const rule = res.data.list[0]
+        form.value.rule_name = rule.rule_name
+        form.value.service_type = 'comsrv'
+        form.value.channel_id = rule.channel_id
+        form.value.point_id = rule.point_id
+        form.value.data_type = rule.data_type as 'T' | 'S'
+        form.value.warning_level = rule.warning_level
+        form.value.operator = rule.operator as Operator
+        form.value.value = rule.value
+        form.value.description = rule.description || ''
+        form.value.enabled = rule.enabled
+
         // 如果有通道，加载所有点位
         if (form.value.channel_id) {
           await loadAllPoints(Number(form.value.channel_id))
@@ -388,17 +388,30 @@ defineExpose({ open, close })
 .rules-form {
   display: flex;
   flex-wrap: wrap;
-
   .monitor-data-group,
   .alarm-level-group,
   .condition-group {
+    // width: 100%;
     position: relative;
     display: flex;
     gap: 0.16rem;
   }
 
+  .rules-form__compact-item {
+    margin-right: 0 !important;
+  }
+
+  .rules-form__full-row {
+    width: 100%;
+    margin-right: 0 !important;
+  }
+
+  :deep(.rules-form__value-input) {
+    width: 4.96rem;
+  }
+
   :deep(.el-switch) {
-    height: 0.32rem !important;
+    height: 0.32rem;
   }
 
   :deep(.el-input__inner) {

@@ -31,15 +31,23 @@ export interface RuleInfo {
   notification?: string[]
   enabled: boolean
   description?: string
-  created_at: string
-  updated_at?: string
+  created_at: number // Unix 时间戳（秒）
+  updated_at?: number // Unix 时间戳（秒）
 }
 
 // 对话框暴露类型
 export interface DialogExpose {
   dialogVisible: boolean
 }
+
+// GET /alarmApi/rules 列表响应
 export interface RuleResponse {
+  list: RuleInfo[]
+  total: number
+}
+
+// GET /alarmApi/rules/{id} 单条规则响应
+export interface RuleDetailResponse {
   list: RuleInfo[]
   total: number
 }
