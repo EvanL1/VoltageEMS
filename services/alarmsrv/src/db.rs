@@ -8,7 +8,8 @@ use sqlx::SqlitePool;
 use tracing::{debug, info};
 
 use crate::models::{
-    Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams, RuleQueryParams,
+    resolve_pagination, Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams,
+    PagedData, RuleQueryParams,
 };
 
 // ============================================================================
@@ -158,7 +159,7 @@ pub async fn get_rule_by_id(pool: &SqlitePool, id: i64) -> Result<Option<AlertRu
 pub async fn list_rules(
     pool: &SqlitePool,
     params: &RuleQueryParams,
-) -> Result<(i64, Vec<AlertRule>)> {
+) -> Result<PagedData<AlertRule>> {
     let mut cond_strings: Vec<String> = Vec::new();
 
     if params.service_type.is_some() {
@@ -185,7 +186,7 @@ pub async fn list_rules(
 
     let count_sql = format!("SELECT COUNT(*) FROM alert_rule WHERE {}", where_clause);
     let data_sql = format!(
-        "SELECT * FROM alert_rule WHERE {} ORDER BY id DESC LIMIT ? OFFSET ?",
+        "SELECT * FROM alert_rule WHERE {} ORDER BY id ASC LIMIT ? OFFSET ?",
         where_clause
     );
 
@@ -212,19 +213,27 @@ pub async fn list_rules(
         }};
     }
 
+    let (eff_limit, offset, page, page_size) =
+        resolve_pagination(params.page, params.page_size, params.skip, params.limit);
+
     let total: i64 = bind_params!(sqlx::query_scalar::<_, i64>(&count_sql))
         .fetch_one(pool)
         .await
         .context("count rules")?;
 
-    let rows: Vec<AlertRule> = bind_params!(sqlx::query_as::<_, AlertRule>(&data_sql))
-        .bind(params.limit)
-        .bind(params.skip)
+    let list: Vec<AlertRule> = bind_params!(sqlx::query_as::<_, AlertRule>(&data_sql))
+        .bind(eff_limit)
+        .bind(offset)
         .fetch_all(pool)
         .await
         .context("list rules")?;
 
-    Ok((total, rows))
+    Ok(PagedData {
+        total,
+        list,
+        page,
+        page_size,
+    })
 }
 
 pub async fn get_rules_by_channel(pool: &SqlitePool, channel_id: i64) -> Result<Vec<AlertRule>> {
@@ -233,6 +242,38 @@ pub async fn get_rules_by_channel(pool: &SqlitePool, channel_id: i64) -> Result<
         .fetch_all(pool)
         .await
         .context("get rules by channel")
+}
+
+/// Check whether a rule with the given name already exists (case-insensitive).
+pub async fn find_rule_by_name(pool: &SqlitePool, rule_name: &str) -> Result<Option<AlertRule>> {
+    sqlx::query_as::<_, AlertRule>(
+        "SELECT * FROM alert_rule WHERE LOWER(rule_name) = LOWER(?) LIMIT 1",
+    )
+    .bind(rule_name)
+    .fetch_optional(pool)
+    .await
+    .context("find rule by name")
+}
+
+/// Check whether a rule already exists for the given (service_type, channel_id, data_type, point_id)
+/// combination. Returns the first matching rule (enabled or disabled) if found.
+pub async fn find_rule_by_point(
+    pool: &SqlitePool,
+    service_type: &str,
+    channel_id: i64,
+    data_type: &str,
+    point_id: i64,
+) -> Result<Option<AlertRule>> {
+    sqlx::query_as::<_, AlertRule>(
+        "SELECT * FROM alert_rule WHERE service_type = ? AND channel_id = ? AND data_type = ? AND point_id = ? LIMIT 1",
+    )
+    .bind(service_type)
+    .bind(channel_id)
+    .bind(data_type)
+    .bind(point_id)
+    .fetch_optional(pool)
+    .await
+    .context("find rule by point")
 }
 
 pub async fn get_all_enabled_rules(pool: &SqlitePool) -> Result<Vec<AlertRule>> {
@@ -388,10 +429,7 @@ pub async fn get_all_active_alerts(pool: &SqlitePool) -> Result<Vec<Alert>> {
     .context("get all active alerts")
 }
 
-pub async fn list_alerts(
-    pool: &SqlitePool,
-    params: &AlertQueryParams,
-) -> Result<(i64, Vec<Alert>)> {
+pub async fn list_alerts(pool: &SqlitePool, params: &AlertQueryParams) -> Result<PagedData<Alert>> {
     let mut cond_strings: Vec<String> = Vec::new();
     cond_strings.push("status = 'active'".to_string());
 
@@ -443,14 +481,22 @@ pub async fn list_alerts(
         .await
         .context("count alerts")?;
 
-    let rows: Vec<Alert> = bind_alert_params!(sqlx::query_as::<_, Alert>(&data_sql))
-        .bind(params.limit)
-        .bind(params.skip)
+    let (eff_limit, offset, page, page_size) =
+        resolve_pagination(params.page, params.page_size, params.skip, params.limit);
+
+    let list: Vec<Alert> = bind_alert_params!(sqlx::query_as::<_, Alert>(&data_sql))
+        .bind(eff_limit)
+        .bind(offset)
         .fetch_all(pool)
         .await
         .context("list alerts")?;
 
-    Ok((total, rows))
+    Ok(PagedData {
+        total,
+        list,
+        page,
+        page_size,
+    })
 }
 
 pub async fn insert_alert(pool: &SqlitePool, rule: &AlertRule, current_value: f64) -> Result<i64> {
@@ -612,7 +658,7 @@ pub async fn resolve_alerts_by_rule_id(pool: &SqlitePool, rule_id: i64) -> Resul
 pub async fn list_events(
     pool: &SqlitePool,
     params: &EventQueryParams,
-) -> Result<(i64, Vec<AlertEvent>)> {
+) -> Result<PagedData<AlertEvent>> {
     let mut cond_strings: Vec<String> = Vec::new();
 
     if params.rule_id.is_some() {
@@ -676,14 +722,22 @@ pub async fn list_events(
         .await
         .context("count events")?;
 
-    let rows: Vec<AlertEvent> = bind_event_params!(sqlx::query_as::<_, AlertEvent>(&data_sql))
-        .bind(params.limit)
-        .bind(params.skip)
+    let (eff_limit, offset, page, page_size) =
+        resolve_pagination(params.page, params.page_size, params.skip, params.limit);
+
+    let list: Vec<AlertEvent> = bind_event_params!(sqlx::query_as::<_, AlertEvent>(&data_sql))
+        .bind(eff_limit)
+        .bind(offset)
         .fetch_all(pool)
         .await
         .context("list events")?;
 
-    Ok((total, rows))
+    Ok(PagedData {
+        total,
+        list,
+        page,
+        page_size,
+    })
 }
 
 pub async fn get_all_events_for_export(
