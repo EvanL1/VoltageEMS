@@ -39,7 +39,7 @@ import { useGlobalStore } from '@/stores/global'
 import { pxToResponsive } from '@/utils/responsive'
 import { ZoomIn, Download } from '@element-plus/icons-vue'
 import FullSceenDialog from '@/components/dialog/fullSceenDialog.vue'
-import * as XLSX from 'xlsx'
+import { downloadCsv } from '@/utils/csv'
 
 const fullScreenDialogRef = ref()
 const fullScreenChartRef = ref<HTMLDivElement | null>(null)
@@ -554,18 +554,8 @@ const handleExport = () => {
     exportData.push(row)
   })
 
-  // 创建工作簿
-  const wb = XLSX.utils.book_new()
-  const ws = XLSX.utils.aoa_to_sheet(exportData)
-
-  // 添加工作表到工作簿
-  XLSX.utils.book_append_sheet(wb, ws, 'energy_chart_data')
-
-  // 生成文件名
-  const fileName = `energy_chart_data_${new Date().toISOString().slice(0, 10)}.xlsx`
-
-  // 导出文件
-  XLSX.writeFile(wb, fileName)
+  const fileName = `energy_chart_data_${new Date().toISOString().slice(0, 10)}.csv`
+  downloadCsv(exportData, fileName)
 }
 
 // 监听侧边栏折叠状态变化

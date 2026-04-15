@@ -44,14 +44,19 @@ export default defineConfig(({ mode }) => ({
         return !/\.(png|jpe?g|gif|svg|webp|avif|bmp|ico)$/i.test(file)
       },
     }),
-    // 打包分析插件 - 生成分析报告到 dist/stats.html
-    visualizer({
-      open: true, // 构建后自动打开分析报告
-      gzipSize: true,
-      brotliSize: true,
-      filename: 'dist/stats.html', // 生成分析报告文件
-      emitFile: true,
-    }),
+    // 打包分析插件 - 仅在 analyze 模式下生成 dist/stats.html
+    // 使用：VITE_ANALYZE=true pnpm build
+    ...(process.env.VITE_ANALYZE
+      ? [
+          visualizer({
+            open: true,
+            gzipSize: true,
+            brotliSize: true,
+            filename: 'dist/stats.html',
+            emitFile: true,
+          }),
+        ]
+      : []),
   ],
   server: {
     host: '0.0.0.0', // 允许外部访问

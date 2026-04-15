@@ -17,11 +17,11 @@
     backdrop-filter: blur(0.2rem);
 
     .el-date-picker {
-      width: 3.32rem;
+      width: 3.32rem !important;
     }
 
     .el-date-range-picker {
-      width: 6.46rem;
+      width: 6.46rem !important;
     }
 
     .el-date-range-picker__content {
@@ -341,7 +341,7 @@
   }
 
   .el-range-editor.el-input__wrapper {
-    width: 4rem;
+    width: 4rem !important;
 
     &:hover {
       box-shadow: none;
