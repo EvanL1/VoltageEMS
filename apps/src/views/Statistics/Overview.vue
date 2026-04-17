@@ -11,19 +11,6 @@
               class="curves__toolbar-time-interval"
               ref="toolbarRightRef"
             >
-              <el-select
-                v-model="timeInterval"
-                @change="handleTimeIntervalChange"
-                :append-to="toolbarRightRef"
-                placeholder="Select Time Interval"
-              >
-                <el-option
-                  v-for="btn in intervalList"
-                  :key="btn.value"
-                  :label="btn.label"
-                  :value="btn.value"
-                />
-              </el-select>
             </div>
             <el-date-picker
               v-if="selectedTimeBtn === 'custom'"
@@ -205,13 +192,6 @@ const handleTimeBtnClick = (event: MouseEvent) => {
     if (selectedTimeBtn.value !== 'custom') {
       fetchPowerTrendData()
     }
-  }
-}
-
-// 处理时间间隔变化
-const handleTimeIntervalChange = () => {
-  if (selectedTimeBtn.value === 'custom' && rangeArray.value.length === 2) {
-    fetchPowerTrendData()
   }
 }
 

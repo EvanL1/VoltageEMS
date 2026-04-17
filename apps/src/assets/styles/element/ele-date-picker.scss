@@ -26,6 +26,7 @@
 
     .el-date-range-picker__content {
       padding: 0.16rem;
+      margin:0;
 
       &.is-left {
         border-right: 0.01rem solid rgba(255, 255, 255, 0.5);
@@ -125,7 +126,7 @@
         }
 
         .el-picker-panel__content {
-          margin: 0.15rem;
+          // margin: 0.15rem;
 
           .el-date-table {
             font-size: 0.12rem;
@@ -339,10 +340,14 @@
       background-color: rgba(255, 105, 0, 1);
     }
   }
-
+  .el-date-editor.is-focus .el-input__wrapper{
+    box-shadow: none;
+  }
   .el-range-editor.el-input__wrapper {
     width: 4rem !important;
-
+    &.is-active {
+      box-shadow: none;
+    }
     &:hover {
       box-shadow: none;
     }

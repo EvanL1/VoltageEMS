@@ -19,7 +19,7 @@
             </el-form-item>
             <el-form-item label="Start Time:">
               <el-date-picker
-                v-model="filters.start_time"
+                v-model="startTimeDisplay"
                 type="datetime"
                 placeholder="Please select start time"
                 format="YYYY-MM-DD HH:mm:ss"
@@ -32,7 +32,7 @@
             </el-form-item>
             <el-form-item label="End Time:">
               <el-date-picker
-                v-model="filters.end_time"
+                v-model="endTimeDisplay"
                 type="datetime"
                 placeholder="Please select end time"
                 format="YYYY-MM-DD HH:mm:ss"
@@ -149,6 +149,10 @@ const warningLevelText = {
   3: 'Info Alarm',
 }
 
+// 日期选择器显示用的 Date 对象（与 filters 中的 Unix 时间戳分开）
+const startTimeDisplay = ref<Date | null>(null)
+const endTimeDisplay = ref<Date | null>(null)
+
 // 使用 useTableData composable
 const {
   loading,
@@ -159,13 +163,20 @@ const {
   fetchTableData,
   filters,
   exportData,
-  reloadFilters,
+  reloadFilters: _reloadFilters,
 } = useTableData<HistoryAlarmData>({
   listUrl: '/alarmApi/alert-events',
   exportUrl: '/alarmApi/alert-events/export',
   enableExport: true,
   defaultPageSize: 20,
 })
+
+// 重置时同步清空日期选择器显示值
+const reloadFilters = () => {
+  startTimeDisplay.value = null
+  endTimeDisplay.value = null
+  _reloadFilters()
+}
 
 // 初始化filters
 filters.warning_level = null
@@ -174,15 +185,17 @@ filters.end_time = null
 
 // 处理开始时间变化
 const handleStartTimeChange = (value: Date | null) => {
+  startTimeDisplay.value = value
   // 记录原始 Date 以便禁用规则计算
   filters.startTime = value || null
   // 如果开始时间晚于或等于结束时间，清空结束时间
   if (value && filters.endTime && value.getTime() >= new Date(filters.endTime).getTime()) {
     filters.endTime = null
     filters.end_time = null
+    endTimeDisplay.value = null
   }
-  // 转为后端需要的字符串格式
-  filters.start_time = value ? value.toLocaleString('sv-SE').replace(' ', 'T') : null
+  // 转为后端需要的 Unix 秒时间戳
+  filters.start_time = value ? Math.floor(value.getTime() / 1000) : null
 }
 
 // 处理结束时间变化
@@ -198,6 +211,7 @@ const handleEndTimeChange = (value: Date | null) => {
   ) {
     adjusted.setHours(23, 59, 59, 999)
   }
+  endTimeDisplay.value = adjusted
   filters.endTime = adjusted || null
   // 如果结束时间早于或等于开始时间，清空开始时间
   if (
@@ -207,9 +221,10 @@ const handleEndTimeChange = (value: Date | null) => {
   ) {
     filters.startTime = null
     filters.start_time = null
+    startTimeDisplay.value = null
   }
-  // 转为后端需要的字符串格式
-  filters.end_time = adjusted ? adjusted.toLocaleString('sv-SE').replace(' ', 'T') : null
+  // 转为后端需要的 Unix 秒时间戳
+  filters.end_time = adjusted ? Math.floor(adjusted.getTime() / 1000) : null
 }
 
 // 禁用开始时间的日期选择
