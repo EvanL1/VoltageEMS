@@ -14,7 +14,7 @@
       <div class="header__right-weather">
         <img :src="sunIcon" alt="sunny weather" class="header__right-weatherIcon" />
         <div class="header__right-weatherStatus">Wind</div>
-        <div class="header__right-weatherValue">67F / 79F</div>
+        <div class="header__right-weatherValue">67 ℉ / 79 ℉</div>
       </div>
 
       <div class="header__right-avatar">

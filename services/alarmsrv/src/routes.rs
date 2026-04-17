@@ -17,10 +17,10 @@ use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::{Config, SwaggerUi};
 
-use crate::db;
+use crate::db::{self};
 use crate::models::{
     AlertEvent, AlertQueryParams, AlertRule, ApiResponse, CreateRuleRequest, EventQueryParams,
-    MonitorStatus, PagedData, RuleQueryParams, UpdateRuleRequest,
+    MonitorStatus, RuleQueryParams, UpdateRuleRequest,
 };
 use crate::monitor;
 use crate::state::AppState;
@@ -114,14 +114,14 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
         MonitorStatus,
     )),
     tags(
-        (name = "Rules",   description = "告警规则 CRUD"),
-        (name = "Alerts",  description = "活跃告警查询与解除"),
-        (name = "Events",  description = "告警事件历史与导出"),
-        (name = "Monitor", description = "监控状态与手动触发"),
-        (name = "Meta",    description = "服务信息"),
+        (name = "Rules",   description = "Alarm rule CRUD"),
+        (name = "Alerts",  description = "Active alert query and resolution"),
+        (name = "Events",  description = "Alert event history and export"),
+        (name = "Monitor", description = "Monitor status and manual trigger"),
+        (name = "Meta",    description = "Service info"),
     ),
     info(title = "VoltageEMS Alarm Service", version = "1.0.0",
-         description = "告警规则管理、活跃告警监控、事件历史查询")
+         description = "Alarm rule management, active alert monitoring, event history query")
 )]
 pub struct ApiDoc;
 
@@ -130,7 +130,7 @@ pub struct ApiDoc;
 // ============================================================================
 
 #[utoipa::path(get, path = "/", tag = "Meta",
-    responses((status = 200, description = "服务基本信息")))]
+    responses((status = 200, description = "Service basic info")))]
 async fn service_info() -> Json<Value> {
     Json(json!({
         "success": true,
@@ -144,7 +144,7 @@ async fn service_info() -> Json<Value> {
 }
 
 #[utoipa::path(get, path = "/health", tag = "Meta",
-    responses((status = 200, description = "健康检查")))]
+    responses((status = 200, description = "Health check")))]
 async fn health() -> Json<Value> {
     Json(json!({ "success": true, "message": "Service is running" }))
 }
@@ -156,20 +156,20 @@ async fn health() -> Json<Value> {
 #[utoipa::path(get, path = "/alarmApi/rules", tag = "Rules",
     params(RuleQueryParams),
     responses(
-        (status = 200, description = "规则列表"),
+        (status = 200, description = "Rule list"),
     ))]
 async fn list_rules(
     State(state): State<Arc<AppState>>,
     Query(params): Query<RuleQueryParams>,
 ) -> impl IntoResponse {
     match db::list_rules(&state.db, &params).await {
-        Ok((total, list)) => {
-            let msg = format!("查询成功，共找到 {} 条规则", total);
-            Json(ApiResponse::ok(msg, PagedData { total, list })).into_response()
+        Ok(paged) => {
+            let msg = format!("Found {} rule(s)", paged.total);
+            Json(ApiResponse::ok(msg, paged)).into_response()
         },
         Err(e) => {
             error!("list_rules: {}", e);
-            server_error("查询规则失败")
+            server_error("Failed to query rules")
         },
     }
 }
@@ -177,15 +177,82 @@ async fn list_rules(
 #[utoipa::path(post, path = "/alarmApi/rules", tag = "Rules",
     request_body = CreateRuleRequest,
     responses(
-        (status = 201, description = "规则创建成功", body = AlertRule),
-        (status = 400, description = "无效的运算符"),
+        (status = 200, description = "Rule created", body = AlertRule),
+        (status = 400, description = "Invalid operator"),
+        (status = 409, description = "Duplicate rule"),
     ))]
 async fn create_rule(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateRuleRequest>,
 ) -> impl IntoResponse {
     if !is_valid_operator(&req.operator) {
-        return bad_request("无效的运算符，支持: >, <, >=, <=, ==, !=");
+        return bad_request("Invalid operator. Allowed: >, <, >=, <=, ==, !=");
+    }
+
+    // Reject duplicate rule name (case-insensitive)
+    match db::find_rule_by_name(&state.db, &req.rule_name).await {
+        Ok(Some(existing)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "success": false,
+                    "message": format!("A rule named '{}' already exists", req.rule_name),
+                    "data": {
+                        "conflict": "duplicate_name",
+                        "existing_rule": {
+                            "id": existing.id,
+                            "rule_name": existing.rule_name,
+                            "created_at": existing.created_at,
+                        }
+                    }
+                })),
+            )
+                .into_response();
+        },
+        Ok(None) => {},
+        Err(e) => {
+            error!("create_rule name check: {}", e);
+            return server_error("Failed to create rule");
+        },
+    }
+
+    // Reject duplicate point binding: same (service_type, channel_id, data_type, point_id)
+    match db::find_rule_by_point(
+        &state.db,
+        &req.service_type,
+        req.channel_id,
+        &req.data_type,
+        req.point_id,
+    )
+    .await
+    {
+        Ok(Some(existing)) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "success": false,
+                    "message": format!(
+                        "A rule already monitors this point (service:{}, channel:{}, type:{}, point:{})",
+                        req.service_type, req.channel_id, req.data_type, req.point_id
+                    ),
+                    "data": {
+                        "conflict": "duplicate_point",
+                        "existing_rule": {
+                            "id": existing.id,
+                            "rule_name": existing.rule_name,
+                            "created_at": existing.created_at,
+                        },
+                        "suggestion": format!("Update the existing rule (id:{}) or choose a different point", existing.id),
+                    }
+                })),
+            )
+                .into_response();
+        },
+        Ok(None) => {},
+        Err(e) => {
+            error!("create_rule point check: {}", e);
+            return server_error("Failed to create rule");
+        },
     }
 
     match db::insert_rule(
@@ -205,48 +272,56 @@ async fn create_rule(
     {
         Ok(id) => {
             let rule = db::get_rule_by_id(&state.db, id).await.ok().flatten();
-            (
-                StatusCode::CREATED,
-                Json(ApiResponse::ok(
-                    "创建规则成功",
-                    json!({ "id": id, "rule": rule }),
-                )),
-            )
-                .into_response()
+            Json(ApiResponse::ok(
+                format!("Rule '{}' created", req.rule_name),
+                json!({
+                    "rule_id": id,
+                    "rule_name": req.rule_name,
+                    "redis_key": format!("{}:{}:{}", req.service_type, req.channel_id, req.data_type),
+                    "monitoring": req.enabled,
+                    "rule": rule,
+                }),
+            ))
+            .into_response()
         },
         Err(e) => {
             error!("create_rule: {}", e);
-            server_error("创建规则失败")
+            server_error("Failed to create rule")
         },
     }
 }
 
 #[utoipa::path(get, path = "/alarmApi/rules/{id}", tag = "Rules",
-    params(("id" = i64, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "规则详情", body = AlertRule),
-        (status = 404, description = "规则不存在"),
+        (status = 200, description = "Rule detail", body = AlertRule),
+        (status = 404, description = "Rule not found"),
     ))]
 async fn get_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_rule_by_id(&state.db, id).await {
         Ok(Some(rule)) => {
-            Json(ApiResponse::ok("获取规则成功", json!({ "rule": rule }))).into_response()
+            // Return list format for compatibility with alarmsrv-py (data.list[0])
+            Json(ApiResponse::ok(
+                "Rule retrieved",
+                json!({ "total": 1, "list": [rule] }),
+            ))
+            .into_response()
         },
-        Ok(None) => not_found("规则不存在"),
+        Ok(None) => not_found("Rule not found"),
         Err(e) => {
             error!("get_rule: {}", e);
-            server_error("获取规则失败")
+            server_error("Failed to get rule")
         },
     }
 }
 
 #[utoipa::path(put, path = "/alarmApi/rules/{id}", tag = "Rules",
-    params(("id" = i64, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "Rule ID")),
     request_body = UpdateRuleRequest,
     responses(
-        (status = 200, description = "规则更新成功", body = AlertRule),
-        (status = 400, description = "无效运算符"),
-        (status = 404, description = "规则不存在"),
+        (status = 200, description = "Rule updated", body = AlertRule),
+        (status = 400, description = "Invalid operator"),
+        (status = 404, description = "Rule not found"),
     ))]
 async fn update_rule(
     State(state): State<Arc<AppState>>,
@@ -255,7 +330,32 @@ async fn update_rule(
 ) -> impl IntoResponse {
     if let Some(ref op) = req.operator {
         if !is_valid_operator(op) {
-            return bad_request("无效的运算符");
+            return bad_request("Invalid operator. Allowed: >, <, >=, <=, ==, !=");
+        }
+    }
+
+    // If renaming, ensure the new name does not clash with another rule
+    if let Some(ref new_name) = req.rule_name {
+        match db::find_rule_by_name(&state.db, new_name).await {
+            Ok(Some(existing)) if existing.id != id => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "success": false,
+                        "message": format!("A rule named '{}' already exists", new_name),
+                        "data": {
+                            "conflict": "duplicate_name",
+                            "existing_rule": { "id": existing.id, "rule_name": existing.rule_name }
+                        }
+                    })),
+                )
+                    .into_response();
+            },
+            Ok(_) => {},
+            Err(e) => {
+                error!("update_rule name check: {}", e);
+                return server_error("Failed to update rule");
+            },
         }
     }
 
@@ -277,71 +377,66 @@ async fn update_rule(
     {
         Ok(true) => {
             monitor::on_rule_updated(&state, id).await;
-            let rule = db::get_rule_by_id(&state.db, id).await.ok().flatten();
-            Json(ApiResponse::ok("更新规则成功", json!({ "rule": rule }))).into_response()
+            Json(ApiResponse::ok("Rule updated", json!({ "rule_id": id }))).into_response()
         },
-        Ok(false) => not_found("规则不存在"),
+        Ok(false) => not_found("Rule not found"),
         Err(e) => {
             error!("update_rule: {}", e);
-            server_error("更新规则失败")
+            server_error("Failed to update rule")
         },
     }
 }
 
 #[utoipa::path(delete, path = "/alarmApi/rules/{id}", tag = "Rules",
-    params(("id" = i64, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "规则删除成功"),
-        (status = 404, description = "规则不存在"),
+        (status = 200, description = "Rule deleted"),
+        (status = 404, description = "Rule not found"),
     ))]
 async fn delete_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     let rule = match db::get_rule_by_id(&state.db, id).await {
         Ok(Some(r)) => r,
-        Ok(None) => return not_found("规则不存在"),
+        Ok(None) => return not_found("Rule not found"),
         Err(e) => {
             error!("delete_rule fetch: {}", e);
-            return server_error("删除规则失败");
+            return server_error("Failed to delete rule");
         },
     };
 
     monitor::on_rule_deleted(&state, &rule).await;
 
     match db::delete_rule(&state.db, id).await {
-        Ok(true) => Json(ApiResponse::ok("删除规则成功", json!({ "id": id }))).into_response(),
-        Ok(false) => not_found("规则不存在"),
+        Ok(true) => Json(ApiResponse::ok("Rule deleted", json!({ "rule_id": id }))).into_response(),
+        Ok(false) => not_found("Rule not found"),
         Err(e) => {
             error!("delete_rule: {}", e);
-            server_error("删除规则失败")
+            server_error("Failed to delete rule")
         },
     }
 }
 
 #[utoipa::path(patch, path = "/alarmApi/rules/{id}/enable", tag = "Rules",
-    params(("id" = i64, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "规则已启用"),
-        (status = 404, description = "规则不存在"),
+        (status = 200, description = "Rule enabled"),
+        (status = 404, description = "Rule not found"),
     ))]
 async fn enable_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::set_rule_enabled(&state.db, id, true).await {
-        Ok(true) => Json(ApiResponse::ok(
-            "规则已启用",
-            json!({ "id": id, "enabled": true }),
-        ))
-        .into_response(),
-        Ok(false) => not_found("规则不存在"),
+        Ok(true) => Json(ApiResponse::ok("Rule enabled", json!({ "rule_id": id }))).into_response(),
+        Ok(false) => not_found("Rule not found"),
         Err(e) => {
             error!("enable_rule: {}", e);
-            server_error("启用规则失败")
+            server_error("Failed to enable rule")
         },
     }
 }
 
 #[utoipa::path(patch, path = "/alarmApi/rules/{id}/disable", tag = "Rules",
-    params(("id" = i64, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "规则已禁用"),
-        (status = 404, description = "规则不存在"),
+        (status = 200, description = "Rule disabled"),
+        (status = 404, description = "Rule not found"),
     ))]
 async fn disable_rule(
     State(state): State<Arc<AppState>>,
@@ -350,23 +445,19 @@ async fn disable_rule(
     match db::set_rule_enabled(&state.db, id, false).await {
         Ok(true) => {
             monitor::on_rule_updated(&state, id).await;
-            Json(ApiResponse::ok(
-                "规则已禁用",
-                json!({ "id": id, "enabled": false }),
-            ))
-            .into_response()
+            Json(ApiResponse::ok("Rule disabled", json!({ "rule_id": id }))).into_response()
         },
-        Ok(false) => not_found("规则不存在"),
+        Ok(false) => not_found("Rule not found"),
         Err(e) => {
             error!("disable_rule: {}", e);
-            server_error("禁用规则失败")
+            server_error("Failed to disable rule")
         },
     }
 }
 
 #[utoipa::path(get, path = "/alarmApi/rules/channel/{channel_id}", tag = "Rules",
-    params(("channel_id" = i64, Path, description = "通道 ID")),
-    responses((status = 200, description = "该通道下的规则列表")))]
+    params(("channel_id" = i64, Path, description = "Channel ID")),
+    responses((status = 200, description = "Rules for the given channel")))]
 async fn rules_by_channel(
     State(state): State<Arc<AppState>>,
     Path(channel_id): Path<i64>,
@@ -374,15 +465,21 @@ async fn rules_by_channel(
     match db::get_rules_by_channel(&state.db, channel_id).await {
         Ok(list) => {
             let total = list.len() as i64;
+            let page_size = total.max(1);
             Json(ApiResponse::ok(
-                format!("查询成功，共找到 {} 条规则", total),
-                PagedData { total, list },
+                format!("Found {} rule(s) for channel {}", total, channel_id),
+                crate::models::PagedData {
+                    total,
+                    list,
+                    page: 1,
+                    page_size,
+                },
             ))
             .into_response()
         },
         Err(e) => {
             error!("rules_by_channel: {}", e);
-            server_error("查询规则失败")
+            server_error("Failed to query rules")
         },
     }
 }
@@ -393,48 +490,53 @@ async fn rules_by_channel(
 
 #[utoipa::path(get, path = "/alarmApi/alerts", tag = "Alerts",
     params(AlertQueryParams),
-    responses((status = 200, description = "活跃告警列表")))]
+    responses((status = 200, description = "Active alert list")))]
 async fn list_alerts(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AlertQueryParams>,
 ) -> impl IntoResponse {
     match db::list_alerts(&state.db, &params).await {
-        Ok((total, list)) => Json(ApiResponse::ok(
-            format!("查询成功，共找到 {} 条活跃告警", total),
-            PagedData { total, list },
+        Ok(paged) => Json(ApiResponse::ok(
+            format!("Found {} active alert(s)", paged.total),
+            paged,
         ))
         .into_response(),
         Err(e) => {
             error!("list_alerts: {}", e);
-            server_error("查询告警失败")
+            server_error("Failed to query alerts")
         },
     }
 }
 
 #[utoipa::path(get, path = "/alarmApi/alerts/{id}", tag = "Alerts",
-    params(("id" = i64, Path, description = "告警 ID")),
+    params(("id" = i64, Path, description = "Alert ID")),
     responses(
-        (status = 200, description = "告警详情", body = crate::models::Alert),
-        (status = 404, description = "告警不存在"),
+        (status = 200, description = "Alert detail", body = crate::models::Alert),
+        (status = 404, description = "Alert not found"),
     ))]
 async fn get_alert(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> impl IntoResponse {
     match db::get_alert_by_id(&state.db, id).await {
         Ok(Some(alert)) => {
-            Json(ApiResponse::ok("获取告警成功", json!({ "alert": alert }))).into_response()
+            // Return list format for compatibility with alarmsrv-py (data.list[0])
+            Json(ApiResponse::ok(
+                "Alert retrieved",
+                json!({ "total": 1, "list": [alert] }),
+            ))
+            .into_response()
         },
-        Ok(None) => not_found("告警不存在"),
+        Ok(None) => not_found("Alert not found"),
         Err(e) => {
             error!("get_alert: {}", e);
-            server_error("获取告警失败")
+            server_error("Failed to get alert")
         },
     }
 }
 
 #[utoipa::path(patch, path = "/alarmApi/alerts/{id}/resolve", tag = "Alerts",
-    params(("id" = i64, Path, description = "告警 ID")),
+    params(("id" = i64, Path, description = "Alert ID")),
     responses(
-        (status = 200, description = "告警已手动解除"),
-        (status = 404, description = "告警不存在"),
+        (status = 200, description = "Alert resolved"),
+        (status = 404, description = "Alert not found"),
     ))]
 async fn resolve_alert(
     State(state): State<Arc<AppState>>,
@@ -442,10 +544,10 @@ async fn resolve_alert(
 ) -> impl IntoResponse {
     let alert = match db::get_alert_by_id(&state.db, id).await {
         Ok(Some(a)) => a,
-        Ok(None) => return not_found("告警不存在"),
+        Ok(None) => return not_found("Alert not found"),
         Err(e) => {
             error!("resolve_alert fetch: {}", e);
-            return server_error("解除告警失败");
+            return server_error("Failed to resolve alert");
         },
     };
 
@@ -457,17 +559,17 @@ async fn resolve_alert(
             if let Ok(Some(rule)) = db::get_rule_by_id(&state.db, rule_id).await {
                 state
                     .broadcaster
-                    .send_alarm_recovery(id, &rule, Some(recovery_value), "手动解除")
+                    .send_alarm_recovery(id, &rule, Some(recovery_value), "manually resolved")
                     .await;
             }
             if let Ok(counts) = db::get_active_alarm_counts(&state.db).await {
                 state.broadcaster.send_alarm_count(&counts).await;
             }
-            Json(ApiResponse::ok("告警已解除", json!({ "id": id }))).into_response()
+            Json(ApiResponse::ok("Alert resolved", json!({ "alert_id": id }))).into_response()
         },
         Err(e) => {
             error!("resolve_alert: {}", e);
-            server_error("解除告警失败")
+            server_error("Failed to resolve alert")
         },
     }
 }
@@ -478,20 +580,20 @@ async fn resolve_alert(
 
 #[utoipa::path(get, path = "/alarmApi/alert-events", tag = "Events",
     params(EventQueryParams),
-    responses((status = 200, description = "告警事件历史列表")))]
+    responses((status = 200, description = "Alert event history list")))]
 async fn list_events(
     State(state): State<Arc<AppState>>,
     Query(params): Query<EventQueryParams>,
 ) -> impl IntoResponse {
     match db::list_events(&state.db, &params).await {
-        Ok((total, list)) => Json(ApiResponse::ok(
-            format!("查询成功，共找到 {} 条记录", total),
-            PagedData { total, list },
+        Ok(paged) => Json(ApiResponse::ok(
+            format!("Found {} event(s)", paged.total),
+            paged,
         ))
         .into_response(),
         Err(e) => {
             error!("list_events: {}", e);
-            server_error("查询告警事件失败")
+            server_error("Failed to query alert events")
         },
     }
 }
@@ -499,7 +601,7 @@ async fn list_events(
 #[utoipa::path(get, path = "/alarmApi/alert-events/export", tag = "Events",
     params(EventQueryParams),
     responses(
-        (status = 200, description = "返回 CSV 文件流",
+        (status = 200, description = "CSV file stream",
          content_type = "text/csv"),
     ))]
 async fn export_events_csv(
@@ -510,7 +612,7 @@ async fn export_events_csv(
         Ok(e) => e,
         Err(e) => {
             error!("export_events_csv: {}", e);
-            return server_error("导出失败");
+            return server_error("Export failed");
         },
     };
 
@@ -576,7 +678,7 @@ async fn export_events_csv(
             .into_response(),
         Err(e) => {
             error!("csv flush: {}", e);
-            server_error("导出失败")
+            server_error("Export failed")
         },
     }
 }
@@ -586,23 +688,23 @@ async fn export_events_csv(
 // ============================================================================
 
 #[utoipa::path(get, path = "/alarmApi/alert-statistics", tag = "Monitor",
-    responses((status = 200, description = "告警统计数据")))]
+    responses((status = 200, description = "Alert statistics")))]
 async fn alert_statistics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match db::get_statistics(&state.db).await {
-        Ok(stats) => Json(ApiResponse::ok("统计数据获取成功", stats)).into_response(),
+        Ok(stats) => Json(ApiResponse::ok("Statistics retrieved", stats)).into_response(),
         Err(e) => {
             error!("alert_statistics: {}", e);
-            server_error("获取统计信息失败")
+            server_error("Failed to get statistics")
         },
     }
 }
 
 #[utoipa::path(get, path = "/alarmApi/monitor/status", tag = "Monitor",
-    responses((status = 200, description = "监控循环运行状态", body = MonitorStatus)))]
+    responses((status = 200, description = "Monitor loop status", body = MonitorStatus)))]
 async fn monitor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let ms = state.monitor_status.read().await.clone();
     Json(ApiResponse::ok(
-        "监控状态获取成功",
+        "Monitor status retrieved",
         json!({
             "running": ms.running,
             "last_check_time": ms.last_check_time,
@@ -613,10 +715,10 @@ async fn monitor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse
 }
 
 #[utoipa::path(post, path = "/alarmApi/monitor/check-rule/{id}", tag = "Monitor",
-    params(("id" = i64, Path, description = "规则 ID")),
+    params(("id" = i64, Path, description = "Rule ID")),
     responses(
-        (status = 200, description = "手动检查结果"),
-        (status = 404, description = "规则不存在"),
+        (status = 200, description = "Manual check result"),
+        (status = 404, description = "Rule not found"),
     ))]
 async fn manual_check_rule(
     State(state): State<Arc<AppState>>,
@@ -637,13 +739,13 @@ async fn manual_check_rule(
 }
 
 #[utoipa::path(post, path = "/alarmApi/call-data", tag = "Monitor",
-    responses((status = 200, description = "广播当前所有活跃告警")))]
+    responses((status = 200, description = "Broadcast all active alerts")))]
 async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let alerts = match db::get_all_active_alerts(&state.db).await {
         Ok(a) => a,
         Err(e) => {
             error!("call_data get alerts: {}", e);
-            return server_error("获取告警失败");
+            return server_error("Failed to get alerts");
         },
     };
 
@@ -652,7 +754,7 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             state.broadcaster.send_alarm_count(&counts).await;
         }
         return Json(ApiResponse::ok(
-            "当前没有活动告警",
+            "No active alerts",
             json!({ "broadcast_count": 0, "alarm_count": 0 }),
         ))
         .into_response();
@@ -678,7 +780,7 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 
     Json(ApiResponse::ok(
-        format!("广播完成，共 {} 条告警", alarm_count),
+        format!("Broadcast complete: {} alert(s)", alarm_count),
         json!({
             "broadcast_count": alarm_count,
             "alarm_count": alarm_count,

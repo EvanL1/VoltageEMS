@@ -152,7 +152,11 @@ async fn collect_redis_data<R: Rtdb>(
                 .map(|(k, v)| {
                     let parsed = std::str::from_utf8(&v)
                         .ok()
-                        .and_then(|s| s.parse::<f64>().ok().map(|n| serde_json::json!(n)))
+                        .map(|s| {
+                            s.parse::<f64>()
+                                .map(|n| serde_json::json!(n))
+                                .unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
+                        })
                         .unwrap_or(serde_json::Value::Null);
                     (k, parsed)
                 })
@@ -164,8 +168,8 @@ async fn collect_redis_data<R: Rtdb>(
 
             entries.push(PropertyEntry {
                 source: source.to_string(),
-                // Spaces are preserved (cloud side handles them)
-                device: device.to_string(),
+                // Cloud side expects underscores (spaces from Redis key converted here)
+                device: device.replace(' ', "_"),
                 data_type: data_type.to_string(),
                 value,
             });

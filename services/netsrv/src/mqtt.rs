@@ -12,14 +12,20 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use chrono::Utc;
-use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, TlsConfiguration, Transport};
+use rumqttc::{
+    AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS, TlsConfiguration, Transport,
+};
+use serde_json::json;
 use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use voltage_rtdb::Rtdb;
 
-use crate::models::{CommandReply, ReadRequest, StatusPayload, WriteRequest};
+use crate::models::{
+    CommandReply, ReadReply, ReadReplyProperty, ReadRequest, StatusPayload, WriteReply,
+    WriteRequest,
+};
 use crate::state::AppState;
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -88,6 +94,27 @@ async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> a
     let mut options = MqttOptions::new(&client_id, &cfg.broker_host, cfg.broker_port);
     options.set_keep_alive(Duration::from_secs(cfg.broker_keepalive_secs));
     options.set_clean_session(true);
+
+    // MQTT username/password auth (only set when both are non-empty)
+    if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password) {
+        if !user.is_empty() {
+            options.set_credentials(user, pass);
+        }
+    }
+
+    // Last Will Testament: broker publishes this automatically on unexpected disconnect.
+    let lwt_payload = json!({
+        "type": "unexpected_disconnect",
+        "gateway": "",
+        "timestamp": Utc::now().timestamp()
+    })
+    .to_string();
+    options.set_last_will(LastWill::new(
+        &state.topics.status,
+        lwt_payload.into_bytes(),
+        QoS::AtLeastOnce,
+        true,
+    ));
 
     // TLS – cert_dir is fixed at startup from EnvConfig (not API-editable).
     // If ssl_enabled but cert loading fails, abort the connection attempt rather
@@ -247,53 +274,70 @@ async fn handle_read(state: Arc<AppState>, payload: Bytes) {
         Ok(r) => r,
         Err(e) => {
             warn!("Bad read request: {}", e);
+            let err_reply = json!({
+                "result": "fail",
+                "error": "json_parse_error",
+                "message": format!("JSON parse error: {}", e),
+                "msgId": "unknown",
+                "timestamp": Utc::now().timestamp()
+            });
+            let _ = publish_json(&state, &state.topics.read_reply, &err_reply).await;
             return;
         },
     };
 
-    let redis_key = format!("{}:{}:{}", req.source, req.device, req.data_type);
+    // Convert underscores to spaces for Redis key lookup (mirrors Python netsrv behaviour:
+    // the cloud sends device names with underscores, Redis stores them with spaces).
+    let device_for_redis = req.device.replace('_', " ");
+    let redis_key = format!("{}:{}:{}", req.source, device_for_redis, req.data_type);
 
     let value = match &req.field {
         Some(field) => {
-            // Single field
             match state.rtdb.hash_get(&redis_key, field).await {
-                Ok(Some(v)) => parse_redis_value(&v),
-                Ok(None) => serde_json::Value::Null,
+                Ok(Some(v)) => {
+                    let mut map = serde_json::Map::new();
+                    map.insert(field.clone(), parse_redis_value(&v));
+                    serde_json::Value::Object(map)
+                },
+                Ok(None) => {
+                    warn!("Read: field '{}' not found in '{}'", field, redis_key);
+                    return; // Python silently returns without reply when data not found
+                },
                 Err(e) => {
                     error!("Redis HGET '{}' '{}': {}", redis_key, field, e);
-                    serde_json::Value::Null
+                    return;
                 },
             }
         },
-        None => {
-            // All fields
-            match state.rtdb.hash_get_all(&redis_key).await {
-                Ok(map) => {
-                    let obj: serde_json::Map<String, serde_json::Value> = map
-                        .into_iter()
-                        .filter(|(k, _)| !k.starts_with('_'))
-                        .map(|(k, v)| (k, parse_redis_value(&v)))
-                        .collect();
-                    serde_json::Value::Object(obj)
-                },
-                Err(e) => {
-                    error!("Redis HGETALL '{}': {}", redis_key, e);
-                    serde_json::Value::Null
-                },
-            }
+        None => match state.rtdb.hash_get_all(&redis_key).await {
+            Ok(map) if map.is_empty() => {
+                warn!("Read: key '{}' not found or empty", redis_key);
+                return;
+            },
+            Ok(map) => {
+                let obj: serde_json::Map<String, serde_json::Value> = map
+                    .into_iter()
+                    .filter(|(k, _)| !k.starts_with('_'))
+                    .map(|(k, v)| (k, parse_redis_value(&v)))
+                    .collect();
+                serde_json::Value::Object(obj)
+            },
+            Err(e) => {
+                error!("Redis HGETALL '{}': {}", redis_key, e);
+                return;
+            },
         },
     };
 
-    let reply = crate::models::ReadReply {
-        source: req.source,
-        device: req.device,
-        data_type: req.data_type,
-        field: req.field,
-        value,
+    let reply = ReadReply {
         timestamp: Utc::now().timestamp(),
-        request_id: req.request_id,
-        success: true,
-        error: None,
+        property: vec![ReadReplyProperty {
+            source: req.source,
+            device: req.device,
+            data_type: req.data_type,
+            value,
+        }],
+        msg_id: req.msg_id,
     };
 
     if let Err(e) = publish_json(&state, &state.topics.read_reply, &reply).await {
@@ -306,35 +350,43 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
         Ok(r) => r,
         Err(e) => {
             warn!("Bad write request: {}", e);
+            let err_reply = json!({
+                "result": "fail",
+                "error": "json_parse_error",
+                "message": format!("JSON parse error: {}", e),
+                "msgId": "unknown",
+                "timestamp": Utc::now().timestamp()
+            });
+            let _ = publish_json(&state, &state.topics.write_reply, &err_reply).await;
             return;
         },
     };
 
-    let redis_key = format!("{}:{}:{}", req.source, req.device, req.data_type);
+    // Convert underscores to spaces for Redis key lookup.
+    let device_for_redis = req.device.replace('_', " ");
+    let redis_key = format!("{}:{}:{}", req.source, device_for_redis, req.data_type);
+
     let value_str = match &req.value {
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => s.clone(),
         other => other.to_string(),
     };
 
-    let result = state
+    let result_str = match state
         .rtdb
         .hash_set(&redis_key, &req.field, Bytes::from(value_str))
-        .await;
-
-    let (success, error) = match result {
-        Ok(_) => (true, None),
+        .await
+    {
+        Ok(_) => "success",
         Err(e) => {
             error!("Redis HSET '{}': {}", redis_key, e);
-            (false, Some(e.to_string()))
+            "fail"
         },
     };
 
     let reply = WriteReply {
-        success,
-        error,
-        request_id: req.request_id,
-        timestamp: Utc::now().timestamp(),
+        result: result_str.to_string(),
+        msg_id: req.msg_id,
     };
 
     if let Err(e) = publish_json(&state, &state.topics.write_reply, &reply).await {
@@ -342,38 +394,35 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
     }
 }
 
-use crate::models::WriteReply;
-
 async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
-    // Parse optional request_id
-    let request_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
+    let msg_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
         .ok()
         .and_then(|v| {
-            v.get("request_id")
+            v.get("msgId")
                 .and_then(|r| r.as_str())
                 .map(|s| s.to_string())
         });
 
-    // First reply, then do the full data upload
+    // Reply first, then trigger the upload so the cloud gets an ACK immediately.
     let reply = CommandReply {
-        success: true,
-        error: None,
-        request_id: request_id.clone(),
+        result: "success".to_string(),
+        message: "数据总召已启动".to_string(),
         timestamp: Utc::now().timestamp(),
+        msg_id: msg_id.clone(),
+        error: None,
     };
     if let Err(e) = publish_json(&state, &state.topics.call_data_reply, &reply).await {
         error!("Failed to publish call-data-reply: {}", e);
     }
 
-    // Trigger immediate data upload
     crate::forwarder::upload_once(Arc::clone(&state)).await;
 }
 
 async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
-    let request_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
+    let msg_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
         .ok()
         .and_then(|v| {
-            v.get("request_id")
+            v.get("msgId")
                 .and_then(|r| r.as_str())
                 .map(|s| s.to_string())
         });
@@ -381,21 +430,34 @@ async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
     let alarmsrv_url = state.config.read().await.alarmsrv_url.clone();
     let url = format!("{}/alarmApi/call-data", alarmsrv_url);
 
-    let (success, error) = match state.http_client.post(&url).send().await {
-        Ok(resp) if resp.status().is_success() => (true, None),
-        Ok(resp) => (false, Some(format!("alarmsrv returned {}", resp.status()))),
-        Err(e) => (false, Some(e.to_string())),
+    // POST to alarmsrv with msgId + timestamp in body (matches Python netsrv).
+    let post_body = json!({
+        "msgId": msg_id.as_deref().unwrap_or(""),
+        "timestamp": Utc::now().timestamp()
+    });
+
+    let (result, message) = match state.http_client.post(&url).json(&post_body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            ("success".to_string(), "告警数据请求成功".to_string())
+        },
+        Ok(resp) => {
+            let msg = format!("告警API返回状态码: {}", resp.status());
+            warn!("call-alarm: {}", msg);
+            ("warning".to_string(), msg)
+        },
+        Err(e) => {
+            let msg = format!("告警API调用失败: {}", e);
+            warn!("call-alarm: {}", msg);
+            ("fail".to_string(), msg)
+        },
     };
 
-    if !success {
-        warn!("call-alarm: {}", error.as_deref().unwrap_or("unknown"));
-    }
-
     let reply = CommandReply {
-        success,
-        error,
-        request_id,
+        result,
+        message,
         timestamp: Utc::now().timestamp(),
+        msg_id,
+        error: None,
     };
     if let Err(e) = publish_json(&state, &state.topics.call_alarm_reply, &reply).await {
         error!("Failed to publish call-alarm-reply: {}", e);

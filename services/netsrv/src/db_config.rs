@@ -19,6 +19,8 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "auto",
         "MQTT client ID ('auto' = use device_sn)",
     ),
+    ("username", "", "MQTT username (empty = no auth)"),
+    ("password", "", "MQTT password"),
     ("ssl_enabled", "false", "Enable TLS for MQTT"),
     (
         "reconnect_delay_secs",
@@ -107,6 +109,22 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
         broker_port: get("broker_port", "8883").parse().unwrap_or(8883),
         broker_keepalive_secs: get("broker_keepalive_secs", "120").parse().unwrap_or(120),
         client_id: get("client_id", "auto"),
+        username: {
+            let v = get("username", "");
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
+        },
+        password: {
+            let v = get("password", "");
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
+        },
         ssl_enabled: get("ssl_enabled", "false") == "true",
         reconnect_delay_secs: get("reconnect_delay_secs", "10").parse().unwrap_or(10),
         reconnect_max_attempts: get("reconnect_max_attempts", "50").parse().unwrap_or(50),
@@ -137,6 +155,8 @@ pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<(
             cfg.broker_keepalive_secs.to_string(),
         ),
         ("client_id", cfg.client_id.clone()),
+        ("username", cfg.username.clone().unwrap_or_default()),
+        ("password", cfg.password.clone().unwrap_or_default()),
         ("ssl_enabled", cfg.ssl_enabled.to_string()),
         ("reconnect_delay_secs", cfg.reconnect_delay_secs.to_string()),
         (
