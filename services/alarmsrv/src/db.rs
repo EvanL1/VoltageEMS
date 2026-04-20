@@ -204,7 +204,11 @@ pub async fn list_rules(
             let mut q = $q;
             if let Some(ref kw) = params.keyword {
                 let pat = format!("%{}%", kw);
-                q = q.bind(pat.clone()).bind(pat.clone()).bind(pat.clone()).bind(pat);
+                q = q
+                    .bind(pat.clone())
+                    .bind(pat.clone())
+                    .bind(pat.clone())
+                    .bind(pat);
             }
             if let Some(ref v) = params.service_type {
                 q = q.bind(v.clone());
