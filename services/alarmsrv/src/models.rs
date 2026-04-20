@@ -181,6 +181,8 @@ pub struct UpdateRuleRequest {
 
 #[derive(Debug, Deserialize, Default, IntoParams)]
 pub struct RuleQueryParams {
+    /// Fuzzy keyword: matches rule_name, description, channel_id, point_id
+    pub keyword: Option<String>,
     pub service_type: Option<String>,
     pub channel_id: Option<i64>,
     pub data_type: Option<String>,
@@ -218,6 +220,8 @@ pub struct AlertQueryParams {
 
 #[derive(Debug, Deserialize, Default, IntoParams)]
 pub struct EventQueryParams {
+    /// Fuzzy keyword: matches rule_name, channel_id, point_id
+    pub keyword: Option<String>,
     pub rule_id: Option<i64>,
     /// "trigger" or "recovery"
     pub event_type: Option<String>,

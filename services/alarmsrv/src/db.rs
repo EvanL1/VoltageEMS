@@ -162,6 +162,14 @@ pub async fn list_rules(
 ) -> Result<PagedData<AlertRule>> {
     let mut cond_strings: Vec<String> = Vec::new();
 
+    // keyword: fuzzy match across rule_name, description, channel_id, point_id
+    if params.keyword.is_some() {
+        cond_strings.push(
+            "(rule_name LIKE ? OR COALESCE(description,'') LIKE ? \
+             OR CAST(channel_id AS TEXT) LIKE ? OR CAST(point_id AS TEXT) LIKE ?)"
+                .to_string(),
+        );
+    }
     if params.service_type.is_some() {
         cond_strings.push("service_type = ?".to_string());
     }
@@ -194,6 +202,14 @@ pub async fn list_rules(
     macro_rules! bind_params {
         ($q:expr) => {{
             let mut q = $q;
+            if let Some(ref kw) = params.keyword {
+                let pat = format!("%{}%", kw);
+                q = q
+                    .bind(pat.clone())
+                    .bind(pat.clone())
+                    .bind(pat.clone())
+                    .bind(pat);
+            }
             if let Some(ref v) = params.service_type {
                 q = q.bind(v.clone());
             }
@@ -661,6 +677,13 @@ pub async fn list_events(
 ) -> Result<PagedData<AlertEvent>> {
     let mut cond_strings: Vec<String> = Vec::new();
 
+    // keyword: fuzzy match across rule_name, channel_id, point_id
+    if params.keyword.is_some() {
+        cond_strings.push(
+            "(rule_name LIKE ? OR CAST(channel_id AS TEXT) LIKE ? OR CAST(point_id AS TEXT) LIKE ?)"
+                .to_string(),
+        );
+    }
     if params.rule_id.is_some() {
         cond_strings.push("rule_id = ?".to_string());
     }
@@ -695,6 +718,10 @@ pub async fn list_events(
     macro_rules! bind_event_params {
         ($q:expr) => {{
             let mut q = $q;
+            if let Some(ref kw) = params.keyword {
+                let pat = format!("%{}%", kw);
+                q = q.bind(pat.clone()).bind(pat.clone()).bind(pat);
+            }
             if let Some(v) = params.rule_id {
                 q = q.bind(v);
             }
@@ -745,6 +772,12 @@ pub async fn get_all_events_for_export(
     params: &EventQueryParams,
 ) -> Result<Vec<AlertEvent>> {
     let mut cond_strings: Vec<String> = Vec::new();
+    if params.keyword.is_some() {
+        cond_strings.push(
+            "(rule_name LIKE ? OR CAST(channel_id AS TEXT) LIKE ? OR CAST(point_id AS TEXT) LIKE ?)"
+                .to_string(),
+        );
+    }
     if params.rule_id.is_some() {
         cond_strings.push("rule_id = ?".to_string());
     }
@@ -776,6 +809,10 @@ pub async fn get_all_events_for_export(
     );
 
     let mut q = sqlx::query_as::<_, AlertEvent>(&sql);
+    if let Some(ref kw) = params.keyword {
+        let pat = format!("%{}%", kw);
+        q = q.bind(pat.clone()).bind(pat.clone()).bind(pat);
+    }
     if let Some(v) = params.rule_id {
         q = q.bind(v);
     }
