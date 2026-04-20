@@ -202,20 +202,22 @@ impl WsHub {
 
 // ── Background Tasks ──────────────────────────────────────────────────────────
 
-/// Periodic heartbeat broadcast to all connected clients.
+/// Sentinel string sent via the text channel to trigger a WebSocket Ping frame.
+/// The send_task converts this to `Message::Ping` so the browser WebSocket
+/// library handles keepalive natively without surfacing an "unknown message
+/// type" warning in application-level code.
+const WS_PING_SENTINEL: &str = "\x00__ping__\x00";
+
+/// Periodic heartbeat: sends a native WebSocket Ping frame to every client.
+/// The browser responds automatically with a Pong; no application-level
+/// handler is needed on the frontend.
 pub async fn run_heartbeat(hub: Arc<WsHub>, shutdown: CancellationToken) {
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = interval.tick() => {
-                let msg = json!({
-                    "type": "heartbeat",
-                    "timestamp": Utc::now().timestamp(),
-                    "data": { "server_time": Utc::now().timestamp() }
-                })
-                .to_string();
-                hub.broadcast(&msg);
+                hub.broadcast(WS_PING_SENTINEL);
                 hub.cleanup_inactive();
             }
         }
@@ -522,11 +524,18 @@ pub async fn handle_socket(
 
     info!("WS client connected: {}", client_id);
 
-    // Forward from channel to WebSocket
+    // Forward from channel to WebSocket.
+    // WS_PING_SENTINEL is converted to a protocol-level Ping frame so the
+    // browser handles it transparently without triggering application logic.
     let client_id_send = client_id.clone();
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if ws_sender.send(Message::Text(msg.into())).await.is_err() {
+            let frame = if msg == WS_PING_SENTINEL {
+                Message::Ping(bytes::Bytes::new())
+            } else {
+                Message::Text(msg.into())
+            };
+            if ws_sender.send(frame).await.is_err() {
                 break;
             }
         }
