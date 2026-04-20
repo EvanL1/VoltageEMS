@@ -7,10 +7,13 @@ export const useGlobalStore = defineStore(
     const isCollapse = ref(false)
     const alarmNum = ref(0)
     const loading = ref(false)
+    // 应用初始化中（鉴权 + 路由注入），初始为 true，不持久化
+    const appInitializing = ref(true)
     return {
       isCollapse,
       alarmNum,
       loading,
+      appInitializing,
     }
   },
   {

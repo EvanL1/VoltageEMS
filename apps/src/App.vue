@@ -6,11 +6,14 @@ import wsManager from '@/utils/websocket'
 import { useRouter } from 'vue-router'
 import { useGlobalStore } from '@/stores/global'
 import { useUserStore } from '@/stores/user'
+import { storeToRefs } from 'pinia'
+import AppSkeleton from '@/components/common/AppSkeleton.vue'
 
 const locale = en
 const router = useRouter()
 const globalStore = useGlobalStore()
 const userStore = useUserStore()
+const { appInitializing } = storeToRefs(globalStore)
 
 const handleAlarmDetail = () => {
   ElNotification.closeAll()
@@ -121,5 +124,31 @@ watch(
 <template>
   <el-config-provider :locale="locale">
     <router-view />
+    <!-- 骨架屏以覆盖层形式显示，保证 router-view 始终渲染，MainLayout 能正常挂载 -->
+    <AppSkeleton v-if="appInitializing" class="app-skeleton-overlay" />
   </el-config-provider>
 </template>
+
+<style>
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.app-skeleton-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+</style>

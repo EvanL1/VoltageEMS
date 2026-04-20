@@ -1,54 +1,74 @@
+import { nextTick } from 'vue'
 import { router } from './index'
 import { useUserStore } from '@/stores/user'
+import { useGlobalStore } from '@/stores/global'
 import { ensureRoutesInjected } from './injector'
 import { cancelAllPendingRequests } from '@/utils/request'
 
 const WHITE_LIST = ['/login']
 
 router.beforeEach(async (to, from, next) => {
-  // 取消所有pending的请求
   cancelAllPendingRequests()
 
   const user = useUserStore()
+  const global = useGlobalStore()
 
-  // 如果是登录页，直接放行
+  // 登录页：直接放行，afterEach 会立即关闭骨架屏
   if (WHITE_LIST.includes(to.path)) {
     return next()
   }
 
-  // 如果不是登录页，需要先获取用户信息
   try {
-    // 如果没有 token，跳转到登录页
     if (!user.token || !user.userInfo) {
-      // 如果有 refreshToken，尝试刷新 token（可选，根据实际需求）
-      // 这里直接跳转到登录页
       if (!user.refreshToken) {
+        // 无 refreshToken，跳登录（afterEach 会关闭骨架屏）
         return next({ path: '/login' })
-      } else {
-        const result = await user.refreshUserToken()
-        if (result.success) {
-          const res = await user.getUserInfo()
-          if (!res.success) {
-            user.clearUserData()
-            return next({ path: '/login' })
-          }
-        } else {
+      }
+
+      // 有 refreshToken：刷新 token，骨架屏保持显示
+      const result = await user.refreshUserToken()
+      if (result.success) {
+        const res = await user.getUserInfo()
+        if (!res.success) {
           user.clearUserData()
           return next({ path: '/login' })
         }
+      } else {
+        user.clearUserData()
+        return next({ path: '/login' })
       }
     }
-    // 确保已注入动态路由
+
+    // 路由尚未注入：注入后重定向，骨架屏继续覆盖，afterEach 处理关闭
     if (!user.routesInjected) {
       await ensureRoutesInjected()
-      return next({ ...to, replace: true }) // 路由重定向
-    } else {
-      next()
+      return next({ ...to, replace: true })
     }
+
+    next()
   } catch (e) {
-    // 发生错误，清除数据并跳转到登录页
     console.error('Route guard error:', e)
     user.clearUserData()
     next({ path: '/login' })
+  }
+})
+
+/**
+ * 在导航完全结束后关闭骨架屏：
+ * - nextTick 确保 router-view 已完成 DOM 更新，避免骨架屏消失后出现短暂空白
+ * - 仅在 appInitializing 为 true 时执行（只有首次启动才需要）
+ */
+router.afterEach((to) => {
+  const global = useGlobalStore()
+  if (!global.appInitializing) return
+
+  if (WHITE_LIST.includes(to.path)) {
+    // 登录页不需要等 DOM，直接关闭（骨架屏是应用布局，不适合显示在登录页上）
+    global.appInitializing = false
+  } else {
+    // 应用页面：等 DOM 更新完毕再关闭，消除空白帧
+    nextTick(() => {
+      global.appInitializing = false
+    })
   }
 })

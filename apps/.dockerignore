@@ -18,3 +18,7 @@ coverage
 Dockerfile
 .dockerignore
 docker-compose.yml
+reports
+scripts
+auto-imports.d.ts
+components.d.ts

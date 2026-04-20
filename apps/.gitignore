@@ -18,6 +18,7 @@ stats.html
 
 /cypress/videos/
 /cypress/screenshots/
+/reports/
 
 # Editor directories and files
 .vscode/*

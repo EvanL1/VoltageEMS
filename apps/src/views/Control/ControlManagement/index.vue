@@ -10,7 +10,7 @@
             <el-form-item label="Alarm Level:">
               <el-select
                 v-model="filters.warning_level"
-                placeholder="Please select alarm level"
+                placeholder="Please select level"
                 clearable
                 :append-to="levelSelectRef"
               >
@@ -59,7 +59,7 @@
       </div>
       <div class="rule-management__table">
         <el-table :data="tableData" class="rule-management__table-content" align="left">
-          <el-table-column prop="id" label="ID" class-name="table-ellipsis" width="80" />
+          <!-- <el-table-column prop="id" label="ID" class-name="table-ellipsis" width="80" /> -->
           <el-table-column
             prop="rule_name"
             label="Rule Name"
@@ -125,7 +125,11 @@
           </el-table-column>
           <el-table-column prop="enabled" label="Enabled" min-width="80">
             <template #default="{ row }">
-              <el-switch :model-value="row.enabled" @change="handleSwitchChange(row)" />
+              <el-switch
+                :model-value="row.enabled"
+                :loading="switchLoadingId === row.id"
+                @change="handleSwitchChange(row)"
+              />
             </template>
           </el-table-column>
           <el-table-column label="Operation" fixed="right" v-permission="['Admin']" min-width="120">
@@ -208,6 +212,7 @@ filters.enabled = null
 const levelSelectRef = ref<HTMLElement | null>(null)
 
 const rulesOperationFormRef = ref()
+const switchLoadingId = ref<string | number | null>(null)
 
 // 格式�?MonitorData
 const formatMonitorData = (row: RuleInfo) => {
@@ -260,16 +265,21 @@ const handleDelete = async (row: RuleInfo) => {
   )
 }
 const handleSwitchChange = async (row: RuleInfo) => {
-  if (!row.enabled) {
-    const res = await enableRule(row.id)
-    if (res.message) {
-      fetchTableData()
+  switchLoadingId.value = row.id
+  try {
+    if (!row.enabled) {
+      const res = await enableRule(row.id)
+      if (res.message) {
+        row.enabled = true
+      }
+    } else {
+      const res = await disableRule(row.id)
+      if (res.message) {
+        row.enabled = false
+      }
     }
-  } else {
-    const res = await disableRule(row.id)
-    if (res.message) {
-      fetchTableData()
-    }
+  } finally {
+    switchLoadingId.value = null
   }
 }
 
