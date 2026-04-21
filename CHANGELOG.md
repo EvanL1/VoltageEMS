@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-21 — First Beta (首个内测版本)
+
+首个内测版本。功能完备度与稳定性已达到小范围试用标准，欢迎内部测试反馈。
+
+### Added
+- **comsrv**: IEC 61850 协议支持（MMS），至此支持 14 种协议
+- **comsrv**: 每通道独立日志配置（create/update flow 贯通）
+- **comsrv**: `:ts` 时间戳 sidecar 写入 `inst:{id}:{M,A}` Redis 哈希
+- **alarmsrv**: 告警规则 / 事件支持关键字模糊搜索（rule_name / description / channel_id / point_id）(#87)
+- **apigateway**: WebSocket 原生 Ping 心跳（替代应用层 JSON heartbeat，浏览器自动 Pong）(#87)
+- **apigateway**: 新增 nginx `/hisApi/` 路由接入历史数据服务
+- **hissrv**: TimescaleDB 数据库压缩策略
+- **monarch**: channels / points CRUD 接口
+- **monarch**: 日志文件查看器（list / view / tail / ui 子命令）
+- **monarch**: 远程日志查看（HTTP API）
+- **monarch**: sync 默认 upsert 模式（`--force` 触发全量覆盖）
+- **modsrv**: SHM 自动重建 + dispatch degraded 错误码 + UDS 健康状态
+- **build**: Swagger UI 改为可选 cargo feature（生产构建瘦身）
+- **frontend**: 组件定义增强，字体资源更新
+
+### Changed
+- **comsrv**: SHM → Redis 异步刷写，热路径移除 DashMap（性能优化）
+- **rules**: RPN 执行器替换为 evalexpr 中缀引擎
+- **rules**: 点位字段统一为 `point_id`（从 Vue Flow variables 读取）
+- **rtdb-shm**: 通过 `ChannelPointCounts` 解耦 SHM 布局与路由
+- **comsrv/modsrv**: 解耦路由刷新与 SHM 重建
+- **voltage-model**: 产品 JSON 由 `build.rs` 自动发现（无需手动注册）
+- **CI**: 采用 cargo-nextest（测试提速 2–3x），引入 cargo-hakari + resolver v3
+- **CI**: 统一 release pipeline，清理 Python 时期遗留
+
+### Fixed
+- **SHM seqlock**: 重试耗尽返回 `None`，杜绝撕裂读
+- **SHM**: `writer_generation` 计数器检测 comsrv 重启，避免 TOCTOU
+- **SHM**: UDS 最大退避降至 5s；新增 dropped command 计数器
+- **modsrv**: dispatch 降级 → HTTP 502（区分 UDS 降级 vs 内部错误）
+- **monarch**: 迁移 v4 修复 `trigger_config`，跳过非 Vue Flow 规则
+- **monarch**: sync 通过 `extract_rule_flow()` 同步 `nodes_json`（避免 flow_json / nodes_json 错位）
+- **monarch**: 导出补齐 points / mappings（per-type tables）、templates、per-rule JSON
+- **resilience**: SIGTERM 优雅停机，health 503，warning 统计，Redis 重试
+- **install**: `gunzip` 管道替代 unpigz（避开 zlib 错误），收紧权限，构建全 6 服务镜像
+- **timescaledb**: 固定 `2.25.2-pg17` 兼容性
+- **websocket**: 补齐无 `ts` 时间戳与首页订阅问题
+- **i18n**: 部分消息响应统一改英文
+
+### Infra / Housekeeping
+- 打包脚本调整，适配单服务测试更新
+- 抑制 `monarch` 启动 banner（init 命令除外）
+
 ## [0.2.0] - 2026-03-18
 
 ### Breaking Changes — Full Rust Migration

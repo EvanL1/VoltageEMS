@@ -2,8 +2,12 @@
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
+[![Version](https://img.shields.io/badge/version-0.3.0--beta-yellow.svg)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
-[中文版本](README-CN.md) | [Documentation](docs/README.md)
+[中文版本](README-CN.md) | [Documentation](docs/README.md) | [Changelog](CHANGELOG.md)
+
+> **v0.3.0 — First Beta (首个内测版本, 2026-04-21).** 功能已基本完备并达到小范围试用标准，欢迎内部测试反馈。见 [CHANGELOG](CHANGELOG.md#030---2026-04-21--first-beta-首个内测版本)。
 
 Industrial IoT energy management system built with Rust. Multi-protocol data acquisition, real-time processing via shared memory, rule engine execution, and full-stack monitoring for industrial energy scenarios.
 

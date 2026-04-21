@@ -2,8 +2,12 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
+[![Version](https://img.shields.io/badge/version-0.3.0--beta-yellow.svg)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
-[English](README.md) | [文档](docs/README.md)
+[English](README.md) | [文档](docs/README.md) | [更新日志](CHANGELOG.md)
+
+> **v0.3.0 — 首个内测版本（2026-04-21）。** 功能已基本完备并达到小范围试用标准，欢迎内部测试反馈。详见 [CHANGELOG](CHANGELOG.md#030---2026-04-21--first-beta-首个内测版本)。
 
 基于 Rust 构建的工业物联网能源管理系统。多协议数据采集、共享内存实时处理、规则引擎执行，为工业能源场景提供全栈监控能力。
 
