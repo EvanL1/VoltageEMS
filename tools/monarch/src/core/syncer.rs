@@ -5,14 +5,14 @@
 
 use anyhow::{Context, Result};
 use common::validation::CsvFields;
-use comsrv::core::config::ComsrvConfig;
-use modsrv::config::ModsrvConfig;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+use voltage_config::comsrv::ComsrvConfig;
+use voltage_config::modsrv::ModsrvConfig;
 
 use super::file_utils::{flatten_json, load_csv, load_csv_typed_with_errors, load_csv_with_errors};
 use super::schema;
@@ -799,7 +799,7 @@ impl ConfigSyncer {
         config_dir: &Path,
         errors: &mut Vec<SyncError>,
     ) -> Result<usize> {
-        use comsrv::core::config::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
+        use voltage_config::comsrv::{AdjustmentPoint, ControlPoint, SignalPoint, TelemetryPoint};
 
         let mut total_count = 0;
 

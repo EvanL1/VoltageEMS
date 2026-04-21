@@ -1,0 +1,27 @@
+[package]
+name = "voltage-config"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Cross-platform configuration schema for VoltageEMS services"
+
+[lib]
+name = "voltage_config"
+path = "src/lib.rs"
+
+[dependencies]
+common = { path = "../common", default-features = false, features = ["redis", "sqlite", "axum"] }
+voltage-schema-macro = { path = "../voltage-schema-macro" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }
+utoipa = { workspace = true }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[features]
+default = []
+openapi = ["common/openapi"]

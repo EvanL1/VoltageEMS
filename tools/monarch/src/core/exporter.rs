@@ -11,9 +11,9 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-// Import config types from service crates (for type definitions only)
-use comsrv::core::config::{ChannelConfig, ChannelCore, ComsrvConfig};
-use modsrv::config::{ModsrvConfig, RuleConfig, RuleCore, RulesConfig};
+// Cross-platform config schema (shared with comsrv/modsrv via voltage-config).
+use voltage_config::comsrv::{ChannelConfig, ChannelCore, ComsrvConfig};
+use voltage_config::modsrv::{ModsrvConfig, RuleConfig, RuleCore, RulesConfig};
 use voltage_model::product_lib;
 
 /// CSV column headers for point exports

@@ -12,11 +12,10 @@ voltage-model = { path = "../../libs/voltage-model" }
 voltage-rules = { path = "../../libs/voltage-rules" }
 common = { path = "../../libs/common" }
 
-# Service crate dependencies (for config type definitions only)
-# These provide typed config structs for YAML/CSV parsing in core/ module.
-# Runtime communication uses HTTP APIs, not embedded lib code.
-comsrv = { path = "../../services/comsrv", default-features = false }
-modsrv = { path = "../../services/modsrv", default-features = false }
+# Cross-platform config schema. Replaces the previous comsrv/modsrv service
+# crate dependencies so monarch.exe builds on Windows (service crates are
+# Linux-only due to SHM/UDS deps).
+voltage-config = { path = "../../libs/voltage-config" }
 
 # CLI
 clap = { workspace = true }

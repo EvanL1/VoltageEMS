@@ -865,6 +865,7 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
+ "voltage-config",
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
@@ -2432,6 +2433,7 @@ dependencies = [
  "utoipa-swagger-ui",
  "uuid",
  "voltage-calc",
+ "voltage-config",
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
@@ -2450,10 +2452,8 @@ dependencies = [
  "clap",
  "colored",
  "common",
- "comsrv",
  "crossterm",
  "csv",
- "modsrv",
  "ratatui",
  "reqwest",
  "rustyline",
@@ -2465,6 +2465,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "voltage-config",
  "voltage-model",
  "voltage-routing",
  "voltage-rtdb",
@@ -4865,6 +4866,22 @@ dependencies = [
  "tokio",
  "tracing",
  "voltage-rtdb",
+ "workspace-hack",
+]
+
+[[package]]
+name = "voltage-config"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "common",
+ "serde",
+ "serde_json",
+ "serde_yml",
+ "sqlx",
+ "utoipa",
+ "voltage-schema-macro",
  "workspace-hack",
 ]
 
