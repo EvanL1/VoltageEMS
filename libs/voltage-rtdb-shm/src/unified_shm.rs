@@ -49,6 +49,17 @@ pub const UNIFIED_VERSION: u32 = 2;
 /// Default max slots (100,000 points)
 pub const DEFAULT_MAX_SLOTS: u32 = 100_000;
 
+#[inline]
+fn dirty_word_count(slot_count: usize) -> usize {
+    slot_count.div_ceil(u64::BITS as usize)
+}
+
+fn new_dirty_words(slot_count: usize) -> Vec<AtomicU64> {
+    (0..dirty_word_count(slot_count))
+        .map(|_| AtomicU64::new(0))
+        .collect()
+}
+
 // ========== Header (64 bytes) ==========
 
 /// Unified shared memory header (simplified)
@@ -361,6 +372,12 @@ pub struct UnifiedWriter {
     slot_count: usize,
     /// Channel layouts (Vec index by channel_id)
     channel_layouts: Vec<ChannelLayout>,
+    /// Process-local dirty slot bitmap for fast SHM→Redis sync.
+    ///
+    /// PointSlot.dirty is shared across processes, but scanning it still costs O(slots).
+    /// This bitmap is set by this writer's `set*` calls so comsrv can drain changed
+    /// slots in O(dirty_words + dirty_slots), with periodic full scans as fallback.
+    dirty_words: Vec<AtomicU64>,
 }
 
 impl UnifiedWriter {
@@ -444,6 +461,7 @@ impl UnifiedWriter {
             max_slots,
             slot_count,
             channel_layouts,
+            dirty_words: new_dirty_words(slot_count),
         })
     }
 
@@ -471,6 +489,7 @@ impl UnifiedWriter {
         if let Some(layout) = self.channel_layouts.get(channel_id as usize) {
             if let Some(slot) = layout.slot(point_type, point_id) {
                 self.slot_at(slot).set(value, raw, timestamp_ms);
+                self.mark_dirty_slot(slot);
                 // Update heartbeat
                 self.header()
                     .writer_heartbeat
@@ -492,9 +511,41 @@ impl UnifiedWriter {
             self.slot_count
         );
         self.slot_at(slot).set(value, raw, timestamp_ms);
+        self.mark_dirty_slot(slot);
         self.header()
             .writer_heartbeat
             .store(timestamp_ms, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn mark_dirty_slot(&self, slot: usize) {
+        let word_idx = slot / u64::BITS as usize;
+        let bit_idx = slot % u64::BITS as usize;
+        if let Some(word) = self.dirty_words.get(word_idx) {
+            word.fetch_or(1u64 << bit_idx, Ordering::Release);
+        }
+    }
+
+    /// Drain process-local dirty slots set by this writer.
+    ///
+    /// Concurrent writes are safe: if a writer sets a bit before `swap(0)`, this
+    /// call returns it; if it sets after the swap, the bit remains for the next pass.
+    pub fn take_dirty_slots(&self) -> Vec<usize> {
+        let mut slots = Vec::new();
+
+        for (word_idx, word) in self.dirty_words.iter().enumerate() {
+            let mut bits = word.swap(0, Ordering::AcqRel);
+            while bits != 0 {
+                let bit_idx = bits.trailing_zeros() as usize;
+                let slot = word_idx * u64::BITS as usize + bit_idx;
+                if slot < self.slot_count {
+                    slots.push(slot);
+                }
+                bits &= bits - 1;
+            }
+        }
+
+        slots
     }
 
     /// Returns the current writer generation from the SHM header.
@@ -587,6 +638,7 @@ impl UnifiedWriter {
             max_slots,
             slot_count,
             channel_layouts,
+            dirty_words: new_dirty_words(slot_count),
         })
     }
 
@@ -712,6 +764,7 @@ impl UnifiedWriter {
             max_slots,
             slot_count,
             channel_layouts,
+            dirty_words: new_dirty_words(slot_count),
         })
     }
 

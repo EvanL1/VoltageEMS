@@ -39,9 +39,7 @@ use comsrv::{
 };
 use voltage_routing::load_routing_maps;
 use voltage_rtdb_shm::{is_shm_available, snapshot_exists, SnapshotConfig, SnapshotManager};
-use voltage_rtdb_shm::{
-    ChannelToSlotIndex, ReverseSlotIndex, SharedConfig, ShmHandle, UnifiedWriter,
-};
+use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, ShmHandle, UnifiedWriter};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -306,32 +304,24 @@ async fn main() -> VoltageResult<()> {
     let rtdb_for_shutdown = Arc::clone(&rtdb);
 
     // ============ ShmRedisSync: background SHM → Redis flush ============
-    // Build ReverseSlotIndex and start the async flush task.
     // Must happen before shm_handle/routing_cache move into ChannelManager.
     let (shm_sync_shutdown_tx, shm_sync_shutdown_rx) = tokio::sync::watch::channel(false);
     let shm_sync_handle = if let Some(ref handle) = shm_handle {
-        // Build reverse index from the forward ChannelToSlotIndex
         let slot_count = handle
-            .writer()
-            .and_then(|g| g.as_ref().map(|w| w.slot_count()))
+            .layout_arc()
+            .map(|layout| {
+                info!(
+                    "ReverseSlotIndex: {} mapped slots out of {}",
+                    layout.reverse_index.mapped_count(),
+                    layout.reverse_index.slot_count()
+                );
+                layout.writer.slot_count()
+            })
             .unwrap_or(0);
-        let forward_index = handle.index_arc().unwrap_or_else(|| {
-            Arc::new(ChannelToSlotIndex::from_unified_writer(
-                handle.writer().unwrap().as_ref().unwrap(),
-            ))
-        });
-        let reverse = ReverseSlotIndex::from_forward(&forward_index, slot_count);
-        let reverse_swap = Arc::new(arc_swap::ArcSwap::new(Arc::new(reverse)));
-        info!(
-            "ReverseSlotIndex: {} mapped slots out of {}",
-            forward_index.len(),
-            slot_count
-        );
 
         let sync = comsrv::store::ShmRedisSync::new(
             Arc::clone(&rtdb),
             Arc::clone(handle),
-            reverse_swap,
             Arc::clone(&routing_cache),
             slot_count,
         );

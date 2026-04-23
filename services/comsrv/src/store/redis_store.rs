@@ -254,13 +254,12 @@ impl<R: Rtdb> RedisDataStore<R> {
 
         // Select write path: prefer shared memory direct write for best performance
         let _stats = if let Some(handle) = &self.shm_handle {
-            if let (Some(writer_guard), Some(index_guard)) = (handle.writer(), handle.index()) {
+            if let Some(layout_guard) = handle.layout() {
                 // Fast path: direct shared memory write with pre-computed channel → slot mapping
-                let writer = writer_guard.as_ref().expect("writer guard non-empty");
-                let index = index_guard.as_ref().expect("index guard non-empty");
+                let layout = layout_guard.as_ref().expect("layout guard non-empty");
                 voltage_rtdb_shm::write_channel_batch_direct(
-                    writer,
-                    index,
+                    &layout.writer,
+                    &layout.index,
                     &self.routing_cache,
                     updates,
                 )

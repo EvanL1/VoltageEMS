@@ -75,7 +75,7 @@ pub use shared_config::{
 pub use reverse_index::{ReverseSlotIndex, SlotOrigin};
 
 // Runtime-swappable SHM handle
-pub use shm_handle::ShmHandle;
+pub use shm_handle::{ShmHandle, ShmLayout};
 
 // Direct SHM batch write (bridges SHM + routing + RTDB)
 pub use batch_direct::write_channel_batch_direct;
