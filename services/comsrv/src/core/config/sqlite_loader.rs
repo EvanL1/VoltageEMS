@@ -21,6 +21,16 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
 
+// Control point defaults.
+// Only momentary controls are supported today; the schema/CSV carry no columns
+// for these parameters, so every control point shares the same shape.
+// If per-point override becomes a real requirement, add columns to
+// control_points + CSV headers and read them in load_channel_points.
+const DEFAULT_CONTROL_TYPE: &str = "momentary";
+const DEFAULT_CONTROL_ON_VALUE: u16 = 1;
+const DEFAULT_CONTROL_OFF_VALUE: u16 = 0;
+const DEFAULT_CONTROL_PULSE_MS: u32 = 100;
+
 /// Comsrv-specific SQLite configuration loader
 pub struct ComsrvSqliteLoader {
     base_loader: Option<ServiceConfigLoader>,
@@ -356,10 +366,10 @@ impl ComsrvSqliteLoader {
             runtime_config.control_points.push(ControlPoint {
                 base,
                 reverse,
-                control_type: "momentary".to_string(),
-                on_value: 1,
-                off_value: 0,
-                pulse_duration_ms: Some(100),
+                control_type: DEFAULT_CONTROL_TYPE.to_string(),
+                on_value: DEFAULT_CONTROL_ON_VALUE,
+                off_value: DEFAULT_CONTROL_OFF_VALUE,
+                pulse_duration_ms: Some(DEFAULT_CONTROL_PULSE_MS),
             });
         }
 
