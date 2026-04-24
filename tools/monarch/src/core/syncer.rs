@@ -691,17 +691,13 @@ impl ConfigSyncer {
                 continue;
             }
 
-            let value_str = match &value {
-                JsonValue::String(s) => s.clone(),
-                _ => serde_json::to_string(&value)?,
-            };
-
-            let value_type = match &value {
-                JsonValue::Bool(_) => "boolean",
-                JsonValue::Number(_) => "number",
-                JsonValue::Array(_) => "array",
-                JsonValue::Object(_) => "object",
-                _ => "string",
+            let (value_str, value_type) = match value {
+                JsonValue::String(s) => (s, "string"),
+                JsonValue::Bool(b) => (b.to_string(), "boolean"),
+                JsonValue::Number(n) => (n.to_string(), "number"),
+                JsonValue::Array(a) => (serde_json::to_string(&JsonValue::Array(a))?, "array"),
+                JsonValue::Object(o) => (serde_json::to_string(&JsonValue::Object(o))?, "object"),
+                JsonValue::Null => continue,
             };
 
             sqlx::query(

@@ -234,7 +234,7 @@ pub async fn migrate_yaml_to_db(
                 let (value_str, value_type) = match value {
                     serde_yml::Value::Bool(b) => (b.to_string(), "boolean"),
                     serde_yml::Value::Number(n) => (n.to_string(), "number"),
-                    serde_yml::Value::String(s) => (s.clone(), "string"),
+                    serde_yml::Value::String(s) => (s, "string"),
                     serde_yml::Value::Mapping(_) | serde_yml::Value::Sequence(_) => {
                         (serde_json::to_string(&value)?, "json")
                     },

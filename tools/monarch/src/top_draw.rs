@@ -104,9 +104,9 @@ fn draw_channel_list(f: &mut ratatui::Frame, area: ratatui::layout::Rect, state:
             Row::new(vec![
                 Cell::from(format!("Ch{}", ch.id)),
                 Cell::from(st).style(st_style),
-                Cell::from(ch.name.clone()),
-                Cell::from(ch.protocol.clone()),
-                Cell::from(ch.address.clone()),
+                Cell::from(ch.name.as_str()),
+                Cell::from(ch.protocol.as_str()),
+                Cell::from(ch.address.as_str()),
                 Cell::from(ch.point_count.to_string()),
                 Cell::from(ch.read_count.to_string()),
                 Cell::from(err).style(Style::default().fg(Color::Yellow)),
@@ -181,9 +181,9 @@ fn draw_channel_detail(f: &mut ratatui::Frame, area: ratatui::layout::Rect, stat
             };
             Row::new(vec![
                 Cell::from(format!("pt{}", p.point_id)),
-                Cell::from(p.name.clone()),
+                Cell::from(p.name.as_str()),
                 Cell::from(fmt_val(p.value)).style(val_style),
-                Cell::from(p.unit.clone()),
+                Cell::from(p.unit.as_str()),
                 Cell::from(age).style(age_style),
             ])
         })
@@ -222,8 +222,8 @@ fn draw_instance_list(f: &mut ratatui::Frame, area: ratatui::layout::Rect, state
         .map(|inst| {
             Row::new(vec![
                 Cell::from(inst.id.to_string()),
-                Cell::from(inst.name.clone()),
-                Cell::from(inst.product.clone()),
+                Cell::from(inst.name.as_str()),
+                Cell::from(inst.product.as_str()),
             ])
         })
         .collect();
@@ -296,13 +296,13 @@ fn draw_instance_detail(f: &mut ratatui::Frame, area: ratatui::layout::Rect, sta
             Row::new(vec![
                 Cell::from(p.point_id.to_string()),
                 Cell::from(p.kind),
-                Cell::from(p.name.clone()),
+                Cell::from(p.name.as_str()),
                 Cell::from(fmt_val(p.value)).style(val_style),
-                Cell::from(p.unit.clone()),
+                Cell::from(p.unit.as_str()),
                 Cell::from(if p.routing.is_empty() {
-                    "-".to_string()
+                    "-"
                 } else {
-                    p.routing.clone()
+                    p.routing.as_str()
                 })
                 .style(route_style),
                 Cell::from(age).style(age_style),
@@ -351,8 +351,8 @@ fn draw_rule_list(f: &mut ratatui::Frame, area: ratatui::layout::Rect, state: &T
             Row::new(vec![
                 Cell::from(r.id.to_string()),
                 Cell::from(st).style(st_style),
-                Cell::from(r.name.clone()),
-                Cell::from(r.description.clone()),
+                Cell::from(r.name.as_str()),
+                Cell::from(r.description.as_str()),
             ])
         })
         .collect();
@@ -390,7 +390,7 @@ pub fn draw_help(f: &mut ratatui::Frame, area: ratatui::layout::Rect, state: &To
     );
 }
 
-fn focused_block(title: &str, focused: bool) -> Block<'_> {
+fn focused_block<'a>(title: &'a str, focused: bool) -> Block<'a> {
     let style = if focused {
         Style::default().fg(Color::Cyan)
     } else {
@@ -399,7 +399,7 @@ fn focused_block(title: &str, focused: bool) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(style)
-        .title(title.to_string())
+        .title(title)
 }
 
 pub fn fmt_val(v: f64) -> String {

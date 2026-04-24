@@ -763,9 +763,8 @@ mod tests {
     }
 
     #[test]
-    fn test_clone_and_debug() {
+    fn test_debug() {
         let err = ComSrvError::ConfigError("test".into());
-        assert_eq!(err.to_string(), err.clone().to_string());
         assert!(format!("{:?}", err).contains("ConfigError"));
     }
 }

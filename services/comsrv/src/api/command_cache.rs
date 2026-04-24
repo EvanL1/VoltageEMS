@@ -85,7 +85,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(100);
 
         // Register
-        cache.register(1001, tx.clone());
+        cache.register(1001, tx);
         assert!(cache.get_tx(1001).is_some());
         assert_eq!(cache.len(), 1);
 

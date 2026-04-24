@@ -238,8 +238,8 @@ pub async fn refresh_token(
         },
     };
 
-    let token_id = match &claims.token_id {
-        Some(id) => id.clone(),
+    let token_id = match claims.token_id {
+        Some(id) => id,
         None => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -422,7 +422,13 @@ pub async fn change_password(
         Err(e) => return e.into_response(),
     };
 
-    apply_password_change(&state, claims.user_id, &body).await
+    apply_password_change(
+        &state,
+        claims.user_id,
+        &body.old_password,
+        &body.new_password,
+    )
+    .await
 }
 
 // ── GET /api/v1/auth/roles ────────────────────────────────────────────────────
@@ -695,11 +701,7 @@ async fn apply_user_update(
     if body.old_password.is_some() || body.new_password.is_some() {
         match (&body.old_password, &body.new_password) {
             (Some(old), Some(new)) => {
-                let pw = PasswordChange {
-                    old_password: old.clone(),
-                    new_password: new.clone(),
-                };
-                return apply_password_change(state, user_id, &pw).await;
+                return apply_password_change(state, user_id, old, new).await;
             },
             _ => {
                 return (
@@ -729,7 +731,8 @@ async fn apply_user_update(
 async fn apply_password_change(
     state: &AppState,
     user_id: i64,
-    body: &PasswordChange,
+    old_password: &str,
+    new_password: &str,
 ) -> axum::response::Response {
     let row = match db::get_user_by_id(&state.db, user_id).await {
         Ok(Some(r)) => r,
@@ -742,7 +745,7 @@ async fn apply_password_change(
         },
     };
 
-    if !verify_password(&body.old_password, &row.password_hash) {
+    if !verify_password(old_password, &row.password_hash) {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"success": false, "message": "Incorrect current password"})),
@@ -750,7 +753,7 @@ async fn apply_password_change(
             .into_response();
     }
 
-    let new_hash = match hash_password(&body.new_password) {
+    let new_hash = match hash_password(new_password) {
         Ok(h) => h,
         Err(e) => {
             error!("bcrypt error: {}", e);

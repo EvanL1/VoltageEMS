@@ -21,7 +21,7 @@ pub struct TimescaleDbBackend {
 impl TimescaleDbBackend {
     pub fn new(pool: PgPool) -> Self {
         Self {
-            inner: PostgresBackend::new(pool.clone()),
+            inner: PostgresBackend::new(pool),
         }
     }
 }

@@ -564,7 +564,7 @@ pub fn init_with_config(config: LogConfig) -> Result<(), Box<dyn std::error::Err
     let business_file_layer = if config.enable_json {
         fmt::layer()
             .json()
-            .with_writer(writer_handle.clone())
+            .with_writer(writer_handle)
             .with_level(true)
             .with_target(true)
             .with_thread_ids(true)

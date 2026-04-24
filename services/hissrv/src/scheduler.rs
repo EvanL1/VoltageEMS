@@ -18,18 +18,18 @@ use crate::state::AppState;
 /// Spawn all background tasks. Each task honours the given `CancellationToken`.
 pub fn spawn_all(state: Arc<AppState>, shutdown: CancellationToken) {
     {
-        let s = state.clone();
+        let s = Arc::clone(&state);
         let sd = shutdown.clone();
         tokio::spawn(async move { collector_task(s, sd).await });
     }
     {
-        let s = state.clone();
+        let s = Arc::clone(&state);
         let sd = shutdown.clone();
         tokio::spawn(async move { flush_task(s, sd).await });
     }
     {
-        let s = state.clone();
-        let sd = shutdown.clone();
+        let s = state;
+        let sd = shutdown;
         tokio::spawn(async move { cleanup_task(s, sd).await });
     }
 }

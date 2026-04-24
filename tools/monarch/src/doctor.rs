@@ -3,6 +3,7 @@
 use anyhow::Result;
 use colored::*;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -439,14 +440,14 @@ fn print_results(results: &[CheckResult], verbose: bool) {
         };
 
         let name = format!("{:<18}", result.name);
-        let message = if verbose {
+        let message: Cow<'_, str> = if verbose {
             if let Some(ms) = result.duration_ms {
-                format!("{} ({}ms)", result.message, ms)
+                Cow::Owned(format!("{} ({}ms)", result.message, ms))
             } else {
-                result.message.clone()
+                Cow::Borrowed(result.message.as_str())
             }
         } else {
-            result.message.clone()
+            Cow::Borrowed(result.message.as_str())
         };
 
         println!("│ {} {} {:<35} │", icon, name, message);

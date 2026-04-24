@@ -84,7 +84,7 @@ pub fn create_modbus_channel(
     }
 
     let channel_name = format!("modbus_tcp_{}", channel_id);
-    let channel = ModbusChannel::new(config, channel_id, channel_name.clone());
+    let channel = ModbusChannel::new(config, channel_id, channel_name);
 
     // ModbusChannel directly implements ChannelRuntime - no wrapper needed
     // Logging is configured by ChannelManager.configure_channel_logging()
@@ -123,7 +123,7 @@ pub fn create_modbus_rtu_channel(
     }
 
     let channel_name = format!("modbus_rtu_{}", channel_id);
-    let channel = ModbusChannel::new(config, channel_id, channel_name.clone());
+    let channel = ModbusChannel::new(config, channel_id, channel_name);
 
     // ModbusChannel directly implements ChannelRuntime - no wrapper needed
     // Logging is configured by ChannelManager.configure_channel_logging()

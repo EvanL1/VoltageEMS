@@ -444,9 +444,10 @@ fn handle_list(
     date: &Option<String>,
     json: bool,
 ) -> Result<()> {
-    let date_prefix = date
-        .clone()
-        .unwrap_or_else(|| chrono::Local::now().format("%Y%m%d").to_string());
+    let date_prefix = date.as_deref().map_or_else(
+        || chrono::Local::now().format("%Y%m%d").to_string(),
+        |d| d.to_string(),
+    );
 
     if !log_dir.exists() {
         anyhow::bail!("Log directory not found: {}", log_dir.display());

@@ -274,7 +274,7 @@ impl From<errors::VoltageError> for ModSrvError {
             VE::Redis(e) => Self::RedisError(e.to_string()),
             VE::Io(e) => Self::InternalError(format!("IO: {}", e)),
             VE::Timeout(d) => Self::InternalError(format!("Timeout: {:?}", d)),
-            VE::Serialization(e) => Self::SerializationError(e.to_string()),
+            VE::Serialization(e) => Self::SerializationError(e),
             _ => Self::InternalError(err.to_string()),
         }
     }

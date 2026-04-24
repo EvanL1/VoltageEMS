@@ -160,16 +160,19 @@ impl ComsrvSqliteLoader {
                         channel_id, e
                     ))
                 })?;
-            let extra_config_obj = extra_config.as_object().ok_or_else(|| {
-                ComSrvError::ConfigError(format!(
-                    "Invalid channel config for channel {}: expected JSON object",
-                    channel_id
-                ))
-            })?;
+            let mut extra_config_obj = match extra_config {
+                serde_json::Value::Object(obj) => obj,
+                _ => {
+                    return Err(ComSrvError::ConfigError(format!(
+                        "Invalid channel config for channel {}: expected JSON object",
+                        channel_id
+                    )));
+                },
+            };
 
-            let description = match extra_config_obj.get("description") {
+            let description = match extra_config_obj.remove("description") {
                 None => None,
-                Some(serde_json::Value::String(s)) => Some(s.clone()),
+                Some(serde_json::Value::String(s)) => Some(s),
                 Some(_) => {
                     return Err(ComSrvError::ConfigError(format!(
                         "Invalid channel config for channel {}: 'description' must be a string",
@@ -180,44 +183,42 @@ impl ComsrvSqliteLoader {
 
             // Parse parameters from config JSON
             // Read from the "parameters" field in the JSON, not from top level
-            let mut parameters = HashMap::new();
-            match extra_config_obj.get("parameters") {
-                None => {},
-                Some(serde_json::Value::Object(obj)) => {
-                    for (key, value) in obj {
-                        // Use JSON value directly (parameters field expects serde_json::Value)
-                        parameters.insert(key.clone(), value.clone());
-                    }
-                },
+            let parameters = match extra_config_obj.remove("parameters") {
+                None => HashMap::new(),
+                Some(serde_json::Value::Object(obj)) => obj.into_iter().collect(),
                 Some(_) => {
                     return Err(ComSrvError::ConfigError(format!(
                         "Invalid channel config for channel {}: 'parameters' must be an object",
                         channel_id
                     )));
                 },
-            }
+            };
 
             // Parse logging config from JSON
-            let logging = match extra_config_obj.get("logging") {
+            let logging = match extra_config_obj.remove("logging") {
                 None => crate::core::config::ChannelLoggingConfig::default(),
-                Some(logging_value) => serde_json::from_value(logging_value.clone())
-                    .unwrap_or_else(|e| {
-                        tracing::warn!(
-                            "Ch{} invalid logging config, using default: {}",
-                            channel_id,
-                            e
-                        );
-                        crate::core::config::ChannelLoggingConfig::default()
-                    }),
+                Some(logging_value) => serde_json::from_value(logging_value).unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "Ch{} invalid logging config, using default: {}",
+                        channel_id,
+                        e
+                    );
+                    crate::core::config::ChannelLoggingConfig::default()
+                }),
             };
+
+            info!(
+                "Loaded channel {} ({}) - points will be loaded at runtime",
+                channel_id, name
+            );
 
             // Create channel config (without runtime fields)
             let channel = ChannelConfig {
                 core: crate::core::config::ChannelCore {
                     id: channel_id,
-                    name: name.clone(),
+                    name,
                     description,
-                    protocol: protocol.clone(),
+                    protocol,
                     enabled,
                 },
                 parameters,
@@ -227,11 +228,6 @@ impl ComsrvSqliteLoader {
             // Note: Points will be loaded at runtime when creating RuntimeChannelConfig
             // Wrap in Arc for cheap cloning during startup
             channels.push(Arc::new(channel));
-
-            info!(
-                "Loaded channel {} ({}) - points will be loaded at runtime",
-                channel_id, name
-            );
         }
 
         Ok(channels)

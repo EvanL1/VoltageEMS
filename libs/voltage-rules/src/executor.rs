@@ -12,6 +12,7 @@ use crate::types::{
     RuleVariable, RuleWires,
 };
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
@@ -126,9 +127,9 @@ fn evaluate_token_formula(
     let expr: String = tokens
         .iter()
         .map(|t| match t {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Number(n) => n.to_string(),
-            other => format!("{}", other),
+            serde_json::Value::String(s) => Cow::Borrowed(s.as_str()),
+            serde_json::Value::Number(n) => Cow::Owned(n.to_string()),
+            other => Cow::Owned(other.to_string()),
         })
         .collect::<Vec<_>>()
         .join(" ");

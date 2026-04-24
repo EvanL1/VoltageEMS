@@ -362,19 +362,28 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
         },
     };
 
-    // Convert underscores to spaces for Redis key lookup.
-    let device_for_redis = req.device.replace('_', " ");
-    let redis_key = format!("{}:{}:{}", req.source, device_for_redis, req.data_type);
+    let WriteRequest {
+        source,
+        device,
+        data_type,
+        field,
+        value,
+        msg_id,
+    } = req;
 
-    let value_str = match &req.value {
+    // Convert underscores to spaces for Redis key lookup.
+    let device_for_redis = device.replace('_', " ");
+    let redis_key = format!("{}:{}:{}", source, device_for_redis, data_type);
+
+    let value_str = match value {
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::String(s) => s,
         other => other.to_string(),
     };
 
     let result_str = match state
         .rtdb
-        .hash_set(&redis_key, &req.field, Bytes::from(value_str))
+        .hash_set(&redis_key, &field, Bytes::from(value_str))
         .await
     {
         Ok(_) => "success",
@@ -386,7 +395,7 @@ async fn handle_write(state: Arc<AppState>, payload: Bytes) {
 
     let reply = WriteReply {
         result: result_str.to_string(),
-        msg_id: req.msg_id,
+        msg_id,
     };
 
     if let Err(e) = publish_json(&state, &state.topics.write_reply, &reply).await {
@@ -408,7 +417,7 @@ async fn handle_call_data(state: Arc<AppState>, payload: Bytes) {
         result: "success".to_string(),
         message: "数据总召已启动".to_string(),
         timestamp: Utc::now().timestamp(),
-        msg_id: msg_id.clone(),
+        msg_id,
         error: None,
     };
     if let Err(e) = publish_json(&state, &state.topics.call_data_reply, &reply).await {

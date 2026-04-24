@@ -153,7 +153,9 @@ impl WsHub {
 
         for entry in self.clients.iter() {
             let id = entry.key();
-            let sub = entry.sub.read().map(|s| s.clone()).unwrap_or_default();
+            let Ok(sub) = entry.sub.read() else {
+                continue;
+            };
 
             connections.insert(
                 id.clone(),
@@ -167,9 +169,9 @@ impl WsHub {
             subscriptions_map.insert(
                 id.clone(),
                 json!({
-                    "source": sub.source,
-                    "channels": sub.channels,
-                    "data_types": sub.data_types,
+                    "source": &sub.source,
+                    "channels": &sub.channels,
+                    "data_types": &sub.data_types,
                     "interval": sub.interval_ms,
                 }),
             );
@@ -615,24 +617,16 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
                 })
                 .unwrap_or_else(|| vec!["T".to_string()]);
             let interval_ms: u64 = data["data"]["interval"].as_u64().unwrap_or(1000);
+            let is_homepage = source == "homepage";
 
             // Load homepage points once from DB when subscribing to "homepage" source.
-            let homepage_points = if source == "homepage" {
+            let homepage_points = if is_homepage {
                 load_homepage_points(&hub.db).await
             } else {
                 Vec::new()
             };
 
-            hub.update_subscription(
-                client_id,
-                source.clone(),
-                channels.clone(),
-                data_types,
-                interval_ms,
-                homepage_points,
-            );
-
-            let ack = if source == "homepage" {
+            let ack = if is_homepage {
                 json!({
                     "type": "subscribe_ack",
                     "id": format!("{}_ack", data["id"].as_str().unwrap_or("sub")),
@@ -644,9 +638,17 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
                     "type": "subscribe_ack",
                     "id": format!("{}_ack", data["id"].as_str().unwrap_or("sub")),
                     "timestamp": Utc::now().timestamp(),
-                    "data": { "subscribed": channels, "failed": [] }
+                    "data": { "subscribed": &channels, "failed": [] }
                 })
             };
+            hub.update_subscription(
+                client_id,
+                source,
+                channels,
+                data_types,
+                interval_ms,
+                homepage_points,
+            );
             hub.send_to(client_id, ack.to_string());
         },
 

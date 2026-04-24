@@ -109,21 +109,22 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         let (m_routing_rows, a_routing_rows) = tokio::try_join!(m_routing_query, a_routing_query)?;
 
         // 3. Merge: product point definitions + routing data
-        let m_routing_map: HashMap<u32, _> = m_routing_rows.into_iter().map(|r| (r.0, r)).collect();
+        let mut m_routing_map: HashMap<u32, _> =
+            m_routing_rows.into_iter().map(|r| (r.0, r)).collect();
 
         let measurements = product
             .measurements
             .iter()
             .map(|mp| {
-                let routing = m_routing_map.get(&mp.measurement_id).and_then(
+                let routing = m_routing_map.remove(&mp.measurement_id).and_then(
                     |(_, cid, ctype, cpid, enabled, cname, cpname)| match (ctype, enabled) {
                         (Some(t), Some(e)) => Some(PointRouting {
-                            channel_id: *cid,
-                            channel_type: Some(t.clone()),
-                            channel_point_id: *cpid,
-                            enabled: *e,
-                            channel_name: cname.clone(),
-                            channel_point_name: cpname.clone(),
+                            channel_id: cid,
+                            channel_type: Some(t),
+                            channel_point_id: cpid,
+                            enabled: e,
+                            channel_name: cname,
+                            channel_point_name: cpname,
                         }),
                         _ => None,
                     },
@@ -138,21 +139,22 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             })
             .collect();
 
-        let a_routing_map: HashMap<u32, _> = a_routing_rows.into_iter().map(|r| (r.0, r)).collect();
+        let mut a_routing_map: HashMap<u32, _> =
+            a_routing_rows.into_iter().map(|r| (r.0, r)).collect();
 
         let actions = product
             .actions
             .iter()
             .map(|ap| {
-                let routing = a_routing_map.get(&ap.action_id).and_then(
+                let routing = a_routing_map.remove(&ap.action_id).and_then(
                     |(_, cid, ctype, cpid, enabled, cname, cpname)| match (ctype, enabled) {
                         (Some(t), Some(e)) => Some(PointRouting {
-                            channel_id: *cid,
-                            channel_type: Some(t.clone()),
-                            channel_point_id: *cpid,
-                            enabled: *e,
-                            channel_name: cname.clone(),
-                            channel_point_name: cpname.clone(),
+                            channel_id: cid,
+                            channel_type: Some(t),
+                            channel_point_id: cpid,
+                            enabled: e,
+                            channel_name: cname,
+                            channel_point_name: cpname,
                         }),
                         _ => None,
                     },

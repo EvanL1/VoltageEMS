@@ -1,5 +1,6 @@
 /// netsrv runtime configuration stored in the shared SQLite database.
 use sqlx::SqlitePool;
+use std::borrow::Cow;
 use tracing::info;
 
 use crate::models::NetConfig;
@@ -145,43 +146,58 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
 }
 
 pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<()> {
-    let pairs: Vec<(&str, String)> = vec![
-        ("product_sn", cfg.product_sn.clone()),
-        ("device_sn", cfg.device_sn.clone()),
-        ("broker_host", cfg.broker_host.clone()),
-        ("broker_port", cfg.broker_port.to_string()),
+    let pairs: Vec<(&str, Cow<'_, str>)> = vec![
+        ("product_sn", Cow::Borrowed(cfg.product_sn.as_str())),
+        ("device_sn", Cow::Borrowed(cfg.device_sn.as_str())),
+        ("broker_host", Cow::Borrowed(cfg.broker_host.as_str())),
+        ("broker_port", Cow::Owned(cfg.broker_port.to_string())),
         (
             "broker_keepalive_secs",
-            cfg.broker_keepalive_secs.to_string(),
+            Cow::Owned(cfg.broker_keepalive_secs.to_string()),
         ),
-        ("client_id", cfg.client_id.clone()),
-        ("username", cfg.username.clone().unwrap_or_default()),
-        ("password", cfg.password.clone().unwrap_or_default()),
-        ("ssl_enabled", cfg.ssl_enabled.to_string()),
-        ("reconnect_delay_secs", cfg.reconnect_delay_secs.to_string()),
+        ("client_id", Cow::Borrowed(cfg.client_id.as_str())),
+        (
+            "username",
+            Cow::Borrowed(cfg.username.as_deref().unwrap_or_default()),
+        ),
+        (
+            "password",
+            Cow::Borrowed(cfg.password.as_deref().unwrap_or_default()),
+        ),
+        ("ssl_enabled", Cow::Owned(cfg.ssl_enabled.to_string())),
+        (
+            "reconnect_delay_secs",
+            Cow::Owned(cfg.reconnect_delay_secs.to_string()),
+        ),
         (
             "reconnect_max_attempts",
-            cfg.reconnect_max_attempts.to_string(),
+            Cow::Owned(cfg.reconnect_max_attempts.to_string()),
         ),
-        ("report_interval_secs", cfg.report_interval_secs.to_string()),
-        ("report_batch_size", cfg.report_batch_size.to_string()),
+        (
+            "report_interval_secs",
+            Cow::Owned(cfg.report_interval_secs.to_string()),
+        ),
+        (
+            "report_batch_size",
+            Cow::Owned(cfg.report_batch_size.to_string()),
+        ),
         (
             "system_monitor_enabled",
-            cfg.system_monitor_enabled.to_string(),
+            Cow::Owned(cfg.system_monitor_enabled.to_string()),
         ),
         (
             "system_monitor_interval_secs",
-            cfg.system_monitor_interval_secs.to_string(),
+            Cow::Owned(cfg.system_monitor_interval_secs.to_string()),
         ),
         (
             "subscribe_patterns",
-            serde_json::to_string(&cfg.subscribe_patterns)?,
+            Cow::Owned(serde_json::to_string(&cfg.subscribe_patterns)?),
         ),
         (
             "exclude_patterns",
-            serde_json::to_string(&cfg.exclude_patterns)?,
+            Cow::Owned(serde_json::to_string(&cfg.exclude_patterns)?),
         ),
-        ("alarmsrv_url", cfg.alarmsrv_url.clone()),
+        ("alarmsrv_url", Cow::Borrowed(cfg.alarmsrv_url.as_str())),
     ];
 
     for (key, value) in pairs {
@@ -192,7 +208,7 @@ pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<(
                                             updated_at = datetime('now')",
         )
         .bind(key)
-        .bind(value)
+        .bind(value.as_ref())
         .execute(pool)
         .await?;
     }

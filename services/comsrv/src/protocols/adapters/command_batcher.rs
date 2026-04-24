@@ -349,7 +349,7 @@ mod tests {
             byte_order: ByteOrder::Cdab,
         };
 
-        batcher.add_command(cmd.clone());
+        batcher.add_command(cmd);
         let commands = batcher.take_commands();
 
         let stored = &commands.get(&(5, 16)).unwrap()[0];

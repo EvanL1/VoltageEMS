@@ -12,7 +12,7 @@ use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use ratatui::Terminal;
 use std::io;
 use std::time::{Duration, Instant};
@@ -265,7 +265,11 @@ fn draw_dashboard(
         .skip(state.scroll_offset)
         .map(|p| {
             let value_str = format!("{:.6}", p.value);
-            Row::new([p.key.clone(), p.kind.to_string(), value_str])
+            Row::new(vec![
+                Cell::from(p.key.as_str()),
+                Cell::from(p.kind),
+                Cell::from(value_str),
+            ])
         })
         .collect();
 

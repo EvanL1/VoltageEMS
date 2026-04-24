@@ -7,6 +7,7 @@
 /// - **Operational** (`ServiceConfig`) – exposed via `/hisApi/config`.
 /// - **Storage connection** (`StorageSettings`) – exposed via `/hisApi/storage`.
 use sqlx::SqlitePool;
+use std::borrow::Cow;
 use tracing::info;
 
 use crate::models::{ServiceConfig, StorageSettings};
@@ -105,7 +106,7 @@ async fn load_all_kv(
     Ok(rows.into_iter().collect())
 }
 
-async fn upsert_pairs(pool: &SqlitePool, pairs: &[(&str, String)]) -> anyhow::Result<()> {
+async fn upsert_pairs(pool: &SqlitePool, pairs: &[(&str, Cow<'_, str>)]) -> anyhow::Result<()> {
     for (key, value) in pairs {
         sqlx::query(
             "INSERT INTO hissrv_config (key, value)
@@ -114,7 +115,7 @@ async fn upsert_pairs(pool: &SqlitePool, pairs: &[(&str, String)]) -> anyhow::Re
                                             updated_at = datetime('now')",
         )
         .bind(key)
-        .bind(value)
+        .bind(value.as_ref())
         .execute(pool)
         .await?;
     }
@@ -150,28 +151,40 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<ServiceConfig> {
 
 /// Persist operational settings back to the DB.
 pub async fn save_config(pool: &SqlitePool, cfg: &ServiceConfig) -> anyhow::Result<()> {
-    let pairs: Vec<(&str, String)> = vec![
+    let pairs: Vec<(&str, Cow<'_, str>)> = vec![
         (
             "collection_interval_secs",
-            cfg.collection_interval_secs.to_string(),
+            Cow::Owned(cfg.collection_interval_secs.to_string()),
         ),
-        ("flush_interval_secs", cfg.flush_interval_secs.to_string()),
-        ("batch_size", cfg.batch_size.to_string()),
-        ("cleanup_enabled", cfg.cleanup_enabled.to_string()),
+        (
+            "flush_interval_secs",
+            Cow::Owned(cfg.flush_interval_secs.to_string()),
+        ),
+        ("batch_size", Cow::Owned(cfg.batch_size.to_string())),
+        (
+            "cleanup_enabled",
+            Cow::Owned(cfg.cleanup_enabled.to_string()),
+        ),
         (
             "cleanup_older_than_days",
-            cfg.cleanup_older_than_days.to_string(),
+            Cow::Owned(cfg.cleanup_older_than_days.to_string()),
         ),
-        ("default_page_size", cfg.default_page_size.to_string()),
-        ("max_page_size", cfg.max_page_size.to_string()),
-        ("max_time_range_days", cfg.max_time_range_days.to_string()),
+        (
+            "default_page_size",
+            Cow::Owned(cfg.default_page_size.to_string()),
+        ),
+        ("max_page_size", Cow::Owned(cfg.max_page_size.to_string())),
+        (
+            "max_time_range_days",
+            Cow::Owned(cfg.max_time_range_days.to_string()),
+        ),
         (
             "subscribe_patterns",
-            serde_json::to_string(&cfg.subscribe_patterns)?,
+            Cow::Owned(serde_json::to_string(&cfg.subscribe_patterns)?),
         ),
         (
             "exclude_patterns",
-            serde_json::to_string(&cfg.exclude_patterns)?,
+            Cow::Owned(serde_json::to_string(&cfg.exclude_patterns)?),
         ),
     ];
     upsert_pairs(pool, &pairs).await
@@ -193,10 +206,10 @@ pub async fn load_storage(pool: &SqlitePool) -> anyhow::Result<StorageSettings> 
 
 /// Persist storage connection settings to the DB.
 pub async fn save_storage(pool: &SqlitePool, s: &StorageSettings) -> anyhow::Result<()> {
-    let pairs: Vec<(&str, String)> = vec![
-        ("storage_enabled", s.enabled.to_string()),
-        ("storage_backend", s.backend.clone()),
-        ("storage_url", s.url.clone()),
+    let pairs: Vec<(&str, Cow<'_, str>)> = vec![
+        ("storage_enabled", Cow::Owned(s.enabled.to_string())),
+        ("storage_backend", Cow::Borrowed(s.backend.as_str())),
+        ("storage_url", Cow::Borrowed(s.url.as_str())),
     ];
     upsert_pairs(pool, &pairs).await
 }
