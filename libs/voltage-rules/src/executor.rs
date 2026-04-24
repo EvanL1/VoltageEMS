@@ -683,8 +683,11 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 if let Some((val, _ts)) =
                     reader.get_instance(instance_id, instance_type, point, &self.routing_cache)
                 {
-                    // SharedMemory hit - fastest path
-                    values_changed |= values.insert(var_name, val) != Some(val);
+                    // SharedMemory hit - fastest path.
+                    // total_cmp avoids NaN != NaN busting the Arc snapshot every cycle.
+                    values_changed |= values
+                        .insert(var_name, val)
+                        .is_none_or(|prev| prev.total_cmp(&val).is_ne());
                     continue;
                 }
             }
@@ -724,7 +727,9 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                                 );
                                 0.0
                             });
-                        values_changed |= values.insert(var_name, val) != Some(val);
+                        values_changed |= values
+                            .insert(var_name, val)
+                            .is_none_or(|prev| prev.total_cmp(&val).is_ne());
                     }
                 },
                 Err(e) => {

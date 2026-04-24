@@ -160,6 +160,8 @@ pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<(
             "username",
             Cow::Borrowed(cfg.username.as_deref().unwrap_or_default()),
         ),
+        // TODO(security): MQTT password stored plaintext in local SQLite.
+        // Acceptable for single-user device config; revisit if DB is shared.
         (
             "password",
             Cow::Borrowed(cfg.password.as_deref().unwrap_or_default()),
@@ -200,6 +202,7 @@ pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<(
         ("alarmsrv_url", Cow::Borrowed(cfg.alarmsrv_url.as_str())),
     ];
 
+    let mut tx = pool.begin().await?;
     for (key, value) in pairs {
         sqlx::query(
             "INSERT INTO netsrv_config (key, value)
@@ -209,8 +212,9 @@ pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<(
         )
         .bind(key)
         .bind(value.as_ref())
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     }
+    tx.commit().await?;
     Ok(())
 }

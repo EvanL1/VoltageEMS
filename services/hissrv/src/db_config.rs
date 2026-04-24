@@ -107,6 +107,7 @@ async fn load_all_kv(
 }
 
 async fn upsert_pairs(pool: &SqlitePool, pairs: &[(&str, Cow<'_, str>)]) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
     for (key, value) in pairs {
         sqlx::query(
             "INSERT INTO hissrv_config (key, value)
@@ -116,9 +117,10 @@ async fn upsert_pairs(pool: &SqlitePool, pairs: &[(&str, Cow<'_, str>)]) -> anyh
         )
         .bind(key)
         .bind(value.as_ref())
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 
