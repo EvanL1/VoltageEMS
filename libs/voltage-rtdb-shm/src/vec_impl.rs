@@ -127,23 +127,27 @@ impl PointSlot {
     /// This is the core seqlock read protocol used by both `load_consistent` (retrying)
     /// and callers that prefer to skip stale data rather than spin.
     ///
-    /// ## Algorithm
+    /// ## Algorithm (classic Linux seqlock pattern)
     ///
-    /// 1. Read seq (Relaxed) to get sequence counter
-    /// 2. If sequence is odd (write in progress), return None
-    /// 3. **fence(Acquire)** — prevents data loads from being speculated
-    ///    before seq1. x86: compiler barrier only. ARM64: `dmb ishld`.
-    /// 4. Read value, raw, timestamp (Relaxed)
-    /// 5. Re-read seq with **load(Acquire)** — pairs with writer's
-    ///    `store(Release)`, ensures data loads complete before seq2.
-    /// 6. If seq unchanged → `Some(data)`; otherwise `None`
+    /// 1. Read seq1 (Relaxed). If odd → write in progress → return None.
+    /// 2. **fence(Acquire)** — data loads cannot be reordered before seq1.
+    /// 3. Read value, raw, timestamp (Relaxed).
+    /// 4. **fence(Acquire)** — data loads cannot be reordered after seq2.
+    /// 5. Read seq2 (Relaxed). If seq1 == seq2 → consistent snapshot.
     ///
-    /// ## Memory Ordering (Acquire/Release, AArch64-safe)
+    /// ## Why two fences, not `load(Acquire)` on seq2
     ///
-    /// Reader uses `fence(Acquire)` + `load(Acquire)` to pair with
-    /// writer's `store(Release)`. On x86 (TSO), both are compiler
-    /// barriers only (0 instructions). On ARM64, `fence(Acquire)`
-    /// emits `dmb ishld` (load barrier) and `load(Acquire)` emits `ldar`.
+    /// A single `load(Acquire)` on seq2 is insufficient on weakly-ordered
+    /// architectures (e.g. AArch64). Acquire-load (`ldar`) only prevents
+    /// *subsequent* loads from being reordered before it — it does **not**
+    /// prevent *preceding* data loads from being reordered after it. That
+    /// allows a reader to observe `seq1 == seq2` while its data loads
+    /// straddled a full writer cycle, producing a torn read.
+    ///
+    /// The second `fence(Acquire)` — emitted as `dmb ishld` on AArch64 —
+    /// is a bidirectional load-load barrier that prevents data loads from
+    /// slipping past seq2. On x86 (TSO) load-load reordering is already
+    /// prohibited, so both fences compile to compiler barriers only.
     #[inline]
     pub fn try_load_consistent(&self) -> Option<(f64, f64, u64)> {
         let seq1 = self.seq.load(Ordering::Relaxed);
@@ -152,17 +156,20 @@ impl PointSlot {
             return None; // write in progress
         }
 
-        // ACQUIRE fence: prevents data loads from being speculated before seq1.
-        // x86: compiler barrier only. ARM64: dmb ishld.
+        // First Acquire fence: prevents data loads from being reordered
+        // before seq1. On AArch64: dmb ishld. On x86: compiler barrier.
         fence(Ordering::Acquire);
 
         let value = f64::from_bits(self.value_bits.load(Ordering::Relaxed));
         let raw = f64::from_bits(self.raw_bits.load(Ordering::Relaxed));
         let ts = self.timestamp.load(Ordering::Relaxed);
 
-        // Acquire load: ensures data loads above complete before reading seq2,
-        // and pairs with writer's store(Release) for cross-thread visibility.
-        let seq2 = self.seq.load(Ordering::Acquire);
+        // Second Acquire fence: prevents data loads from being reordered
+        // past seq2. Critical on AArch64 where load-load reordering is
+        // allowed and `ldar` alone does not back-fence prior loads.
+        fence(Ordering::Acquire);
+
+        let seq2 = self.seq.load(Ordering::Relaxed);
 
         if seq1 == seq2 {
             Some((value, raw, ts))
@@ -177,14 +184,21 @@ impl PointSlot {
     /// data fields, then stores to even (write-complete). Readers that
     /// observe an odd sequence or a changed sequence will retry.
     ///
-    /// # Memory Ordering (store-release, AArch64-safe)
+    /// # Memory Ordering (classic Linux write_seqcount pattern)
     ///
-    /// Both seq stores use `Release` ordering:
-    /// - Opening `store(odd, Release)` prevents preceding stores from being
-    ///   reordered after it. x86: plain `mov`; ARM64: `stlr`.
-    /// - Closing `store(even, Release)` prevents preceding data stores from
-    ///   being reordered after it, pairing with reader's `load(Acquire)` on
-    ///   seq2 to guarantee data visibility. x86: plain `mov`; ARM64: `stlr`.
+    /// 1. `store(seq+1, Relaxed)` — mark write-in-progress (odd).
+    /// 2. **`fence(Release)`** — data stores cannot be reordered before
+    ///    the seq→odd store. On AArch64: `dmb ishst`. On x86: compiler barrier.
+    /// 3. Data stores (Relaxed) — value, raw, timestamp.
+    /// 4. `store(seq+2, Release)` — mark write-complete (even). Release
+    ///    ordering prevents data stores from being reordered past it,
+    ///    pairing with the reader's trailing Acquire fence.
+    ///
+    /// Without the middle Release fence a Release store on seq→odd only
+    /// blocks *preceding* ops from moving past it — *subsequent* data
+    /// stores could still be reordered before the odd-seq publication on
+    /// weakly-ordered hardware (AArch64), allowing readers to observe
+    /// seq==even while data is already partially mutated.
     ///
     /// # Single-writer assumption
     ///
@@ -202,20 +216,23 @@ impl PointSlot {
             s
         );
 
-        // Begin write: seq → odd (signals write-in-progress).
-        // Release: prevents preceding stores from being reordered after this
-        // store, ensuring readers that observe an odd seq also see prior writes.
-        // x86: plain mov. ARM64: stlr.
-        self.seq.store(s.wrapping_add(1), Ordering::Release);
+        // Begin write: seq → odd (signals write-in-progress). Relaxed —
+        // the following Release fence establishes ordering.
+        self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
 
-        // Data stores — Relaxed; ordering enforced by surrounding Release stores.
+        // Release fence: data stores below cannot be reordered before the
+        // seq→odd store above. Critical on AArch64 (dmb ishst) to ensure
+        // an observer that sees data=NEW also sees seq=odd.
+        fence(Ordering::Release);
+
+        // Data stores — Relaxed; ordering enforced by surrounding fences/stores.
         self.value_bits.store(value.to_bits(), Ordering::Relaxed);
         self.raw_bits.store(raw.to_bits(), Ordering::Relaxed);
         self.timestamp.store(timestamp, Ordering::Relaxed);
 
-        // End write: seq → even (signals write-complete).
-        // Release: prevents prior data stores from being reordered after
-        // this store. Pairs with reader's load(Acquire). x86: mov. ARM64: stlr.
+        // End write: seq → even (signals write-complete). Release prevents
+        // prior data stores from being reordered past this store, pairing
+        // with the reader's trailing Acquire fence. x86: mov. ARM64: stlr.
         self.seq.store(s.wrapping_add(2), Ordering::Release);
 
         // Dirty flag — outside seqlock envelope (advisory, not consistency-critical).
