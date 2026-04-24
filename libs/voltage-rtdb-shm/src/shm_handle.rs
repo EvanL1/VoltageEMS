@@ -55,19 +55,14 @@ impl ShmLayout {
 /// extremely infrequent (only on routing reload) and non-blocking to readers.
 pub struct ShmHandle {
     layout: ArcSwapOption<ShmLayout>,
-    writer: ArcSwapOption<UnifiedWriter>,
-    index: ArcSwapOption<ChannelToSlotIndex>,
     config: SharedConfig,
 }
 
 impl ShmHandle {
     /// Create a new ShmHandle with initial writer and index.
     pub fn new(config: SharedConfig, writer: UnifiedWriter, index: ChannelToSlotIndex) -> Self {
-        let layout = Arc::new(ShmLayout::new(writer, index));
         Self {
-            layout: ArcSwapOption::new(Some(Arc::clone(&layout))),
-            writer: ArcSwapOption::new(Some(Arc::clone(&layout.writer))),
-            index: ArcSwapOption::new(Some(Arc::clone(&layout.index))),
+            layout: ArcSwapOption::new(Some(Arc::new(ShmLayout::new(writer, index)))),
             config,
         }
     }
@@ -76,8 +71,6 @@ impl ShmHandle {
     pub fn empty(config: SharedConfig) -> Self {
         Self {
             layout: ArcSwapOption::empty(),
-            writer: ArcSwapOption::empty(),
-            index: ArcSwapOption::empty(),
             config,
         }
     }
@@ -99,45 +92,10 @@ impl ShmHandle {
         self.layout.load_full()
     }
 
-    /// Load current writer (wait-free, returns Guard for zero-copy access).
-    #[inline]
-    pub fn writer(&self) -> Option<Guard<Option<Arc<UnifiedWriter>>>> {
-        let guard = self.writer.load();
-        if guard.is_some() {
-            Some(guard)
-        } else {
-            None
-        }
-    }
-
-    /// Load current writer Arc (clones the Arc, slightly more expensive than guard).
-    #[inline]
-    pub fn writer_arc(&self) -> Option<Arc<UnifiedWriter>> {
-        self.writer.load_full()
-    }
-
-    /// Load current index (wait-free).
-    #[inline]
-    pub fn index(&self) -> Option<Guard<Option<Arc<ChannelToSlotIndex>>>> {
-        let guard = self.index.load();
-        if guard.is_some() {
-            Some(guard)
-        } else {
-            None
-        }
-    }
-
-    /// Load current index Arc.
-    #[inline]
-    pub fn index_arc(&self) -> Option<Arc<ChannelToSlotIndex>> {
-        self.index.load_full()
-    }
-
     /// Rebuild SHM writer and indexes from updated channel point counts.
     ///
     /// Called after routing reload succeeds. Reconfigures the existing
     /// SHM file in place, then atomically swaps the coherent layout handle.
-    /// Compatibility writer/index handles are updated for existing call sites.
     /// Old objects are dropped when the last reader Guard releases.
     pub fn rebuild(&self, channel_points: &ChannelPointCounts) -> anyhow::Result<()> {
         let writer = UnifiedWriter::reconfigure_existing(&self.config, channel_points)?;
@@ -147,8 +105,6 @@ impl ShmHandle {
         let layout = Arc::new(ShmLayout::new(writer, index));
         let reverse_len = layout.reverse_index.mapped_count();
 
-        self.writer.store(Some(Arc::clone(&layout.writer)));
-        self.index.store(Some(Arc::clone(&layout.index)));
         self.layout.store(Some(layout));
 
         info!(

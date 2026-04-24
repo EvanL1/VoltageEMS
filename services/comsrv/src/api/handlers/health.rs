@@ -227,10 +227,10 @@ pub async fn health_check<R: Rtdb>(
     if let Some(handle) = manager.shm_handle() {
         let mut parts = Vec::new();
 
-        if let Some(guard) = handle.writer() {
-            if let Some(writer) = guard.as_ref() {
-                parts.push(format!("total={}", writer.slot_count()));
-                parts.push(format!("heartbeat_ms={}", writer.writer_heartbeat()));
+        if let Some(guard) = handle.layout() {
+            if let Some(layout) = guard.as_ref() {
+                parts.push(format!("total={}", layout.writer.slot_count()));
+                parts.push(format!("heartbeat_ms={}", layout.writer.writer_heartbeat()));
             }
         }
 

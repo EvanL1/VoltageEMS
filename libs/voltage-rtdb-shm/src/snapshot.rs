@@ -162,11 +162,12 @@ impl SnapshotManager {
     ///
     /// Can be called at any time to force an immediate snapshot.
     pub fn save_now(&self) -> Result<()> {
-        let writer = self
+        let layout = self
             .shm_handle
-            .writer_arc()
+            .layout_arc()
             .context("SHM writer not available for snapshot")?;
-        writer
+        layout
+            .writer
             .save_snapshot(&self.config.path)
             .context("Failed to save snapshot")
     }
