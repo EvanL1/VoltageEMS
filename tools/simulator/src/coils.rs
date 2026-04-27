@@ -38,13 +38,13 @@ impl CoilStore {
 
     /// Write a single coil (FC05).
     pub fn write_coil(&self, unit_id: u8, address: u16, value: bool) {
-        let mut coils = self.coils.write().expect("coils lock poisoned");
+        let mut coils = self.coils.write().unwrap_or_else(|e| e.into_inner());
         coils.insert((unit_id, address), value);
     }
 
     /// Write multiple coils (FC0F).
     pub fn write_coils(&self, unit_id: u8, start_address: u16, values: &[bool]) {
-        let mut coils = self.coils.write().expect("coils lock poisoned");
+        let mut coils = self.coils.write().unwrap_or_else(|e| e.into_inner());
         for (offset, &value) in values.iter().enumerate() {
             let addr = start_address.wrapping_add(offset as u16);
             coils.insert((unit_id, addr), value);
@@ -54,7 +54,7 @@ impl CoilStore {
     /// Read a single coil.
     #[allow(dead_code)]
     pub fn read_coil(&self, unit_id: u8, address: u16) -> bool {
-        let coils = self.coils.read().expect("coils lock poisoned");
+        let coils = self.coils.read().unwrap_or_else(|e| e.into_inner());
         coils.get(&(unit_id, address)).copied().unwrap_or(false)
     }
 
@@ -63,7 +63,7 @@ impl CoilStore {
     /// Returns a Vec of boolean values for the requested range.
     /// Unset coils default to `false`.
     pub fn read_coils(&self, unit_id: u8, start_address: u16, count: u16) -> Vec<bool> {
-        let coils = self.coils.read().expect("coils lock poisoned");
+        let coils = self.coils.read().unwrap_or_else(|e| e.into_inner());
         (0..count)
             .map(|offset| {
                 let addr = start_address.wrapping_add(offset);
@@ -81,7 +81,7 @@ impl CoilStore {
         let mut inputs = self
             .discrete_inputs
             .write()
-            .expect("discrete_inputs lock poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         inputs.insert((unit_id, address), value);
     }
 
@@ -91,7 +91,7 @@ impl CoilStore {
         let mut inputs = self
             .discrete_inputs
             .write()
-            .expect("discrete_inputs lock poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         for (offset, &value) in values.iter().enumerate() {
             let addr = start_address.wrapping_add(offset as u16);
             inputs.insert((unit_id, addr), value);
@@ -106,7 +106,7 @@ impl CoilStore {
         let inputs = self
             .discrete_inputs
             .read()
-            .expect("discrete_inputs lock poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         (0..count)
             .map(|offset| {
                 let addr = start_address.wrapping_add(offset);
@@ -164,10 +164,13 @@ impl CoilStore {
     /// Clear all stored coils (useful for testing).
     #[allow(dead_code)]
     pub fn clear(&self) {
-        self.coils.write().expect("coils lock poisoned").clear();
+        self.coils
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.discrete_inputs
             .write()
-            .expect("discrete_inputs lock poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clear();
     }
 }

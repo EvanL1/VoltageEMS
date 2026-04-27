@@ -1,17 +1,16 @@
 use std::path::Path;
 use std::{env, fs};
 
-fn main() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")?;
     let products_dir = Path::new(&manifest_dir).join("src/products");
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_dir = env::var("OUT_DIR")?;
     let dest = Path::new(&out_dir).join("product_includes.rs");
 
     // Rerun when any file in products/ changes (add/remove/modify)
     println!("cargo:rerun-if-changed=src/products");
 
-    let mut entries: Vec<String> = fs::read_dir(&products_dir)
-        .expect("src/products directory must exist (git submodule)")
+    let mut entries: Vec<String> = fs::read_dir(&products_dir)?
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let path = e.path();
@@ -31,7 +30,7 @@ fn main() {
         .iter()
         .map(|name| {
             let abs = products_dir.join(name);
-            format!("    include_str!({:?}),", abs.to_str().unwrap())
+            format!("    include_str!({:?}),", abs.to_string_lossy())
         })
         .collect();
 
@@ -40,5 +39,6 @@ fn main() {
         includes.join("\n")
     );
 
-    fs::write(&dest, generated).expect("Failed to write product_includes.rs");
+    fs::write(&dest, generated)?;
+    Ok(())
 }

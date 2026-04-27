@@ -898,9 +898,12 @@ pub async fn get_statistics(pool: &SqlitePool) -> Result<serde_json::Value> {
 
 fn today_start_timestamp() -> i64 {
     let now = chrono::Local::now();
-    let today = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let Some(today) = now.date_naive().and_hms_opt(0, 0, 0) else {
+        return now.timestamp();
+    };
     chrono::Local
         .from_local_datetime(&today)
-        .unwrap()
-        .timestamp()
+        .single()
+        .map(|dt| dt.timestamp())
+        .unwrap_or_else(|| now.timestamp())
 }

@@ -392,8 +392,9 @@ impl ShardedSlotStore {
     /// Only locks the shard containing this point.
     pub fn update(&self, point_id: u32, value: Value, quality: Quality) {
         if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
-            // SAFETY: With panic=abort, RwLock cannot be poisoned; expect is unreachable
-            let shard = self.shards[shard_idx].read().expect("RwLock poisoned");
+            let shard = self.shards[shard_idx]
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
             shard[slot_idx].update(value, quality);
         }
     }
@@ -401,8 +402,9 @@ impl ShardedSlotStore {
     /// Read a single point's value.
     pub fn read(&self, point_id: u32) -> Option<(Value, Quality, i64, u64)> {
         if let Some(&(shard_idx, slot_idx)) = self.index.get(&point_id) {
-            // SAFETY: With panic=abort, RwLock cannot be poisoned; expect is unreachable
-            let shard = self.shards[shard_idx].read().expect("RwLock poisoned");
+            let shard = self.shards[shard_idx]
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
             shard[slot_idx].read()
         } else {
             None
@@ -415,7 +417,7 @@ impl ShardedSlotStore {
         let mut batch = DataBatch::with_capacity(total_capacity);
         let now = Utc::now();
         for (shard_idx, shard) in self.shards.iter().enumerate() {
-            let slots = shard.read().expect("RwLock poisoned");
+            let slots = shard.read().unwrap_or_else(|e| e.into_inner());
             for (slot_idx, slot) in slots.iter().enumerate() {
                 let pid = self.shard_point_ids[shard_idx][slot_idx];
                 if let Some(point) = slot_to_point(slot, pid, self.point_type, now) {

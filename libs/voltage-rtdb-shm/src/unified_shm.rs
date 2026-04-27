@@ -60,6 +60,26 @@ fn new_dirty_words(slot_count: usize) -> Vec<AtomicU64> {
         .collect()
 }
 
+fn read_ne_bytes<const N: usize>(buf: &[u8], start: usize, label: &str) -> Result<[u8; N]> {
+    let end = start
+        .checked_add(N)
+        .with_context(|| format!("Invalid snapshot offset for {}", label))?;
+    let bytes = buf
+        .get(start..end)
+        .with_context(|| format!("Snapshot missing {}", label))?;
+    bytes
+        .try_into()
+        .with_context(|| format!("Invalid snapshot field size for {}", label))
+}
+
+fn read_u64_ne(buf: &[u8], start: usize, label: &str) -> Result<u64> {
+    Ok(u64::from_ne_bytes(read_ne_bytes(buf, start, label)?))
+}
+
+fn read_u32_ne(buf: &[u8], start: usize, label: &str) -> Result<u32> {
+    Ok(u32::from_ne_bytes(read_ne_bytes(buf, start, label)?))
+}
+
 // ========== Header (64 bytes) ==========
 
 /// Unified shared memory header (simplified)
@@ -834,10 +854,10 @@ impl UnifiedWriter {
         //   offset 40: routing_hash (AtomicU64 → read as u64)
         //   offset 48: _reserved (16 bytes)
         let snap = &snapshot_data;
-        let snap_magic = u64::from_ne_bytes(snap[0..8].try_into().unwrap());
-        let snap_version = u32::from_ne_bytes(snap[8..12].try_into().unwrap());
-        let snap_slot_count_val = u32::from_ne_bytes(snap[16..20].try_into().unwrap());
-        let snap_routing_hash = u64::from_ne_bytes(snap[40..48].try_into().unwrap());
+        let snap_magic = read_u64_ne(snap, 0, "header.magic")?;
+        let snap_version = read_u32_ne(snap, 8, "header.version")?;
+        let snap_slot_count_val = read_u32_ne(snap, 16, "header.slot_count")?;
+        let snap_routing_hash = read_u64_ne(snap, 40, "header.routing_hash")?;
 
         if snap_magic != UNIFIED_MAGIC {
             bail!(
@@ -904,9 +924,9 @@ impl UnifiedWriter {
             //   offset 24: seq        (AtomicU32 → not needed for restore)
             //   offset 28: dirty      (AtomicU32 → not needed for restore)
             let sb = &snapshot_data[slot_offset_in_file..slot_offset_in_file + slot_size];
-            let value = f64::from_bits(u64::from_ne_bytes(sb[0..8].try_into().unwrap()));
-            let timestamp = u64::from_ne_bytes(sb[8..16].try_into().unwrap());
-            let raw = f64::from_bits(u64::from_ne_bytes(sb[16..24].try_into().unwrap()));
+            let value = f64::from_bits(read_u64_ne(sb, 0, "slot.value_bits")?);
+            let timestamp = read_u64_ne(sb, 8, "slot.timestamp")?;
+            let raw = f64::from_bits(read_u64_ne(sb, 16, "slot.raw_bits")?);
 
             // Validate data: skip NaN and Infinity
             if value.is_nan() || value.is_infinite() || raw.is_nan() || raw.is_infinite() {

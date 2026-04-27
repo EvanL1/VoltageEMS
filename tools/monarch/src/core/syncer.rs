@@ -94,10 +94,10 @@ fn normalize_protocol_mapping(
                 .or_insert(JsonValue::Bool(false));
             normalized
                 .entry("scale".to_string())
-                .or_insert(JsonValue::Number(Number::from_f64(1.0).unwrap()));
+                .or_insert(JsonValue::Number(Number::from(1)));
             normalized
                 .entry("offset".to_string())
-                .or_insert(JsonValue::Number(Number::from_f64(0.0).unwrap()));
+                .or_insert(JsonValue::Number(Number::from(0)));
             normalized
         },
         "di_do" | "gpio" | "dido" => convert_fields(mapping, &["gpio_number"]),

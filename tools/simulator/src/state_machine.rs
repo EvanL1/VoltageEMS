@@ -75,14 +75,14 @@ impl StateMachine {
     }
 
     pub fn current_state(&self) -> DeviceState {
-        *self.state.read().expect("state lock poisoned")
+        *self.state.read().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Called when a coil is written. Returns new state if transitioned.
     ///
     /// Uses a single write lock for the entire check-and-set to avoid TOCTOU races.
     pub fn on_coil_write(&self, address: u16, value: bool) -> Option<DeviceState> {
-        let mut state = self.state.write().expect("state lock poisoned");
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         for t in &self.transitions {
             if t.from == *state {
                 if let Trigger::Coil {
@@ -104,7 +104,7 @@ impl StateMachine {
     ///
     /// Uses a single write lock for the entire check-and-set to avoid TOCTOU races.
     pub fn on_register_write(&self, address: u16, value: u16) -> Option<DeviceState> {
-        let mut state = self.state.write().expect("state lock poisoned");
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         for t in &self.transitions {
             if t.from == *state {
                 if let Trigger::Register {

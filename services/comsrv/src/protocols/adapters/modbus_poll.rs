@@ -167,8 +167,8 @@ fn build_register_segments<'a>(
                 if gap <= max_gap && new_total <= max_batch_size {
                     seg.end_address = addr + count;
                     seg.points.push((addr, count, point));
-                } else {
-                    segments.push(current_segment.take().unwrap());
+                } else if let Some(segment) = current_segment.take() {
+                    segments.push(segment);
                     current_segment = Some(RegisterSegment {
                         start_address: addr,
                         end_address: addr + count,

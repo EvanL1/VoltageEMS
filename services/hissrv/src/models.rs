@@ -384,7 +384,9 @@ pub fn parse_time(s: &str) -> anyhow::Result<DateTime<Utc>> {
 
     // Date only: `2025-08-21`
     if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc());
+        if let Some(dt) = d.and_hms_opt(0, 0, 0) {
+            return Ok(dt.and_utc());
+        }
     }
 
     // Unix timestamp (integer)

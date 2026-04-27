@@ -1,7 +1,7 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use axum::{
     body::Body,
@@ -29,6 +29,37 @@ static UPLOAD_TOTAL_BYTES: AtomicU64 = AtomicU64::new(0);
 static UPLOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 // Set by abort_upgrade to signal the streaming loop to stop early.
 static UPLOAD_ABORT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+fn upgrade_state_error_response() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({
+            "success": false,
+            "message": "Upgrade state is unavailable; please retry or restart apigateway"
+        })),
+    )
+        .into_response()
+}
+
+fn lock_upgrade_running() -> Option<MutexGuard<'static, bool>> {
+    match UPGRADE_RUNNING.lock() {
+        Ok(running) => Some(running),
+        Err(e) => {
+            error!("Upgrade running lock poisoned: {}", e);
+            None
+        },
+    }
+}
+
+fn lock_upgrade_pid() -> Option<MutexGuard<'static, Option<u32>>> {
+    match UPGRADE_PID.lock() {
+        Ok(pid) => Some(pid),
+        Err(e) => {
+            error!("Upgrade PID lock poisoned: {}", e);
+            None
+        },
+    }
+}
 
 fn write_upgrade_status(data: &serde_json::Value) {
     if let Ok(s) = serde_json::to_string_pretty(data) {
@@ -82,11 +113,23 @@ pub async fn check_config() -> impl IntoResponse {
         .into_response();
     }
 
-    let entries: Vec<String> = std::fs::read_dir(dir)
-        .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect();
+    let entries: Vec<String> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect(),
+        Err(e) => {
+            error!("Failed to read config directory {}: {}", CONFIG_DIR, e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "success": false,
+                    "message": format!("Failed to read config directory: {}", e)
+                })),
+            )
+                .into_response();
+        },
+    };
 
     Json(json!({
         "success": true,
@@ -119,7 +162,7 @@ pub async fn export_config() -> impl IntoResponse {
     match create_zip_archive(dir) {
         Ok(data) => {
             let filename = format!("config_{}.zip", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
-            Response::builder()
+            match Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "application/zip")
                 .header(
@@ -127,7 +170,19 @@ pub async fn export_config() -> impl IntoResponse {
                     format!("attachment; filename=\"{}\"", filename),
                 )
                 .body(Body::from(data))
-                .unwrap()
+            {
+                Ok(response) => response,
+                Err(e) => {
+                    error!("Build export response error: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(
+                            json!({"success": false, "message": "Failed to build export response"}),
+                        ),
+                    )
+                        .into_response()
+                },
+            }
         },
         Err(e) => {
             error!("Export config error: {}", e);
@@ -152,7 +207,9 @@ fn create_zip_archive(dir: &Path) -> io::Result<Vec<u8>> {
 
     let base = dir;
     for entry in walkdir_simple(base) {
-        let rel = entry.strip_prefix(base).unwrap();
+        let rel = entry
+            .strip_prefix(base)
+            .map_err(|e| io::Error::other(format!("invalid archive path: {}", e)))?;
         let rel_str = rel.to_string_lossy();
 
         if entry.is_dir() {
@@ -397,7 +454,10 @@ pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl
     info!("Upgrade upload request received");
 
     {
-        let running = UPGRADE_RUNNING.lock().unwrap();
+        let running = match lock_upgrade_running() {
+            Some(running) => running,
+            None => return upgrade_state_error_response(),
+        };
         if *running {
             return (
                 StatusCode::CONFLICT,
@@ -696,7 +756,10 @@ pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl
     // Set UPGRADE_RUNNING=true and write status file BEFORE spawning the blocking task.
     // If we set it inside spawn_blocking, the tokio thread pool may not schedule the task
     // immediately — a status poll arriving in that window would incorrectly see running=false.
-    *UPGRADE_RUNNING.lock().unwrap() = true;
+    match lock_upgrade_running() {
+        Some(mut running) => *running = true,
+        None => return upgrade_state_error_response(),
+    }
 
     let size_mb = received_bytes as f64 / (1024.0 * 1024.0);
     write_upgrade_status(&json!({
@@ -809,7 +872,10 @@ pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl
 
         match result {
             Ok(mut child) => {
-                *UPGRADE_PID.lock().unwrap() = Some(child.id());
+                match UPGRADE_PID.lock() {
+                    Ok(mut pid) => *pid = Some(child.id()),
+                    Err(e) => error!("Upgrade PID lock poisoned: {}", e),
+                }
                 let exit_code = child.wait().ok().and_then(|s| s.code()).unwrap_or(-1);
                 if exit_code == 0 {
                     info!("Upgrade completed successfully");
@@ -868,8 +934,14 @@ pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl
             Err(e) => error!("Post-install cleanup read_dir failed: {}", e),
         }
 
-        *UPGRADE_RUNNING.lock().unwrap() = false;
-        *UPGRADE_PID.lock().unwrap() = None;
+        match UPGRADE_RUNNING.lock() {
+            Ok(mut running) => *running = false,
+            Err(e) => error!("Upgrade running lock poisoned: {}", e),
+        }
+        match UPGRADE_PID.lock() {
+            Ok(mut pid) => *pid = None,
+            Err(e) => error!("Upgrade PID lock poisoned: {}", e),
+        }
     });
 
     Json(json!({
@@ -887,8 +959,14 @@ pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl
     responses((status = 200, description = "升级已中断")))]
 pub async fn abort_upgrade() -> impl IntoResponse {
     let uploading = UPLOAD_IN_PROGRESS.load(Ordering::Relaxed);
-    let pid = UPGRADE_PID.lock().unwrap().take();
-    let installing = *UPGRADE_RUNNING.lock().unwrap();
+    let pid = match lock_upgrade_pid() {
+        Some(mut pid) => pid.take(),
+        None => return upgrade_state_error_response(),
+    };
+    let installing = match lock_upgrade_running() {
+        Some(running) => *running,
+        None => return upgrade_state_error_response(),
+    };
 
     if !uploading && !installing && pid.is_none() {
         return Json(json!({"success": false, "message": "No upgrade in progress"}))
@@ -920,8 +998,14 @@ pub async fn abort_upgrade() -> impl IntoResponse {
                 .await;
         }
 
-        *UPGRADE_RUNNING.lock().unwrap() = false;
-        *UPGRADE_PID.lock().unwrap() = None;
+        match lock_upgrade_running() {
+            Some(mut running) => *running = false,
+            None => return upgrade_state_error_response(),
+        }
+        match lock_upgrade_pid() {
+            Some(mut pid) => *pid = None,
+            None => return upgrade_state_error_response(),
+        }
 
         write_upgrade_status(&json!({
             "status": "aborted",
@@ -940,8 +1024,14 @@ pub async fn abort_upgrade() -> impl IntoResponse {
     responses((status = 200, description = "升级状态")))]
 pub async fn upgrade_status() -> impl IntoResponse {
     let file_status = read_upgrade_status().await;
-    let mem_running = *UPGRADE_RUNNING.lock().unwrap();
-    let mem_pid = *UPGRADE_PID.lock().unwrap();
+    let mem_running = match lock_upgrade_running() {
+        Some(running) => *running,
+        None => return upgrade_state_error_response(),
+    };
+    let mem_pid = match lock_upgrade_pid() {
+        Some(pid) => *pid,
+        None => return upgrade_state_error_response(),
+    };
 
     // Cross-check: if memory says not running but status file says "running",
     // verify whether the upgrader container is actually still alive on the host.

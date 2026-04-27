@@ -690,7 +690,19 @@ async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
     let command_type = control["command_type"].as_str();
     let value = &control["value"];
 
-    if channel_id.is_none() || point_id.is_none() || command_type.is_none() || value.is_null() {
+    let (Some(channel_id), Some(point_id), Some(_command_type)) =
+        (channel_id, point_id, command_type)
+    else {
+        let err = error_msg(
+            "CONTROL_ERROR",
+            "Missing required control parameters",
+            data["id"].as_str(),
+        );
+        hub.send_to(client_id, err);
+        return;
+    };
+
+    if value.is_null() {
         let err = error_msg(
             "CONTROL_ERROR",
             "Missing required control parameters",
@@ -715,8 +727,20 @@ async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
         "timestamp": Utc::now().timestamp(),
     });
 
-    let trigger_key = format!("{}:trigger:{}:C", source, channel_id.unwrap());
-    let cmd_bytes = Bytes::from(serde_json::to_vec(&cmd_data).unwrap_or_default());
+    let trigger_key = format!("{}:trigger:{}:C", source, channel_id);
+    let cmd_bytes = match serde_json::to_vec(&cmd_data) {
+        Ok(bytes) => Bytes::from(bytes),
+        Err(e) => {
+            error!("Failed to encode WS control command: {}", e);
+            let err = error_msg(
+                "CONTROL_ERROR",
+                "Failed to encode control command",
+                data["id"].as_str(),
+            );
+            hub.send_to(client_id, err);
+            return;
+        },
+    };
 
     match hub.rtdb.list_rpush(&trigger_key, cmd_bytes).await {
         Ok(_) => {

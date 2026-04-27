@@ -15,20 +15,26 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
-// Pre-compiled regex patterns for stateful function parsing (compiled once, used many times)
-// Using expect() for compile-time constant patterns that cannot fail
-static RE_INTEGRATE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"integrate\s*\(\s*(\w+)(?:\s*,\s*([0-9.]+))?\s*\)")
-        .expect("RE_INTEGRATE: invalid regex pattern")
-});
-static RE_MOVING_AVG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"moving_avg\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)")
-        .expect("RE_MOVING_AVG: invalid regex pattern")
-});
-static RE_RATE_OF_CHANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"rate_of_change\s*\(\s*(\w+)\s*\)")
-        .expect("RE_RATE_OF_CHANGE: invalid regex pattern")
-});
+// Pre-compiled regex patterns for stateful function parsing (compiled once, used many times).
+static RE_INTEGRATE: LazyLock<std::result::Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new(r"integrate\s*\(\s*(\w+)(?:\s*,\s*([0-9.]+))?\s*\)"));
+static RE_MOVING_AVG: LazyLock<std::result::Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new(r"moving_avg\s*\(\s*(\w+)\s*,\s*(\d+)\s*\)"));
+static RE_RATE_OF_CHANGE: LazyLock<std::result::Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new(r"rate_of_change\s*\(\s*(\w+)\s*\)"));
+
+fn stateful_regex(
+    name: &str,
+    regex: &'static LazyLock<std::result::Result<Regex, regex::Error>>,
+) -> Result<&'static Regex> {
+    match &**regex {
+        Ok(regex) => Ok(regex),
+        Err(e) => Err(CalcError::function(format!(
+            "{} regex failed to compile: {}",
+            name, e
+        ))),
+    }
+}
 
 /// CalcEngine - Formula evaluation engine
 ///
@@ -154,7 +160,8 @@ impl<S: StateStore> CalcEngine<S> {
         variables: &HashMap<String, f64>,
     ) -> Result<Cow<'a, str>> {
         // Collect all matches with their ranges and parameters (single scan)
-        let matches: Vec<_> = RE_INTEGRATE
+        let regex = stateful_regex("integrate", &RE_INTEGRATE)?;
+        let matches: Vec<_> = regex
             .captures_iter(&formula)
             .filter_map(|caps| {
                 let m = caps.get(0)?;
@@ -199,7 +206,8 @@ impl<S: StateStore> CalcEngine<S> {
         variables: &HashMap<String, f64>,
     ) -> Result<Cow<'a, str>> {
         // Collect all matches with their ranges and parameters (single scan)
-        let matches: Vec<_> = RE_MOVING_AVG
+        let regex = stateful_regex("moving_avg", &RE_MOVING_AVG)?;
+        let matches: Vec<_> = regex
             .captures_iter(&formula)
             .filter_map(|caps| {
                 let m = caps.get(0)?;
@@ -240,7 +248,8 @@ impl<S: StateStore> CalcEngine<S> {
         variables: &HashMap<String, f64>,
     ) -> Result<Cow<'a, str>> {
         // Collect all matches with their ranges and parameters (single scan)
-        let matches: Vec<_> = RE_RATE_OF_CHANGE
+        let regex = stateful_regex("rate_of_change", &RE_RATE_OF_CHANGE)?;
+        let matches: Vec<_> = regex
             .captures_iter(&formula)
             .filter_map(|caps| {
                 let m = caps.get(0)?;

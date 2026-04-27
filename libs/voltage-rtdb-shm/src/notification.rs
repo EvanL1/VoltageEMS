@@ -75,9 +75,9 @@ impl ShmNotification {
 
     /// Convert to byte array (zero-copy, compile-time safety guarantee)
     pub fn to_bytes(&self) -> [u8; Self::SIZE] {
-        *bytemuck::bytes_of(self)
-            .first_chunk()
-            .expect("size matches")
+        let mut bytes = [0u8; Self::SIZE];
+        bytes.copy_from_slice(bytemuck::bytes_of(self));
+        bytes
     }
 
     /// Create from byte array (zero-copy, compile-time safety guarantee)

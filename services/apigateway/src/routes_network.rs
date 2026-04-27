@@ -91,11 +91,9 @@ fn parse_config(content: &str) -> NetworkConfig {
             line
         };
 
-        if !parsed.contains('=') {
+        let Some((key, value)) = parsed.split_once('=') else {
             continue;
-        }
-
-        let (key, value) = parsed.split_once('=').unwrap();
+        };
         let key = key.trim();
         let value = value.trim();
 

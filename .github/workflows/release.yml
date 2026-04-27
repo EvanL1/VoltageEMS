@@ -53,6 +53,7 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace -- -D warnings
+          cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
           cargo nextest run --workspace --lib --bins
 
   # ============================================================================

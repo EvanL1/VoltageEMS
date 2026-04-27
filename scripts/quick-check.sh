@@ -50,6 +50,10 @@ cargo fmt --all -- --check
 echo -e "${YELLOW}Running Clippy...${NC}"
 cargo clippy --all-targets --all-features -- -D warnings
 
+# Runtime panic-boundary check (tests may still use unwrap/expect for clarity).
+echo -e "${YELLOW}Checking runtime unwrap/expect usage...${NC}"
+cargo clippy --workspace --lib --bins -- -D clippy::unwrap_used -D clippy::expect_used
+
 # Prefer cargo-nextest when available (2-3x faster, per-test process isolation).
 # Falls back to cargo test so developers who haven't installed nextest are
 # not blocked. Install with: curl -LsSf https://get.nexte.st/latest/mac | tar zxf - -C ~/.cargo/bin

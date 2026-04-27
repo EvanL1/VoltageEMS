@@ -1,8 +1,8 @@
 # Clippy configuration for VoltageEMS
 # Enforces code quality standards across the workspace
 #
-# Note: unwrap() restrictions are enforced via pre-push hook strict checks,
-# not here, to avoid breaking test code which legitimately uses unwrap().
+# Note: unwrap()/expect() restrictions are enforced by strict runtime clippy
+# CI steps, not here, to avoid breaking test code which legitimately uses them.
 
 # Additional quality checks
 cognitive-complexity-threshold = 25  # Warn on overly complex functions
