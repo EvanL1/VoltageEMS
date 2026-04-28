@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use axum::{
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::Json,
     routing::get,
-    Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{error, info};
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -42,8 +42,8 @@ async fn probe_backend(req: &StorageTestRequest) -> anyhow::Result<()> {
 
 /// Open a PostgreSQL connection pool, run `SELECT 1`, then close it.
 async fn probe_pg(url: &str) -> anyhow::Result<()> {
-    use sqlx::postgres::PgPoolOptions;
     use sqlx::Executor;
+    use sqlx::postgres::PgPoolOptions;
 
     let pool = PgPoolOptions::new()
         .max_connections(1)

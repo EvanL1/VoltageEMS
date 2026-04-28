@@ -35,12 +35,13 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
+use crate::protocols::ChannelRuntime;
 use crate::protocols::adapters::matter_config::MatterConfig;
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
@@ -53,7 +54,6 @@ use crate::protocols::core::point::PointConfig;
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
 };
-use crate::protocols::ChannelRuntime;
 
 /// Matter protocol message types (simplified).
 ///

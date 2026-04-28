@@ -1,7 +1,7 @@
 [package]
 name = "voltage-schema-macro"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 license.workspace = true
 description = "Procedural macros for automatic SQL DDL generation from Rust structs"
 

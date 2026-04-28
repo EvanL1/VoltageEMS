@@ -717,11 +717,7 @@ impl TransformConfig {
     }
 
     pub fn apply_bool(&self, raw: bool) -> bool {
-        if self.reverse {
-            !raw
-        } else {
-            raw
-        }
+        if self.reverse { !raw } else { raw }
     }
 }
 

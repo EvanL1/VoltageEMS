@@ -126,12 +126,12 @@ pub async fn health_check(
         "uds_notifier_configured": uds_notifier_configured
     });
 
-    if let Some(stats) = state.instance_manager.slot_bitmap_stats() {
-        if let Some(obj) = shm_value.as_object_mut() {
-            obj.insert("total_slots".to_string(), json!(stats.total_slots));
-            obj.insert("allocated".to_string(), json!(stats.allocated_slots));
-            obj.insert("free".to_string(), json!(stats.free_slots));
-        }
+    if let Some(stats) = state.instance_manager.slot_bitmap_stats()
+        && let Some(obj) = shm_value.as_object_mut()
+    {
+        obj.insert("total_slots".to_string(), json!(stats.total_slots));
+        obj.insert("allocated".to_string(), json!(stats.allocated_slots));
+        obj.insert("free".to_string(), json!(stats.free_slots));
     }
 
     checks.insert("shm_dispatch".to_string(), shm_value);

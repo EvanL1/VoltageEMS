@@ -10,7 +10,7 @@
 //! Unlike Modbus TCP, RTU frames have no MBAP header and use CRC16 for error checking.
 
 use crate::coils::CoilStore;
-use crate::devices::{generate_registers, DeviceMap};
+use crate::devices::{DeviceMap, generate_registers};
 use crate::scenarios::DeviceConfig;
 use crate::writable::WritableRegisters;
 use anyhow::Result;
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(resp[0], 1); // slave_id
         assert_eq!(resp[1], FC_READ_HOLDING_REGISTERS); // function_code
         assert_eq!(resp[2], 4); // byte_count = 2 registers * 2 bytes
-                                // Register values in big-endian
+        // Register values in big-endian
         assert_eq!(resp[3], 0x00);
         assert_eq!(resp[4], 0x64);
         assert_eq!(resp[5], 0x00);

@@ -25,18 +25,17 @@ pub fn list_available_products() -> Result<()> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_dir() {
-            if let Some(name) = path.file_name() {
-                if let Some(name_str) = name.to_str() {
-                    // Check if it has at least one CSV file
-                    let has_csv = ["measurements.csv", "actions.csv", "properties.csv"]
-                        .iter()
-                        .any(|f| path.join(f).exists());
+        if path.is_dir()
+            && let Some(name) = path.file_name()
+            && let Some(name_str) = name.to_str()
+        {
+            // Check if it has at least one CSV file
+            let has_csv = ["measurements.csv", "actions.csv", "properties.csv"]
+                .iter()
+                .any(|f| path.join(f).exists());
 
-                    if has_csv {
-                        println!("  - {}", name_str);
-                    }
-                }
+            if has_csv {
+                println!("  - {}", name_str);
             }
         }
     }

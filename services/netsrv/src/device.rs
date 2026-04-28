@@ -52,17 +52,17 @@ fn resolve_device_sn() -> String {
     }
 
     // 2. Environment variable
-    if let Ok(sn) = std::env::var("DEVICE_SN") {
-        if !sn.is_empty() {
-            return sn;
-        }
+    if let Ok(sn) = std::env::var("DEVICE_SN")
+        && !sn.is_empty()
+    {
+        return sn;
     }
 
     // 3. Hostname (Docker container ID)
-    if let Ok(h) = std::env::var("HOSTNAME") {
-        if !h.is_empty() {
-            return h;
-        }
+    if let Ok(h) = std::env::var("HOSTNAME")
+        && !h.is_empty()
+    {
+        return h;
     }
 
     // 4. Fallback

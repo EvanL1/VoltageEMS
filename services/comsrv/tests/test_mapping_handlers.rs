@@ -583,10 +583,12 @@ async fn test_update_mappings_merge_mode_partial_update() -> Result<()> {
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     let data = &body["data"];
     assert_eq!(data["updated_count"], 1);
-    assert!(data["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("merge mode"));
+    assert!(
+        data["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("merge mode")
+    );
 
     Ok(())
 }
@@ -629,10 +631,12 @@ async fn test_update_mappings_validate_only_success() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     let data = &body["data"];
-    assert!(data["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("Validation OK"));
+    assert!(
+        data["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Validation OK")
+    );
 
     Ok(())
 }
@@ -1280,10 +1284,12 @@ async fn test_update_mappings_with_auto_reload_disabled() -> Result<()> {
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     let data = &body["data"];
     assert_eq!(data["channel_reloaded"], false);
-    assert!(data["message"]
-        .as_str()
-        .unwrap_or("")
-        .contains("reload disabled"));
+    assert!(
+        data["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("reload disabled")
+    );
 
     Ok(())
 }

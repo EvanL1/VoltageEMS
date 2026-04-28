@@ -204,10 +204,10 @@ fn parse_network_file(content: &str) -> NetworkInterfaceConfig {
                     },
                     "VLAN" => {
                         // VLAN reference (e.g., "vlan100")
-                        if let Some(id_str) = value.strip_prefix("vlan") {
-                            if let Ok(id) = id_str.parse::<u16>() {
-                                config.vlan_id = Some(id);
-                            }
+                        if let Some(id_str) = value.strip_prefix("vlan")
+                            && let Ok(id) = id_str.parse::<u16>()
+                        {
+                            config.vlan_id = Some(id);
                         }
                     },
                     _ => {},

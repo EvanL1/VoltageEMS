@@ -124,7 +124,7 @@ pub fn build_read_request(invoke_id: u8, domain: &str, item: &str) -> Vec<u8> {
     let a0_varspec_content = 2 + seq_content; // 30 TLV total
     let a1_list_content = 2 + a0_varspec_content; // A0 TLV total
     let a4_read_content = 2 + a1_list_content; // A1 TLV total
-                                               // outer A0 content = invokeID(3) + A4 TLV total(2 + a4_read_content)
+    // outer A0 content = invokeID(3) + A4 TLV total(2 + a4_read_content)
     let req_inner = 3 + 2 + a4_read_content;
 
     let mut buf = Vec::with_capacity(2 + req_inner);

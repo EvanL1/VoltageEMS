@@ -483,19 +483,25 @@ mod tests {
         assert_eq!(telemetry.name, Some("temperature".to_string()));
 
         // Check signal point exists with original point_id and point_type
-        assert!(configs
-            .iter()
-            .any(|c| c.id == 20 && c.point_type == PointType::Signal));
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.id == 20 && c.point_type == PointType::Signal)
+        );
 
         // Check control point exists with original point_id and point_type
-        assert!(configs
-            .iter()
-            .any(|c| c.id == 30 && c.point_type == PointType::Control));
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.id == 30 && c.point_type == PointType::Control)
+        );
 
         // Check adjustment point exists with original point_id and point_type
-        assert!(configs
-            .iter()
-            .any(|c| c.id == 40 && c.point_type == PointType::Adjustment));
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.id == 40 && c.point_type == PointType::Adjustment)
+        );
     }
 
     #[test]

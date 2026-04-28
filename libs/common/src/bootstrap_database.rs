@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use crate::config_loader::{
-    build_redis_candidates, connect_redis_with_retry, DEFAULT_REDIS_MAX_ATTEMPTS,
+    DEFAULT_REDIS_MAX_ATTEMPTS, build_redis_candidates, connect_redis_with_retry,
 };
 use crate::redis::RedisClient;
 

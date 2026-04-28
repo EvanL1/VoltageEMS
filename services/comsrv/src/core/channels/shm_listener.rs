@@ -14,16 +14,16 @@
 //! Replaced the former ShmCommandPoller (polling-based) with lower latency (~1-2ms vs 10-20ms avg)
 //! and event-triggered CPU usage instead of continuous polling.
 
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use dashmap::mapref::entry::Entry;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
-use voltage_model::{validate_value, PointType, ValidationConfig};
-use voltage_rtdb_shm::{ShmNotification, DEFAULT_UDS_PATH};
+use voltage_model::{PointType, ValidationConfig, validate_value};
+use voltage_rtdb_shm::{DEFAULT_UDS_PATH, ShmNotification};
 
 use crate::core::channels::types::ChannelCommand;
 
@@ -204,12 +204,7 @@ impl ShmCommandListener {
                 if last_producer == notif.producer_id && notif.seq <= last_seq {
                     trace!(
                         "ShmListener: stale event dropped ch={} {:?}:{} producer={} seq={}<= {}",
-                        channel_id,
-                        point_type,
-                        point_id,
-                        notif.producer_id,
-                        notif.seq,
-                        last_seq
+                        channel_id, point_type, point_id, notif.producer_id, notif.seq, last_seq
                     );
                     return;
                 }
@@ -238,13 +233,7 @@ impl ShmCommandListener {
 
         trace!(
             "ShmListener: ch={} {:?}:{} val={} ts={} producer={} seq={}",
-            channel_id,
-            point_type,
-            point_id,
-            value,
-            timestamp,
-            notif.producer_id,
-            notif.seq
+            channel_id, point_type, point_id, value, timestamp, notif.producer_id, notif.seq
         );
 
         // Build and send command
@@ -257,37 +246,43 @@ impl ShmCommandListener {
             notif.seq,
         );
 
-        if let Some(sender) = senders.get(&channel_id) {
-            // Use send_timeout instead of try_send to handle transient backpressure
-            // 50ms timeout allows brief buffer congestion without blocking event loop
-            match tokio::time::timeout(std::time::Duration::from_millis(50), sender.send(command))
+        match senders.get(&channel_id) {
+            Some(sender) => {
+                // Use send_timeout instead of try_send to handle transient backpressure
+                // 50ms timeout allows brief buffer congestion without blocking event loop
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    sender.send(command),
+                )
                 .await
-            {
-                Ok(Ok(())) => {
-                    // Successfully sent
-                },
-                Ok(Err(_)) => {
-                    // Channel closed
-                    warn!(
-                        "ShmListener: channel {} closed, notification discarded",
-                        channel_id
-                    );
-                },
-                Err(_) => {
-                    // Timeout - sustained backpressure, drop command
-                    dropped_count.fetch_add(1, Ordering::Relaxed);
-                    error!(
-                        "ShmListener: channel {} buffer FULL for 50ms, notification DROPPED \
+                {
+                    Ok(Ok(())) => {
+                        // Successfully sent
+                    },
+                    Ok(Err(_)) => {
+                        // Channel closed
+                        warn!(
+                            "ShmListener: channel {} closed, notification discarded",
+                            channel_id
+                        );
+                    },
+                    Err(_) => {
+                        // Timeout - sustained backpressure, drop command
+                        dropped_count.fetch_add(1, Ordering::Relaxed);
+                        error!(
+                            "ShmListener: channel {} buffer FULL for 50ms, notification DROPPED \
                          (point {:?}:{}, sustained backpressure)",
-                        channel_id, point_type, point_id
-                    );
-                },
-            }
-        } else {
-            debug!(
-                "ShmListener: no sender for channel {} (not registered)",
-                channel_id
-            );
+                            channel_id, point_type, point_id
+                        );
+                    },
+                }
+            },
+            _ => {
+                debug!(
+                    "ShmListener: no sender for channel {} (not registered)",
+                    channel_id
+                );
+            },
         }
     }
 

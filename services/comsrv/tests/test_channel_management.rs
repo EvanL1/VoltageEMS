@@ -251,10 +251,12 @@ async fn test_create_channel_duplicate_name() -> Result<()> {
 
     assert_eq!(status, StatusCode::CONFLICT, "Should reject duplicate name");
     assert_eq!(body["success"], false);
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("already exists"));
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already exists")
+    );
 
     Ok(())
 }
@@ -543,10 +545,12 @@ async fn test_enable_already_enabled_channel() -> Result<()> {
 
     assert_eq!(status, StatusCode::OK, "Response: {:?}", body);
     assert_eq!(body["success"], true);
-    assert!(body["data"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("already"));
+    assert!(
+        body["data"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already")
+    );
 
     Ok(())
 }

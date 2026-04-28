@@ -233,12 +233,12 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         slot.store(Some(Arc::clone(entry)));
 
         // 2. Register command_tx with cache
-        if let (Some(ref cache), Some(ref tx)) = (&self.command_tx_cache, &entry.command_tx) {
+        if let (Some(cache), Some(tx)) = (&self.command_tx_cache, &entry.command_tx) {
             cache.register(channel_id, tx.clone());
         }
 
         // 3. Register with SHM listener for event-driven M2C dispatch
-        if let (Some(ref listener), Some(ref tx)) = (&self.shm_listener, &entry.command_tx) {
+        if let (Some(listener), Some(tx)) = (&self.shm_listener, &entry.command_tx) {
             listener.register_channel(channel_id, tx.clone());
             debug!(
                 "Ch{} registered with ShmListener for event-driven dispatch",
@@ -280,7 +280,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         tokio::spawn(async move {
             let keyspace = voltage_model::KeySpaceConfig::production_cached();
             let channels_key = keyspace.channels_hash_key();
-            if let Err(e) = rtdb
+            match rtdb
                 .hash_set(
                     &channels_key,
                     &channel_id.to_string(),
@@ -288,15 +288,18 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 )
                 .await
             {
-                warn!(
-                    "Ch{} failed to write name to Redis hash ({}): {}",
-                    channel_id, channels_key, e
-                );
-            } else {
-                debug!(
-                    "Ch{} name written to Redis hash: {}",
-                    channel_id, channels_key
-                );
+                Err(e) => {
+                    warn!(
+                        "Ch{} failed to write name to Redis hash ({}): {}",
+                        channel_id, channels_key, e
+                    );
+                },
+                _ => {
+                    debug!(
+                        "Ch{} name written to Redis hash: {}",
+                        channel_id, channels_key
+                    );
+                },
             }
         });
     }

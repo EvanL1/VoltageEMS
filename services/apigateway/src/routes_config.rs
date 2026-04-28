@@ -4,11 +4,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use axum::{
+    Json,
     body::Body,
     extract::Multipart,
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use tracing::{error, info};
@@ -75,17 +75,16 @@ fn write_upgrade_status(data: &serde_json::Value) {
 /// service back up.  Mark the status as "completed_or_restarted" so the status
 /// endpoint never returns the contradictory `running=false` + `status="running"`.
 pub fn reconcile_upgrade_status_on_startup() {
-    if let Ok(content) = std::fs::read_to_string(UPGRADE_STATUS_FILE) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-            if v.get("status").and_then(|s| s.as_str()) == Some("running") {
-                write_upgrade_status(&json!({
-                    "status": "completed_or_restarted",
-                    "message": "Service was restarted during upgrade (likely by the installer). Check the upgrade log for the actual outcome.",
-                    "recovered_at": chrono::Utc::now().to_rfc3339(),
-                }));
-                info!("Recovered stale upgrade status: 'running' → 'completed_or_restarted'");
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(UPGRADE_STATUS_FILE)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
+        && v.get("status").and_then(|s| s.as_str()) == Some("running")
+    {
+        write_upgrade_status(&json!({
+            "status": "completed_or_restarted",
+            "message": "Service was restarted during upgrade (likely by the installer). Check the upgrade log for the actual outcome.",
+            "recovered_at": chrono::Utc::now().to_rfc3339(),
+        }));
+        info!("Recovered stale upgrade status: 'running' → 'completed_or_restarted'");
     }
 }
 
@@ -635,7 +634,7 @@ pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl
 
     // Macro to consolidate the repeated cleanup on error paths inside the loop.
     macro_rules! upload_abort_cleanup {
-        ($pkg_path:expr) => {{
+        ($pkg_path:expr_2021) => {{
             UPLOAD_IN_PROGRESS.store(false, Ordering::Relaxed);
             UPLOAD_ABORT_REQUESTED.store(false, Ordering::Relaxed);
             UPLOAD_RECEIVED_BYTES.store(0, Ordering::Relaxed);
@@ -1067,7 +1066,9 @@ pub async fn upgrade_status() -> impl IntoResponse {
             "recovered_at": chrono::Utc::now().to_rfc3339(),
         });
         write_upgrade_status(&recovered);
-        info!("Status inconsistency detected: status file was 'running' but no upgrade in progress; corrected to 'completed_or_restarted'");
+        info!(
+            "Status inconsistency detected: status file was 'running' but no upgrade in progress; corrected to 'completed_or_restarted'"
+        );
         recovered
     } else {
         file_status

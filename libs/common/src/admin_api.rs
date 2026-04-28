@@ -15,7 +15,7 @@
 //! ```
 
 use axum::extract::Query;
-use axum::{http::StatusCode, response::IntoResponse, Json};
+use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 
@@ -152,10 +152,10 @@ pub async fn list_log_files(Query(q): Query<ListLogFilesQuery>) -> impl IntoResp
         if !name.starts_with(&date_prefix) || !name.ends_with(".log") || name.ends_with(".gz") {
             continue;
         }
-        if let Some(ref svc) = q.service {
-            if !name[date_prefix.len()..].starts_with(&format!("_{svc}")) {
-                continue;
-            }
+        if let Some(ref svc) = q.service
+            && !name[date_prefix.len()..].starts_with(&format!("_{svc}"))
+        {
+            continue;
         }
         let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
         files.push(LogFileEntry { name, size });

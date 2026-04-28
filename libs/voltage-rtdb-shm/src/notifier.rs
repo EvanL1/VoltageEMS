@@ -274,10 +274,10 @@ impl ShmNotifier {
         }
 
         // Check backoff time
-        if let Some(last_attempt) = self.last_connect_attempt {
-            if last_attempt.elapsed().as_millis() < self.backoff_ms as u128 {
-                return; // Within backoff period, skip
-            }
+        if let Some(last_attempt) = self.last_connect_attempt
+            && last_attempt.elapsed().as_millis() < self.backoff_ms as u128
+        {
+            return; // Within backoff period, skip
         }
 
         // Attempt reconnection

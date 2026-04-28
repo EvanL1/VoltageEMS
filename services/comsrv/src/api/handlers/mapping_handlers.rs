@@ -160,11 +160,7 @@ fn parse_protocol_json(json_str: Option<&str>, table: &str, point_id: i64) -> se
         }),
         None => json!({}),
     };
-    if value.is_null() {
-        json!({})
-    } else {
-        value
-    }
+    if value.is_null() { json!({}) } else { value }
 }
 
 /// Get all mapping configurations for a channel
@@ -704,20 +700,20 @@ pub async fn update_channel_mappings_handler<R: Rtdb>(
         new_json = new_json.map(|v| normalize_protocol_data(&protocol, &v));
 
         // For Merge mode, validate the merged JSON before writing
-        if matches!(req.mode, crate::dto::MappingUpdateMode::Merge) {
-            if let Some(ref merged) = new_json {
-                let merged_item = crate::dto::PointMappingItem {
-                    point_id: item.point_id,
-                    four_remote: item.four_remote.clone(),
-                    protocol_data: merged.clone(),
-                };
-                let errors = validate_mappings(&protocol, &[merged_item]);
-                if !errors.is_empty() {
-                    return Err(AppError::bad_request(format!(
-                        "Validation errors: {}",
-                        errors.join("; ")
-                    )));
-                }
+        if matches!(req.mode, crate::dto::MappingUpdateMode::Merge)
+            && let Some(ref merged) = new_json
+        {
+            let merged_item = crate::dto::PointMappingItem {
+                point_id: item.point_id,
+                four_remote: item.four_remote.clone(),
+                protocol_data: merged.clone(),
+            };
+            let errors = validate_mappings(&protocol, &[merged_item]);
+            if !errors.is_empty() {
+                return Err(AppError::bad_request(format!(
+                    "Validation errors: {}",
+                    errors.join("; ")
+                )));
             }
         }
 
@@ -935,13 +931,13 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
                         }
 
                         // 2. bit_position range (0-7)
-                        if let Some(bp) = validated.bit_position {
-                            if bp > 7 {
-                                errors.push(format!(
-                                    "Point {}: bit_position {} out of range (0-7)",
-                                    mapping.point_id, bp
-                                ));
-                            }
+                        if let Some(bp) = validated.bit_position
+                            && bp > 7
+                        {
+                            errors.push(format!(
+                                "Point {}: bit_position {} out of range (0-7)",
+                                mapping.point_id, bp
+                            ));
                         }
 
                         // 3. bit_length must be non-zero and reasonable
@@ -1081,10 +1077,10 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
     // Only clone when we actually need to modify
     let mut normalized = obj.clone();
     for field in numeric_fields {
-        if let Some(v) = obj.get(*field) {
-            if let Some(normalized_v) = to_number(v) {
-                normalized.insert((*field).to_string(), normalized_v);
-            }
+        if let Some(v) = obj.get(*field)
+            && let Some(normalized_v) = to_number(v)
+        {
+            normalized.insert((*field).to_string(), normalized_v);
         }
     }
 

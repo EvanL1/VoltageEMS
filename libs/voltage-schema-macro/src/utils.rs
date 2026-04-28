@@ -28,34 +28,27 @@ pub fn extract_type_name(ty: &Type) -> String {
 ///
 /// Returns `Some(&T)` if the type is `Option<T>`, None otherwise
 pub fn extract_option_inner(ty: &Type) -> Option<&Type> {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Option" {
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                        return Some(inner_ty);
-                    }
-                }
-            }
-        }
+    if let Type::Path(TypePath { path, .. }) = ty
+        && let Some(segment) = path.segments.last()
+        && segment.ident == "Option"
+        && let PathArguments::AngleBracketed(args) = &segment.arguments
+        && let Some(GenericArgument::Type(inner_ty)) = args.args.first()
+    {
+        return Some(inner_ty);
     }
     None
 }
 
 /// Check if type is `Vec<u8>`
 pub fn is_u8_vec(ty: &Type) -> bool {
-    if let Type::Path(TypePath { path, .. }) = ty {
-        if let Some(segment) = path.segments.last() {
-            if segment.ident == "Vec" {
-                if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(GenericArgument::Type(Type::Path(inner_path))) = args.args.first() {
-                        if let Some(inner_seg) = inner_path.path.segments.last() {
-                            return inner_seg.ident == "u8";
-                        }
-                    }
-                }
-            }
-        }
+    if let Type::Path(TypePath { path, .. }) = ty
+        && let Some(segment) = path.segments.last()
+        && segment.ident == "Vec"
+        && let PathArguments::AngleBracketed(args) = &segment.arguments
+        && let Some(GenericArgument::Type(Type::Path(inner_path))) = args.args.first()
+        && let Some(inner_seg) = inner_path.path.segments.last()
+    {
+        return inner_seg.ident == "u8";
     }
     false
 }

@@ -22,8 +22,8 @@ pub use error::{ModelError, Result};
 pub use keyspace::KeySpaceConfig;
 pub use types::{PointRole, PointType};
 pub use validation::{
-    is_value_valid, sanitize_value, validate_calculation_id, validate_instance_name,
-    validate_product_name, validate_value, ValidationConfig, ValueValidationError,
+    ValidationConfig, ValueValidationError, is_value_valid, sanitize_value,
+    validate_calculation_id, validate_instance_name, validate_product_name, validate_value,
 };
 
 // Re-export core types for compatibility

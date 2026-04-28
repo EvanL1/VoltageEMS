@@ -678,7 +678,7 @@ fn default_data_type() -> String {
     "uint32".to_string()
 }
 
-use sqlx::{sqlite::SqliteQueryResult, Executor, Sqlite};
+use sqlx::{Executor, Sqlite, sqlite::SqliteQueryResult};
 
 /// Trait for inserting point definitions into database
 #[allow(async_fn_in_trait)]

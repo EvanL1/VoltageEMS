@@ -6,7 +6,7 @@ use socketcan::{CanFrame, CanSocket, EmbeddedFrame, ExtendedId, Socket};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
-use voltage_j1939::{build_can_id, J1939Id};
+use voltage_j1939::{J1939Id, build_can_id};
 
 fn build_eec1_frame(source_address: u8, state: &DeviceState) -> CanFrame {
     let raw_speed: u16 = match state {

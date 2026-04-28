@@ -7,7 +7,7 @@
 
 use crate::error::ModSrvError;
 use crate::infra::shm_dispatch::DispatchOutcome;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use tracing::{debug, error, warn};
 

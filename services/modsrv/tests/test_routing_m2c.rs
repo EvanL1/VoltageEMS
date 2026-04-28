@@ -8,8 +8,8 @@ use anyhow::Result;
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
-use voltage_routing::set_action_point;
 use voltage_routing::RoutingCache;
+use voltage_routing::set_action_point;
 use voltage_rtdb::{MemoryRtdb, Rtdb};
 
 // ==================== Test Helper Functions ====================

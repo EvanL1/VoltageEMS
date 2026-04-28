@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::error;
 
 use crate::{
@@ -175,7 +175,7 @@ pub async fn login(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"success": false, "message": "Internal server error"})),
             )
-                .into_response()
+                .into_response();
         },
     };
 
@@ -285,7 +285,7 @@ pub async fn refresh_token(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"success": false, "message": "Internal server error"})),
             )
-                .into_response()
+                .into_response();
         },
     };
 
@@ -335,10 +335,10 @@ pub async fn logout(
     let _ = require_auth(&state, &headers);
 
     // Revoke refresh token if valid
-    if let Some(claims) = verify_refresh_token(&body.refresh_token, &state.config.jwt_secret) {
-        if let Some(token_id) = claims.token_id {
-            state.refresh_tokens.remove(&token_id);
-        }
+    if let Some(claims) = verify_refresh_token(&body.refresh_token, &state.config.jwt_secret)
+        && let Some(token_id) = claims.token_id
+    {
+        state.refresh_tokens.remove(&token_id);
     }
 
     Json(json!({"success": true, "message": "Logged out successfully"}))
@@ -676,26 +676,26 @@ async fn apply_user_update(
     user_id: i64,
     body: &UserUpdate,
 ) -> axum::response::Response {
-    if let Some(role_id) = body.role_id {
-        if let Err(e) = db::update_user_role(&state.db, user_id, role_id).await {
-            error!("Update role error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "Internal server error"})),
-            )
-                .into_response();
-        }
+    if let Some(role_id) = body.role_id
+        && let Err(e) = db::update_user_role(&state.db, user_id, role_id).await
+    {
+        error!("Update role error: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "message": "Internal server error"})),
+        )
+            .into_response();
     }
 
-    if let Some(is_active) = body.is_active {
-        if let Err(e) = db::update_user_active(&state.db, user_id, is_active).await {
-            error!("Update active error: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"success": false, "message": "Internal server error"})),
-            )
-                .into_response();
-        }
+    if let Some(is_active) = body.is_active
+        && let Err(e) = db::update_user_active(&state.db, user_id, is_active).await
+    {
+        error!("Update active error: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "message": "Internal server error"})),
+        )
+            .into_response();
     }
 
     if body.old_password.is_some() || body.new_password.is_some() {
@@ -741,7 +741,7 @@ async fn apply_password_change(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"success": false, "message": "Internal server error"})),
             )
-                .into_response()
+                .into_response();
         },
     };
 

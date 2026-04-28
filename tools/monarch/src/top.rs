@@ -7,14 +7,14 @@
 
 use anyhow::Result;
 use common::redis::RedisClient;
+use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::widgets::TableState;
-use ratatui::Terminal;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -299,14 +299,12 @@ fn run_event_loop(
 
         terminal.draw(|f| crate::top_draw::draw_ui(f, state))?;
 
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press
-                    && handle_key(key.code, state, handle, client, rtdb, urls)
-                {
-                    return Ok(());
-                }
-            }
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+            && handle_key(key.code, state, handle, client, rtdb, urls)
+        {
+            return Ok(());
         }
     }
 }
@@ -410,25 +408,24 @@ fn do_refresh(
         clamp_select(&mut state.ch_table, state.channels.len());
     }
 
-    if let Some(ch_id) = state.selected_ch_id() {
-        if state.last_ch_id == Some(ch_id) {
-            if let Ok(pts) = handle.block_on(load_points(client, rtdb, &urls.comsrv, ch_id)) {
-                state.points = pts;
-                let max = state.visible_points().len().saturating_sub(1);
-                state.pt_table.select(prev_pt.map(|s| s.min(max)));
-            }
-        }
+    if let Some(ch_id) = state.selected_ch_id()
+        && state.last_ch_id == Some(ch_id)
+        && let Ok(pts) = handle.block_on(load_points(client, rtdb, &urls.comsrv, ch_id))
+    {
+        state.points = pts;
+        let max = state.visible_points().len().saturating_sub(1);
+        state.pt_table.select(prev_pt.map(|s| s.min(max)));
     }
 
-    if state.view == View::Instances && state.depth == Depth::Detail {
-        if let Some(inst_id) = state.selected_inst_id() {
-            let prev_ipt = state.inst_pt_table.selected();
-            if let Ok(pts) = handle.block_on(fetch_inst_points(client, rtdb, &urls.modsrv, inst_id))
-            {
-                state.inst_points = pts;
-                let max = state.inst_points.len().saturating_sub(1);
-                state.inst_pt_table.select(prev_ipt.map(|s| s.min(max)));
-            }
+    if state.view == View::Instances
+        && state.depth == Depth::Detail
+        && let Some(inst_id) = state.selected_inst_id()
+    {
+        let prev_ipt = state.inst_pt_table.selected();
+        if let Ok(pts) = handle.block_on(fetch_inst_points(client, rtdb, &urls.modsrv, inst_id)) {
+            state.inst_points = pts;
+            let max = state.inst_points.len().saturating_sub(1);
+            state.inst_pt_table.select(prev_ipt.map(|s| s.min(max)));
         }
     }
 
@@ -455,11 +452,11 @@ fn reload_ch_points(
 ) {
     let ch_id = state.selected_ch_id();
     state.last_ch_id = ch_id;
-    if let Some(id) = ch_id {
-        if let Ok(pts) = handle.block_on(load_points(client, rtdb, comsrv_url, id)) {
-            state.points = pts;
-            state.pt_table.select(Some(0));
-        }
+    if let Some(id) = ch_id
+        && let Ok(pts) = handle.block_on(load_points(client, rtdb, comsrv_url, id))
+    {
+        state.points = pts;
+        state.pt_table.select(Some(0));
     }
 }
 
@@ -472,11 +469,11 @@ fn reload_inst_points(
 ) {
     let inst_id = state.selected_inst_id();
     state.last_inst_id = inst_id;
-    if let Some(id) = inst_id {
-        if let Ok(pts) = handle.block_on(fetch_inst_points(client, rtdb, modsrv_url, id)) {
-            state.inst_points = pts;
-            state.inst_pt_table.select(Some(0));
-        }
+    if let Some(id) = inst_id
+        && let Ok(pts) = handle.block_on(fetch_inst_points(client, rtdb, modsrv_url, id))
+    {
+        state.inst_points = pts;
+        state.inst_pt_table.select(Some(0));
     }
 }
 
@@ -485,10 +482,10 @@ fn clamp_select(table: &mut TableState, len: usize) {
         table.select(None);
     } else if table.selected().is_none() {
         table.select(Some(0));
-    } else if let Some(s) = table.selected() {
-        if s >= len {
-            table.select(Some(len - 1));
-        }
+    } else if let Some(s) = table.selected()
+        && s >= len
+    {
+        table.select(Some(len - 1));
     }
 }
 

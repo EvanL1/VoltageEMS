@@ -26,8 +26,8 @@ use std::fmt::Write as FmtWrite;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use async_trait::async_trait;
 use chrono::{Local, NaiveDate};
@@ -293,11 +293,11 @@ impl ChannelFileLogHandler {
                 let _ = write!(info, "[slave={} fc=0x{:02X}", slave_id, function_code);
 
                 // Address range (if available)
-                if let (Some(start), Some(qty)) = (start_address, quantity) {
-                    if *qty > 0 {
-                        let end = start.saturating_add(qty.saturating_sub(1));
-                        let _ = write!(info, " @{}-{}", start, end);
-                    }
+                if let (Some(start), Some(qty)) = (start_address, quantity)
+                    && *qty > 0
+                {
+                    let end = start.saturating_add(qty.saturating_sub(1));
+                    let _ = write!(info, " @{}-{}", start, end);
                 }
 
                 info.push(']');
@@ -400,31 +400,31 @@ impl ChannelFileLogHandler {
         let now = Local::now();
         let date = now.date_naive();
 
-        if let Some(mut files) = self.get_writer(channel_id, date) {
-            if let Some(open_file) = files.get_mut(&channel_id) {
-                let timestamp = now.format("%Y-%m-%d %H:%M:%S%.3f");
-                let write_result = writeln!(open_file.writer, "{} {}", timestamp, line);
-                let flush_result = open_file.writer.flush();
+        if let Some(mut files) = self.get_writer(channel_id, date)
+            && let Some(open_file) = files.get_mut(&channel_id)
+        {
+            let timestamp = now.format("%Y-%m-%d %H:%M:%S%.3f");
+            let write_result = writeln!(open_file.writer, "{} {}", timestamp, line);
+            let flush_result = open_file.writer.flush();
 
-                // If write or flush failed, invalidate cache so next call will recreate
-                if write_result.is_err() || flush_result.is_err() {
-                    if let Err(e) = write_result {
-                        tracing::warn!(
-                            "Ch{} log write failed: {}, will recreate on next write",
-                            channel_id,
-                            e
-                        );
-                    }
-                    if let Err(e) = flush_result {
-                        tracing::warn!(
-                            "Ch{} log flush failed: {}, will recreate on next write",
-                            channel_id,
-                            e
-                        );
-                    }
-                    // Remove from cache to force recreation on next write
-                    files.remove(&channel_id);
+            // If write or flush failed, invalidate cache so next call will recreate
+            if write_result.is_err() || flush_result.is_err() {
+                if let Err(e) = write_result {
+                    tracing::warn!(
+                        "Ch{} log write failed: {}, will recreate on next write",
+                        channel_id,
+                        e
+                    );
                 }
+                if let Err(e) = flush_result {
+                    tracing::warn!(
+                        "Ch{} log flush failed: {}, will recreate on next write",
+                        channel_id,
+                        e
+                    );
+                }
+                // Remove from cache to force recreation on next write
+                files.remove(&channel_id);
             }
         }
     }

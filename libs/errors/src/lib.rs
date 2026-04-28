@@ -330,27 +330,27 @@ impl From<std::num::ParseFloatError> for VoltageError {
 // Helper macros for creating errors
 #[macro_export]
 macro_rules! config_error {
-    ($msg:expr) => {
+    ($msg:expr_2021) => {
         $crate::VoltageError::Configuration($msg.to_string())
     };
-    ($fmt:expr, $($arg:tt)*) => {
+    ($fmt:expr_2021, $($arg:tt)*) => {
         $crate::VoltageError::Configuration(format!($fmt, $($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! validation_error {
-    ($msg:expr) => {
+    ($msg:expr_2021) => {
         $crate::VoltageError::Validation($msg.to_string())
     };
-    ($fmt:expr, $($arg:tt)*) => {
+    ($fmt:expr_2021, $($arg:tt)*) => {
         $crate::VoltageError::Validation(format!($fmt, $($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! protocol_error {
-    ($protocol:expr, $msg:expr) => {
+    ($protocol:expr_2021, $msg:expr_2021) => {
         $crate::VoltageError::Protocol {
             protocol: $protocol.to_string(),
             message: $msg.to_string(),
@@ -620,11 +620,7 @@ pub trait VoltageErrorTrait: std::error::Error + Send + Sync + 'static {
 
     /// Maximum retry attempts
     fn max_retries(&self) -> u32 {
-        if self.is_retryable() {
-            3
-        } else {
-            0
-        }
+        if self.is_retryable() { 3 } else { 0 }
     }
 
     /// Convert to HTTP status code
@@ -725,10 +721,12 @@ mod tests {
         assert!(VoltageError::Timeout("test".into()).is_retryable());
         assert!(VoltageError::ServiceUnavailable("test".into()).is_retryable());
         assert!(!VoltageError::Validation("test".into()).is_retryable());
-        assert!(!VoltageError::NotFound {
-            resource: "test".into()
-        }
-        .is_retryable());
+        assert!(
+            !VoltageError::NotFound {
+                resource: "test".into()
+            }
+            .is_retryable()
+        );
     }
 
     #[test]

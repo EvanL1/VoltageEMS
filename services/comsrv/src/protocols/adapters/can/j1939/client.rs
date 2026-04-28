@@ -2,8 +2,8 @@
 //!
 //! Implements the protocol layer's Protocol traits for J1939/CAN communication.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use arc_swap::ArcSwapOption;
 use socketcan::{CanSocket, EmbeddedFrame, Id, Socket};

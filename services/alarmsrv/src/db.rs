@@ -8,8 +8,8 @@ use sqlx::SqlitePool;
 use tracing::{debug, info};
 
 use crate::models::{
-    resolve_pagination, Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams,
-    PagedData, RuleQueryParams,
+    Alert, AlertEvent, AlertQueryParams, AlertRule, EventQueryParams, PagedData, RuleQueryParams,
+    resolve_pagination,
 };
 
 // ============================================================================
@@ -200,7 +200,7 @@ pub async fn list_rules(
 
     // Bind parameters helper closure
     macro_rules! bind_params {
-        ($q:expr) => {{
+        ($q:expr_2021) => {{
             let mut q = $q;
             if let Some(ref kw) = params.keyword {
                 let pat = format!("%{}%", kw);
@@ -473,7 +473,7 @@ pub async fn list_alerts(pool: &SqlitePool, params: &AlertQueryParams) -> Result
     );
 
     macro_rules! bind_alert_params {
-        ($q:expr) => {{
+        ($q:expr_2021) => {{
             let mut q = $q;
             if let Some(ref v) = params.service_type {
                 q = q.bind(v.clone());
@@ -716,7 +716,7 @@ pub async fn list_events(
     );
 
     macro_rules! bind_event_params {
-        ($q:expr) => {{
+        ($q:expr_2021) => {{
             let mut q = $q;
             if let Some(ref kw) = params.keyword {
                 let pat = format!("%{}%", kw);

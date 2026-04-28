@@ -1,7 +1,7 @@
 [package]
 name = "voltage-model"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 license.workspace = true
 description = "Model layer library for VoltageEMS - calculations, products, and instance management"
 

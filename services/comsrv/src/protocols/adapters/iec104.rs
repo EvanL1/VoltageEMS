@@ -30,8 +30,8 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
@@ -956,9 +956,11 @@ mod tests {
         let channel = Iec104Channel::new(config, 1, "test_iec104".to_string());
 
         assert_eq!(ProtocolCapabilities::name(&channel), "IEC 60870-5-104");
-        assert!(channel
-            .supported_modes()
-            .contains(&CommunicationMode::EventDriven));
+        assert!(
+            channel
+                .supported_modes()
+                .contains(&CommunicationMode::EventDriven)
+        );
     }
 
     #[test]

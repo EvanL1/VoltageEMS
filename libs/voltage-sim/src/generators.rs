@@ -397,8 +397,8 @@ impl WaveformGenerator for NoiseGenerator {
     fn generate(&self, _timestamp_ms: i64) -> f64 {
         let mut rng = rand::thread_rng();
         // Box-Muller transform for Gaussian noise
-        let u1: f64 = rng.gen();
-        let u2: f64 = rng.gen();
+        let u1: f64 = rng.r#gen();
+        let u2: f64 = rng.r#gen();
         let z = (-2.0 * u1.ln()).sqrt() * (2.0 * PI * u2).cos();
         self.mean + z * self.std_dev
     }

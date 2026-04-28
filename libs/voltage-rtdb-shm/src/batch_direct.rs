@@ -12,7 +12,7 @@ use voltage_model::PointType;
 
 use crate::{ChannelToSlotIndex, UnifiedWriter};
 use voltage_routing::batch::{BatchRoutingResult, ChannelPointUpdate};
-use voltage_routing::{RoutingCache, MAX_C2C_CASCADE_DEPTH};
+use voltage_routing::{MAX_C2C_CASCADE_DEPTH, RoutingCache};
 
 /// Type alias for C2C visited tracking (channel_id, point_type, point_id)
 type C2CVisited = FxHashSet<(u32, PointType, u32)>;
@@ -104,33 +104,32 @@ fn write_channel_batch_direct_impl(
             }
 
             // C2C routing lookup
-            if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
-                if let Some(target) =
+            if update.cascade_depth < MAX_C2C_CASCADE_DEPTH
+                && let Some(target) =
                     routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
-                {
-                    let target_key = (target.channel_id, target.point_type, target.point_id);
+            {
+                let target_key = (target.channel_id, target.point_type, target.point_id);
 
-                    if group_visited.contains(&target_key) {
-                        warn!(
-                            "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
-                            channel_id,
-                            point_type,
-                            update.point_id,
-                            target.channel_id,
-                            target.point_type,
-                            target.point_id
-                        );
-                        result.cycles_detected += 1;
-                    } else {
-                        c2c_forwards.push(ChannelPointUpdate {
-                            channel_id: target.channel_id,
-                            point_type: target.point_type,
-                            point_id: target.point_id,
-                            value: update.value,
-                            raw_value: update.raw_value,
-                            cascade_depth: update.cascade_depth + 1,
-                        });
-                    }
+                if group_visited.contains(&target_key) {
+                    warn!(
+                        "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
+                        channel_id,
+                        point_type,
+                        update.point_id,
+                        target.channel_id,
+                        target.point_type,
+                        target.point_id
+                    );
+                    result.cycles_detected += 1;
+                } else {
+                    c2c_forwards.push(ChannelPointUpdate {
+                        channel_id: target.channel_id,
+                        point_type: target.point_type,
+                        point_id: target.point_id,
+                        value: update.value,
+                        raw_value: update.raw_value,
+                        cascade_depth: update.cascade_depth + 1,
+                    });
                 }
             }
         }

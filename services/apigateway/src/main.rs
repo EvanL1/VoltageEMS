@@ -12,10 +12,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
+    Router,
     extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
     response::IntoResponse,
     routing::{delete, get, post, put},
-    Router,
 };
 use dashmap::DashMap;
 use serde::Deserialize;

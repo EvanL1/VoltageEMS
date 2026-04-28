@@ -11,8 +11,8 @@ pub mod dl645;
 
 // Re-exports
 pub use dl645::{
+    DataIdentifier, Dl645Error, Dl645Frame, FRAME_END, FRAME_START, MeterAddress,
     calculate_checksum, decode_data, decode_response, encode_data, encode_read_request,
-    DataIdentifier, Dl645Error, Dl645Frame, MeterAddress, FRAME_END, FRAME_START,
 };
 
-pub use can::{decode_value, extract_field, CanDataType, CanDecodeError, ExtractedField};
+pub use can::{CanDataType, CanDecodeError, ExtractedField, decode_value, extract_field};

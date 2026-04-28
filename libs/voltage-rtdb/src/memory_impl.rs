@@ -184,13 +184,14 @@ impl Rtdb for MemoryRtdb {
         key: &str,
         fields: &[&str],
     ) -> impl Future<Output = Result<Vec<Option<Bytes>>>> + Send + '_ {
-        let result = if let Some(hash) = self.hash_store.get(key) {
-            fields
+        let result = match self.hash_store.get(key) {
+            Some(hash) => fields
                 .iter()
                 .map(|field| hash.get(*field).map(|v| v.clone()))
-                .collect()
-        } else {
-            vec![None; fields.len()]
+                .collect(),
+            _ => {
+                vec![None; fields.len()]
+            },
         };
         async move { Ok(result) }
     }
@@ -211,24 +212,24 @@ impl Rtdb for MemoryRtdb {
         &self,
         key: &str,
     ) -> impl Future<Output = Result<HashMap<String, Bytes>>> + Send + '_ {
-        let result = if let Some(hash) = self.hash_store.get(key) {
-            // Pre-allocate HashMap with exact capacity
-            let mut map = HashMap::with_capacity(hash.len());
-            for entry in hash.iter() {
-                map.insert(entry.key().clone(), entry.value().clone());
-            }
-            map
-        } else {
-            HashMap::new()
+        let result = match self.hash_store.get(key) {
+            Some(hash) => {
+                // Pre-allocate HashMap with exact capacity
+                let mut map = HashMap::with_capacity(hash.len());
+                for entry in hash.iter() {
+                    map.insert(entry.key().clone(), entry.value().clone());
+                }
+                map
+            },
+            _ => HashMap::new(),
         };
         async move { Ok(result) }
     }
 
     fn hash_del(&self, key: &str, field: &str) -> impl Future<Output = Result<bool>> + Send + '_ {
-        let result = if let Some(hash) = self.hash_store.get(key) {
-            hash.remove(field).is_some()
-        } else {
-            false
+        let result = match self.hash_store.get(key) {
+            Some(hash) => hash.remove(field).is_some(),
+            _ => false,
         };
         async move { Ok(result) }
     }
@@ -238,16 +239,17 @@ impl Rtdb for MemoryRtdb {
         key: &str,
         fields: &[String],
     ) -> impl Future<Output = Result<usize>> + Send + '_ {
-        let result = if let Some(hash) = self.hash_store.get(key) {
-            let mut removed = 0;
-            for field in fields {
-                if hash.remove(field).is_some() {
-                    removed += 1;
+        let result = match self.hash_store.get(key) {
+            Some(hash) => {
+                let mut removed = 0;
+                for field in fields {
+                    if hash.remove(field).is_some() {
+                        removed += 1;
+                    }
                 }
-            }
-            removed
-        } else {
-            0
+                removed
+            },
+            _ => 0,
         };
         async move { Ok(result) }
     }
@@ -296,7 +298,7 @@ impl Rtdb for MemoryRtdb {
         let keys: Vec<String> = keys.iter().copied().map(String::from).collect();
 
         async move {
-            use tokio::time::{sleep, Duration, Instant};
+            use tokio::time::{Duration, Instant, sleep};
 
             let start = Instant::now();
             let timeout = Duration::from_secs(timeout_seconds);
@@ -330,21 +332,22 @@ impl Rtdb for MemoryRtdb {
         start: isize,
         stop: isize,
     ) -> impl Future<Output = Result<Vec<Bytes>>> + Send + '_ {
-        let result = if let Some(list) = self.list_store.get(key) {
-            let list = list.read();
-            let (start_idx, stop_idx) = normalize_list_indices(list.len(), start, stop);
-            if start_idx < stop_idx {
-                let count = stop_idx - start_idx;
-                let mut result = Vec::with_capacity(count);
-                for item in list.iter().skip(start_idx).take(count) {
-                    result.push(item.clone());
+        let result = match self.list_store.get(key) {
+            Some(list) => {
+                let list = list.read();
+                let (start_idx, stop_idx) = normalize_list_indices(list.len(), start, stop);
+                if start_idx < stop_idx {
+                    let count = stop_idx - start_idx;
+                    let mut result = Vec::with_capacity(count);
+                    for item in list.iter().skip(start_idx).take(count) {
+                        result.push(item.clone());
+                    }
+                    result
+                } else {
+                    Vec::new()
                 }
-                result
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
+            },
+            _ => Vec::new(),
         };
         async move { Ok(result) }
     }
@@ -422,24 +425,24 @@ impl Rtdb for MemoryRtdb {
     }
 
     fn srem(&self, key: &str, member: &str) -> impl Future<Output = Result<bool>> + Send + '_ {
-        let result = if let Some(set) = self.set_store.get(key) {
-            set.remove(member).is_some()
-        } else {
-            false
+        let result = match self.set_store.get(key) {
+            Some(set) => set.remove(member).is_some(),
+            _ => false,
         };
         async move { Ok(result) }
     }
 
     fn smembers(&self, key: &str) -> impl Future<Output = Result<Vec<String>>> + Send + '_ {
-        let result = if let Some(set) = self.set_store.get(key) {
-            // Pre-allocate Vec with exact capacity
-            let mut members = Vec::with_capacity(set.len());
-            for entry in set.iter() {
-                members.push(entry.key().clone());
-            }
-            members
-        } else {
-            Vec::new()
+        let result = match self.set_store.get(key) {
+            Some(set) => {
+                // Pre-allocate Vec with exact capacity
+                let mut members = Vec::with_capacity(set.len());
+                for entry in set.iter() {
+                    members.push(entry.key().clone());
+                }
+                members
+            },
+            _ => Vec::new(),
         };
         async move { Ok(result) }
     }
@@ -520,7 +523,7 @@ mod tests {
     /// Spawn `$count` concurrent tasks on a fresh `MemoryRtdb`.
     /// Each task receives an `Arc<MemoryRtdb>` and loop index.
     macro_rules! concurrent_test {
-        ($count:expr, |$rtdb:ident, $i:ident| $body:expr) => {{
+        ($count:expr_2021, |$rtdb:ident, $i:ident| $body:expr_2021) => {{
             let rtdb = Arc::new(MemoryRtdb::new());
             let mut tasks = JoinSet::new();
             for $i in 0..$count as usize {

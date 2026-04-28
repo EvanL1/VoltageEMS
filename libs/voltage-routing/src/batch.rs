@@ -176,35 +176,34 @@ where
             }
 
             // C2C routing lookup - zero-allocation using structured key
-            if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
-                if let Some(target) =
+            if update.cascade_depth < MAX_C2C_CASCADE_DEPTH
+                && let Some(target) =
                     routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
-                {
-                    let target_key = (target.channel_id, target.point_type, target.point_id);
+            {
+                let target_key = (target.channel_id, target.point_type, target.point_id);
 
-                    // Cycle detection: check if target is in the forwarding chain
-                    if group_visited.contains(&target_key) {
-                        warn!(
-                            "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
-                            channel_id,
-                            point_type,
-                            update.point_id,
-                            target.channel_id,
-                            target.point_type,
-                            target.point_id
-                        );
-                        result.cycles_detected += 1;
-                    } else {
-                        // Add to forwards (target will be marked visited when processed)
-                        c2c_forwards.push(ChannelPointUpdate {
-                            channel_id: target.channel_id,
-                            point_type: target.point_type,
-                            point_id: target.point_id,
-                            value: update.value,
-                            raw_value: update.raw_value,
-                            cascade_depth: update.cascade_depth + 1,
-                        });
-                    }
+                // Cycle detection: check if target is in the forwarding chain
+                if group_visited.contains(&target_key) {
+                    warn!(
+                        "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
+                        channel_id,
+                        point_type,
+                        update.point_id,
+                        target.channel_id,
+                        target.point_type,
+                        target.point_id
+                    );
+                    result.cycles_detected += 1;
+                } else {
+                    // Add to forwards (target will be marked visited when processed)
+                    c2c_forwards.push(ChannelPointUpdate {
+                        channel_id: target.channel_id,
+                        point_type: target.point_type,
+                        point_id: target.point_id,
+                        value: update.value,
+                        raw_value: update.raw_value,
+                        cascade_depth: update.cascade_depth + 1,
+                    });
                 }
             }
         }
@@ -355,35 +354,34 @@ fn write_channel_batch_buffered_impl(
             }
 
             // C2C routing lookup - zero-allocation using structured key
-            if update.cascade_depth < MAX_C2C_CASCADE_DEPTH {
-                if let Some(target) =
+            if update.cascade_depth < MAX_C2C_CASCADE_DEPTH
+                && let Some(target) =
                     routing_cache.lookup_c2c_by_parts(channel_id, point_type, update.point_id)
-                {
-                    let target_key = (target.channel_id, target.point_type, target.point_id);
+            {
+                let target_key = (target.channel_id, target.point_type, target.point_id);
 
-                    // Cycle detection: check if target is in the forwarding chain
-                    if group_visited.contains(&target_key) {
-                        warn!(
-                            "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
-                            channel_id,
-                            point_type,
-                            update.point_id,
-                            target.channel_id,
-                            target.point_type,
-                            target.point_id
-                        );
-                        result.cycles_detected += 1;
-                    } else {
-                        // Add to forwards (target will be marked visited when processed)
-                        c2c_forwards.push(ChannelPointUpdate {
-                            channel_id: target.channel_id,
-                            point_type: target.point_type,
-                            point_id: target.point_id,
-                            value: update.value,
-                            raw_value: update.raw_value,
-                            cascade_depth: update.cascade_depth + 1,
-                        });
-                    }
+                // Cycle detection: check if target is in the forwarding chain
+                if group_visited.contains(&target_key) {
+                    warn!(
+                        "C2C cycle detected: {}:{:?}:{} -> {}:{:?}:{} (skipping)",
+                        channel_id,
+                        point_type,
+                        update.point_id,
+                        target.channel_id,
+                        target.point_type,
+                        target.point_id
+                    );
+                    result.cycles_detected += 1;
+                } else {
+                    // Add to forwards (target will be marked visited when processed)
+                    c2c_forwards.push(ChannelPointUpdate {
+                        channel_id: target.channel_id,
+                        point_type: target.point_type,
+                        point_id: target.point_id,
+                        value: update.value,
+                        raw_value: update.raw_value,
+                        cascade_depth: update.cascade_depth + 1,
+                    });
                 }
             }
         }

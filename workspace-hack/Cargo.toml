@@ -1,7 +1,7 @@
 [package]
 name = "workspace-hack"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 # workspace-hack is managed by cargo-hakari.
@@ -21,6 +21,7 @@ crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.1", default-features = false, features = ["std"] }
 digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["serde", "use_std"] }
+fastrand = { version = "2" }
 flate2 = { version = "1", features = ["zlib-rs"] }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-executor = { version = "0.3" }
@@ -81,6 +82,7 @@ crossbeam-utils = { version = "0.8" }
 crypto-common = { version = "0.1", default-features = false, features = ["std"] }
 digest = { version = "0.10", features = ["mac", "oid", "std"] }
 either = { version = "1", features = ["serde", "use_std"] }
+fastrand = { version = "2" }
 flate2 = { version = "1", features = ["zlib-rs"] }
 futures-channel = { version = "0.3", features = ["sink"] }
 futures-executor = { version = "0.3" }

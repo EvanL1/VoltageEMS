@@ -4,9 +4,9 @@
 //! All handler implementations are in separate handler modules.
 
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
     routing::{get, post},
-    Router,
 };
 use chrono::{DateTime, Utc};
 use std::sync::{Arc, OnceLock};

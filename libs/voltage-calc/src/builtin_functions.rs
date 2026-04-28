@@ -5,7 +5,7 @@
 
 use crate::error::{CalcError, Result};
 use crate::state::{
-    state_key, IntegrateState, MovingAvgState, PeriodDeltaState, RateOfChangeState, StateStore,
+    IntegrateState, MovingAvgState, PeriodDeltaState, RateOfChangeState, StateStore, state_key,
 };
 use chrono::{Datelike, Local, TimeZone, Utc};
 use std::sync::Arc;

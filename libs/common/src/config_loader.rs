@@ -18,11 +18,11 @@ where
     T::Err: Display,
 {
     // Priority 1: DB value (if not default)
-    if let Some(val) = db_value {
-        if !is_default {
-            debug!("{} from DB", env_var);
-            return val;
-        }
+    if let Some(val) = db_value
+        && !is_default
+    {
+        debug!("{} from DB", env_var);
+        return val;
     }
 
     // Priority 2: Environment variable
@@ -51,19 +51,20 @@ pub fn get_string_config(
     default: String,
 ) -> String {
     // Priority 1: DB value (if not empty and not default)
-    if let Some(val) = db_value {
-        if !val.is_empty() && !is_default {
-            debug!("{} from DB", env_var);
-            return val;
-        }
+    if let Some(val) = db_value
+        && !val.is_empty()
+        && !is_default
+    {
+        debug!("{} from DB", env_var);
+        return val;
     }
 
     // Priority 2: Environment variable
-    if let Ok(env_val) = std::env::var(env_var) {
-        if !env_val.is_empty() {
-            debug!("{} from env", env_var);
-            return env_val;
-        }
+    if let Ok(env_val) = std::env::var(env_var)
+        && !env_val.is_empty()
+    {
+        debug!("{} from env", env_var);
+        return env_val;
     }
 
     // Priority 3: Default value
@@ -166,17 +167,18 @@ pub fn build_redis_candidates(
     let mut candidates = Vec::new();
 
     // Priority 1: DB configuration (if not default)
-    if let Some(url) = db_url {
-        if !url.is_empty() && url != default_url {
-            candidates.push(("DB", url));
-        }
+    if let Some(url) = db_url
+        && !url.is_empty()
+        && url != default_url
+    {
+        candidates.push(("DB", url));
     }
 
     // Priority 2: Environment variable
-    if let Ok(env_url) = std::env::var("REDIS_URL") {
-        if !env_url.is_empty() {
-            candidates.push(("ENV", env_url));
-        }
+    if let Ok(env_url) = std::env::var("REDIS_URL")
+        && !env_url.is_empty()
+    {
+        candidates.push(("ENV", env_url));
     }
 
     // Priority 3: Default value (only if no higher-priority candidate exists)

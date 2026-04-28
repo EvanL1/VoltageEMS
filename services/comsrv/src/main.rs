@@ -38,8 +38,8 @@ use comsrv::{
     shutdown_services, wait_for_shutdown,
 };
 use voltage_routing::load_routing_maps;
-use voltage_rtdb_shm::{is_shm_available, snapshot_exists, SnapshotConfig, SnapshotManager};
 use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, ShmHandle, UnifiedWriter};
+use voltage_rtdb_shm::{SnapshotConfig, SnapshotManager, is_shm_available, snapshot_exists};
 
 #[tokio::main]
 async fn main() -> VoltageResult<()> {
@@ -126,10 +126,13 @@ async fn main() -> VoltageResult<()> {
     {
         use voltage_rtdb::Rtdb;
         let online_key = voltage_model::KeySpaceConfig::production_cached().channel_online_key();
-        if let Err(e) = redis_rtdb.del(&online_key).await {
-            warn!("Failed to clear channel online hash: {}", e);
-        } else {
-            debug!("Cleared channel online status hash (fresh start)");
+        match redis_rtdb.del(&online_key).await {
+            Err(e) => {
+                warn!("Failed to clear channel online hash: {}", e);
+            },
+            _ => {
+                debug!("Cleared channel online status hash (fresh start)");
+            },
         }
     }
 
@@ -515,10 +518,13 @@ async fn main() -> VoltageResult<()> {
     {
         use voltage_rtdb::Rtdb;
         let online_key = voltage_model::KeySpaceConfig::production_cached().channel_online_key();
-        if let Err(e) = rtdb_for_shutdown.del(&online_key).await {
-            warn!("Failed to clear channel online hash on shutdown: {}", e);
-        } else {
-            info!("Cleared channel online status (service stopped)");
+        match rtdb_for_shutdown.del(&online_key).await {
+            Err(e) => {
+                warn!("Failed to clear channel online hash on shutdown: {}", e);
+            },
+            _ => {
+                info!("Cleared channel online status (service stopped)");
+            },
         }
     }
 

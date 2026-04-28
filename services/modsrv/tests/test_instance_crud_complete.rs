@@ -471,9 +471,11 @@ async fn test_search_instances_by_name() {
         .expect("Failed to search");
     assert_eq!(total, 2);
     assert_eq!(results.len(), 2);
-    assert!(results
-        .iter()
-        .all(|i| i.core.instance_name.contains("inverter")));
+    assert!(
+        results
+            .iter()
+            .all(|i| i.core.instance_name.contains("inverter"))
+    );
 
     // Search for "01"
     let (total, _results) = manager

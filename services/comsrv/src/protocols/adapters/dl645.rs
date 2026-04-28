@@ -29,6 +29,7 @@ use tokio_serial::{DataBits, Parity, SerialPortBuilderExt, SerialStream, StopBit
 use tracing::{debug, info, warn};
 use voltage_model::PointType;
 
+use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -40,7 +41,6 @@ use crate::protocols::core::{
     AdjustmentCommand, CommunicationMode, ConnectionState, ControlCommand, Diagnostics,
     PointFailure, PollResult, Protocol, ProtocolCapabilities, ProtocolClient, WriteResult,
 };
-use crate::protocols::ChannelRuntime;
 
 // ============================================================================
 // Constants
@@ -733,7 +733,7 @@ impl Dl645Transport {
                 return Err(GatewayError::Config(format!(
                     "Invalid parity: {}",
                     config.parity
-                )))
+                )));
             },
         };
 
@@ -746,7 +746,7 @@ impl Dl645Transport {
                 return Err(GatewayError::Config(format!(
                     "Invalid data bits: {}",
                     config.data_bits
-                )))
+                )));
             },
         };
 
@@ -757,7 +757,7 @@ impl Dl645Transport {
                 return Err(GatewayError::Config(format!(
                     "Invalid stop bits: {}",
                     config.stop_bits
-                )))
+                )));
             },
         };
 
@@ -1194,8 +1194,7 @@ impl HasMetadata for Dl645Channel {
         DriverMetadata {
             name: "dl645",
             display_name: "DL/T 645-2007",
-            description:
-                "DL/T 645-2007 smart meter protocol (read-only, uses standard data points)",
+            description: "DL/T 645-2007 smart meter protocol (read-only, uses standard data points)",
             is_recommended: false,
             example_config: Value::Object(config),
             parameters: vec![],

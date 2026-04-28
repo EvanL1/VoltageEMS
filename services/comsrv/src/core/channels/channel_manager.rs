@@ -16,7 +16,7 @@ use voltage_rtdb::Rtdb;
 use voltage_rtdb_shm::{ChannelIndex, ShmHandle, SlotBitmap};
 
 // Re-export types for backwards compatibility
-pub use crate::core::channels::channel_entry::{unix_timestamp_ms, ChannelMetadata};
+pub use crate::core::channels::channel_entry::{ChannelMetadata, unix_timestamp_ms};
 
 // ============================================================================
 // Channel Manager
@@ -181,13 +181,14 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .get(channel_id as usize)
             .ok_or_else(|| ComSrvError::invalid_channel_id(channel_id))?;
 
-        if let Some(entry) = slot.swap(None) {
-            self.shutdown_channel_entry(&entry, channel_id).await?;
-            self.cleanup_channel_redis(channel_id).await;
-            info!("Ch{} removed (graceful shutdown)", channel_id);
-            Ok(())
-        } else {
-            Err(ComSrvError::channel_not_found(channel_id))
+        match slot.swap(None) {
+            Some(entry) => {
+                self.shutdown_channel_entry(&entry, channel_id).await?;
+                self.cleanup_channel_redis(channel_id).await;
+                info!("Ch{} removed (graceful shutdown)", channel_id);
+                Ok(())
+            },
+            _ => Err(ComSrvError::channel_not_found(channel_id)),
         }
     }
 
@@ -197,14 +198,13 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
         entry.shutdown();
 
         // 2. Await task exit with timeout (500ms), then force-abort
-        if let Some(handle) = entry.take_task_handle() {
-            if tokio::time::timeout(std::time::Duration::from_millis(500), handle)
+        if let Some(handle) = entry.take_task_handle()
+            && tokio::time::timeout(std::time::Duration::from_millis(500), handle)
                 .await
                 .is_err()
-            {
-                warn!("Ch{} task did not exit in 500ms, aborting", channel_id);
-                entry.abort_task();
-            }
+        {
+            warn!("Ch{} task did not exit in 500ms, aborting", channel_id);
+            entry.abort_task();
         }
 
         // 4. Shutdown store to flush WriteBuffer to Redis
@@ -291,10 +291,9 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 .channels
                 .get(*channel_id as usize)
                 .and_then(|s| s.load_full())
+                && entry.is_connected()
             {
-                if entry.is_connected() {
-                    count += 1;
-                }
+                count += 1;
             }
         }
         count

@@ -107,37 +107,37 @@ impl ProductLibrary {
     pub fn load(products_dir: Option<&Path>) -> Result<Self> {
         let mut products: Vec<BuiltinProduct> = BUILTIN_PRODUCTS.clone();
 
-        if let Some(dir) = products_dir {
-            if dir.is_dir() {
-                let entries = std::fs::read_dir(dir)
-                    .with_context(|| format!("Failed to read products dir: {}", dir.display()))?;
+        if let Some(dir) = products_dir
+            && dir.is_dir()
+        {
+            let entries = std::fs::read_dir(dir)
+                .with_context(|| format!("Failed to read products dir: {}", dir.display()))?;
 
-                for entry in entries {
-                    let entry = entry?;
-                    let path = entry.path();
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
 
-                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                        continue;
-                    }
+                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                    continue;
+                }
 
-                    let content = std::fs::read_to_string(&path)
-                        .with_context(|| format!("Failed to read {}", path.display()))?;
+                let content = std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read {}", path.display()))?;
 
-                    let product: BuiltinProduct = serde_json::from_str(&content)
-                        .with_context(|| format!("Invalid product JSON: {}", path.display()))?;
+                let product: BuiltinProduct = serde_json::from_str(&content)
+                    .with_context(|| format!("Invalid product JSON: {}", path.display()))?;
 
-                    // Override existing or append new
-                    if let Some(idx) = products.iter().position(|p| p.name == product.name) {
-                        tracing::info!(
-                            "Product '{}' overridden from {}",
-                            product.name,
-                            path.display()
-                        );
-                        products[idx] = product;
-                    } else {
-                        tracing::info!("Product '{}' loaded from {}", product.name, path.display());
-                        products.push(product);
-                    }
+                // Override existing or append new
+                if let Some(idx) = products.iter().position(|p| p.name == product.name) {
+                    tracing::info!(
+                        "Product '{}' overridden from {}",
+                        product.name,
+                        path.display()
+                    );
+                    products[idx] = product;
+                } else {
+                    tracing::info!("Product '{}' loaded from {}", product.name, path.display());
+                    products.push(product);
                 }
             }
         }

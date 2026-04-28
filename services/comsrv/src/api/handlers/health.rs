@@ -9,7 +9,7 @@ use common::{ComponentHealth, ServiceStatus as HealthServiceStatus};
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::api::routes::{get_service_start_time, AppState};
+use crate::api::routes::{AppState, get_service_start_time};
 use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
 use voltage_rtdb::Rtdb;
 
@@ -227,11 +227,11 @@ pub async fn health_check<R: Rtdb>(
     if let Some(handle) = manager.shm_handle() {
         let mut parts = Vec::new();
 
-        if let Some(guard) = handle.layout() {
-            if let Some(layout) = guard.as_ref() {
-                parts.push(format!("total={}", layout.writer.slot_count()));
-                parts.push(format!("heartbeat_ms={}", layout.writer.writer_heartbeat()));
-            }
+        if let Some(guard) = handle.layout()
+            && let Some(layout) = guard.as_ref()
+        {
+            parts.push(format!("total={}", layout.writer.slot_count()));
+            parts.push(format!("heartbeat_ms={}", layout.writer.writer_heartbeat()));
         }
 
         if let Some(stats) = manager.slot_bitmap_stats() {

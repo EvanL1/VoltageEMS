@@ -3,7 +3,7 @@
 //! This module provides routing CRUD operations for measurement and action points.
 //! Extracted from instance_manager.rs for better code organization.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use common::{ValidationLevel, ValidationResult};
 use tracing::{debug, warn};
 use voltage_model::PointType;
@@ -25,13 +25,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         request: crate::dto::SinglePointRoutingRequest,
     ) -> Result<()> {
         // Validate channel_type (must be T or S for measurement, skip if None - unbound)
-        if let Some(ref fr) = request.four_remote {
-            if !fr.is_input() {
-                return Err(anyhow!(
-                    "Invalid channel_type '{}' for measurement routing (must be T or S)",
-                    fr
-                ));
-            }
+        if let Some(ref fr) = request.four_remote
+            && !fr.is_input()
+        {
+            return Err(anyhow!(
+                "Invalid channel_type '{}' for measurement routing (must be T or S)",
+                fr
+            ));
         }
 
         // Get instance_name for routing table denormalization
@@ -71,39 +71,39 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Dynamic Slot Allocation: Add shared_slot reference for C2M routing
         // Only for enabled bound routing (has channel info)
-        if request.enabled {
-            if let (Some(index), Some(channel_id), Some(channel_type), Some(channel_point_id)) = (
+        if request.enabled
+            && let (Some(index), Some(channel_id), Some(channel_type), Some(channel_point_id)) = (
                 self.dynamic_instance_index(),
                 request.channel_id,
                 request.four_remote,
                 request.channel_point_id,
-            ) {
-                let channel_id = channel_id as u32;
-                let slot_ref = SharedSlotRef {
-                    // slot_id = 0: Delayed computation - resolve when accessing shared memory
-                    slot_id: 0,
-                    // point_type = source channel type (T/S for measurement routing)
-                    point_type: channel_type,
-                    point_id,
-                    source_channel_id: channel_id,
-                    source_point_type: channel_type,
-                    source_point_id: channel_point_id,
-                };
+            )
+        {
+            let channel_id = channel_id as u32;
+            let slot_ref = SharedSlotRef {
+                // slot_id = 0: Delayed computation - resolve when accessing shared memory
+                slot_id: 0,
+                // point_type = source channel type (T/S for measurement routing)
+                point_type: channel_type,
+                point_id,
+                source_channel_id: channel_id,
+                source_point_type: channel_type,
+                source_point_id: channel_point_id,
+            };
 
-                match index.add_shared_slot(instance_id, slot_ref) {
-                    Ok(()) => {
-                        debug!(
-                            "Inst{}:M:{} shared_slot added (ch:{}:{}:{})",
-                            instance_id, point_id, channel_id, channel_type, channel_point_id
-                        );
-                    },
-                    Err(e) => {
-                        warn!(
-                            "Inst{}:M:{} shared_slot add failed: {}",
-                            instance_id, point_id, e
-                        );
-                    },
-                }
+            match index.add_shared_slot(instance_id, slot_ref) {
+                Ok(()) => {
+                    debug!(
+                        "Inst{}:M:{} shared_slot added (ch:{}:{}:{})",
+                        instance_id, point_id, channel_id, channel_type, channel_point_id
+                    );
+                },
+                Err(e) => {
+                    warn!(
+                        "Inst{}:M:{} shared_slot add failed: {}",
+                        instance_id, point_id, e
+                    );
+                },
             }
         }
 
@@ -118,13 +118,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         request: crate::dto::SinglePointRoutingRequest,
     ) -> Result<()> {
         // Validate channel_type (must be C or A for action, skip if None - unbound)
-        if let Some(ref fr) = request.four_remote {
-            if !fr.is_output() {
-                return Err(anyhow!(
-                    "Invalid channel_type '{}' for action routing (must be C or A)",
-                    fr
-                ));
-            }
+        if let Some(ref fr) = request.four_remote
+            && !fr.is_output()
+        {
+            return Err(anyhow!(
+                "Invalid channel_type '{}' for action routing (must be C or A)",
+                fr
+            ));
         }
 
         // Get instance_name for routing table denormalization
@@ -177,39 +177,39 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Dynamic Slot Allocation: Remove shared_slot reference
         // Try both Telemetry and Signal types since measurement routing uses T/S
-        if result.rows_affected() > 0 {
-            if let Some(index) = self.dynamic_instance_index() {
-                // Try Telemetry first, then Signal
-                let removed = index
-                    .remove_shared_slot(instance_id, PointType::Telemetry, point_id)
-                    .ok()
-                    .flatten()
-                    .or_else(|| {
-                        index
-                            .remove_shared_slot(instance_id, PointType::Signal, point_id)
-                            .ok()
-                            .flatten()
-                    });
+        if result.rows_affected() > 0
+            && let Some(index) = self.dynamic_instance_index()
+        {
+            // Try Telemetry first, then Signal
+            let removed = index
+                .remove_shared_slot(instance_id, PointType::Telemetry, point_id)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    index
+                        .remove_shared_slot(instance_id, PointType::Signal, point_id)
+                        .ok()
+                        .flatten()
+                });
 
-                match removed {
-                    Some(slot_ref) => {
-                        debug!(
-                            "Inst{}:M:{} shared_slot removed (ch:{}:{}:{})",
-                            instance_id,
-                            point_id,
-                            slot_ref.source_channel_id,
-                            slot_ref.source_point_type,
-                            slot_ref.source_point_id
-                        );
-                    },
-                    None => {
-                        // No shared_slot found - might be unbound routing
-                        debug!(
-                            "Inst{}:M:{} no shared_slot to remove",
-                            instance_id, point_id
-                        );
-                    },
-                }
+            match removed {
+                Some(slot_ref) => {
+                    debug!(
+                        "Inst{}:M:{} shared_slot removed (ch:{}:{}:{})",
+                        instance_id,
+                        point_id,
+                        slot_ref.source_channel_id,
+                        slot_ref.source_point_type,
+                        slot_ref.source_point_id
+                    );
+                },
+                None => {
+                    // No shared_slot found - might be unbound routing
+                    debug!(
+                        "Inst{}:M:{} no shared_slot to remove",
+                        instance_id, point_id
+                    );
+                },
             }
         }
 
@@ -384,13 +384,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             errors.push(format!("Instance {} does not exist", instance_name));
         }
 
-        if let Some(ref ct) = channel_type {
-            if !is_valid_direction(ct) {
-                errors.push(format!(
-                    "Invalid channel_type for {}: {}. Must be {}",
-                    point_label, ct, direction_label
-                ));
-            }
+        if let Some(ct) = channel_type
+            && !is_valid_direction(ct)
+        {
+            errors.push(format!(
+                "Invalid channel_type for {}: {}. Must be {}",
+                point_label, ct, direction_label
+            ));
         }
 
         let point_exists = if instance_exists {
@@ -442,21 +442,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // Dynamic Slot Allocation: Clear all shared_slots for this instance
         // Note: We don't remove the instance from InstanceIndex, just clear its shared_slots
-        if measurement_result.rows_affected() > 0 {
-            if let Some(index) = self.dynamic_instance_index() {
-                match index.clear_shared_slots(instance_id) {
-                    Ok(cleared_count) if cleared_count > 0 => {
-                        debug!(
-                            "Inst{} cleared {} shared_slots (routing deleted)",
-                            instance_id, cleared_count
-                        );
-                    },
-                    Ok(_) => {},
-                    Err(e) => {
-                        // Instance not found in InstanceIndex - might not be using dynamic allocation
-                        debug!("Inst{} clear_shared_slots skipped: {}", instance_id, e);
-                    },
-                }
+        if measurement_result.rows_affected() > 0
+            && let Some(index) = self.dynamic_instance_index()
+        {
+            match index.clear_shared_slots(instance_id) {
+                Ok(cleared_count) if cleared_count > 0 => {
+                    debug!(
+                        "Inst{} cleared {} shared_slots (routing deleted)",
+                        instance_id, cleared_count
+                    );
+                },
+                Ok(_) => {},
+                Err(e) => {
+                    // Instance not found in InstanceIndex - might not be using dynamic allocation
+                    debug!("Inst{} clear_shared_slots skipped: {}", instance_id, e);
+                },
             }
         }
 
@@ -630,10 +630,12 @@ mod tests {
         let result = manager.upsert_measurement_routing(1001, 1, request).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid channel_type"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid channel_type")
+        );
     }
 
     #[tokio::test]
@@ -715,10 +717,12 @@ mod tests {
         let result = manager.upsert_action_routing(2001, 1, request).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid channel_type"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid channel_type")
+        );
     }
 
     // ========== delete_measurement_routing tests ==========

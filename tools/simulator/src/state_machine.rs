@@ -84,17 +84,16 @@ impl StateMachine {
     pub fn on_coil_write(&self, address: u16, value: bool) -> Option<DeviceState> {
         let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         for t in &self.transitions {
-            if t.from == *state {
-                if let Trigger::Coil {
+            if t.from == *state
+                && let Trigger::Coil {
                     address: a,
                     value: v,
                 } = &t.trigger
-                {
-                    if *a == address && *v == value {
-                        *state = t.to;
-                        return Some(t.to);
-                    }
-                }
+                && *a == address
+                && *v == value
+            {
+                *state = t.to;
+                return Some(t.to);
             }
         }
         None
@@ -106,17 +105,16 @@ impl StateMachine {
     pub fn on_register_write(&self, address: u16, value: u16) -> Option<DeviceState> {
         let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         for t in &self.transitions {
-            if t.from == *state {
-                if let Trigger::Register {
+            if t.from == *state
+                && let Trigger::Register {
                     address: a,
                     value: v,
                 } = &t.trigger
-                {
-                    if *a == address && *v == value {
-                        *state = t.to;
-                        return Some(t.to);
-                    }
-                }
+                && *a == address
+                && *v == value
+            {
+                *state = t.to;
+                return Some(t.to);
             }
         }
         None

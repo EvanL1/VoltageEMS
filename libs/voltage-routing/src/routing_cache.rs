@@ -628,12 +628,16 @@ mod tests {
         assert_eq!(c2c.point_id, 5);
 
         // Non-existent should return None
-        assert!(cache
-            .lookup_c2m_by_parts(999, PointType::Telemetry, 1)
-            .is_none());
-        assert!(cache
-            .lookup_c2c_by_parts(999, PointType::Telemetry, 1)
-            .is_none());
+        assert!(
+            cache
+                .lookup_c2m_by_parts(999, PointType::Telemetry, 1)
+                .is_none()
+        );
+        assert!(
+            cache
+                .lookup_c2c_by_parts(999, PointType::Telemetry, 1)
+                .is_none()
+        );
     }
 
     #[test]

@@ -3,18 +3,18 @@
 //! Loads channel configurations, point tables, and mappings from SQLite database
 
 use crate::core::config::Point;
-use crate::core::config::{
-    AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
-    SignalPoint, TelemetryPoint,
-};
 #[cfg(test)]
 use crate::core::config::{
     ADJUSTMENT_POINTS_TABLE, CHANNELS_TABLE, CONTROL_POINTS_TABLE, SERVICE_CONFIG_TABLE,
     SIGNAL_POINTS_TABLE, TELEMETRY_POINTS_TABLE,
 };
+use crate::core::config::{
+    AdjustmentPoint, AppConfig, ChannelConfig, ControlPoint, RuntimeChannelConfig, ServiceConfig,
+    SignalPoint, TelemetryPoint,
+};
 use crate::error::{ComSrvError, Result};
-use common::sqlite::ServiceConfigLoader;
 use common::DEFAULT_API_HOST;
+use common::sqlite::ServiceConfigLoader;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 use std::path::Path;

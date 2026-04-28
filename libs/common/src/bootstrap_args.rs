@@ -167,8 +167,10 @@ mod tests {
     #[test]
     fn test_get_db_path() {
         // Clean up any environment variables that might affect the test
-        std::env::remove_var("VOLTAGE_DB_PATH");
-        std::env::remove_var("DATABASE_DIR");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("VOLTAGE_DB_PATH") };
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("DATABASE_DIR") };
 
         let args = ServiceArgs::default();
         assert_eq!(args.get_db_path("comsrv"), "data/voltage.db");

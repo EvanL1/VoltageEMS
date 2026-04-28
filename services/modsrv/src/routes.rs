@@ -3,9 +3,9 @@
 //! Central route definition for all Model Service API endpoints
 
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
     routing::{get, post},
-    Router,
 };
 use std::sync::Arc;
 

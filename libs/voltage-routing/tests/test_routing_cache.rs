@@ -269,23 +269,33 @@ fn test_all_point_types_routing() {
 
     let cache = RoutingCache::from_maps(c2m, HashMap::new(), HashMap::new());
 
-    assert!(cache
-        .lookup_c2m_by_parts(1001, PointType::Telemetry, 0)
-        .is_some());
-    assert!(cache
-        .lookup_c2m_by_parts(1001, PointType::Signal, 0)
-        .is_some());
-    assert!(cache
-        .lookup_c2m_by_parts(1001, PointType::Control, 0)
-        .is_some());
-    assert!(cache
-        .lookup_c2m_by_parts(1001, PointType::Adjustment, 0)
-        .is_some());
+    assert!(
+        cache
+            .lookup_c2m_by_parts(1001, PointType::Telemetry, 0)
+            .is_some()
+    );
+    assert!(
+        cache
+            .lookup_c2m_by_parts(1001, PointType::Signal, 0)
+            .is_some()
+    );
+    assert!(
+        cache
+            .lookup_c2m_by_parts(1001, PointType::Control, 0)
+            .is_some()
+    );
+    assert!(
+        cache
+            .lookup_c2m_by_parts(1001, PointType::Adjustment, 0)
+            .is_some()
+    );
 
     // Non-existent point should return None
-    assert!(cache
-        .lookup_c2m_by_parts(1001, PointType::Telemetry, 999)
-        .is_none());
+    assert!(
+        cache
+            .lookup_c2m_by_parts(1001, PointType::Telemetry, 999)
+            .is_none()
+    );
 }
 
 #[test]
@@ -309,7 +319,9 @@ fn test_m2c_routing_lookups() {
     }
 
     // Non-existent instance
-    assert!(cache
-        .lookup_m2c_by_parts(999, PointType::Adjustment, 0)
-        .is_none());
+    assert!(
+        cache
+            .lookup_m2c_by_parts(999, PointType::Adjustment, 0)
+            .is_none()
+    );
 }

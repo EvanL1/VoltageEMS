@@ -363,11 +363,11 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
     Json(req): Json<crate::dto::ChannelConfigUpdateRequest>,
 ) -> Result<Json<SuccessResponse<crate::dto::ChannelCrudResult>>, AppError> {
     // Check if channel ID migration is requested
-    if let Some(new_id) = req.channel_id {
-        if new_id != id {
-            tracing::info!("Ch{} -> Ch{} ID migration requested", id, new_id);
-            return migration::change_channel_id(id, new_id, req, &state).await;
-        }
+    if let Some(new_id) = req.channel_id
+        && new_id != id
+    {
+        tracing::info!("Ch{} -> Ch{} ID migration requested", id, new_id);
+        return migration::change_channel_id(id, new_id, req, &state).await;
     }
 
     tracing::debug!("Ch{} updating", id);
@@ -565,7 +565,7 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
     if name_changed {
         let keyspace = voltage_model::KeySpaceConfig::production_cached();
         let channels_key = keyspace.channels_hash_key();
-        if let Err(e) = state
+        match state
             .rtdb
             .hash_set(
                 &channels_key,
@@ -574,15 +574,18 @@ pub async fn update_channel_handler<R: Rtdb + 'static>(
             )
             .await
         {
-            // Redis is cache layer - log warning but don't fail the request
-            tracing::warn!(
-                "Ch{} failed to update name in Redis hash ({}): {}",
-                id,
-                channels_key,
-                e
-            );
-        } else {
-            tracing::debug!("Ch{} name updated in Redis hash: {}", id, channels_key);
+            Err(e) => {
+                // Redis is cache layer - log warning but don't fail the request
+                tracing::warn!(
+                    "Ch{} failed to update name in Redis hash ({}): {}",
+                    id,
+                    channels_key,
+                    e
+                );
+            },
+            _ => {
+                tracing::debug!("Ch{} name updated in Redis hash: {}", id, channels_key);
+            },
         }
     }
 

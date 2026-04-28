@@ -7,10 +7,10 @@
 
 use crate::error::ModSrvError;
 use axum::{
+    Router,
     extract::{Path, Query, State},
     response::Json,
     routing::{get, post},
-    Router,
 };
 use common::{PaginatedResponse, SuccessResponse};
 use serde_json::json;

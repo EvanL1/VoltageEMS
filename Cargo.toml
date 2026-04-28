@@ -73,9 +73,9 @@ sqlx = { version = "0.8", default-features = false, features = [
     "uuid",
     "macros",
 ] }
-redis = { version = "0.26", features = ["tokio-comp", "connection-manager"] }
-bb8 = "0.8"
-bb8-redis = "0.16"
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+bb8 = "0.9"
+bb8-redis = "0.24"
 
 # Error handling
 anyhow = "1.0"

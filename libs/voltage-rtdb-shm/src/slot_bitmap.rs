@@ -91,13 +91,15 @@ impl<'a> SlotBitmapView<'a> {
     /// - Memory must remain valid for lifetime 'a
     /// - Caller must ensure exclusive access during mutation
     pub unsafe fn from_raw(header_ptr: *const SlotBitmapHeader, bitmap_ptr: *mut u64) -> Self {
-        // SAFETY: Caller guarantees header_ptr is valid, aligned, and lives for 'a.
-        let header = &*header_ptr;
-        let word_count = (header.total_slots as usize).div_ceil(64);
-        // SAFETY: Caller guarantees bitmap_ptr points to at least word_count u64 values
-        // and the memory remains valid and exclusively accessible for lifetime 'a.
-        let bitmap = std::slice::from_raw_parts_mut(bitmap_ptr, word_count);
-        Self { header, bitmap }
+        unsafe {
+            // SAFETY: Caller guarantees header_ptr is valid, aligned, and lives for 'a.
+            let header = &*header_ptr;
+            let word_count = (header.total_slots as usize).div_ceil(64);
+            // SAFETY: Caller guarantees bitmap_ptr points to at least word_count u64 values
+            // and the memory remains valid and exclusively accessible for lifetime 'a.
+            let bitmap = std::slice::from_raw_parts_mut(bitmap_ptr, word_count);
+            Self { header, bitmap }
+        }
     }
 
     /// Get total slots
@@ -152,14 +154,14 @@ impl<'a> SlotBitmapView<'a> {
         }
 
         // Wrap around: search from beginning
-        if start_pos > 0 {
-            if let Some(base) = self.find_contiguous_free(0, count) {
-                self.mark_allocated(base, count);
-                return Some(SlotAllocation {
-                    base_slot: base,
-                    count,
-                });
-            }
+        if start_pos > 0
+            && let Some(base) = self.find_contiguous_free(0, count)
+        {
+            self.mark_allocated(base, count);
+            return Some(SlotAllocation {
+                base_slot: base,
+                count,
+            });
         }
 
         None
@@ -351,14 +353,14 @@ impl SlotBitmap {
         }
 
         // Wrap around
-        if start_pos > 0 {
-            if let Some(base) = self.find_contiguous_free(0, count) {
-                self.mark_allocated(base, count);
-                return Some(SlotAllocation {
-                    base_slot: base,
-                    count,
-                });
-            }
+        if start_pos > 0
+            && let Some(base) = self.find_contiguous_free(0, count)
+        {
+            self.mark_allocated(base, count);
+            return Some(SlotAllocation {
+                base_slot: base,
+                count,
+            });
         }
 
         None
@@ -522,7 +524,7 @@ mod tests {
         let a1 = bm.alloc_contiguous(30).unwrap(); // 0-29
         let _a2 = bm.alloc_contiguous(30).unwrap(); // 30-59
         let a3 = bm.alloc_contiguous(30).unwrap(); // 60-89
-                                                   // Remaining: slots 90-99 (10 slots) are unallocated
+        // Remaining: slots 90-99 (10 slots) are unallocated
 
         // Free first and third blocks
         bm.free(a1.base_slot, a1.count);

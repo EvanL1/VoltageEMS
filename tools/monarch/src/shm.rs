@@ -3,7 +3,7 @@
 //! Provides a mysql-cli style interactive interface for reading/writing
 //! shared memory data with zero-latency access.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use colored::*;
 use common::PointType;
@@ -15,7 +15,7 @@ use rustyline::validate::Validator;
 use rustyline::{Editor, Helper};
 use std::time::Duration;
 use voltage_routing::RoutingCache;
-use voltage_rtdb_shm::{default_shm_path, SharedConfig, UnifiedReader};
+use voltage_rtdb_shm::{SharedConfig, UnifiedReader, default_shm_path};
 
 use crate::shm_dashboard::run_dashboard;
 

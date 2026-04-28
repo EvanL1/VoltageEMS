@@ -12,7 +12,7 @@ use axum::{
 };
 use common::SuccessResponse;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::app_state::AppState;

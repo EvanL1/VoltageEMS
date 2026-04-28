@@ -10,11 +10,11 @@
 use std::collections::{BTreeMap, HashMap};
 use tempfile::tempdir;
 use voltage_model::PointType;
-use voltage_routing::batch::ChannelPointUpdate;
 use voltage_routing::RoutingCache;
+use voltage_routing::batch::ChannelPointUpdate;
 use voltage_rtdb_shm::{
-    batch_direct::write_channel_batch_direct, ChannelPointCounts, ChannelToSlotIndex, SharedConfig,
-    UnifiedReader, UnifiedWriter,
+    ChannelPointCounts, ChannelToSlotIndex, SharedConfig, UnifiedReader, UnifiedWriter,
+    batch_direct::write_channel_batch_direct,
 };
 
 // ============================================================================

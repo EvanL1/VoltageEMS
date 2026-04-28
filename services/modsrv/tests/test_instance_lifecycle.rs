@@ -10,7 +10,7 @@
 mod common;
 
 use anyhow::Result;
-use common::{fixtures, helpers, TestEnv};
+use common::{TestEnv, fixtures, helpers};
 use modsrv::instance_manager::InstanceManager;
 use modsrv::product_loader::{CreateInstanceRequest, ProductLoader};
 use std::collections::HashMap;

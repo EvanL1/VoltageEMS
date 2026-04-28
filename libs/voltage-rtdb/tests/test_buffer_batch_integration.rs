@@ -9,8 +9,8 @@
 #![allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 
 use bytes::Bytes;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::sync::Notify;
 use voltage_rtdb::{MemoryRtdb, Rtdb, WriteBuffer, WriteBufferConfig};

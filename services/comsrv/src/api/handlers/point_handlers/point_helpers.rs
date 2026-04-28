@@ -153,10 +153,10 @@ pub(super) async fn fetch_grouped_points(
     };
 
     for &(type_letter, table) in &TABLES {
-        if let Some(filter) = type_filter {
-            if !filter.eq_ignore_ascii_case(type_letter) {
-                continue;
-            }
+        if let Some(filter) = type_filter
+            && !filter.eq_ignore_ascii_case(type_letter)
+        {
+            continue;
         }
 
         let points = fetch_point_definitions(pool, table, channel_id, unmapped_only).await?;
@@ -258,10 +258,13 @@ pub async fn trigger_channel_reload_if_needed<R: Rtdb + 'static>(
 
     let state_clone = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = perform_channel_reload(channel_id, &state_clone).await {
-            tracing::error!("Ch{} reload: {}", channel_id, e);
-        } else {
-            tracing::debug!("Ch{} reloaded", channel_id);
+        match perform_channel_reload(channel_id, &state_clone).await {
+            Err(e) => {
+                tracing::error!("Ch{} reload: {}", channel_id, e);
+            },
+            _ => {
+                tracing::debug!("Ch{} reloaded", channel_id);
+            },
         }
     });
 }

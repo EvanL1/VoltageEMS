@@ -12,8 +12,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use voltage_routing::set_action_point;
 use voltage_routing::RoutingCache;
+use voltage_routing::set_action_point;
 use voltage_rtdb::{MemoryRtdb, Rtdb};
 
 // ============================================================================

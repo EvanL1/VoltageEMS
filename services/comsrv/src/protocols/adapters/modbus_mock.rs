@@ -437,12 +437,12 @@ impl MockModbusServer {
 
         for i in 0..quantity {
             let addr = start_addr + i;
-            if let Some(&value) = coils.get(&addr) {
-                if value {
-                    let byte_idx = i as usize / 8;
-                    let bit_idx = i as usize % 8;
-                    response_data[byte_idx] |= 1 << bit_idx;
-                }
+            if let Some(&value) = coils.get(&addr)
+                && value
+            {
+                let byte_idx = i as usize / 8;
+                let bit_idx = i as usize % 8;
+                response_data[byte_idx] |= 1 << bit_idx;
             }
         }
 
@@ -492,12 +492,12 @@ impl MockModbusServer {
 
         for i in 0..quantity {
             let addr = start_addr + i;
-            if let Some(&value) = inputs.get(&addr) {
-                if value {
-                    let byte_idx = i as usize / 8;
-                    let bit_idx = i as usize % 8;
-                    response_data[byte_idx] |= 1 << bit_idx;
-                }
+            if let Some(&value) = inputs.get(&addr)
+                && value
+            {
+                let byte_idx = i as usize / 8;
+                let bit_idx = i as usize % 8;
+                response_data[byte_idx] |= 1 << bit_idx;
             }
         }
 

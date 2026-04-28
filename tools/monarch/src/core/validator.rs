@@ -201,9 +201,11 @@ channels: []
 
         // Should have error about no channels
         assert!(!result.is_valid);
-        assert!(result
-            .errors
-            .iter()
-            .any(|e| e.contains("at least one channel")));
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("at least one channel"))
+        );
     }
 }

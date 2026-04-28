@@ -6,8 +6,8 @@
 //! - Periodic polling
 
 use arc_swap::ArcSwapOption;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -118,8 +118,10 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
 ) {
     info!(
         "Ch{} unified task started (interval: {}ms, reconnect: max_attempts={}, initial_delay={:?})",
-        ctx.channel_id, ctx.poll_interval_ms,
-        reconnect_policy.max_attempts, reconnect_policy.initial_delay
+        ctx.channel_id,
+        ctx.poll_interval_ms,
+        reconnect_policy.max_attempts,
+        reconnect_policy.initial_delay
     );
 
     // Create reconnection helper for auto-reconnect functionality

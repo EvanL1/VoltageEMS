@@ -9,7 +9,7 @@
 //! the crate root, so it is fully accessible from integration tests without any
 //! production-code changes.
 
-use voltage_model::{validate_value, ValidationConfig, ValueValidationError};
+use voltage_model::{ValidationConfig, ValueValidationError, validate_value};
 
 // ---------------------------------------------------------------------------
 // Helper

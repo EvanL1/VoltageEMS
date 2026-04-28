@@ -4,11 +4,12 @@
 //! Keys: ↑↓/jk scroll | g/G top/bottom | f follow | / search | n next | q quit
 
 use anyhow::{Context, Result};
+use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
@@ -16,7 +17,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
-use ratatui::Terminal;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -208,76 +208,76 @@ fn run_viewer_loop(
         })?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).context("Failed to poll events")? {
-            if let Event::Key(key) = event::read().context("Failed to read event")? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                match state.mode {
-                    Mode::Search => match key.code {
-                        KeyCode::Enter => {
-                            state.apply_search();
-                            state.jump_to_match(viewport_height);
-                            state.mode = Mode::Normal;
-                        },
-                        KeyCode::Esc => {
-                            state.search_input.clear();
-                            state.mode = Mode::Normal;
-                            state.status_msg = String::new();
-                        },
-                        KeyCode::Backspace => {
-                            state.search_input.pop();
-                        },
-                        KeyCode::Char(c) => {
-                            state.search_input.push(c);
-                        },
-                        _ => {},
+        if event::poll(timeout).context("Failed to poll events")?
+            && let Event::Key(key) = event::read().context("Failed to read event")?
+        {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match state.mode {
+                Mode::Search => match key.code {
+                    KeyCode::Enter => {
+                        state.apply_search();
+                        state.jump_to_match(viewport_height);
+                        state.mode = Mode::Normal;
                     },
-                    Mode::Normal | Mode::Follow => match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Up | KeyCode::Char('k') => {
+                    KeyCode::Esc => {
+                        state.search_input.clear();
+                        state.mode = Mode::Normal;
+                        state.status_msg = String::new();
+                    },
+                    KeyCode::Backspace => {
+                        state.search_input.pop();
+                    },
+                    KeyCode::Char(c) => {
+                        state.search_input.push(c);
+                    },
+                    _ => {},
+                },
+                Mode::Normal | Mode::Follow => match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        state.mode = Mode::Normal;
+                        state.scroll_up(1);
+                    },
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        state.mode = Mode::Normal;
+                        state.scroll_down(1, viewport_height);
+                    },
+                    KeyCode::PageUp => {
+                        state.mode = Mode::Normal;
+                        state.scroll_up(viewport_height);
+                    },
+                    KeyCode::PageDown => {
+                        state.mode = Mode::Normal;
+                        state.scroll_down(viewport_height, viewport_height);
+                    },
+                    KeyCode::Char('g') => {
+                        state.mode = Mode::Normal;
+                        state.scroll_to_top();
+                    },
+                    KeyCode::Char('G') => {
+                        state.scroll_to_bottom(viewport_height);
+                    },
+                    KeyCode::Char('f') => {
+                        if state.mode == Mode::Follow {
                             state.mode = Mode::Normal;
-                            state.scroll_up(1);
-                        },
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            state.mode = Mode::Normal;
-                            state.scroll_down(1, viewport_height);
-                        },
-                        KeyCode::PageUp => {
-                            state.mode = Mode::Normal;
-                            state.scroll_up(viewport_height);
-                        },
-                        KeyCode::PageDown => {
-                            state.mode = Mode::Normal;
-                            state.scroll_down(viewport_height, viewport_height);
-                        },
-                        KeyCode::Char('g') => {
-                            state.mode = Mode::Normal;
-                            state.scroll_to_top();
-                        },
-                        KeyCode::Char('G') => {
+                            state.status_msg = "Follow OFF".to_string();
+                        } else {
+                            state.mode = Mode::Follow;
                             state.scroll_to_bottom(viewport_height);
-                        },
-                        KeyCode::Char('f') => {
-                            if state.mode == Mode::Follow {
-                                state.mode = Mode::Normal;
-                                state.status_msg = "Follow OFF".to_string();
-                            } else {
-                                state.mode = Mode::Follow;
-                                state.scroll_to_bottom(viewport_height);
-                                state.status_msg = "Follow ON".to_string();
-                            }
-                        },
-                        KeyCode::Char('/') => {
-                            state.mode = Mode::Search;
-                            state.search_input.clear();
-                        },
-                        KeyCode::Char('n') => {
-                            state.next_match(viewport_height);
-                        },
-                        _ => {},
+                            state.status_msg = "Follow ON".to_string();
+                        }
                     },
-                }
+                    KeyCode::Char('/') => {
+                        state.mode = Mode::Search;
+                        state.search_input.clear();
+                    },
+                    KeyCode::Char('n') => {
+                        state.next_match(viewport_height);
+                    },
+                    _ => {},
+                },
             }
         }
 

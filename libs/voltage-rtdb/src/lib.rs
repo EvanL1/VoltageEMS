@@ -38,7 +38,7 @@ pub use redis_impl::RedisRtdb;
 
 pub use memory_impl::{MemoryRtdb, MemoryStats};
 
-pub use cleanup::{cleanup_invalid_keys, CleanupProvider};
+pub use cleanup::{CleanupProvider, cleanup_invalid_keys};
 
 pub use time::{FixedTimeProvider, SystemTimeProvider, TimeProvider};
 

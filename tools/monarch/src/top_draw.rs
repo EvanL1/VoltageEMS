@@ -6,7 +6,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Tabs};
 
-use crate::top::{format_time, is_stale, Depth, TopState, View};
+use crate::top::{Depth, TopState, View, format_time, is_stale};
 
 pub fn draw_ui(f: &mut ratatui::Frame, state: &TopState) {
     let chunks = Layout::default()

@@ -79,11 +79,7 @@ impl ShmHandle {
     #[inline]
     pub fn layout(&self) -> Option<Guard<Option<Arc<ShmLayout>>>> {
         let guard = self.layout.load();
-        if guard.is_some() {
-            Some(guard)
-        } else {
-            None
-        }
+        if guard.is_some() { Some(guard) } else { None }
     }
 
     /// Load current layout Arc (clones the Arc, slightly more expensive than guard).

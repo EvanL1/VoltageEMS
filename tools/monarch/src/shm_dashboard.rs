@@ -4,16 +4,16 @@
 
 use anyhow::{Context, Result};
 use common::PointType;
+use crossterm::ExecutableCommand;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
-use ratatui::Terminal;
 use std::io;
 use std::time::{Duration, Instant};
 use voltage_model::KeySpaceConfig;
@@ -109,20 +109,19 @@ fn run_dashboard_loop(
         terminal.draw(|f| draw_dashboard(f, reader, routing_cache, state))?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).context("Failed to poll events")? {
-            if let Event::Key(key) = event::read().context("Failed to read event")? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Up | KeyCode::Char('k') => state.scroll_up(),
-                        KeyCode::Down | KeyCode::Char('j') => state.scroll_down(state.points.len()),
-                        KeyCode::Char('r') => {
-                            state.last_instance_count = 0;
-                            state.last_channel_count = 0;
-                        },
-                        _ => {},
-                    }
-                }
+        if event::poll(timeout).context("Failed to poll events")?
+            && let Event::Key(key) = event::read().context("Failed to read event")?
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                KeyCode::Up | KeyCode::Char('k') => state.scroll_up(),
+                KeyCode::Down | KeyCode::Char('j') => state.scroll_down(state.points.len()),
+                KeyCode::Char('r') => {
+                    state.last_instance_count = 0;
+                    state.last_channel_count = 0;
+                },
+                _ => {},
             }
         }
 
@@ -201,10 +200,10 @@ fn update_point_values(
     points: &mut [PointRow],
 ) {
     for point in points.iter_mut() {
-        if let Ok(key) = parse_key(&point.key) {
-            if let Some(value) = get_value(reader, &key, routing_cache) {
-                point.value = value;
-            }
+        if let Ok(key) = parse_key(&point.key)
+            && let Some(value) = get_value(reader, &key, routing_cache)
+        {
+            point.value = value;
         }
     }
 }

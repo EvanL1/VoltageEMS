@@ -1,14 +1,14 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::{
+    Router,
     extract::{Multipart, Path, State},
     http::StatusCode,
     response::Json,
     routing::{delete, get, post},
-    Router,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::error;
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -342,7 +342,7 @@ async fn cert_upload(
                 Json(
                     json!({"success": false, "message": format!("Unsupported cert_type: '{}'. Valid: ca_cert | client_cert | client_key", cert_type)}),
                 ),
-            ))
+            ));
         },
     };
 
@@ -476,7 +476,7 @@ async fn cert_delete(
                 Json(
                     json!({"success": false, "message": "Unknown cert_type. Valid: ca_cert | client_cert | client_key"}),
                 ),
-            ))
+            ));
         },
     };
 

@@ -6,7 +6,7 @@
 
 use serde_json::json;
 use sqlx::SqlitePool;
-use voltage_rules::{delete_rule, extract_rule_flow, get_rule, list_rules, upsert_rule, Result};
+use voltage_rules::{Result, delete_rule, extract_rule_flow, get_rule, list_rules, upsert_rule};
 
 /// Create an in-memory SQLite pool and initialize tables
 async fn setup_test_db() -> SqlitePool {

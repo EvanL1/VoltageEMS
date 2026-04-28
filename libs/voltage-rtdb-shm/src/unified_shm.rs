@@ -30,11 +30,11 @@
 use crate::channel_points::ChannelPointCounts;
 use crate::shared_config::SharedConfig;
 use crate::vec_impl::PointSlot;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use voltage_model::PointType;
 use voltage_routing::RoutingCache;
 
@@ -506,16 +506,16 @@ impl UnifiedWriter {
         raw: f64,
         timestamp_ms: u64,
     ) -> bool {
-        if let Some(layout) = self.channel_layouts.get(channel_id as usize) {
-            if let Some(slot) = layout.slot(point_type, point_id) {
-                self.slot_at(slot).set(value, raw, timestamp_ms);
-                self.mark_dirty_slot(slot);
-                // Update heartbeat
-                self.header()
-                    .writer_heartbeat
-                    .store(timestamp_ms, Ordering::Relaxed);
-                return true;
-            }
+        if let Some(layout) = self.channel_layouts.get(channel_id as usize)
+            && let Some(slot) = layout.slot(point_type, point_id)
+        {
+            self.slot_at(slot).set(value, raw, timestamp_ms);
+            self.mark_dirty_slot(slot);
+            // Update heartbeat
+            self.header()
+                .writer_heartbeat
+                .store(timestamp_ms, Ordering::Relaxed);
+            return true;
         }
         false
     }
@@ -1205,10 +1205,10 @@ impl UnifiedReader {
         F: FnMut(u32, f64),
     {
         for ((ch_id, pt_type, ch_pt_id), target) in routing_cache.c2m_iter() {
-            if target.instance_id == instance_id {
-                if let Some((val, _ts)) = self.get_channel(ch_id, pt_type.to_u8(), ch_pt_id) {
-                    f(target.point_id, val);
-                }
+            if target.instance_id == instance_id
+                && let Some((val, _ts)) = self.get_channel(ch_id, pt_type.to_u8(), ch_pt_id)
+            {
+                f(target.point_id, val);
             }
         }
     }
@@ -1221,14 +1221,14 @@ impl UnifiedReader {
         // M2C: (instance, point_type, point) → (channel, type, point)
         // Filter by instance_id
         for ((inst_id, _inst_type, inst_pt_id), target) in routing_cache.m2c_iter() {
-            if inst_id == instance_id {
-                if let Some((val, _ts)) = self.get_channel(
+            if inst_id == instance_id
+                && let Some((val, _ts)) = self.get_channel(
                     target.channel_id,
                     target.point_type.to_u8(),
                     target.point_id,
-                ) {
-                    f(inst_pt_id, val);
-                }
+                )
+            {
+                f(inst_pt_id, val);
             }
         }
     }

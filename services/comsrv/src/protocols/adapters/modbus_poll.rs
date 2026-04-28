@@ -221,19 +221,19 @@ async fn read_register_segment<'a>(
         if end <= registers.len() {
             let point_regs = &registers[offset..end];
 
-            if let ProtocolAddress::Modbus(modbus_addr) = &point.address {
-                if let Ok(value) = decode_registers(
+            if let ProtocolAddress::Modbus(modbus_addr) = &point.address
+                && let Ok(value) = decode_registers(
                     point_regs,
                     modbus_addr.format,
                     modbus_addr.byte_order,
                     modbus_addr.bit_position,
-                ) {
-                    let transformed = apply_transform(value, &point.transform);
-                    results.push((
-                        point.id,
-                        DataPoint::new(point.id, point.point_type, transformed),
-                    ));
-                }
+                )
+            {
+                let transformed = apply_transform(value, &point.transform);
+                results.push((
+                    point.id,
+                    DataPoint::new(point.id, point.point_type, transformed),
+                ));
             }
         }
     }

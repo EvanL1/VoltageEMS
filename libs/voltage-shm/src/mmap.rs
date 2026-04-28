@@ -8,9 +8,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::traits::{ShmOps, ShmOpsExt};
 use crate::DEFAULT_SHM_PATH;
-use voltage_core::shm::{shm_size, slot_flags, PointSlot, ShmHeader, HEADER_SIZE, SLOT_SIZE};
+use crate::traits::{ShmOps, ShmOpsExt};
+use voltage_core::shm::{HEADER_SIZE, PointSlot, SLOT_SIZE, ShmHeader, shm_size, slot_flags};
 
 /// Shared memory error.
 #[derive(Debug)]

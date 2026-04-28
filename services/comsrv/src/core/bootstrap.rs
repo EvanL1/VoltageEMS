@@ -11,8 +11,8 @@ use clap::Parser;
 use tracing::{debug, info};
 
 use crate::core::config::DEFAULT_PORT;
-use common::service_bootstrap::ServiceInfo;
 use common::DEFAULT_API_HOST;
+use common::service_bootstrap::ServiceInfo;
 use errors::{VoltageError, VoltageResult};
 
 use crate::core::config::ConfigManager;

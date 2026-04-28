@@ -14,7 +14,7 @@
 //! assert_eq!(result, 20.0);
 //! ```
 
-use evalexpr::{eval_number_with_context, ContextWithMutableVariables, HashMapContext, Value};
+use evalexpr::{ContextWithMutableVariables, HashMapContext, Value, eval_number_with_context};
 use std::collections::HashMap;
 
 /// Evaluate a mathematical formula with variable substitution

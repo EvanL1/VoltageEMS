@@ -6,8 +6,8 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 
 /// Spawn background log compression task.
 ///

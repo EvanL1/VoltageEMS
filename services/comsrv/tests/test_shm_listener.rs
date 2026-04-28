@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use comsrv::core::channels::types::ChannelCommand;
 use comsrv::core::channels::ShmCommandListener;
+use comsrv::core::channels::types::ChannelCommand;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::timeout;

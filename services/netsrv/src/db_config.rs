@@ -112,19 +112,11 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
         client_id: get("client_id", "auto"),
         username: {
             let v = get("username", "");
-            if v.is_empty() {
-                None
-            } else {
-                Some(v)
-            }
+            if v.is_empty() { None } else { Some(v) }
         },
         password: {
             let v = get("password", "");
-            if v.is_empty() {
-                None
-            } else {
-                Some(v)
-            }
+            if v.is_empty() { None } else { Some(v) }
         },
         ssl_enabled: get("ssl_enabled", "false") == "true",
         reconnect_delay_secs: get("reconnect_delay_secs", "10").parse().unwrap_or(10),

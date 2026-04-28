@@ -43,8 +43,8 @@ pub use self::core::logging::{
     LoggableProtocol, PacketDirection, PacketMetadata,
 };
 pub use self::core::metadata::{
-    get_protocol_registry, DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
-    ProtocolMetadata, ProtocolRegistry,
+    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType, ProtocolMetadata,
+    ProtocolRegistry, get_protocol_registry,
 };
 pub use self::core::quality::Quality;
 pub use self::core::traits::{
@@ -56,6 +56,6 @@ pub use self::config::ChannelBuildResult;
 
 // Re-export gateway types
 pub use self::gateway::{
-    parse_address, ChannelConfig, ChannelMode, ChannelModeConfig, ChannelRuntime, ConfigError,
-    GatewayConfig, GatewayGlobalConfig, PointDef,
+    ChannelConfig, ChannelMode, ChannelModeConfig, ChannelRuntime, ConfigError, GatewayConfig,
+    GatewayGlobalConfig, PointDef, parse_address,
 };

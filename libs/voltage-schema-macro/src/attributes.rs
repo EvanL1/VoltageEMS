@@ -2,7 +2,7 @@
 //!
 //! This module uses `darling` to parse derive macro attributes in a type-safe way.
 
-use darling::{ast, FromDeriveInput, FromField, FromMeta};
+use darling::{FromDeriveInput, FromField, FromMeta, ast};
 use syn::Ident;
 
 /// Table-level attributes (#[table(...)])

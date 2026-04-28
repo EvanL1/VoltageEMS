@@ -23,7 +23,7 @@ use tracing::warn;
 pub async fn wait_for_shutdown() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let term_signal = match signal(SignalKind::terminate()) {
             Ok(sig) => Some(sig),

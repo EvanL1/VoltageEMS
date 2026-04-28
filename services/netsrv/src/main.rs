@@ -15,8 +15,8 @@
 //! Runtime settings (broker URL, intervals, Redis patterns) are persisted in
 //! the shared SQLite `netsrv_config` table.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use sqlx::sqlite::SqlitePoolOptions;
 use tokio::sync::{Mutex, Notify, RwLock};

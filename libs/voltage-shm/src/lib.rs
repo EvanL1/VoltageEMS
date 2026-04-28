@@ -59,8 +59,8 @@
 
 // Re-export core types
 pub use voltage_core::shm::{
-    shm_size, slot_offset, PointSlot, ShmHeader, DEFAULT_MAX_SLOTS, HEADER_SIZE, SHM_MAGIC,
-    SHM_VERSION, SLOT_SIZE,
+    DEFAULT_MAX_SLOTS, HEADER_SIZE, PointSlot, SHM_MAGIC, SHM_VERSION, SLOT_SIZE, ShmHeader,
+    shm_size, slot_offset,
 };
 pub use voltage_core::{PointType, Quality};
 

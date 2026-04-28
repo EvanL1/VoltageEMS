@@ -23,7 +23,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use modsrv::rule_routes::{create_rule_routes, RuleEngineState};
+use modsrv::rule_routes::{RuleEngineState, create_rule_routes};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;

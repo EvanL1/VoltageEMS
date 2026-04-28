@@ -361,32 +361,32 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
             }
 
             // Batch direct trigger for C/A types (only if any points succeeded)
-            if !direct_points.is_empty() {
-                if let Some(tx) = state.command_tx_cache.get_tx(channel_id) {
-                    let cmd = match point_type {
-                        PointType::Control => ChannelCommand::BatchControl {
-                            command_id: format!("batch_{}_{}", channel_id, batch_ts),
-                            points: direct_points,
-                            timestamp: batch_ts / 1000,
-                        },
-                        PointType::Adjustment => ChannelCommand::BatchAdjustment {
-                            command_id: format!("batch_{}_{}", channel_id, batch_ts),
-                            points: direct_points,
-                            timestamp: batch_ts / 1000,
-                        },
-                        _ => {
-                            tracing::warn!(
-                                "Unexpected point_type {:?} in batch write_channel_point",
-                                point_type
-                            );
-                            return Err(AppError::bad_request(
-                                "Only Control and Adjustment point types are supported",
-                            ));
-                        },
-                    };
-                    if tx.send(cmd).await.is_err() {
-                        tracing::warn!("Batch direct trigger failed Ch{}, Redis-only", channel_id);
-                    }
+            if !direct_points.is_empty()
+                && let Some(tx) = state.command_tx_cache.get_tx(channel_id)
+            {
+                let cmd = match point_type {
+                    PointType::Control => ChannelCommand::BatchControl {
+                        command_id: format!("batch_{}_{}", channel_id, batch_ts),
+                        points: direct_points,
+                        timestamp: batch_ts / 1000,
+                    },
+                    PointType::Adjustment => ChannelCommand::BatchAdjustment {
+                        command_id: format!("batch_{}_{}", channel_id, batch_ts),
+                        points: direct_points,
+                        timestamp: batch_ts / 1000,
+                    },
+                    _ => {
+                        tracing::warn!(
+                            "Unexpected point_type {:?} in batch write_channel_point",
+                            point_type
+                        );
+                        return Err(AppError::bad_request(
+                            "Only Control and Adjustment point types are supported",
+                        ));
+                    },
+                };
+                if tx.send(cmd).await.is_err() {
+                    tracing::warn!("Batch direct trigger failed Ch{}, Redis-only", channel_id);
                 }
             }
 

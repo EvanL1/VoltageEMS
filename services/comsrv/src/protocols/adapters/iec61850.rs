@@ -48,7 +48,7 @@ use crate::protocols::core::traits::{
 };
 use crate::protocols::gateway::ChannelRuntime;
 
-use self::mms::{build_read_request, parse_read_response, MmsValue};
+use self::mms::{MmsValue, build_read_request, parse_read_response};
 use self::transport::Framer;
 
 // ── Timeout defaults ──────────────────────────────────────────────────────────

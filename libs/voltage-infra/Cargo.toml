@@ -1,7 +1,7 @@
 [package]
 name = "voltage-infra"
 version.workspace = true
-edition = "2021"
+edition = "2024"
 description = "Infrastructure layer for VoltageEMS (Redis, SQLite)"
 
 [features]

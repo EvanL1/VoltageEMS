@@ -6,7 +6,7 @@
 use crate::traits::{ShmOps, ShmOpsExt};
 use core::ptr;
 use voltage_core::shm::{
-    slot_flags, PointSlot, ShmHeader, HEADER_SIZE, SHM_MAGIC, SHM_VERSION, SLOT_SIZE,
+    HEADER_SIZE, PointSlot, SHM_MAGIC, SHM_VERSION, SLOT_SIZE, ShmHeader, slot_flags,
 };
 
 /// Raw pointer based shared memory.

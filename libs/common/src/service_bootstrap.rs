@@ -4,7 +4,7 @@
 //! including startup banners, logging initialization, and environment setup.
 
 use crate::logging::{self, LogConfig};
-use tracing::{debug, info, Level};
+use tracing::{Level, debug, info};
 
 /// Service metadata for startup
 pub struct ServiceInfo {
@@ -142,7 +142,8 @@ pub fn load_development_env() {
 
                     // Only set if not already set
                     if std::env::var(key).is_err() {
-                        std::env::set_var(key, value);
+                        // TODO: Audit that the environment access only happens in single-threaded code.
+                        unsafe { std::env::set_var(key, value) };
                     }
                 }
             }
@@ -205,18 +206,18 @@ pub fn get_service_port(config_port: u16, service: &ServiceInfo) -> u16 {
 
     if is_default {
         // Try SERVICE_PORT first (unified across all services)
-        if let Ok(port) = std::env::var("SERVICE_PORT") {
-            if let Ok(p) = port.parse::<u16>() {
-                return p;
-            }
+        if let Ok(port) = std::env::var("SERVICE_PORT")
+            && let Ok(p) = port.parse::<u16>()
+        {
+            return p;
         }
 
         // Fallback to service-specific environment variable
         let env_var = format!("{}_PORT", service.name.to_uppercase());
-        if let Ok(port) = std::env::var(&env_var) {
-            if let Ok(p) = port.parse::<u16>() {
-                return p;
-            }
+        if let Ok(port) = std::env::var(&env_var)
+            && let Ok(p) = port.parse::<u16>()
+        {
+            return p;
         }
     }
 

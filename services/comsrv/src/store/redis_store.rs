@@ -121,11 +121,11 @@ impl<R: Rtdb> RedisDataStore<R> {
         // Check if task already running (prevent concurrent start race)
         {
             let guard = self.flush_handle.read().await;
-            if let Some(ref handle) = *guard {
-                if !handle.is_finished() {
-                    debug!("Flush task already running, skipping start");
-                    return;
-                }
+            if let Some(ref handle) = *guard
+                && !handle.is_finished()
+            {
+                debug!("Flush task already running, skipping start");
+                return;
             }
         }
 
@@ -159,7 +159,9 @@ impl<R: Rtdb> RedisDataStore<R> {
                 Ok(Ok(())) => debug!("RedisDataStore flush task stopped gracefully"),
                 Ok(Err(e)) => warn!("RedisDataStore flush task panicked: {}", e),
                 Err(_) => {
-                    warn!("RedisDataStore flush task did not stop in time, performing final flush before abort");
+                    warn!(
+                        "RedisDataStore flush task did not stop in time, performing final flush before abort"
+                    );
                     // Flush any remaining buffered data before aborting to prevent data loss
                     match self.write_buffer.flush_now(&*self.rtdb).await {
                         Ok(count) => {
@@ -191,10 +193,7 @@ impl<R: Rtdb> RedisDataStore<R> {
                 None => {
                     trace!(
                         "Ch{} [{:?}] Point {}: non-numeric value {:?}, defaulting to 0.0",
-                        channel_id,
-                        point.point_type,
-                        point.id,
-                        point.value
+                        channel_id, point.point_type, point.id, point.value
                     );
                     0.0
                 },
@@ -203,9 +202,7 @@ impl<R: Rtdb> RedisDataStore<R> {
             // Use trace! to avoid flooding logs - only visible with RUST_LOG=trace
             trace!(
                 "[{:?}] Point {}: value={:.2}",
-                point.point_type,
-                point.id,
-                value
+                point.point_type, point.id, value
             );
 
             updates.push(ChannelPointUpdate {
@@ -254,30 +251,33 @@ impl<R: Rtdb> RedisDataStore<R> {
 
         // Select write path: prefer shared memory direct write for best performance
         let _stats = if let Some(handle) = &self.shm_handle {
-            if let Some(layout_guard) = handle.layout() {
-                if let Some(layout) = layout_guard.as_ref() {
-                    // Fast path: direct shared memory write with pre-computed channel → slot mapping
-                    voltage_rtdb_shm::write_channel_batch_direct(
-                        &layout.writer,
-                        &layout.index,
-                        &self.routing_cache,
-                        updates,
-                    )
-                } else {
+            match handle.layout() {
+                Some(layout_guard) => {
+                    if let Some(layout) = layout_guard.as_ref() {
+                        // Fast path: direct shared memory write with pre-computed channel → slot mapping
+                        voltage_rtdb_shm::write_channel_batch_direct(
+                            &layout.writer,
+                            &layout.index,
+                            &self.routing_cache,
+                            updates,
+                        )
+                    } else {
+                        // SHM handle exists but writer/index not yet initialized
+                        voltage_routing::write_channel_batch_buffered(
+                            &self.write_buffer,
+                            &self.routing_cache,
+                            updates,
+                        )
+                    }
+                },
+                _ => {
                     // SHM handle exists but writer/index not yet initialized
                     voltage_routing::write_channel_batch_buffered(
                         &self.write_buffer,
                         &self.routing_cache,
                         updates,
                     )
-                }
-            } else {
-                // SHM handle exists but writer/index not yet initialized
-                voltage_routing::write_channel_batch_buffered(
-                    &self.write_buffer,
-                    &self.routing_cache,
-                    updates,
-                )
+                },
             }
         } else {
             // Fallback path: buffered write to Redis only
@@ -334,15 +334,14 @@ impl<R: Rtdb> Drop for RedisDataStore<R> {
     fn drop(&mut self) {
         // Use try_write to avoid blocking in async context (e.g., tokio tests)
         // If we can't acquire the lock, the task will be cleaned up by tokio anyway
-        if let Ok(mut guard) = self.flush_handle.try_write() {
-            if let Some(handle) = guard.take() {
-                if !handle.is_finished() {
-                    warn!("RedisDataStore dropped without shutdown, aborting flush task");
-                    // Signal shutdown first to allow graceful exit
-                    self.shutdown_notify.notify_one();
-                    handle.abort();
-                }
-            }
+        if let Ok(mut guard) = self.flush_handle.try_write()
+            && let Some(handle) = guard.take()
+            && !handle.is_finished()
+        {
+            warn!("RedisDataStore dropped without shutdown, aborting flush task");
+            // Signal shutdown first to allow graceful exit
+            self.shutdown_notify.notify_one();
+            handle.abort();
         }
     }
 }

@@ -370,27 +370,26 @@ impl ConfigExporter {
             };
 
             // Parse config JSON (consistent with sqlite_loader)
-            if let Some(config_json) = config_str {
-                if let Ok(config_value) = serde_json::from_str::<serde_json::Value>(&config_json) {
-                    // Extract description
-                    channel.core.description = config_value
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .map(|s| s.to_string());
+            if let Some(config_json) = config_str
+                && let Ok(config_value) = serde_json::from_str::<serde_json::Value>(&config_json)
+            {
+                // Extract description
+                channel.core.description = config_value
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(|s| s.to_string());
 
-                    // Extract parameters from nested "parameters" field
-                    if let Some(serde_json::Value::Object(params)) = config_value.get("parameters")
-                    {
-                        channel.parameters =
-                            params.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                    }
+                // Extract parameters from nested "parameters" field
+                if let Some(serde_json::Value::Object(params)) = config_value.get("parameters") {
+                    channel.parameters =
+                        params.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                }
 
-                    // Extract logging config if present
-                    if let Some(logging_val) = config_value.get("logging") {
-                        if let Ok(logging) = serde_json::from_value(logging_val.clone()) {
-                            channel.logging = logging;
-                        }
-                    }
+                // Extract logging config if present
+                if let Some(logging_val) = config_value.get("logging")
+                    && let Ok(logging) = serde_json::from_value(logging_val.clone())
+                {
+                    channel.logging = logging;
                 }
             }
 
@@ -569,12 +568,11 @@ impl ConfigExporter {
                 serde_yml::Value::String(product_name),
             );
 
-            if let Some(props_json) = properties_str {
-                if let Ok(props) = serde_json::from_str::<serde_json::Value>(&props_json) {
-                    if let Ok(yaml_props) = serde_yml::to_value(props) {
-                        instance_data.insert("properties".to_string(), yaml_props);
-                    }
-                }
+            if let Some(props_json) = properties_str
+                && let Ok(props) = serde_json::from_str::<serde_json::Value>(&props_json)
+                && let Ok(yaml_props) = serde_yml::to_value(props)
+            {
+                instance_data.insert("properties".to_string(), yaml_props);
             }
 
             instances.insert(instance_name, instance_data);
@@ -840,7 +838,7 @@ fn insert_nested(root: &mut serde_yml::Mapping, parts: &[&str], value: serde_yml
         .entry(key)
         .or_insert_with(|| serde_yml::Value::Mapping(serde_yml::Mapping::new()));
 
-    if let serde_yml::Value::Mapping(ref mut nested) = entry {
+    if let serde_yml::Value::Mapping(nested) = entry {
         insert_nested(nested, &parts[1..], value);
     }
 }

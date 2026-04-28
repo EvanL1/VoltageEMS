@@ -14,7 +14,7 @@
 //! - FC10: Write Multiple Registers
 
 use crate::coils::CoilStore;
-use crate::devices::{generate_registers, DeviceMap};
+use crate::devices::{DeviceMap, generate_registers};
 use crate::scenarios::{DeviceConfig, FaultConfig, FaultScenario};
 use crate::state_machine::StateMachineStore;
 use crate::writable::WritableRegisters;
@@ -157,13 +157,12 @@ async fn handle_connection(
         }
 
         // Check for fault injection
-        if faults.enabled {
-            if let Some(fault) = check_faults(&faults.scenarios) {
-                if let Some(response) = handle_fault(fault, &buf[..7 + pdu_len]).await {
-                    stream.write_all(&response).await?;
-                    continue;
-                }
-            }
+        if faults.enabled
+            && let Some(fault) = check_faults(&faults.scenarios)
+            && let Some(response) = handle_fault(fault, &buf[..7 + pdu_len]).await
+        {
+            stream.write_all(&response).await?;
+            continue;
         }
 
         // Process request
@@ -366,16 +365,16 @@ fn process_request(
 
             coil_store.write_coil(unit_id, addr, value);
 
-            if let Some(sm) = sm_store.get(&unit_id) {
-                if let Some(new_state) = sm.on_coil_write(addr, value) {
-                    info!(
-                        "State transition: unit={} -> {} (coil {}={})",
-                        unit_id,
-                        new_state.as_str(),
-                        addr,
-                        value
-                    );
-                }
+            if let Some(sm) = sm_store.get(&unit_id)
+                && let Some(new_state) = sm.on_coil_write(addr, value)
+            {
+                info!(
+                    "State transition: unit={} -> {} (coil {}={})",
+                    unit_id,
+                    new_state.as_str(),
+                    addr,
+                    value
+                );
             }
 
             build_write_single_coil_response(transaction_id, unit_id, addr, value)
@@ -405,16 +404,16 @@ fn process_request(
             // Store the written value for subsequent reads
             writable.write_single(unit_id, addr, value);
 
-            if let Some(sm) = sm_store.get(&unit_id) {
-                if let Some(new_state) = sm.on_register_write(addr, value) {
-                    info!(
-                        "State transition: unit={} -> {} (reg {}={})",
-                        unit_id,
-                        new_state.as_str(),
-                        addr,
-                        value
-                    );
-                }
+            if let Some(sm) = sm_store.get(&unit_id)
+                && let Some(new_state) = sm.on_register_write(addr, value)
+            {
+                info!(
+                    "State transition: unit={} -> {} (reg {}={})",
+                    unit_id,
+                    new_state.as_str(),
+                    addr,
+                    value
+                );
             }
 
             build_write_single_response(transaction_id, unit_id, addr, value)
@@ -729,7 +728,7 @@ fn check_faults(scenarios: &[FaultScenario]) -> Option<&FaultScenario> {
             FaultScenario::NoResponse { probability } => *probability,
         };
 
-        if rng.gen::<f64>() < probability {
+        if rng.r#gen::<f64>() < probability {
             return Some(scenario);
         }
     }

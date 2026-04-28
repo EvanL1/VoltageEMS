@@ -3,8 +3,8 @@
 //! Provides the low-latency M2C (modsrv-to-comsrv) dispatch path via shared memory
 //! and Unix Domain Socket notifications.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -179,7 +179,9 @@ impl ActionDispatch for ShmDispatch {
         {
             Ok(guard) => guard,
             Err(_) => {
-                warn!("ShmNotifier lock timeout; SHM value written but UDS notification skipped — action may not reach comsrv");
+                warn!(
+                    "ShmNotifier lock timeout; SHM value written but UDS notification skipped — action may not reach comsrv"
+                );
                 return DispatchOutcome::ShmOnly {
                     reason: "notifier lock timeout",
                 };

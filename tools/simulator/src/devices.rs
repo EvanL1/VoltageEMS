@@ -129,8 +129,8 @@ mod tests {
     #[test]
     fn test_create_constant_generator() {
         let config = GeneratorConfig::Constant { value: 100.0 };
-        let gen = create_generator(&config).unwrap();
-        assert_eq!(gen.generate(0), 100.0);
+        let generator = create_generator(&config).unwrap();
+        assert_eq!(generator.generate(0), 100.0);
     }
 
     #[test]

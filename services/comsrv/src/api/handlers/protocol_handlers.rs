@@ -2,7 +2,7 @@
 //!
 //! Provides endpoints for discovering available protocols and their configuration options.
 
-use crate::protocols::{get_protocol_registry, DriverMetadata, ProtocolMetadata};
+use crate::protocols::{DriverMetadata, ProtocolMetadata, get_protocol_registry};
 use axum::response::Json;
 use serde::Serialize;
 

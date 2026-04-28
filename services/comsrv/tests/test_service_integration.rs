@@ -334,22 +334,24 @@ logging:
             match child.try_wait() {
                 Ok(Some(status)) => {
                     // Process has exited
-                    let stdout = if let Some(mut out) = child.stdout.take() {
-                        let mut buffer = String::new();
-                        use std::io::Read;
-                        out.read_to_string(&mut buffer).ok();
-                        buffer
-                    } else {
-                        String::new()
+                    let stdout = match child.stdout.take() {
+                        Some(mut out) => {
+                            let mut buffer = String::new();
+                            use std::io::Read;
+                            out.read_to_string(&mut buffer).ok();
+                            buffer
+                        },
+                        _ => String::new(),
                     };
 
-                    let stderr = if let Some(mut err) = child.stderr.take() {
-                        let mut buffer = String::new();
-                        use std::io::Read;
-                        err.read_to_string(&mut buffer).ok();
-                        buffer
-                    } else {
-                        String::new()
+                    let stderr = match child.stderr.take() {
+                        Some(mut err) => {
+                            let mut buffer = String::new();
+                            use std::io::Read;
+                            err.read_to_string(&mut buffer).ok();
+                            buffer
+                        },
+                        _ => String::new(),
                     };
 
                     return Err(anyhow::anyhow!(
@@ -490,7 +492,7 @@ impl Drop for ServiceTestEnvironment {
 #[ignore] // requires Redis
 async fn test_service_startup_and_health() -> Result<()> {
     let mut rng = rand::thread_rng();
-    let test_id = rng.gen::<u32>();
+    let test_id = rng.r#gen::<u32>();
     // Use directory for db_path, Monarch init all creates voltage.db inside it
     let db_dir = format!("/tmp/comsrv_test_{:08x}", test_id);
     let db_path = format!("{}/voltage.db", db_dir);
@@ -529,7 +531,7 @@ async fn test_service_startup_and_health() -> Result<()> {
 #[ignore] // requires Redis
 async fn test_service_api_endpoints() -> Result<()> {
     let mut rng = rand::thread_rng();
-    let test_id = rng.gen::<u32>();
+    let test_id = rng.r#gen::<u32>();
     let db_dir = format!("/tmp/comsrv_api_test_{:08x}", test_id);
     let db_path = format!("{}/voltage.db", db_dir);
     let mut env = ServiceTestEnvironment::new(random_test_port()).await?;
@@ -581,7 +583,7 @@ async fn test_service_api_endpoints() -> Result<()> {
 #[ignore] // requires Redis
 async fn test_service_redis_connectivity() -> Result<()> {
     let mut rng = rand::thread_rng();
-    let test_id = rng.gen::<u32>();
+    let test_id = rng.r#gen::<u32>();
     let db_dir = format!("/tmp/comsrv_redis_test_{:08x}", test_id);
     let db_path = format!("{}/voltage.db", db_dir);
     let mut env = ServiceTestEnvironment::new(random_test_port()).await?;
@@ -614,7 +616,7 @@ async fn test_service_redis_connectivity() -> Result<()> {
 #[ignore] // requires Redis
 async fn test_service_graceful_shutdown() -> Result<()> {
     let mut rng = rand::thread_rng();
-    let test_id = rng.gen::<u32>();
+    let test_id = rng.r#gen::<u32>();
     let db_dir = format!("/tmp/comsrv_shutdown_test_{:08x}", test_id);
     let db_path = format!("{}/voltage.db", db_dir);
     let mut env = ServiceTestEnvironment::new(random_test_port()).await?;
@@ -677,7 +679,7 @@ async fn test_service_handles_invalid_database() -> Result<()> {
 #[ignore] // requires Redis
 async fn test_service_memory_stability() -> Result<()> {
     let mut rng = rand::thread_rng();
-    let test_id = rng.gen::<u32>();
+    let test_id = rng.r#gen::<u32>();
     let db_dir = format!("/tmp/comsrv_memory_test_{:08x}", test_id);
     let db_path = format!("{}/voltage.db", db_dir);
     let mut env = ServiceTestEnvironment::new(random_test_port()).await?;

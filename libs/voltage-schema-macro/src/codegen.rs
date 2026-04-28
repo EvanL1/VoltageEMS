@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn test_get_column_name() {
         use darling::FromField;
-        use syn::{parse_quote, Field};
+        use syn::{Field, parse_quote};
 
         // Field with explicit name
         let field: Field = parse_quote! {

@@ -431,16 +431,16 @@ impl ConfigSyncer {
         // Validate channel name uniqueness
         let mut channel_names = std::collections::HashMap::new();
         for (idx, channel) in channels.iter().enumerate() {
-            if let Some(name) = channel.get("name").and_then(|v| v.as_str()) {
-                if let Some(existing_idx) = channel_names.insert(name.to_string(), idx) {
-                    return Err(anyhow::anyhow!(
-                        "Duplicate channel name '{}' found at indices {} and {}. \
+            if let Some(name) = channel.get("name").and_then(|v| v.as_str())
+                && let Some(existing_idx) = channel_names.insert(name.to_string(), idx)
+            {
+                return Err(anyhow::anyhow!(
+                    "Duplicate channel name '{}' found at indices {} and {}. \
                          Channel names must be unique. Please rename one of the channels in comsrv.yaml.",
-                        name,
-                        existing_idx,
-                        idx
-                    ));
-                }
+                    name,
+                    existing_idx,
+                    idx
+                ));
             }
         }
 

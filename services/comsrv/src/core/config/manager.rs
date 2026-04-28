@@ -286,7 +286,8 @@ mod tests {
         let (_temp_dir, db_path) = create_test_database().await;
 
         // Set environment variable
-        std::env::set_var("VOLTAGE_DB_PATH", &db_path);
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("VOLTAGE_DB_PATH", &db_path) };
 
         let manager = ConfigManager::load().await;
         assert!(manager.is_ok(), "Should load with env variable");
@@ -295,7 +296,8 @@ mod tests {
         assert_eq!(manager.service_config().name, "comsrv");
 
         // Clean up
-        std::env::remove_var("VOLTAGE_DB_PATH");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("VOLTAGE_DB_PATH") };
     }
 
     #[tokio::test]
@@ -304,7 +306,8 @@ mod tests {
         // We don't create a database at the default path
 
         // Make sure env var is not set
-        std::env::remove_var("VOLTAGE_DB_PATH");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("VOLTAGE_DB_PATH") };
 
         let result = ConfigManager::load().await;
         assert!(result.is_err(), "Should fail when database not found");

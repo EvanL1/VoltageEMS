@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use voltage_model::PointType;
 use voltage_routing::RoutingCache;
-use voltage_routing::{write_channel_batch, ChannelPointUpdate};
+use voltage_routing::{ChannelPointUpdate, write_channel_batch};
 use voltage_rtdb::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, MemoryRtdb};
 

@@ -217,7 +217,7 @@ pub async fn search_instances(
                 return Err(ModSrvError::InternalError(format!(
                     "Failed to search instances: {}",
                     e
-                )))
+                )));
             },
         }
     } else {
@@ -238,7 +238,7 @@ pub async fn search_instances(
                     return Err(ModSrvError::InternalError(format!(
                         "Failed to load instance {}: {}",
                         id, e
-                    )))
+                    )));
                 },
             }
         }

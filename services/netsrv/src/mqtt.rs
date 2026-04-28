@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// MQTT connection lifecycle and incoming-message dispatch.
 ///
 /// Architecture:
@@ -8,7 +9,6 @@
 /// - A shared `Arc<Mutex<Option<AsyncClient>>>` in `AppState` is updated
 ///   every time a new connection is established, so other tasks can publish.
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use bytes::Bytes;
 use chrono::Utc;
@@ -96,10 +96,10 @@ async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> a
     options.set_clean_session(true);
 
     // MQTT username/password auth (only set when both are non-empty)
-    if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password) {
-        if !user.is_empty() {
-            options.set_credentials(user, pass);
-        }
+    if let (Some(user), Some(pass)) = (&cfg.username, &cfg.password)
+        && !user.is_empty()
+    {
+        options.set_credentials(user, pass);
     }
 
     // Last Will Testament: broker publishes this automatically on unexpected disconnect.

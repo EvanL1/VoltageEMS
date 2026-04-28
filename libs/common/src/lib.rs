@@ -33,11 +33,6 @@ pub use csv::{Reader, ReaderBuilder, StringRecord, Writer, WriterBuilder};
 
 // Re-export commonly used service_config types at crate root for convenience
 pub use service_config::{
-    // URL resolver functions
-    comsrv_url,
-    // Helpers
-    helpers,
-    modsrv_url,
     // Config types
     ApiConfig,
     BaseServiceConfig,
@@ -47,23 +42,6 @@ pub use service_config::{
     ComparisonOperator,
     // Validation
     ConfigValidator,
-    FourRemote,
-    GenericValidator,
-    InstanceReloadResult,
-    LogRotationConfig,
-    LoggingConfig,
-    PointType,
-    RedisConfig,
-    // Redis keys
-    RedisRoutingKeys,
-    ReloadResult,
-    ReloadableService,
-    RuleReloadResult,
-    // Database types
-    ServiceConfigRecord,
-    SyncMetadataRecord,
-    ValidationLevel,
-    ValidationResult,
     // Constants
     DEFAULT_API_HOST,
     DEFAULT_COMSRV_URL,
@@ -75,9 +53,31 @@ pub use service_config::{
     ENV_COMSRV_URL,
     ENV_MODSRV_URL,
     ENV_RULES_URL,
+    FourRemote,
+    GenericValidator,
+    InstanceReloadResult,
     LOCALHOST_HOST,
+    LogRotationConfig,
+    LoggingConfig,
+    PointType,
+    RedisConfig,
+    // Redis keys
+    RedisRoutingKeys,
+    ReloadResult,
+    ReloadableService,
+    RuleReloadResult,
     SERVICE_CONFIG_TABLE,
     SYNC_METADATA_TABLE,
+    // Database types
+    ServiceConfigRecord,
+    SyncMetadataRecord,
+    ValidationLevel,
+    ValidationResult,
+    // URL resolver functions
+    comsrv_url,
+    // Helpers
+    helpers,
+    modsrv_url,
 };
 
 // Re-export commonly used API types

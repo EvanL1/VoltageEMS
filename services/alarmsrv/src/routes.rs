@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
-    Json, Router,
 };
 use chrono::TimeZone;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::error;
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -328,10 +328,10 @@ async fn update_rule(
     Path(id): Path<i64>,
     Json(req): Json<UpdateRuleRequest>,
 ) -> impl IntoResponse {
-    if let Some(ref op) = req.operator {
-        if !is_valid_operator(op) {
-            return bad_request("Invalid operator. Allowed: >, <, >=, <=, ==, !=");
-        }
+    if let Some(ref op) = req.operator
+        && !is_valid_operator(op)
+    {
+        return bad_request("Invalid operator. Allowed: >, <, >=, <=, ==, !=");
     }
 
     // If renaming, ensure the new name does not clash with another rule
@@ -762,10 +762,10 @@ async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
     let mut rule_map: HashMap<i64, crate::models::AlertRule> = HashMap::new();
     for alert in &alerts {
-        if !rule_map.contains_key(&alert.rule_id) {
-            if let Ok(Some(rule)) = db::get_rule_by_id(&state.db, alert.rule_id).await {
-                rule_map.insert(rule.id, rule);
-            }
+        if !rule_map.contains_key(&alert.rule_id)
+            && let Ok(Some(rule)) = db::get_rule_by_id(&state.db, alert.rule_id).await
+        {
+            rule_map.insert(rule.id, rule);
         }
     }
 

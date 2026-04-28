@@ -3,8 +3,8 @@
 //! Contains ChannelEntry, ChannelMetadata, ChannelStats, and related helpers.
 
 use arc_swap::ArcSwapOption;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::task::JoinHandle;
 use tracing::warn;
@@ -16,7 +16,7 @@ use crate::runtime::reconnect::{AutoRecoveryPolicy, ReconnectPolicy};
 use crate::store::RedisDataStore;
 use voltage_rtdb::Rtdb;
 
-use super::channel_task::{run_unified_channel_task, ChannelPollContext};
+use super::channel_task::{ChannelPollContext, run_unified_channel_task};
 
 /// Maximum number of channel slots (pre-allocated for O(1) access)
 /// Channel IDs must be < MAX_CHANNELS
@@ -395,28 +395,30 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
     /// Use this only after `shutdown()` if the task doesn't exit in time.
     /// This is a last resort that may cause resource leaks.
     pub fn abort_task(&self) {
-        if let Ok(mut handle) = self.task_handle.lock() {
-            if let Some(h) = handle.take() {
-                if !h.is_finished() {
-                    warn!(
-                        "Ch{} task did not exit gracefully, aborting",
-                        self.channel_id()
-                    );
-                    h.abort();
-                }
-            }
+        if let Ok(mut handle) = self.task_handle.lock()
+            && let Some(h) = handle.take()
+            && !h.is_finished()
+        {
+            warn!(
+                "Ch{} task did not exit gracefully, aborting",
+                self.channel_id()
+            );
+            h.abort();
         }
     }
 
     /// Check if the unified task has finished.
     pub fn is_task_finished(&self) -> bool {
-        if let Ok(handle) = self.task_handle.lock() {
-            match handle.as_ref() {
-                Some(h) => h.is_finished(),
-                None => true, // Task was already taken/aborted
-            }
-        } else {
-            true // Lock poisoned, assume finished
+        match self.task_handle.lock() {
+            Ok(handle) => {
+                match handle.as_ref() {
+                    Some(h) => h.is_finished(),
+                    None => true, // Task was already taken/aborted
+                }
+            },
+            _ => {
+                true // Lock poisoned, assume finished
+            },
         }
     }
 

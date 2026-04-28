@@ -16,12 +16,11 @@ use utoipa_swagger_ui::SwaggerUi;
 #[cfg(feature = "swagger-ui")]
 use modsrv::rule_routes::RuleApiDoc;
 use modsrv::{
-    bootstrap, routes,
-    rule_routes::{create_rule_routes, RuleEngineState},
-    Result, RuleScheduler, DEFAULT_TICK_MS,
+    DEFAULT_TICK_MS, Result, RuleScheduler, bootstrap, routes,
+    rule_routes::{RuleEngineState, create_rule_routes},
 };
 use voltage_calc::RtdbStateStore;
-use voltage_rtdb_shm::{is_shm_available, SharedConfig, UnifiedReader};
+use voltage_rtdb_shm::{SharedConfig, UnifiedReader, is_shm_available};
 
 #[tokio::main]
 async fn main() -> Result<()> {

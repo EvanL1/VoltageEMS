@@ -246,7 +246,9 @@ pub async fn handle_command(cmd: RuleCommands, base_url: &str, json: bool) -> Re
                 body.insert("flow_json".into(), flow);
             }
             if body.is_empty() {
-                anyhow::bail!("No fields to update. Use --name, --description, --enabled, --priority, --cooldown-ms, or --flow-json");
+                anyhow::bail!(
+                    "No fields to update. Use --name, --description, --enabled, --priority, --cooldown-ms, or --flow-json"
+                );
             }
             let result = client.update_rule(rule_id, Value::Object(body)).await?;
             if json {

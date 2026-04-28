@@ -32,8 +32,8 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -1425,12 +1425,16 @@ mod tests {
         let channel = OpcUaChannel::new(config, 1, "test_opcua".to_string());
 
         assert_eq!(ProtocolCapabilities::name(&channel), "OPC UA");
-        assert!(channel
-            .supported_modes()
-            .contains(&CommunicationMode::EventDriven));
-        assert!(channel
-            .supported_modes()
-            .contains(&CommunicationMode::Hybrid));
+        assert!(
+            channel
+                .supported_modes()
+                .contains(&CommunicationMode::EventDriven)
+        );
+        assert!(
+            channel
+                .supported_modes()
+                .contains(&CommunicationMode::Hybrid)
+        );
     }
 
     #[test]

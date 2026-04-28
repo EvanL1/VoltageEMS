@@ -25,8 +25,8 @@ pub use file_logging::{ChannelFileLogHandler, FileLogLevel};
 #[cfg(feature = "json-mapping")]
 pub use json_mapper::{JsonMapper, JsonMappingConfig, SharedJsonMapper};
 pub use metadata::{
-    get_protocol_registry, DriverMetadata, HasMetadata, ParameterMetadata, ParameterType,
-    ProtocolMetadata, ProtocolRegistry,
+    DriverMetadata, HasMetadata, ParameterMetadata, ParameterType, ProtocolMetadata,
+    ProtocolRegistry, get_protocol_registry,
 };
 pub use point::*;
 pub use quality::*;

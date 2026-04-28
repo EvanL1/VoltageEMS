@@ -284,7 +284,7 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                     println!("   Data will be preserved (AOF + RDB persistence)");
                     println!("\nRecreate Redis container? (yes/NO): ");
 
-                    use std::io::{stdin, stdout, Write};
+                    use std::io::{Write, stdin, stdout};
                     let mut input = String::new();
                     stdout().flush()?;
                     stdin().read_line(&mut input)?;
@@ -334,7 +334,7 @@ pub async fn handle_command(cmd: ServiceCommands) -> Result<()> {
                     println!("   Recreating TimescaleDB may affect historical data queries");
                     println!("\nRecreate TimescaleDB container? (yes/NO): ");
 
-                    use std::io::{stdin, stdout, Write};
+                    use std::io::{Write, stdin, stdout};
                     let mut input = String::new();
                     stdout().flush()?;
                     stdin().read_line(&mut input)?;

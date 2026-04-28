@@ -447,7 +447,7 @@ mod tests {
 
     /// Helper macro to test constructor + display + error_code + category in one shot
     macro_rules! test_error_variant {
-        ($constructor:ident, $variant:pat, $msg:expr, $code:expr, $category:expr) => {
+        ($constructor:ident, $variant:pat, $msg:expr_2021, $code:expr_2021, $category:expr_2021) => {
             let err = ComSrvError::$constructor($msg);
             assert!(matches!(err, $variant));
             assert!(err.to_string().contains($msg));
@@ -612,45 +612,65 @@ mod tests {
 
     #[test]
     fn test_suggestions() {
-        assert!(ComSrvError::ConfigError("t".into())
-            .suggestion()
-            .unwrap()
-            .contains("monarch sync"));
-        assert!(ComSrvError::channel_not_found(1)
-            .suggestion()
-            .unwrap()
-            .contains("monarch channels"));
-        assert!(ComSrvError::channel_exists(1)
-            .suggestion()
-            .unwrap()
-            .contains("already exists"));
-        assert!(ComSrvError::point_not_found("T:1")
-            .suggestion()
-            .unwrap()
-            .contains("/api/channels"));
-        assert!(ComSrvError::ConnectionError("t".into())
-            .suggestion()
-            .unwrap()
-            .contains("reachable"));
-        assert!(ComSrvError::ProtocolError("t".into())
-            .suggestion()
-            .unwrap()
-            .contains("Modbus"));
-        assert!(ComSrvError::TimeoutError("t".into())
-            .suggestion()
-            .unwrap()
-            .contains("timeout"));
-        assert!(ComSrvError::StorageError("t".into())
-            .suggestion()
-            .unwrap()
-            .contains("monarch doctor"));
-        assert!(ComSrvError::DataError("t".into())
-            .suggestion()
-            .unwrap()
-            .contains("scale/offset"));
-        assert!(ComSrvError::ValidationError("t".into())
-            .suggestion()
-            .is_none());
+        assert!(
+            ComSrvError::ConfigError("t".into())
+                .suggestion()
+                .unwrap()
+                .contains("monarch sync")
+        );
+        assert!(
+            ComSrvError::channel_not_found(1)
+                .suggestion()
+                .unwrap()
+                .contains("monarch channels")
+        );
+        assert!(
+            ComSrvError::channel_exists(1)
+                .suggestion()
+                .unwrap()
+                .contains("already exists")
+        );
+        assert!(
+            ComSrvError::point_not_found("T:1")
+                .suggestion()
+                .unwrap()
+                .contains("/api/channels")
+        );
+        assert!(
+            ComSrvError::ConnectionError("t".into())
+                .suggestion()
+                .unwrap()
+                .contains("reachable")
+        );
+        assert!(
+            ComSrvError::ProtocolError("t".into())
+                .suggestion()
+                .unwrap()
+                .contains("Modbus")
+        );
+        assert!(
+            ComSrvError::TimeoutError("t".into())
+                .suggestion()
+                .unwrap()
+                .contains("timeout")
+        );
+        assert!(
+            ComSrvError::StorageError("t".into())
+                .suggestion()
+                .unwrap()
+                .contains("monarch doctor")
+        );
+        assert!(
+            ComSrvError::DataError("t".into())
+                .suggestion()
+                .unwrap()
+                .contains("scale/offset")
+        );
+        assert!(
+            ComSrvError::ValidationError("t".into())
+                .suggestion()
+                .is_none()
+        );
     }
 
     #[test]

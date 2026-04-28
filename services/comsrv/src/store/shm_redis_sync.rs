@@ -32,8 +32,8 @@ use tracing::{debug, info, trace, warn};
 
 use voltage_model::KeySpaceConfig;
 use voltage_routing::RoutingCache;
-use voltage_rtdb::numfmt::{f64_to_bytes, i64_to_bytes, precomputed};
 use voltage_rtdb::Rtdb;
+use voltage_rtdb::numfmt::{f64_to_bytes, i64_to_bytes, precomputed};
 use voltage_rtdb_shm::ShmHandle;
 
 /// seq == 0 means the slot has never been written. Skip on scan to avoid

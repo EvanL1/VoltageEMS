@@ -12,16 +12,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
+    EnvFilter, Layer,
     fmt::{
-        self,
+        self, FmtContext, FormatEvent, FormatFields, MakeWriter,
         format::{FmtSpan, Writer},
-        FmtContext, FormatEvent, FormatFields, MakeWriter,
     },
     layer::SubscriberExt,
     registry::LookupSpan,
     reload,
     util::SubscriberInitExt,
-    EnvFilter, Layer,
 };
 
 /// Custom format for log level with brackets: `[INFO]`, `[WARN]`, etc.
@@ -145,12 +144,11 @@ fn is_test_environment() -> bool {
     }
 
     // Method 2: Check if executable is in target/debug/deps (test binary location)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(path_str) = exe.to_str() {
-            if path_str.contains("target/debug/deps") || path_str.contains("target/release/deps") {
-                return true;
-            }
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(path_str) = exe.to_str()
+        && (path_str.contains("target/debug/deps") || path_str.contains("target/release/deps"))
+    {
+        return true;
     }
 
     false
@@ -311,22 +309,22 @@ impl std::io::Write for DailyRollingWriter {
             }
         }
 
-        if let Some(ref mut file) = *self.get_writer()? {
-            let written = file.write(buf)?;
-            // Update size counter
-            self.current_size
-                .fetch_add(written as u64, Ordering::Relaxed);
-            Ok(written)
-        } else {
-            Ok(0)
+        match *self.get_writer()? {
+            Some(ref mut file) => {
+                let written = file.write(buf)?;
+                // Update size counter
+                self.current_size
+                    .fetch_add(written as u64, Ordering::Relaxed);
+                Ok(written)
+            },
+            _ => Ok(0),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if let Some(ref mut file) = *self.get_writer()? {
-            file.flush()
-        } else {
-            Ok(())
+        match *self.get_writer()? {
+            Some(ref mut file) => file.flush(),
+            _ => Ok(()),
         }
     }
 }
@@ -367,19 +365,19 @@ impl ReloadableWriter {
 
 impl std::io::Write for ReloadableWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if let Ok(mut guard) = self.inner.lock() {
-            if let Some(ref mut writer) = *guard {
-                return writer.write(buf);
-            }
+        if let Ok(mut guard) = self.inner.lock()
+            && let Some(ref mut writer) = *guard
+        {
+            return writer.write(buf);
         }
         Ok(0)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        if let Ok(mut guard) = self.inner.lock() {
-            if let Some(ref mut writer) = *guard {
-                return writer.flush();
-            }
+        if let Ok(mut guard) = self.inner.lock()
+            && let Some(ref mut writer) = *guard
+        {
+            return writer.flush();
         }
         Ok(())
     }
@@ -730,10 +728,10 @@ fn reopen_api_logs() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let (non_blocking, guard) = tracing_appender::non_blocking(api_writer);
 
-    if let Some(storage) = API_GUARD.get() {
-        if let Ok(mut slot) = storage.lock() {
-            *slot = Some(guard);
-        }
+    if let Some(storage) = API_GUARD.get()
+        && let Ok(mut slot) = storage.lock()
+    {
+        *slot = Some(guard);
     }
     if let Some(writer) = API_RELOADABLE_WRITER.get() {
         writer.reload(non_blocking);
@@ -758,7 +756,7 @@ fn reopen_api_logs() -> Result<(), Box<dyn std::error::Error>> {
 pub fn enable_sighup_log_reopen() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
         let handle = tokio::spawn(async move {
             match signal(SignalKind::hangup()) {
                 Ok(mut hup) => loop {
@@ -814,10 +812,10 @@ pub fn set_log_level(level: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to reload log filter: {}", e))?;
 
     // Update stored level
-    if let Some(current) = CURRENT_LOG_LEVEL.get() {
-        if let Ok(mut guard) = current.lock() {
-            *guard = level.to_string();
-        }
+    if let Some(current) = CURRENT_LOG_LEVEL.get()
+        && let Ok(mut guard) = current.lock()
+    {
+        *guard = level.to_string();
     }
 
     tracing::info!("Log level changed to: {}", level);
@@ -860,7 +858,7 @@ pub fn get_log_level() -> String {
 /// ```
 #[allow(clippy::disallowed_methods)] // json! macro internally uses unwrap (compile-time safe, never panics)
 fn redact_sensitive_fields(json_str: &str) -> String {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     const SENSITIVE_KEYS: &[&str] = &["password", "token", "api_key", "secret", "authorization"];
 
@@ -979,7 +977,7 @@ pub async fn http_request_logger(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use std::time::Instant;
-    use tracing::{debug, info, level_enabled, Level};
+    use tracing::{Level, debug, info, level_enabled};
 
     const MAX_BODY_LENGTH: usize = 500;
     const MAX_BODY_READ: usize = 2048;

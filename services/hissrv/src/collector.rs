@@ -89,22 +89,22 @@ fn extract_timestamp(
     fields: &std::collections::HashMap<String, bytes::Bytes>,
 ) -> Option<DateTime<Utc>> {
     for key in &["_timestamp", "__updated"] {
-        if let Some(raw) = fields.get(*key) {
-            if let Ok(s) = std::str::from_utf8(raw) {
-                // Try Unix seconds
-                if let Ok(secs) = s.trim().parse::<i64>() {
-                    if let Some(dt) = DateTime::from_timestamp(secs, 0) {
-                        return Some(dt);
-                    }
-                    // Try milliseconds (13-digit)
-                    if let Some(dt) = DateTime::from_timestamp_millis(secs) {
-                        return Some(dt);
-                    }
+        if let Some(raw) = fields.get(*key)
+            && let Ok(s) = std::str::from_utf8(raw)
+        {
+            // Try Unix seconds
+            if let Ok(secs) = s.trim().parse::<i64>() {
+                if let Some(dt) = DateTime::from_timestamp(secs, 0) {
+                    return Some(dt);
                 }
-                // Try ISO format
-                if let Ok(dt) = DateTime::parse_from_rfc3339(s.trim()) {
-                    return Some(dt.with_timezone(&Utc));
+                // Try milliseconds (13-digit)
+                if let Some(dt) = DateTime::from_timestamp_millis(secs) {
+                    return Some(dt);
                 }
+            }
+            // Try ISO format
+            if let Ok(dt) = DateTime::parse_from_rfc3339(s.trim()) {
+                return Some(dt.with_timezone(&Utc));
             }
         }
     }

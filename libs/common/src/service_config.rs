@@ -804,10 +804,10 @@ impl RedisConfig {
 
     /// Validate Redis connectivity (runtime check)
     pub async fn validate_runtime(&self, result: &mut ValidationResult) {
-        if self.enabled {
-            if let Err(e) = helpers::test_redis_connection(&self.url).await {
-                result.add_error(format!("Redis connection failed: {}", e));
-            }
+        if self.enabled
+            && let Err(e) = helpers::test_redis_connection(&self.url).await
+        {
+            result.add_error(format!("Redis connection failed: {}", e));
         }
     }
 }

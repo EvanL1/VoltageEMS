@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use axum::{extract::Query, extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{Json, extract::Query, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use serde_json::json;
 use tracing::error;

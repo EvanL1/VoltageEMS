@@ -238,13 +238,13 @@ pub fn check_disk_space(path: &str, _required_mb: usize) -> VoltageResult<bool> 
 
     // For now, we'll use a simplified check based on filesystem metadata
     // Real disk space checking would require platform-specific system calls
-    if let Ok(metadata) = std::fs::metadata(check_path) {
-        if metadata.is_dir() || metadata.is_file() {
-            debug!("Path {} exists and is accessible", check_path.display());
-            // Since we can't easily get disk space without external dependencies,
-            // we'll just check if the path is accessible
-            return Ok(true);
-        }
+    if let Ok(metadata) = std::fs::metadata(check_path)
+        && (metadata.is_dir() || metadata.is_file())
+    {
+        debug!("Path {} exists and is accessible", check_path.display());
+        // Since we can't easily get disk space without external dependencies,
+        // we'll just check if the path is accessible
+        return Ok(true);
     }
 
     warn!("Cannot verify disk space at {}", path.display());

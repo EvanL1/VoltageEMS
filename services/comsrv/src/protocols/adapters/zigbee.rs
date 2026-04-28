@@ -26,13 +26,14 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
+use crate::protocols::ChannelRuntime;
 use crate::protocols::adapters::zigbee_codec::{
     AttributeReport, FrameCodec, RawFrameCodec, ZigbeeFrame,
 };
@@ -49,7 +50,6 @@ use crate::protocols::core::point::ZigbeeAddress;
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
 };
-use crate::protocols::ChannelRuntime;
 
 /// TCP read buffer size
 const TCP_READ_BUF_SIZE: usize = 4096;

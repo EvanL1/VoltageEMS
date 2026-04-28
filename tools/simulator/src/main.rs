@@ -30,7 +30,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::{info, warn, Level};
+use tracing::{Level, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
 use scenarios::TriggerConfig;

@@ -51,13 +51,13 @@ fn validate_snapshot_structure(snapshot: &serde_json::Value) -> Result<(), AppEr
         }
     }
     for key in &valid_keys {
-        if let Some(val) = obj.get(*key) {
-            if !val.is_array() {
-                return Err(AppError::bad_request(format!(
-                    "Snapshot key '{}' must be an array",
-                    key
-                )));
-            }
+        if let Some(val) = obj.get(*key)
+            && !val.is_array()
+        {
+            return Err(AppError::bad_request(format!(
+                "Snapshot key '{}' must be an array",
+                key
+            )));
         }
     }
     Ok(())
@@ -901,15 +901,14 @@ pub async fn apply_template<R: Rtdb + 'static>(
 
             // Get protocol mapping and optionally override slave_id
             let mut protocol_data = mappings_map.get(&point_id).cloned().unwrap_or(json!({}));
-            if let Some(override_id) = req.slave_id_override {
-                if let Some(obj) = protocol_data.as_object_mut() {
-                    if obj.contains_key("slave_id") {
-                        obj.insert(
-                            "slave_id".to_string(),
-                            serde_json::Value::Number(override_id.into()),
-                        );
-                    }
-                }
+            if let Some(override_id) = req.slave_id_override
+                && let Some(obj) = protocol_data.as_object_mut()
+                && obj.contains_key("slave_id")
+            {
+                obj.insert(
+                    "slave_id".to_string(),
+                    serde_json::Value::Number(override_id.into()),
+                );
             }
 
             let pm_json = if protocol_data.as_object().is_some_and(|o| o.is_empty()) {

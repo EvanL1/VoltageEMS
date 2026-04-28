@@ -24,8 +24,8 @@
 
 use bytes::Bytes;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::Notify;
 
@@ -189,14 +189,17 @@ impl WriteBuffer {
         }
 
         // Two-phase check: get_mut first to avoid allocation on hot path
-        let len = if let Some(entry) = self.pending.get_mut(key) {
-            entry.insert(field, value);
-            entry.len()
-        } else {
-            // Slow path: key doesn't exist, need to allocate
-            let entry = self.pending.entry(key.to_string()).or_default();
-            entry.insert(field, value);
-            entry.len()
+        let len = match self.pending.get_mut(key) {
+            Some(entry) => {
+                entry.insert(field, value);
+                entry.len()
+            },
+            _ => {
+                // Slow path: key doesn't exist, need to allocate
+                let entry = self.pending.entry(key.to_string()).or_default();
+                entry.insert(field, value);
+                entry.len()
+            },
         };
 
         self.stats.buffered_writes.fetch_add(1, Ordering::Relaxed);
@@ -239,18 +242,21 @@ impl WriteBuffer {
         let count = fields.len() as u64;
 
         // Two-phase check: get_mut first to avoid allocation on hot path
-        let len = if let Some(entry) = self.pending.get_mut(key) {
-            for (field, value) in fields {
-                entry.insert(field, value);
-            }
-            entry.len()
-        } else {
-            // Slow path: key doesn't exist, need to allocate
-            let entry = self.pending.entry(key.to_string()).or_default();
-            for (field, value) in fields {
-                entry.insert(field, value);
-            }
-            entry.len()
+        let len = match self.pending.get_mut(key) {
+            Some(entry) => {
+                for (field, value) in fields {
+                    entry.insert(field, value);
+                }
+                entry.len()
+            },
+            _ => {
+                // Slow path: key doesn't exist, need to allocate
+                let entry = self.pending.entry(key.to_string()).or_default();
+                for (field, value) in fields {
+                    entry.insert(field, value);
+                }
+                entry.len()
+            },
         };
 
         self.stats

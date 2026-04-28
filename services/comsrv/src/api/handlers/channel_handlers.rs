@@ -130,14 +130,15 @@ pub async fn get_all_channels<R: Rtdb>(
         let description = extract_description_from_config(config_str.as_deref(), channel_id)?;
 
         // Get runtime status if channel is running
-        let (connected, last_update) = if let Some(entry) = manager.get_channel(channel_id) {
-            let status = entry.get_status().await;
-            (
-                status.is_connected,
-                DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
-            )
-        } else {
-            (false, Utc::now())
+        let (connected, last_update) = match manager.get_channel(channel_id) {
+            Some(entry) => {
+                let status = entry.get_status().await;
+                (
+                    status.is_connected,
+                    DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
+                )
+            },
+            _ => (false, Utc::now()),
         };
 
         let channel_response = ChannelStatusResponse {
@@ -211,31 +212,32 @@ pub async fn get_channel_status<R: Rtdb>(
     // Direct access without RwLock (lock-free)
     let manager = &state.channel_manager;
 
-    if let Some(entry) = manager.get_channel(id_u16) {
-        let (name, protocol) = manager
-            .get_channel_metadata(id_u16)
-            .unwrap_or_else(|| (format!("Channel {id_u16}"), "Unknown".to_string()));
+    match manager.get_channel(id_u16) {
+        Some(entry) => {
+            let (name, protocol) = manager
+                .get_channel_metadata(id_u16)
+                .unwrap_or_else(|| (format!("Channel {id_u16}"), "Unknown".to_string()));
 
-        let channel_status = entry.get_status().await;
-        let is_running = entry.is_connected();
-        let diagnostics = entry.get_diagnostics(id_u16);
+            let channel_status = entry.get_status().await;
+            let is_running = entry.is_connected();
+            let diagnostics = entry.get_diagnostics(id_u16);
 
-        let status = ChannelStatusDto {
-            id: id_u16,
-            name,
-            protocol,
-            connected: channel_status.is_connected,
-            running: is_running,
-            last_update: DateTime::<Utc>::from_timestamp(channel_status.last_update, 0)
-                .unwrap_or_else(Utc::now),
-            statistics: diagnostics
-                .as_object()
-                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                .unwrap_or_default(),
-        };
-        Ok(Json(SuccessResponse::new(status)))
-    } else {
-        Err(AppError::not_found(format!("Channel {} not found", id_u16)))
+            let status = ChannelStatusDto {
+                id: id_u16,
+                name,
+                protocol,
+                connected: channel_status.is_connected,
+                running: is_running,
+                last_update: DateTime::<Utc>::from_timestamp(channel_status.last_update, 0)
+                    .unwrap_or_else(Utc::now),
+                statistics: diagnostics
+                    .as_object()
+                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default(),
+            };
+            Ok(Json(SuccessResponse::new(status)))
+        },
+        _ => Err(AppError::not_found(format!("Channel {} not found", id_u16))),
     }
 }
 
@@ -378,18 +380,19 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
 
     // Direct access without RwLock (lock-free)
     let manager = &state.channel_manager;
-    let (connected, last_update, statistics) = if let Some(entry) = manager.get_channel(id_u16) {
-        let status = entry.get_status().await;
-        let diag = entry.get_diagnostics(id_u16);
-        (
-            status.is_connected,
-            DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
-            diag.as_object()
-                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                .unwrap_or_default(),
-        )
-    } else {
-        (false, Utc::now(), std::collections::HashMap::new())
+    let (connected, last_update, statistics) = match manager.get_channel(id_u16) {
+        Some(entry) => {
+            let status = entry.get_status().await;
+            let diag = entry.get_diagnostics(id_u16);
+            (
+                status.is_connected,
+                DateTime::<Utc>::from_timestamp(status.last_update, 0).unwrap_or_else(Utc::now),
+                diag.as_object()
+                    .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                    .unwrap_or_default(),
+            )
+        },
+        _ => (false, Utc::now(), std::collections::HashMap::new()),
     };
 
     let config = ChannelConfig {

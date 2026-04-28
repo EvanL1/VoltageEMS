@@ -29,12 +29,13 @@ use btleplug::api::{
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
 use serde_json::json;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::protocols::ChannelRuntime;
 use crate::protocols::adapters::ble_config::BleConfig;
 use crate::protocols::core::data::{DataBatch, DataPoint};
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
@@ -46,7 +47,6 @@ use crate::protocols::core::point::{DataFormat, PointConfig, ProtocolAddress};
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
 };
-use crate::protocols::ChannelRuntime;
 
 /// Expand a short BLE UUID (e.g., "180f") to full 128-bit format.
 ///
@@ -540,25 +540,24 @@ impl ChannelRuntime for BleChannel {
         let resolved = self.resolve_points()?;
 
         for rp in &resolved {
-            if rp.notify {
-                if let Some(char) =
+            if rp.notify
+                && let Some(char) =
                     Self::find_characteristic(&peripheral, rp.service_uuid, rp.char_uuid)
-                {
-                    if let Err(e) = peripheral.subscribe(&char).await {
-                        warn!(
-                            channel_id = self.channel_id,
-                            point_id = rp.point.id,
-                            error = %e,
-                            "Failed to subscribe to BLE characteristic notify"
-                        );
-                    } else {
-                        debug!(
-                            channel_id = self.channel_id,
-                            point_id = rp.point.id,
-                            char_uuid = %rp.char_uuid,
-                            "Subscribed to BLE notify"
-                        );
-                    }
+            {
+                if let Err(e) = peripheral.subscribe(&char).await {
+                    warn!(
+                        channel_id = self.channel_id,
+                        point_id = rp.point.id,
+                        error = %e,
+                        "Failed to subscribe to BLE characteristic notify"
+                    );
+                } else {
+                    debug!(
+                        channel_id = self.channel_id,
+                        point_id = rp.point.id,
+                        char_uuid = %rp.char_uuid,
+                        "Subscribed to BLE notify"
+                    );
                 }
             }
         }

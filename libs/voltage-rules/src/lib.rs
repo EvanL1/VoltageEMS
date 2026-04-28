@@ -48,9 +48,9 @@ pub use repository::{
 #[cfg(unix)]
 pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
 #[cfg(unix)]
-pub use logger::{format_conditions, RuleLogger, RuleLoggerManager};
+pub use logger::{RuleLogger, RuleLoggerManager, format_conditions};
 #[cfg(unix)]
-pub use scheduler::{RuleScheduler, SchedulerStatus, TriggerConfig, DEFAULT_TICK_MS};
+pub use scheduler::{DEFAULT_TICK_MS, RuleScheduler, SchedulerStatus, TriggerConfig};
 
 // Re-export rule types for convenience
 pub use types::{

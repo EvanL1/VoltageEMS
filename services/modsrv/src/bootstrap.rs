@@ -6,11 +6,11 @@
 use crate::config::ModsrvConfig;
 use common::bootstrap_args::ServiceArgs;
 use common::bootstrap_database::{setup_redis_connection, setup_sqlite_pool};
-use common::bootstrap_system::{check_system_requirements_with, SystemRequirements};
+use common::bootstrap_system::{SystemRequirements, check_system_requirements_with};
 use common::redis::RedisClient;
-use common::service_bootstrap::{get_service_port, ServiceInfo};
+use common::service_bootstrap::{ServiceInfo, get_service_port};
 use common::sqlite::ServiceConfigLoader;
-use common::{ApiConfig, BaseServiceConfig, RedisConfig, DEFAULT_API_HOST, DEFAULT_REDIS_URL};
+use common::{ApiConfig, BaseServiceConfig, DEFAULT_API_HOST, DEFAULT_REDIS_URL, RedisConfig};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};

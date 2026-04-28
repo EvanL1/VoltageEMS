@@ -32,12 +32,13 @@ use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, trace};
 
+use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -45,7 +46,6 @@ use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
 };
-use crate::protocols::ChannelRuntime;
 
 /// HTTP channel operating mode
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,12 +219,12 @@ fn build_request(client: &Client, config: &HttpConfig, url: &str) -> reqwest::Re
 
 /// Guard against oversized responses to prevent OOM (max 10MB).
 fn check_response_size(response: &reqwest::Response) -> Result<()> {
-    if let Some(len) = response.content_length() {
-        if len > 10 * 1024 * 1024 {
-            return Err(GatewayError::Protocol(format!(
-                "Response too large: {len} bytes (max 10MB)"
-            )));
-        }
+    if let Some(len) = response.content_length()
+        && len > 10 * 1024 * 1024
+    {
+        return Err(GatewayError::Protocol(format!(
+            "Response too large: {len} bytes (max 10MB)"
+        )));
     }
     Ok(())
 }
@@ -461,12 +461,12 @@ impl HttpChannel {
                 continue;
             }
 
-            if let Some(len) = response.content_length() {
-                if len > 10 * 1024 * 1024 {
-                    diagnostics.record_error(format!("Response too large: {len} bytes (max 10MB)"));
-                    consecutive_failures += 1;
-                    continue;
-                }
+            if let Some(len) = response.content_length()
+                && len > 10 * 1024 * 1024
+            {
+                diagnostics.record_error(format!("Response too large: {len} bytes (max 10MB)"));
+                consecutive_failures += 1;
+                continue;
             }
 
             let body = match response.bytes().await {

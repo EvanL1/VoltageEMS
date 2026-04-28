@@ -38,18 +38,16 @@ impl ChannelChangeType {
         // Check for critical parameter changes (host, port)
         if let (Some(old_host), Some(new_host)) =
             (old.parameters.get("host"), new.parameters.get("host"))
+            && old_host != new_host
         {
-            if old_host != new_host {
-                return ChannelChangeType::Critical;
-            }
+            return ChannelChangeType::Critical;
         }
 
         if let (Some(old_port), Some(new_port)) =
             (old.parameters.get("port"), new.parameters.get("port"))
+            && old_port != new_port
         {
-            if old_port != new_port {
-                return ChannelChangeType::Critical;
-            }
+            return ChannelChangeType::Critical;
         }
 
         // Check for non-critical parameter changes (timeout, retry)
@@ -57,10 +55,9 @@ impl ChannelChangeType {
         for param in &non_critical_params {
             if let (Some(old_val), Some(new_val)) =
                 (old.parameters.get(*param), new.parameters.get(*param))
+                && old_val != new_val
             {
-                if old_val != new_val {
-                    return ChannelChangeType::NonCritical;
-                }
+                return ChannelChangeType::NonCritical;
             }
         }
 

@@ -3,7 +3,7 @@
 //! This module provides Redis sync operations for instances.
 //! Extracted from instance_manager.rs for better code organization.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 

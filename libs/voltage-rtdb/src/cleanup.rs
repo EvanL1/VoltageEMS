@@ -324,7 +324,8 @@ mod tests {
     #[serial]
     async fn test_cleanup_removes_invalid_keys() {
         // Ensure clean environment (prevent pollution from parallel tests)
-        std::env::remove_var("SKIP_REDIS_CLEANUP");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("SKIP_REDIS_CLEANUP") };
 
         let mut valid_ids = HashSet::new();
         valid_ids.insert("1".to_string());
@@ -356,8 +357,10 @@ mod tests {
     #[serial]
     async fn test_cleanup_with_environment_variable() {
         // Ensure clean environment before setting test variable
-        std::env::remove_var("SKIP_REDIS_CLEANUP");
-        std::env::set_var("SKIP_REDIS_CLEANUP", "true");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("SKIP_REDIS_CLEANUP") };
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("SKIP_REDIS_CLEANUP", "true") };
 
         let provider = MockProvider {
             valid_ids: HashSet::new(),
@@ -370,6 +373,7 @@ mod tests {
         assert_eq!(deleted, 0);
 
         // Clean up after test
-        std::env::remove_var("SKIP_REDIS_CLEANUP");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var("SKIP_REDIS_CLEANUP") };
     }
 }

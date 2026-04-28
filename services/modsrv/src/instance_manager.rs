@@ -6,13 +6,13 @@
 //! - `instance_redis_sync.rs` - Redis synchronization
 //! - `instance_data.rs` - Data loading and querying
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use voltage_model::{validate_instance_name, KeySpaceConfig};
+use voltage_model::{KeySpaceConfig, validate_instance_name};
 use voltage_rtdb::Rtdb;
 
 use crate::config::TopologyNode;
@@ -377,7 +377,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // 7. Best effort register instance in Redis (after commit, allow failure)
         info!("Registering instance {} in Redis", req.instance_name);
-        if let Err(e) = self
+        match self
             .register_instance_in_redis(
                 instance_id,
                 &req.instance_name,
@@ -390,15 +390,18 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             )
             .await
         {
-            warn!(
-                "Instance {} created in SQLite but Redis registration failed: {}. Will register on next reload.",
-                req.instance_name, e
-            );
-        } else {
-            info!(
-                "Successfully registered instance {} in Redis after creation",
-                req.instance_name
-            );
+            Err(e) => {
+                warn!(
+                    "Instance {} created in SQLite but Redis registration failed: {}. Will register on next reload.",
+                    req.instance_name, e
+                );
+            },
+            _ => {
+                info!(
+                    "Successfully registered instance {} in Redis after creation",
+                    req.instance_name
+                );
+            },
         }
 
         info!("Successfully created instance {}", req.instance_name);
@@ -794,19 +797,22 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         }
 
         // 5. Best effort remove from Redis (after commit, allow failure)
-        if let Err(e) = self
+        match self
             .unregister_instance_from_redis(instance_id, &instance_name)
             .await
         {
-            warn!(
-                "Instance {} ({}) deleted from SQLite but Redis cleanup failed: {}. Will be cleaned up on next reload.",
-                instance_id, instance_name, e
-            );
-        } else {
-            info!(
-                "Successfully unregistered instance {} ({}) from Redis after deletion",
-                instance_id, instance_name
-            );
+            Err(e) => {
+                warn!(
+                    "Instance {} ({}) deleted from SQLite but Redis cleanup failed: {}. Will be cleaned up on next reload.",
+                    instance_id, instance_name, e
+                );
+            },
+            _ => {
+                info!(
+                    "Successfully unregistered instance {} ({}) from Redis after deletion",
+                    instance_id, instance_name
+                );
+            },
         }
 
         // 6. Dynamic Slot Deallocation: Remove instance from InstanceIndex and free slots

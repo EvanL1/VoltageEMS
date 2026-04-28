@@ -32,8 +32,8 @@ use async_trait::async_trait;
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
@@ -41,6 +41,7 @@ use tracing::{debug, error, info, warn};
 /// Delay between reconnection attempts in the MQTT event loop
 const RECONNECT_BACKOFF_DELAY: Duration = Duration::from_secs(1);
 
+use crate::protocols::ChannelRuntime;
 use crate::protocols::core::data::DataBatch;
 use crate::protocols::core::diagnostics::AtomicDiagnostics;
 use crate::protocols::core::error::{GatewayError, Result};
@@ -48,7 +49,6 @@ use crate::protocols::core::json_mapper::{JsonMapper, JsonMappingConfig};
 use crate::protocols::core::traits::{
     ConnectionState, DataEvent, DataEventReceiver, DataEventSender, Diagnostics, PollResult,
 };
-use crate::protocols::ChannelRuntime;
 
 /// MQTT subscription configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

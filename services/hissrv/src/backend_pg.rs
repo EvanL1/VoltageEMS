@@ -9,7 +9,7 @@ use sqlx::PgPool;
 use tracing::{error, info};
 
 use crate::models::{
-    fmt_ts, parse_time, source_from_key, DataPoint, DataStats, HistoryRecord, QueryRangeParams,
+    DataPoint, DataStats, HistoryRecord, QueryRangeParams, fmt_ts, parse_time, source_from_key,
 };
 use crate::storage::StorageBackend;
 

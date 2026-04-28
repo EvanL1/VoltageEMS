@@ -359,20 +359,20 @@ fn find_host_script() -> Result<String> {
     }
 
     // Try relative to executable
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // Walk up to find project root (look for Cargo.toml)
-            let mut dir = exe_dir;
-            for _ in 0..5 {
-                let candidate = dir.join(HOST_SCRIPT);
-                if candidate.exists() {
-                    return Ok(candidate.to_string_lossy().to_string());
-                }
-                if let Some(parent) = dir.parent() {
-                    dir = parent;
-                } else {
-                    break;
-                }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        // Walk up to find project root (look for Cargo.toml)
+        let mut dir = exe_dir;
+        for _ in 0..5 {
+            let candidate = dir.join(HOST_SCRIPT);
+            if candidate.exists() {
+                return Ok(candidate.to_string_lossy().to_string());
+            }
+            if let Some(parent) = dir.parent() {
+                dir = parent;
+            } else {
+                break;
             }
         }
     }

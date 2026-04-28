@@ -139,26 +139,38 @@ fn test_channel_to_slot_index_lookup() {
     let index = ChannelToSlotIndex::from_unified_writer(&writer);
 
     // Verify mapped points exist
-    assert!(index
-        .lookup(1001, voltage_model::PointType::Telemetry, 0)
-        .is_some());
-    assert!(index
-        .lookup(1001, voltage_model::PointType::Signal, 0)
-        .is_some());
-    assert!(index
-        .lookup(1001, voltage_model::PointType::Control, 0)
-        .is_some());
-    assert!(index
-        .lookup(1002, voltage_model::PointType::Telemetry, 0)
-        .is_some());
+    assert!(
+        index
+            .lookup(1001, voltage_model::PointType::Telemetry, 0)
+            .is_some()
+    );
+    assert!(
+        index
+            .lookup(1001, voltage_model::PointType::Signal, 0)
+            .is_some()
+    );
+    assert!(
+        index
+            .lookup(1001, voltage_model::PointType::Control, 0)
+            .is_some()
+    );
+    assert!(
+        index
+            .lookup(1002, voltage_model::PointType::Telemetry, 0)
+            .is_some()
+    );
 
     // Verify unmapped points return None
-    assert!(index
-        .lookup(9999, voltage_model::PointType::Telemetry, 0)
-        .is_none()); // Unknown channel
-    assert!(index
-        .lookup(1001, voltage_model::PointType::Telemetry, 100)
-        .is_none()); // Out of range
+    assert!(
+        index
+            .lookup(9999, voltage_model::PointType::Telemetry, 0)
+            .is_none()
+    ); // Unknown channel
+    assert!(
+        index
+            .lookup(1001, voltage_model::PointType::Telemetry, 100)
+            .is_none()
+    ); // Out of range
 }
 
 #[test]

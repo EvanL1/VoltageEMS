@@ -16,12 +16,12 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
-use voltage_model::{sanitize_value, ValidationConfig};
-use voltage_routing::set_action_point;
+use voltage_model::{ValidationConfig, sanitize_value};
 use voltage_routing::RoutingCache;
+use voltage_routing::set_action_point;
+use voltage_rtdb::KeySpaceConfig;
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb::KeySpaceConfig;
 use voltage_rtdb_shm::{ShmNotifier, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
@@ -106,10 +106,8 @@ fn snapshot_or_reuse(
     values: &HashMap<String, f64>,
     values_changed: bool,
 ) -> Arc<HashMap<String, f64>> {
-    if !values_changed {
-        if let Some(snapshot) = cache.as_ref() {
-            return Arc::clone(snapshot);
-        }
+    if !values_changed && let Some(snapshot) = cache.as_ref() {
+        return Arc::clone(snapshot);
     }
     let snapshot = Arc::new(values.clone());
     *cache = Some(Arc::clone(&snapshot));
@@ -781,14 +779,14 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 let condition_str = format_conditions(&rule.rule);
 
                 // Find the wire target for this rule's output
-                if let Some(targets) = wires.get(&rule.name) {
-                    if let Some(target) = targets.first() {
-                        return (
-                            Some(target.as_str()),
-                            Some(rule.name.clone()),
-                            Some(condition_str),
-                        );
-                    }
+                if let Some(targets) = wires.get(&rule.name)
+                    && let Some(target) = targets.first()
+                {
+                    return (
+                        Some(target.as_str()),
+                        Some(rule.name.clone()),
+                        Some(condition_str),
+                    );
                 }
             }
         }

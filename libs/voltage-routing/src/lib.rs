@@ -16,15 +16,15 @@ pub mod loader;
 pub mod routing_cache;
 
 pub use batch::{
-    write_channel_batch, write_channel_batch_buffered, BatchRoutingResult, ChannelPointUpdate,
+    BatchRoutingResult, ChannelPointUpdate, write_channel_batch, write_channel_batch_buffered,
 };
-pub use loader::{load_routing_maps, RoutingMaps};
+pub use loader::{RoutingMaps, load_routing_maps};
 
 // Re-export RoutingCache types (canonical location: voltage-routing)
 pub use routing_cache::{C2CTarget, C2MTarget, M2CTarget, RoutingCache, RoutingCacheStats};
 
 use anyhow::{Context, Result};
-use voltage_model::{validate_value, PointType, ValidationConfig};
+use voltage_model::{PointType, ValidationConfig, validate_value};
 use voltage_rtdb::Rtdb;
 
 /// Status string for successful operations
@@ -135,7 +135,7 @@ where
     use voltage_rtdb::{SystemTimeProvider, TimeProvider};
     let timestamp_ms = SystemTimeProvider.now_millis();
 
-    let routed = if let Some(target) = target_opt {
+    if let Some(target) = target_opt {
         // M2CTarget is now a structured type - no parsing needed
         let channel_id = target.channel_id;
         let point_type_enum = target.point_type;
@@ -217,9 +217,7 @@ where
             route_result: Some("no_route".to_string()),
             route_context: None,
         })
-    };
-
-    routed
+    }
 }
 
 // ============================================================================

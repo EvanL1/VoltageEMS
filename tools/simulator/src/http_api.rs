@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
-    Json, Router,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::state_machine::StateMachineStore;
 

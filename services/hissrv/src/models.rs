@@ -383,17 +383,17 @@ pub fn parse_time(s: &str) -> anyhow::Result<DateTime<Utc>> {
     }
 
     // Date only: `2025-08-21`
-    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        if let Some(dt) = d.and_hms_opt(0, 0, 0) {
-            return Ok(dt.and_utc());
-        }
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        && let Some(dt) = d.and_hms_opt(0, 0, 0)
+    {
+        return Ok(dt.and_utc());
     }
 
     // Unix timestamp (integer)
-    if let Ok(ts) = s.parse::<i64>() {
-        if let Some(dt) = DateTime::from_timestamp(ts, 0) {
-            return Ok(dt);
-        }
+    if let Ok(ts) = s.parse::<i64>()
+        && let Some(dt) = DateTime::from_timestamp(ts, 0)
+    {
+        return Ok(dt);
     }
 
     anyhow::bail!("Unsupported time format: {}", s)

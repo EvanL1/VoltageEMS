@@ -34,5 +34,5 @@ pub mod shm;
 pub mod types;
 
 // Re-exports for convenience
-pub use shm::{PointSlot, ShmHeader, HEADER_SIZE, SHM_MAGIC, SLOT_SIZE};
+pub use shm::{HEADER_SIZE, PointSlot, SHM_MAGIC, SLOT_SIZE, ShmHeader};
 pub use types::{ParsePointTypeError, PointType, Quality, Value};

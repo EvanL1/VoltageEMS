@@ -17,8 +17,8 @@
 //! - [`ShardedSlotStore`]: Multi-writer store for VirtualChannel
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
 use tracing::warn;

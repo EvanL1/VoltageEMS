@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, Notify, RwLock};

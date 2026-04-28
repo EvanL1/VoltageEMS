@@ -149,10 +149,10 @@ pub fn validate_value(
     if config.reject_infinity && value.is_infinite() {
         return Err(ValueValidationError::Infinity);
     }
-    if let Some(max) = config.max_abs_value {
-        if value.abs() > max {
-            return Err(ValueValidationError::OutOfRange { value, max });
-        }
+    if let Some(max) = config.max_abs_value
+        && value.abs() > max
+    {
+        return Err(ValueValidationError::OutOfRange { value, max });
     }
     Ok(value)
 }

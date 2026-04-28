@@ -25,7 +25,7 @@ mod utils;
 // This simplifies the architecture, reduces code duplication (~50%), and aligns with MCP patterns.
 // All commands now use HTTP clients to communicate with running services.
 
-use crate::core::{schema, MonarchCore};
+use crate::core::{MonarchCore, schema};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;

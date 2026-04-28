@@ -103,10 +103,8 @@ pub async fn reload_configuration_handler<R: Rtdb>(
 
         let (description, parameters, logging) = parse_channel_config(id, config_str)?;
 
-        if is_update {
-            if let Err(e) = manager.remove_channel(id).await {
-                tracing::debug!("Ch{} not in runtime: {}", id, e);
-            }
+        if is_update && let Err(e) = manager.remove_channel(id).await {
+            tracing::debug!("Ch{} not in runtime: {}", id, e);
         }
 
         let result_vec = if is_update {

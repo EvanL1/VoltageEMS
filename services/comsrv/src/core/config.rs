@@ -31,7 +31,12 @@ pub use sqlite_loader::ComsrvSqliteLoader;
 
 // Re-export comsrv configuration types
 pub use types::{
+    // Table SQL constants
+    ADJUSTMENT_POINTS_TABLE,
     AdjustmentPoint,
+    CHANNEL_ROUTING_TABLE,
+    CHANNELS_TABLE,
+    CONTROL_POINTS_TABLE,
     CanMapping,
     ChannelConfig,
     ChannelCore,
@@ -39,27 +44,22 @@ pub use types::{
     ComsrvConfig,
     ComsrvValidator,
     ControlPoint,
+    DEFAULT_PORT,
     GpioMapping,
     GrpcMapping,
     IecMapping,
+    JSON_POINT_MAPPINGS_TABLE,
     ModbusMapping,
     Point,
     RuntimeChannelConfig,
-    SignalPoint,
-    SqlInsertablePoint,
-    TelemetryPoint,
-    VirtualMapping,
-    // Table SQL constants
-    ADJUSTMENT_POINTS_TABLE,
-    CHANNELS_TABLE,
-    CHANNEL_ROUTING_TABLE,
-    CONTROL_POINTS_TABLE,
-    DEFAULT_PORT,
-    JSON_POINT_MAPPINGS_TABLE,
     SERVICE_CONFIG_TABLE,
     SIGNAL_POINTS_TABLE,
     SYNC_METADATA_TABLE,
+    SignalPoint,
+    SqlInsertablePoint,
     TELEMETRY_POINTS_TABLE,
+    TelemetryPoint,
+    VirtualMapping,
 };
 
 // Re-export common configuration types

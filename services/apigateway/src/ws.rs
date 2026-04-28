@@ -7,7 +7,7 @@ use bytes::Bytes;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -103,14 +103,14 @@ impl WsHub {
         interval_ms: u64,
         homepage_points: Vec<HomepagePoint>,
     ) {
-        if let Some(handle) = self.clients.get(client_id) {
-            if let Ok(mut sub) = handle.sub.write() {
-                sub.source = source;
-                sub.channels = channels;
-                sub.data_types = data_types;
-                sub.interval_ms = interval_ms;
-                sub.homepage_points = homepage_points;
-            }
+        if let Some(handle) = self.clients.get(client_id)
+            && let Ok(mut sub) = handle.sub.write()
+        {
+            sub.source = source;
+            sub.channels = channels;
+            sub.data_types = data_types;
+            sub.interval_ms = interval_ms;
+            sub.homepage_points = homepage_points;
         }
     }
 
@@ -123,10 +123,9 @@ impl WsHub {
     }
 
     pub fn send_to(&self, client_id: &str, msg: String) -> bool {
-        if let Some(handle) = self.clients.get(client_id) {
-            handle.tx.send(msg).is_ok()
-        } else {
-            false
+        match self.clients.get(client_id) {
+            Some(handle) => handle.tx.send(msg).is_ok(),
+            _ => false,
         }
     }
 

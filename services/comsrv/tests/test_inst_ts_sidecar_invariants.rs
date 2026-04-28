@@ -21,7 +21,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use voltage_model::PointType;
-use voltage_routing::{set_action_point, write_channel_batch, ChannelPointUpdate, RoutingCache};
+use voltage_routing::{ChannelPointUpdate, RoutingCache, set_action_point, write_channel_batch};
 use voltage_rtdb::{KeySpaceConfig, MemoryRtdb, Rtdb};
 
 // ============================================================================

@@ -6,8 +6,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use voltage_model::PointType;
@@ -571,10 +571,10 @@ impl LogContext {
     }
 
     pub async fn log(&self, event: ChannelLogEvent) {
-        if let Some(handler) = &self.handler {
-            if self.config.should_log(&event) {
-                handler.on_log(self.channel_id, event).await;
-            }
+        if let Some(handler) = &self.handler
+            && self.config.should_log(&event)
+        {
+            handler.on_log(self.channel_id, event).await;
         }
     }
 
