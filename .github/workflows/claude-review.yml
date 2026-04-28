@@ -1,0 +1,103 @@
+# Claude Code AI Review
+#
+# Required secrets:
+#   ANTHROPIC_API_KEY         — Anthropic API key (required)
+#   CLAUDE_CODE_OAUTH_TOKEN   — alternative to API key (optional)
+#
+# Two modes:
+#   review  — triggered on push/PR, reads + comments only (no push)
+#   fix     — triggered by "claude-fix" label OR comment containing "@claude fix"
+#
+# Trigger fix mode: apply label "claude-fix" to a PR, or comment "@claude fix" on it.
+
+name: Claude Review
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, labeled]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: claude-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Review-only: reads code, posts comments, never pushes
+  review:
+    name: AI Code Review
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          claude_args: >-
+            --allowedTools
+            "Read,Glob,Bash(git diff:*),Bash(gh pr comment:*),Bash(gh pr view:*),Bash(gh issue comment:*)"
+          prompt: |
+            Review the diff on this push/PR for architectural, design, and security concerns.
+            Focus on:
+            - Unsafe Rust, unsound code, or memory-ordering issues
+            - SHM invariant violations (writer ownership, seqlock protocol)
+            - YAGNI violations: unnecessary abstraction, new crates/services without clear need
+            - Security: hardcoded secrets, user input reaching system boundaries unchecked
+            - Error handling: panics in hot paths, missing propagation
+            Skip issues already caught by clippy/fmt (rustfmt + clippy run in the Code Check CI).
+            Post findings as a PR comment. If nothing significant: post "No significant issues found."
+
+  # Fix mode: edit files and commit, gated behind label or @claude trigger
+  fix:
+    name: AI Fix
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'claude-fix')) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '@claude fix'))
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          claude_args: >-
+            --allowedTools
+            "Read,Write,Edit,Glob,Bash(cargo fmt:*),Bash(cargo clippy:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh pr comment:*),Bash(gh pr view:*)"
+          prompt: |
+            Fix the issues found in the PR diff.
+            Rules:
+            - Focus on clear bugs, security issues, and SHM/seqlock invariant violations
+            - Do NOT refactor or clean up code beyond what is needed to fix the issue
+            - Do NOT add abstraction layers, new crates, or generalize solutions
+            - Run `cargo fmt` and `cargo clippy` after changes to verify correctness
+            - Commit with message format: "fix: <description>"
+            - Post a comment summarising what was changed and why
