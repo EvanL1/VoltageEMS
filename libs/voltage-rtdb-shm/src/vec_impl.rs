@@ -2,7 +2,7 @@
 //!
 //! Provides atomic `PointSlot` for lock-free point data access in shared memory.
 
-use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 
 // ========== Instance Point Type Constants ==========
 
@@ -202,38 +202,38 @@ impl PointSlot {
     ///
     /// # Single-writer assumption
     ///
-    /// Uses `load` + `store` instead of `fetch_add` for the seq counter.
-    /// Correct ONLY when a single thread writes to each slot. Guaranteed
-    /// by SCADA architecture: comsrv owns telemetry slots, modsrv owns
-    /// control slots. Concurrent `set()` on the same slot is UB.
+    /// Uses `fetch_add` for the seq counter so each begin/end increment is a
+    /// single atomic RMW — even if a second writer were to race in, the seq
+    /// counter still advances monotonically and any reader observing an odd
+    /// value will retry. SCADA architecture still mandates single-writer per
+    /// slot (comsrv owns T/S, modsrv owns C/A) to avoid data tearing, but the
+    /// counter itself is no longer load-bearing on that convention.
     #[inline]
     pub fn set(&self, value: f64, raw: f64, timestamp: u64) {
-        let s = self.seq.load(Ordering::Relaxed);
+        // Begin write: seq → odd (signals write-in-progress). Relaxed RMW —
+        // the following Release fence establishes ordering with data stores.
+        let old = self.seq.fetch_add(1, Ordering::Relaxed);
         debug_assert!(
-            s & 1 == 0,
-            "PointSlot::set() entered with odd seq={} — concurrent writer or \
-             incomplete prior write. Single-writer invariant violated.",
-            s
+            old & 1 == 0,
+            "PointSlot::set() entered with odd prior seq={} — concurrent writer \
+             or incomplete prior write. Single-writer invariant violated.",
+            old
         );
 
-        // Begin write: seq → odd (signals write-in-progress). Relaxed —
-        // the following Release fence establishes ordering.
-        self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
-
         // Release fence: data stores below cannot be reordered before the
-        // seq→odd store above. Critical on AArch64 (dmb ishst) to ensure
-        // an observer that sees data=NEW also sees seq=odd.
+        // seq→odd RMW above. Critical on AArch64 (dmb ishst) to ensure an
+        // observer that sees data=NEW also sees seq=odd.
         fence(Ordering::Release);
 
-        // Data stores — Relaxed; ordering enforced by surrounding fences/stores.
+        // Data stores — Relaxed; ordering enforced by surrounding fences/RMWs.
         self.value_bits.store(value.to_bits(), Ordering::Relaxed);
         self.raw_bits.store(raw.to_bits(), Ordering::Relaxed);
         self.timestamp.store(timestamp, Ordering::Relaxed);
 
         // End write: seq → even (signals write-complete). Release prevents
-        // prior data stores from being reordered past this store, pairing
-        // with the reader's trailing Acquire fence. x86: mov. ARM64: stlr.
-        self.seq.store(s.wrapping_add(2), Ordering::Release);
+        // prior data stores from being reordered past this RMW, pairing with
+        // the reader's trailing Acquire fence. x86: lock add. ARM64: ldaddal.
+        self.seq.fetch_add(1, Ordering::Release);
 
         // Dirty flag — outside seqlock envelope (advisory, not consistency-critical).
         self.dirty.store(1, Ordering::Relaxed);
@@ -404,8 +404,8 @@ mod tests {
 
     #[test]
     fn test_seqlock_concurrent_read_write() {
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         use std::thread;
 
         let slot = Arc::new(PointSlot::new());
@@ -510,8 +510,8 @@ mod tests {
         // Multiple reader threads + 1 writer: verifies the seqlock protocol itself
         // is correct — uses try_load_consistent() which returns None instead of
         // falling back to unprotected reads under extreme contention.
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
         use std::thread;
 
         let slot = Arc::new(PointSlot::new());

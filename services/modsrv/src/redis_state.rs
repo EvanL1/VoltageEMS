@@ -4,7 +4,7 @@
 //! control-plane read/write for instances/products, keeping business
 //! logic and type safety directly in Rust.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use common::RedisRoutingKeys;
 use serde_json::{Map, Value};
@@ -443,7 +443,6 @@ where
 
 /// Write measurement data (replaces `modsrv_sync_measurement`).
 /// EN: Write measurement data (replaces `modsrv_sync_measurement`).
-#[allow(deprecated)] // Uses time_millis internally until TimeProvider migration is complete
 pub async fn sync_measurement<R>(
     redis: &R,
     instance_id: u32,
@@ -646,10 +645,12 @@ mod tests {
         // Instance does not exist in index
         let result = clear_routing_for_instance(&rtdb, "nonexistent").await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Instance not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Instance not found")
+        );
     }
 
     #[tokio::test]
