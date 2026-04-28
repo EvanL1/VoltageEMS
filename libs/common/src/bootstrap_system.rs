@@ -178,18 +178,16 @@ fn get_linux_memory_info() -> (Option<usize>, Option<usize>) {
 
     if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
         for line in meminfo.lines() {
-            if line.starts_with("MemAvailable:") {
-                if let Some(kb_str) = line.split_whitespace().nth(1) {
-                    if let Ok(kb) = kb_str.parse::<usize>() {
-                        available_mb = Some(kb / 1024);
-                    }
-                }
-            } else if line.starts_with("MemTotal:") {
-                if let Some(kb_str) = line.split_whitespace().nth(1) {
-                    if let Ok(kb) = kb_str.parse::<usize>() {
-                        total_mb = Some(kb / 1024);
-                    }
-                }
+            if line.starts_with("MemAvailable:")
+                && let Some(kb_str) = line.split_whitespace().nth(1)
+                && let Ok(kb) = kb_str.parse::<usize>()
+            {
+                available_mb = Some(kb / 1024);
+            } else if line.starts_with("MemTotal:")
+                && let Some(kb_str) = line.split_whitespace().nth(1)
+                && let Ok(kb) = kb_str.parse::<usize>()
+            {
+                total_mb = Some(kb / 1024);
             }
 
             if available_mb.is_some() && total_mb.is_some() {
