@@ -1,20 +1,20 @@
 # Claude Code AI Review
 #
-# Required secrets:
+# Required secrets (set under repo Settings → Secrets and variables → Actions):
 #   ANTHROPIC_API_KEY         — Anthropic API key (required)
 #   CLAUDE_CODE_OAUTH_TOKEN   — alternative to API key (optional)
 #
 # Two modes:
-#   review  — triggered on push/PR, reads + comments only (no push)
+#   review  — triggered on PR open/sync, reads + comments only (no push)
 #   fix     — triggered by "claude-fix" label OR comment containing "@claude fix"
 #
 # Trigger fix mode: apply label "claude-fix" to a PR, or comment "@claude fix" on it.
+# Note: anthropics/claude-code-action@v1 does NOT support the `push` event,
+# so review only runs on pull_request and issue_comment.
 
 name: Claude Review
 
 on:
-  push:
-    branches: [develop]
   pull_request:
     branches: [develop]
     types: [opened, synchronize, reopened, labeled]
@@ -30,9 +30,7 @@ jobs:
   review:
     name: AI Code Review
     runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'push' ||
-      github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request'
     permissions:
       contents: read
       pull-requests: write

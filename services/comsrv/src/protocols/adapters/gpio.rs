@@ -334,17 +334,17 @@ impl GpiodDriver {
     /// Returns `Cow<'_, str>` to avoid cloning when the chip name is already in the config.
     fn resolve_chip_line(pin: &GpioPinConfig) -> Result<(Cow<'_, str>, u32)> {
         // If gpio_number is provided and chip is default/empty, auto-resolve
-        if let Some(gpio_num) = pin.gpio_number {
-            if pin.chip.is_empty() || pin.chip == "gpiochip0" {
-                // Check if it's actually on gpiochip0
-                if gpio_num < 32 {
-                    // Likely actually on gpiochip0 - borrow from config
-                    return Ok((Cow::Borrowed(&pin.chip), pin.pin));
-                }
-                // Auto-resolve global GPIO number to chip + line (requires allocation)
-                let (chip, line) = resolve_gpio_to_chip_line(gpio_num)?;
-                return Ok((Cow::Owned(chip), line));
+        if let Some(gpio_num) = pin.gpio_number
+            && (pin.chip.is_empty() || pin.chip == "gpiochip0")
+        {
+            // Check if it's actually on gpiochip0
+            if gpio_num < 32 {
+                // Likely actually on gpiochip0 - borrow from config
+                return Ok((Cow::Borrowed(&pin.chip), pin.pin));
             }
+            // Auto-resolve global GPIO number to chip + line (requires allocation)
+            let (chip, line) = resolve_gpio_to_chip_line(gpio_num)?;
+            return Ok((Cow::Owned(chip), line));
         }
 
         // Use the configured chip directly - no allocation!
