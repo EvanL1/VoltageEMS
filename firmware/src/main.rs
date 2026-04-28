@@ -48,7 +48,6 @@ use panic_halt as _;
 use cortex_m_rt::entry;
 
 use voltage_core::codec::dl645::{decode_response, Dl645Frame};
-use voltage_core::codec::can::{extract_field, decode_value, CanDataType};
 use voltage_core::{PointType, Quality};
 use voltage_shm::{RawPtrShm, ShmOps, ShmOpsExt};
 
@@ -172,29 +171,6 @@ fn process_dl645_frame(shm: &mut RawPtrShm, frame: &Dl645Frame) {
 
     // Write to shared memory
     shm.write_slot(slot_index, value, timestamp, Quality::Good as u8);
-}
-
-/// Process CAN frame (example for J1939 PGN)
-#[allow(dead_code)]
-fn process_can_frame(shm: &mut RawPtrShm, can_id: u32, data: &[u8]) {
-    let timestamp = get_timestamp_ms();
-
-    // Extract PGN from 29-bit CAN ID (J1939 format)
-    let pgn = (can_id >> 8) & 0x3FFFF;
-
-    // Example: Engine speed from J1939 EEC1 (PGN 61444)
-    if pgn == 61444 && data.len() >= 4 {
-        // Engine speed is at bytes 3-4, 0.125 RPM/bit
-        if let Ok(field) = extract_field(data, 3, 0, 16) {
-            if let Ok(value) = decode_value(&field, CanDataType::UInt16) {
-                let rpm = value.apply_transform(0.125, 0.0);
-                if let Some(rpm_value) = rpm.as_f64() {
-                    shm.set_slot_metadata(10, 10, 1, PointType::Telemetry as u8);
-                    shm.write_slot(10, rpm_value, timestamp, Quality::Good as u8);
-                }
-            }
-        }
-    }
 }
 
 /// Main firmware entry point

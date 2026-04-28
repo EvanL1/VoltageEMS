@@ -204,11 +204,6 @@ impl CanFrameData {
     pub fn as_slice(&self) -> &[u8] {
         &self.data[..self.len as usize]
     }
-
-    /// Get the length
-    pub fn len(&self) -> usize {
-        self.len as usize
-    }
 }
 
 /// CAN frame cache - stores the latest received frame for each CAN-ID
@@ -235,16 +230,6 @@ impl CanFrameCache {
     /// Get the latest frame data for a CAN-ID
     pub fn get(&self, can_id: u32) -> Option<&[u8]> {
         self.frames.get(&can_id).map(|f| f.as_slice())
-    }
-
-    /// Get number of cached CAN-IDs
-    pub fn len(&self) -> usize {
-        self.frames.len()
-    }
-
-    /// Get all frames (for debugging)
-    pub fn iter(&self) -> impl Iterator<Item = (&u32, &CanFrameData)> {
-        self.frames.iter()
     }
 }
 

@@ -51,13 +51,6 @@ impl CoilStore {
         }
     }
 
-    /// Read a single coil.
-    #[allow(dead_code)]
-    pub fn read_coil(&self, unit_id: u8, address: u16) -> bool {
-        let coils = self.coils.read().unwrap_or_else(|e| e.into_inner());
-        coils.get(&(unit_id, address)).copied().unwrap_or(false)
-    }
-
     /// Read multiple coils (FC01).
     ///
     /// Returns a Vec of boolean values for the requested range.
@@ -83,19 +76,6 @@ impl CoilStore {
             .write()
             .unwrap_or_else(|e| e.into_inner());
         inputs.insert((unit_id, address), value);
-    }
-
-    /// Set multiple discrete inputs (for simulation setup).
-    #[allow(dead_code)]
-    pub fn set_discrete_inputs(&self, unit_id: u8, start_address: u16, values: &[bool]) {
-        let mut inputs = self
-            .discrete_inputs
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
-        for (offset, &value) in values.iter().enumerate() {
-            let addr = start_address.wrapping_add(offset as u16);
-            inputs.insert((unit_id, addr), value);
-        }
     }
 
     /// Read multiple discrete inputs (FC02).
@@ -160,19 +140,6 @@ impl CoilStore {
 
         values
     }
-
-    /// Clear all stored coils (useful for testing).
-    #[allow(dead_code)]
-    pub fn clear(&self) {
-        self.coils
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        self.discrete_inputs
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-    }
 }
 
 impl Default for CoilStore {
@@ -190,14 +157,14 @@ mod tests {
         let store = CoilStore::new();
 
         // Initially false
-        assert!(!store.read_coil(1, 100));
+        assert_eq!(store.read_coils(1, 100, 1), vec![false]);
 
         // Write and read back
         store.write_coil(1, 100, true);
-        assert!(store.read_coil(1, 100));
+        assert_eq!(store.read_coils(1, 100, 1), vec![true]);
 
         // Different unit_id should still be false
-        assert!(!store.read_coil(2, 100));
+        assert_eq!(store.read_coils(2, 100, 1), vec![false]);
     }
 
     #[test]
@@ -205,12 +172,10 @@ mod tests {
         let store = CoilStore::new();
         store.write_coils(1, 0, &[true, false, true, false, true]);
 
-        assert!(store.read_coil(1, 0));
-        assert!(!store.read_coil(1, 1));
-        assert!(store.read_coil(1, 2));
-        assert!(!store.read_coil(1, 3));
-        assert!(store.read_coil(1, 4));
-        assert!(!store.read_coil(1, 5)); // Not set, defaults to false
+        assert_eq!(
+            store.read_coils(1, 0, 6),
+            vec![true, false, true, false, true, false]
+        );
     }
 
     #[test]
@@ -227,7 +192,10 @@ mod tests {
     #[test]
     fn test_discrete_inputs() {
         let store = CoilStore::new();
-        store.set_discrete_inputs(1, 0, &[true, true, false, false]);
+        store.set_discrete_input(1, 0, true);
+        store.set_discrete_input(1, 1, true);
+        store.set_discrete_input(1, 2, false);
+        store.set_discrete_input(1, 3, false);
 
         let values = store.read_discrete_inputs(1, 0, 4);
         assert_eq!(values, vec![true, true, false, false]);

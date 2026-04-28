@@ -129,46 +129,6 @@ pub struct CalculatedPointUpdate {
     pub description: Option<String>,
 }
 
-// ── API Response ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-pub struct ApiResponse<T: Serialize> {
-    pub success: bool,
-    pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<T>,
-}
-
-#[allow(dead_code)]
-impl<T: Serialize> ApiResponse<T> {
-    pub fn ok(message: impl Into<String>, data: T) -> Self {
-        Self {
-            success: true,
-            message: message.into(),
-            data: Some(data),
-        }
-    }
-}
-
-#[allow(dead_code)]
-impl ApiResponse<serde_json::Value> {
-    pub fn ok_msg(message: impl Into<String>) -> Self {
-        Self {
-            success: true,
-            message: message.into(),
-            data: None,
-        }
-    }
-
-    pub fn err_msg(message: impl Into<String>) -> Self {
-        Self {
-            success: false,
-            message: message.into(),
-            data: None,
-        }
-    }
-}
-
 // ── Network Config ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

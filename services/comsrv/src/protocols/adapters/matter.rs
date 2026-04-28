@@ -58,17 +58,11 @@ use crate::protocols::core::traits::{
 /// Matter protocol message types (simplified).
 ///
 /// In a full implementation, these would map to Matter Interaction Model opcodes.
-/// Some variants are reserved for future subscription-based reads.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum MatterMessageType {
     /// Status Report (used for connectivity check)
     StatusReport = 0x01,
-    /// Read Request (attribute read, used in subscription flow)
-    ReadRequest = 0x02,
-    /// Report Data (attribute response)
-    ReportData = 0x05,
     /// Write Request (attribute write)
     WriteRequest = 0x06,
     /// Invoke Request (command invocation)
@@ -112,7 +106,6 @@ impl MatterFrame {
             return None;
         }
 
-        let message_type = buf[0];
         let exchange_id = u16::from_le_bytes([buf[1], buf[2]]);
         let payload_len = u16::from_le_bytes([buf[3], buf[4]]) as usize;
 
@@ -122,9 +115,6 @@ impl MatterFrame {
 
         let payload = buf[5..5 + payload_len].to_vec();
 
-        // We only care about known message types for now
-        let _ = message_type;
-
         Some(Self {
             // Store raw type; callers check as needed
             message_type: MatterMessageType::StatusReport,
@@ -132,22 +122,6 @@ impl MatterFrame {
             payload,
         })
     }
-}
-
-/// Build a Matter-like read request payload for an attribute path.
-///
-/// In a full implementation, this would be TLV-encoded with proper
-/// Interaction Model structures. For now, we encode the path as:
-/// [endpoint: 2B LE][cluster_id: 4B LE][attribute_id: 4B LE]
-///
-/// Reserved for subscription-based attribute reads (not yet wired into runtime).
-#[allow(dead_code)]
-fn build_read_request_payload(endpoint: u16, cluster_id: u32, attribute_id: u32) -> Vec<u8> {
-    let mut payload = Vec::with_capacity(10);
-    payload.extend_from_slice(&endpoint.to_le_bytes());
-    payload.extend_from_slice(&cluster_id.to_le_bytes());
-    payload.extend_from_slice(&attribute_id.to_le_bytes());
-    payload
 }
 
 /// Build a Matter-like invoke request payload (e.g., OnOff Toggle).
@@ -815,25 +789,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_read_request_payload() {
-        let payload = build_read_request_payload(1, 0x0402, 0x0000);
-        assert_eq!(payload.len(), 10);
-
-        // Verify endpoint encoding (LE)
-        assert_eq!(u16::from_le_bytes([payload[0], payload[1]]), 1);
-        // Verify cluster_id encoding (LE)
-        assert_eq!(
-            u32::from_le_bytes([payload[2], payload[3], payload[4], payload[5]]),
-            0x0402
-        );
-        // Verify attribute_id encoding (LE)
-        assert_eq!(
-            u32::from_le_bytes([payload[6], payload[7], payload[8], payload[9]]),
-            0x0000
-        );
-    }
-
-    #[test]
     fn test_build_invoke_request_payload() {
         let payload = build_invoke_request_payload(1, 0x0006, 1, 1.0);
         assert_eq!(payload.len(), 18);
@@ -1002,8 +957,6 @@ mod tests {
     fn test_matter_frame_all_message_types() {
         let types = [
             MatterMessageType::StatusReport,
-            MatterMessageType::ReadRequest,
-            MatterMessageType::ReportData,
             MatterMessageType::WriteRequest,
             MatterMessageType::InvokeRequest,
         ];
@@ -1026,55 +979,6 @@ mod tests {
             assert_eq!(decoded.exchange_id, 1000);
             assert_eq!(decoded.payload, vec![0xAA, 0xBB]);
         }
-    }
-
-    #[test]
-    fn test_build_read_request_boundary_values() {
-        // Minimum boundary: endpoint=0, cluster=0, attribute=0
-        let payload_min = build_read_request_payload(0, 0, 0);
-        assert_eq!(payload_min.len(), 10);
-        assert_eq!(u16::from_le_bytes([payload_min[0], payload_min[1]]), 0);
-        assert_eq!(
-            u32::from_le_bytes([
-                payload_min[2],
-                payload_min[3],
-                payload_min[4],
-                payload_min[5]
-            ]),
-            0
-        );
-        assert_eq!(
-            u32::from_le_bytes([
-                payload_min[6],
-                payload_min[7],
-                payload_min[8],
-                payload_min[9]
-            ]),
-            0
-        );
-
-        // Maximum boundary: endpoint=0xFFFF, cluster=0xFFFFFFFF, attribute=0xFFFFFFFF
-        let payload_max = build_read_request_payload(0xFFFF, 0xFFFF_FFFF, 0xFFFF_FFFF);
-        assert_eq!(payload_max.len(), 10);
-        assert_eq!(u16::from_le_bytes([payload_max[0], payload_max[1]]), 0xFFFF);
-        assert_eq!(
-            u32::from_le_bytes([
-                payload_max[2],
-                payload_max[3],
-                payload_max[4],
-                payload_max[5]
-            ]),
-            0xFFFF_FFFF
-        );
-        assert_eq!(
-            u32::from_le_bytes([
-                payload_max[6],
-                payload_max[7],
-                payload_max[8],
-                payload_max[9]
-            ]),
-            0xFFFF_FFFF
-        );
     }
 
     #[test]

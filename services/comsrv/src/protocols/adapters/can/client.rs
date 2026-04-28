@@ -188,6 +188,7 @@ impl CanClient {
             #[cfg(feature = "tracing-support")]
             tracing::info!("Interval created, starting receive loop");
 
+            #[cfg(feature = "tracing-support")]
             let mut poll_count = 0u64;
             loop {
                 #[cfg(feature = "tracing-support")]

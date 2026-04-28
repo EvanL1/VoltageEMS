@@ -10,7 +10,6 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
@@ -19,9 +18,6 @@ use super::data::{DataBatch, DataPoint, Value};
 use super::error::{GatewayError, Result};
 use super::quality::Quality;
 use voltage_model::PointType;
-
-/// Default timeout for a single transform call.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Path to the Python host script relative to the project root.
 const HOST_SCRIPT: &str = "libs/voltage-script-host/main.py";
@@ -72,8 +68,6 @@ pub struct ScriptRunner {
     script_path: String,
     inner: Mutex<ScriptRunnerInner>,
     request_counter: std::sync::atomic::AtomicU64,
-    #[allow(dead_code)] // will be used for subprocess timeout enforcement
-    timeout: Duration,
 }
 
 struct ScriptRunnerInner {
@@ -103,7 +97,6 @@ impl ScriptRunner {
                 reader: None,
             }),
             request_counter: std::sync::atomic::AtomicU64::new(1),
-            timeout: DEFAULT_TIMEOUT,
         }
     }
 

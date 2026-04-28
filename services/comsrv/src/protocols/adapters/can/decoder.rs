@@ -49,9 +49,9 @@ impl PointManager {
                     Ok(value) => {
                         result.insert(*point_id, value);
                     },
-                    Err(e) => {
+                    Err(_e) => {
                         #[cfg(feature = "tracing-support")]
-                        tracing::warn!("Failed to decode point {}: {}", point_id, e);
+                        tracing::warn!("Failed to decode point {}: {}", point_id, _e);
                     },
                 }
             }
