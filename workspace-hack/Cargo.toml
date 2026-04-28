@@ -62,7 +62,6 @@ sync_wrapper = { version = "1", default-features = false, features = ["futures"]
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["fs", "sync"] }
-tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
 tracing-core = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
@@ -128,7 +127,6 @@ sync_wrapper = { version = "1", default-features = false, features = ["futures"]
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["fs", "sync"] }
-tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
 tracing-core = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }

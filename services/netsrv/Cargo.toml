@@ -11,7 +11,6 @@ path = "src/main.rs"
 [dependencies]
 # Local libraries
 common = { path = "../../libs/common", default-features = false, features = ["redis", "sqlite", "axum"] }
-errors = { path = "../../libs/errors", features = ["axum-support"] }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 
 # Async runtime
@@ -38,15 +37,11 @@ anyhow = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-appender = { workspace = true }
 
 # Utilities
 chrono = { workspace = true }
-futures = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
-async-trait = { workspace = true }
 
 # MQTT client with rustls-based TLS (no native OpenSSL dependency)
 rumqttc = { version = "0.24", default-features = false, features = ["use-rustls"] }

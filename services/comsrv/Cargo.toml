@@ -21,7 +21,6 @@ voltage-model = { path = "../../libs/voltage-model" }
 voltage-routing = { path = "../../libs/voltage-routing" }
 voltage-rtdb = { path = "../../libs/voltage-rtdb" }
 voltage-rtdb-shm = { path = "../../libs/voltage-rtdb-shm" }
-voltage-schema-macro = { path = "../../libs/voltage-schema-macro" }
 
 # Protocol libraries
 voltage_modbus = { version = "0.5.0", optional = true, features = ["rtu"] }
@@ -67,7 +66,6 @@ tower = { workspace = true }
 
 # Data structures
 dashmap = { workspace = true }
-itoa = { workspace = true }  # Stack-allocated integer formatting
 arc-swap = "1.7"
 parking_lot = { workspace = true }  # Non-poisoning RwLock for SlotBitmap
 bytes = { workspace = true }
