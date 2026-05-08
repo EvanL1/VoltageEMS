@@ -296,7 +296,11 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
                     let now_ms = crate::core::channels::channel_entry::unix_timestamp_ms();
                     let timeout_ms = WATCHDOG_HEARTBEAT_TIMEOUT_SECS * 1000;
 
-                    // Watchdog: detect stuck tasks (heartbeat stale > 120s)
+                    // Watchdog: detect stuck tasks (heartbeat stale > 120s).
+                    // Bare abort_task() previously left the slot empty — it scheduled
+                    // cancellation but never spawned a replacement, so a hung channel
+                    // stayed dead until comsrv restarted. respawn_channel() tears down
+                    // and rebuilds from saved config so the runtime self-heals.
                     for stat in &all_stats {
                         // Skip channels that haven't started yet (heartbeat = 0)
                         if stat.watchdog_heartbeat_ms == 0 {
@@ -305,14 +309,18 @@ pub(crate) fn start_cleanup_task_generic<R: Rtdb + 'static>(
                         let age_ms = now_ms - stat.watchdog_heartbeat_ms;
                         if age_ms > timeout_ms {
                             error!(
-                                "Ch{} ({}) watchdog: heartbeat stale for {}s, aborting task",
+                                "Ch{} ({}) watchdog: heartbeat stale for {}s, respawning task",
                                 stat.channel_id,
                                 stat.name,
                                 age_ms / 1000
                             );
-                            // Abort the stuck task
-                            if let Some(entry) = channel_manager.get_channel(stat.channel_id) {
-                                entry.abort_task();
+                            if let Err(e) =
+                                channel_manager.respawn_channel(stat.channel_id).await
+                            {
+                                error!(
+                                    "Ch{} ({}) watchdog respawn failed: {}",
+                                    stat.channel_id, stat.name, e
+                                );
                             }
                         }
                     }

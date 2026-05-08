@@ -160,6 +160,39 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
     // Channel Lifecycle
     // ========================================================================
 
+    /// Respawn a hung channel: tear down the existing entry and rebuild it from
+    /// the same configuration. Used by the runtime watchdog when a task's
+    /// heartbeat goes stale (task hung in a non-cancellable await), since
+    /// `JoinHandle::abort()` alone cannot recover — a fresh task must replace
+    /// the zombie. Re-uses the original `Arc<ChannelConfig>` so points/protocol
+    /// stay identical; routing/SHM slots are reallocated as part of `create_channel`.
+    pub async fn respawn_channel(&self, channel_id: u32) -> Result<()> {
+        // Snapshot the config before we drop the entry; channel_config is the
+        // only piece needed to rebuild via the standard creation path.
+        let cfg = match self
+            .channels
+            .get(channel_id as usize)
+            .and_then(|s| s.load_full())
+        {
+            Some(entry) => Arc::clone(&entry.channel_config),
+            None => return Err(ComSrvError::channel_not_found(channel_id)),
+        };
+
+        // Graceful remove: shutdown signal → 500ms timeout → force-abort.
+        // Errors here (e.g. already-removed) are tolerated; we still try to
+        // create fresh — that's the whole point of the respawn.
+        if let Err(e) = self.remove_channel(channel_id).await {
+            warn!(
+                "Ch{} respawn: remove returned {} — proceeding to recreate",
+                channel_id, e
+            );
+        }
+
+        self.create_channel(cfg).await.map(|_entry| {
+            info!("Ch{} respawned by watchdog", channel_id);
+        })
+    }
+
     /// Remove channel with graceful shutdown.
     pub async fn remove_channel(&self, channel_id: u32) -> Result<()> {
         // Unregister from cache before removing channel
@@ -420,5 +453,28 @@ mod tests {
 
         let count = manager.running_channel_count().await;
         assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_respawn_missing_channel_returns_not_found() {
+        // Watchdog must surface "no such channel" cleanly so a missing slot
+        // doesn't crash the cleanup loop. ChannelNotFound is the expected error
+        // shape — anything else (e.g. panic) would be a regression.
+        let rtdb = create_test_rtdb();
+        let routing_cache = create_test_routing_cache();
+        let manager: ChannelManager<voltage_rtdb::MemoryRtdb> =
+            ChannelManager::new(rtdb, routing_cache);
+
+        let err = manager
+            .respawn_channel(42)
+            .await
+            .expect_err("respawn on missing channel must error");
+        // channel_not_found() constructor returns ChannelError("Channel not found: ...")
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("Channel not found"),
+            "expected 'Channel not found' in error, got: {}",
+            msg
+        );
     }
 }
