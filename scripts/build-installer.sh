@@ -446,7 +446,7 @@ if csv_contains "$BUILD_IMAGES" "voltageems:latest"; then
 
     CARGO_BUILD_JOBS=$CPU_CORES cargo zigbuild --release --target $TARGET \
         -p monarch -p comsrv -p modsrv -p alarmsrv -p apigateway -p hissrv -p netsrv \
-        "${CARGO_FEATURE_ARGS[@]}"
+        ${CARGO_FEATURE_ARGS[@]+"${CARGO_FEATURE_ARGS[@]}"}
 
     if [[ -f "$ROOT_DIR/target/$TARGET/release/monarch" ]]; then
         cp "$ROOT_DIR/target/$TARGET/release/monarch" "$BUILD_DIR/tools/"
