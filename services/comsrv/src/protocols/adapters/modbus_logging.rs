@@ -89,7 +89,7 @@ pub(crate) fn create_packet_callback(
                     (slave, fc, None, start, qty)
                 },
                 #[allow(unreachable_patterns)]
-                _ => unreachable!("ModbusTransportType::Ascii is not supported"),
+                _ => (0, 0, None, None, None),
             };
 
         let metadata = PacketMetadata::Modbus {

@@ -103,7 +103,7 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
 
     let get = |k: &str, d: &str| map.get(k).cloned().unwrap_or_else(|| d.to_string());
 
-    Ok(NetConfig {
+    let mut cfg = NetConfig {
         product_sn: get("product_sn", "MonarchHub"),
         device_sn: get("device_sn", "auto"),
         broker_host: get("broker_host", "localhost"),
@@ -134,10 +134,14 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
         .unwrap_or_else(|_| vec!["inst:*:M".to_string(), "inst:*:A".to_string()]),
         exclude_patterns: serde_json::from_str(&get("exclude_patterns", "[]")).unwrap_or_default(),
         alarmsrv_url: get("alarmsrv_url", "http://localhost:6007"),
-    })
+    };
+    cfg.normalize();
+    Ok(cfg)
 }
 
 pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<()> {
+    let mut cfg = cfg.clone();
+    cfg.normalize();
     let pairs: Vec<(&str, Cow<'_, str>)> = vec![
         ("product_sn", Cow::Borrowed(cfg.product_sn.as_str())),
         ("device_sn", Cow::Borrowed(cfg.device_sn.as_str())),

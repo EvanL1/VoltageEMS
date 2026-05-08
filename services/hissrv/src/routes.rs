@@ -463,8 +463,9 @@ async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     ))]
 async fn update_config(
     State(state): State<Arc<AppState>>,
-    Json(new_cfg): Json<ServiceConfig>,
+    Json(mut new_cfg): Json<ServiceConfig>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    new_cfg.normalize();
     if let Err(e) = db_config::save_config(&state.sqlite, &new_cfg).await {
         error!("Failed to save config: {}", e);
         return Err((

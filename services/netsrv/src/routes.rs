@@ -203,8 +203,10 @@ async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     ))]
 async fn mqtt_update_config(
     State(state): State<Arc<AppState>>,
-    Json(new_cfg): Json<NetConfig>,
+    Json(mut new_cfg): Json<NetConfig>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Without this the in-memory copy bypasses load_config() and chunks(0) can panic.
+    new_cfg.normalize();
     if let Err(e) = db_config::save_config(&state.sqlite, &new_cfg).await {
         error!("Save config failed: {}", e);
         return Err((

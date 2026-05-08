@@ -166,7 +166,12 @@ pub(super) async fn fetch_grouped_points(
             "S" => grouped.signal = points,
             "C" => grouped.control = points,
             "A" => grouped.adjustment = points,
-            _ => unreachable!(),
+            _ => {
+                return Err(AppError::internal_error(format!(
+                    "Unsupported point type in table list: {}",
+                    type_letter
+                )));
+            },
         }
     }
 

@@ -353,7 +353,7 @@ impl ChannelToSlotIndex {
                     1 => PointType::Signal,
                     2 => PointType::Control,
                     3 => PointType::Adjustment,
-                    _ => unreachable!(),
+                    _ => continue,
                 };
 
                 let count = layout.type_counts[type_idx as usize];

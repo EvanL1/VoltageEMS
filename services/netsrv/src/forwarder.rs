@@ -132,10 +132,9 @@ async fn collect_redis_data<R: Rtdb>(
 
             // Parse key into (source, device, data_type)
             let parts: Vec<&str> = key.splitn(3, ':').collect();
-            if parts.len() < 3 {
+            let [source, device, data_type] = parts.as_slice() else {
                 continue;
-            }
-            let (source, device, data_type) = (parts[0], parts[1], parts[2]);
+            };
 
             let fields = match rtdb.hash_get_all(&key).await {
                 Ok(f) if !f.is_empty() => f,

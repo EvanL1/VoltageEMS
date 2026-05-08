@@ -321,7 +321,12 @@ impl ChannelRuntime for Iec61850Channel {
                     failures.push(PointFailure::with_error(point_id, e.to_string()));
                     break;
                 },
-                _ => unreachable!(),
+                Ok(other) => {
+                    failures.push(PointFailure::with_error(
+                        point_id,
+                        format!("unsupported MMS value: {:?}", other),
+                    ));
+                },
             }
         }
 

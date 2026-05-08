@@ -101,6 +101,11 @@ impl<S: StateStore> BuiltinFunctions<S> {
     /// * `value` - Current value to add
     /// * `window` - Window size (number of samples)
     pub async fn moving_avg(&self, var_name: &str, value: f64, window: usize) -> Result<f64> {
+        if window == 0 {
+            return Err(CalcError::function(
+                "moving_avg: window must be >= 1 (got 0)",
+            ));
+        }
         let key = state_key(&self.context, "moving_avg", var_name);
 
         // Load or create state
@@ -359,7 +364,17 @@ pub fn scale(value: f64, factor: f64) -> f64 {
 
 /// Clamp a value to a range
 pub fn clamp(value: f64, min: f64, max: f64) -> f64 {
-    value.clamp(min, max)
+    if min.is_nan() || max.is_nan() {
+        return value;
+    }
+    let (lo, hi) = if min <= max { (min, max) } else { (max, min) };
+    if value < lo {
+        lo
+    } else if value > hi {
+        hi
+    } else {
+        value
+    }
 }
 
 /// Absolute value
@@ -413,6 +428,7 @@ mod tests {
         assert_eq!(clamp(50.0, 0.0, 100.0), 50.0);
         assert_eq!(clamp(-10.0, 0.0, 100.0), 0.0);
         assert_eq!(clamp(150.0, 0.0, 100.0), 100.0);
+        assert_eq!(clamp(50.0, 100.0, 0.0), 50.0);
     }
 
     #[test]
@@ -450,6 +466,16 @@ mod tests {
         let _ = funcs.moving_avg("temp", 20.0, 3).await.unwrap();
         let avg = funcs.moving_avg("temp", 30.0, 3).await.unwrap();
         assert_eq!(avg, 20.0); // (10+20+30)/3
+    }
+
+    #[tokio::test]
+    async fn test_moving_avg_window_zero_returns_err() {
+        let store = Arc::new(MemoryStateStore::new());
+        let funcs = BuiltinFunctions::new(store, "test");
+
+        // window=0 must surface as a CalcError, not silently succeed and not panic.
+        let err = funcs.moving_avg("temp", 10.0, 0).await.unwrap_err();
+        assert!(matches!(err, CalcError::Function(_)));
     }
 
     #[tokio::test]

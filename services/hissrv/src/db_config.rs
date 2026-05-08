@@ -137,7 +137,7 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<ServiceConfig> {
     let exclude_patterns: Vec<String> =
         serde_json::from_str(&get("exclude_patterns", "[]")).unwrap_or_default();
 
-    Ok(ServiceConfig {
+    let mut cfg = ServiceConfig {
         collection_interval_secs: get("collection_interval_secs", "30").parse().unwrap_or(30),
         flush_interval_secs: get("flush_interval_secs", "60").parse().unwrap_or(60),
         batch_size: get("batch_size", "1000").parse().unwrap_or(1000),
@@ -148,11 +148,15 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<ServiceConfig> {
         max_time_range_days: get("max_time_range_days", "365").parse().unwrap_or(365),
         subscribe_patterns,
         exclude_patterns,
-    })
+    };
+    cfg.normalize();
+    Ok(cfg)
 }
 
 /// Persist operational settings back to the DB.
 pub async fn save_config(pool: &SqlitePool, cfg: &ServiceConfig) -> anyhow::Result<()> {
+    let mut cfg = cfg.clone();
+    cfg.normalize();
     let pairs: Vec<(&str, Cow<'_, str>)> = vec![
         (
             "collection_interval_secs",

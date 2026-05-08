@@ -341,7 +341,7 @@ fn handle_single_command(cmd: ShmCommands) -> Result<()> {
             let parsed = parse_key(&key)?;
             watch_key(&reader, &parsed, interval_ms, &routing_cache)?;
         },
-        ShmCommands::Top => unreachable!(),
+        ShmCommands::Top => return run_dashboard(),
     }
 
     Ok(())

@@ -188,6 +188,47 @@ impl Default for ServiceConfig {
     }
 }
 
+impl ServiceConfig {
+    pub fn normalize(&mut self) {
+        self.collection_interval_secs = self.collection_interval_secs.max(1);
+        self.flush_interval_secs = self.flush_interval_secs.max(1);
+        self.batch_size = self.batch_size.max(1);
+        self.cleanup_older_than_days = self.cleanup_older_than_days.max(1);
+        self.default_page_size = self.default_page_size.max(1);
+        self.max_page_size = self.max_page_size.max(1);
+        self.max_time_range_days = self.max_time_range_days.max(1);
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_clamps_zero_runtime_values() {
+        let mut cfg = ServiceConfig {
+            collection_interval_secs: 0,
+            flush_interval_secs: 0,
+            batch_size: 0,
+            cleanup_older_than_days: 0,
+            default_page_size: 0,
+            max_page_size: 0,
+            max_time_range_days: 0,
+            ..ServiceConfig::default()
+        };
+
+        cfg.normalize();
+
+        assert_eq!(cfg.collection_interval_secs, 1);
+        assert_eq!(cfg.flush_interval_secs, 1);
+        assert_eq!(cfg.batch_size, 1);
+        assert_eq!(cfg.cleanup_older_than_days, 1);
+        assert_eq!(cfg.default_page_size, 1);
+        assert_eq!(cfg.max_page_size, 1);
+        assert_eq!(cfg.max_time_range_days, 1);
+    }
+}
+
 // ── Internal storage connection settings ─────────────────────────────────────
 
 /// Storage backend connection settings.  Persisted in the same `hissrv_config`

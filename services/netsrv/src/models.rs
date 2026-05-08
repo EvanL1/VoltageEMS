@@ -251,6 +251,47 @@ impl Default for NetConfig {
     }
 }
 
+impl NetConfig {
+    pub fn normalize(&mut self) {
+        self.broker_port = self.broker_port.max(1);
+        self.broker_keepalive_secs = self.broker_keepalive_secs.max(1);
+        self.reconnect_delay_secs = self.reconnect_delay_secs.max(1);
+        self.reconnect_max_attempts = self.reconnect_max_attempts.max(1);
+        self.report_interval_secs = self.report_interval_secs.max(1);
+        self.report_batch_size = self.report_batch_size.max(1);
+        self.system_monitor_interval_secs = self.system_monitor_interval_secs.max(1);
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_clamps_zero_runtime_values() {
+        let mut cfg = NetConfig {
+            broker_port: 0,
+            broker_keepalive_secs: 0,
+            reconnect_delay_secs: 0,
+            reconnect_max_attempts: 0,
+            report_interval_secs: 0,
+            report_batch_size: 0,
+            system_monitor_interval_secs: 0,
+            ..NetConfig::default()
+        };
+
+        cfg.normalize();
+
+        assert_eq!(cfg.broker_port, 1);
+        assert_eq!(cfg.broker_keepalive_secs, 1);
+        assert_eq!(cfg.reconnect_delay_secs, 1);
+        assert_eq!(cfg.reconnect_max_attempts, 1);
+        assert_eq!(cfg.report_interval_secs, 1);
+        assert_eq!(cfg.report_batch_size, 1);
+        assert_eq!(cfg.system_monitor_interval_secs, 1);
+    }
+}
+
 // ── HTTP API models ───────────────────────────────────────────────────────────
 
 /// 告警广播请求体（JSON 对象，内容透传至 MQTT 告警 Topic）
