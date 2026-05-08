@@ -363,10 +363,22 @@ impl ReconnectHelper {
         let base_delay = self.policy.initial_delay;
         let multiplier = self.policy.backoff_multiplier;
 
-        // Exponential backoff: delay = initial_delay * (multiplier ^ attempt)
-        let mut delay = base_delay.mul_f64(multiplier.powi(attempt as i32));
+        // Compute the multiplier in f64 and clamp BEFORE handing to Duration::mul_f64,
+        // which panics when the result overflows Duration (~u64::MAX seconds).
+        // With max_attempts=0 (unlimited) the attempt counter can grow until
+        // 2^attempt overflows; clamp to (max_delay / base_delay) so the
+        // subsequent cap step is purely a formality and Duration::mul_f64 cannot panic.
+        let factor = multiplier.powi(attempt as i32);
+        let max_factor = if base_delay.is_zero() {
+            1.0
+        } else {
+            self.policy.max_delay.as_secs_f64() / base_delay.as_secs_f64()
+        };
+        let safe_factor = factor.clamp(0.0, max_factor.max(1.0));
 
-        // Cap at maximum delay
+        let mut delay = base_delay.mul_f64(safe_factor);
+
+        // Cap at maximum delay (defense-in-depth; clamp above already enforces this).
         if delay > self.policy.max_delay {
             delay = self.policy.max_delay;
         }
@@ -415,6 +427,36 @@ mod tests {
 
         helper.context.current_attempt = 4;
         assert_eq!(helper.calculate_next_delay(), Duration::from_millis(800));
+    }
+
+    #[tokio::test]
+    async fn test_unlimited_retry_does_not_panic_on_overflow() {
+        // Regression test for the production crash where comsrv would panic in
+        // Duration::mul_f64(2.0_f64.powi(64)) after ~65 reconnect attempts when
+        // max_attempts=0 (unlimited). With panic = "abort" in release, this
+        // SIGABRTed the process and Docker restarted it ~hourly while a
+        // Modbus device stayed unreachable.
+        let policy = ReconnectPolicy {
+            max_attempts: 0, // unlimited — production default
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(60),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let mut helper = ReconnectHelper::new(policy);
+
+        // Walk attempt counter past the historical crash point.
+        for n in [1u32, 10, 50, 65, 100, 1_000, u32::MAX] {
+            helper.context.current_attempt = n;
+            let delay = helper.calculate_next_delay();
+            assert!(
+                delay <= Duration::from_secs(60),
+                "attempt={} must stay capped at max_delay, got {:?}",
+                n,
+                delay
+            );
+        }
     }
 
     #[tokio::test]
