@@ -36,6 +36,10 @@ pub(super) struct ChannelPollContext<R: Rtdb> {
     pub watchdog_heartbeat_ms: Arc<AtomicI64>,
     pub reconnect_total_attempts: Arc<AtomicU64>,
     pub reconnect_failed: Arc<AtomicBool>,
+    /// Timestamp (millis since epoch) of the most recent poll cycle that
+    /// returned at least one successful point. Drives `is_connected()` so the
+    /// UI reflects data freshness, not just TCP state.
+    pub last_successful_read_ms: Arc<AtomicI64>,
     /// Consecutive zero-data poll cycles before triggering disconnect (0 = disabled)
     pub zero_data_threshold: u32,
 }
@@ -373,6 +377,11 @@ async fn handle_poll_tick<R: Rtdb>(
     let count = result.data.len();
     if count > 0 {
         *consecutive_zero_data = 0;
+        // Mark "data is flowing" — is_connected() requires this to stay fresh
+        // so a TCP-up-but-Modbus-dead zombie reports as disconnected after
+        // ~3 missed polls.
+        ctx.last_successful_read_ms
+            .store(super::channel_entry::unix_timestamp_ms(), Ordering::Relaxed);
         tracing::trace!("Ch{} poll ok: {} pts", ctx.channel_id, count);
         if let Err(e) = ctx.store.write_batch(ctx.channel_id, result.data).await {
             error!("Ch{} failed to write to Redis: {}", ctx.channel_id, e);
