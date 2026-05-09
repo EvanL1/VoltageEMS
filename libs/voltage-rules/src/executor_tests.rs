@@ -319,10 +319,11 @@ async fn test_read_rule_variables_with_name_index() {
     }];
 
     let mut values = HashMap::new();
-    executor
+    let outcome = executor
         .read_rule_variables(&variables, &mut values)
         .await
         .unwrap();
+    assert!(outcome.missing.is_empty(), "no variables should be missing");
 
     assert_eq!(values.get("X1"), Some(&42.5));
 }
@@ -344,12 +345,74 @@ async fn test_read_variables_no_cache_uses_redis() {
     }];
 
     let mut values = HashMap::new();
-    executor
+    let outcome = executor
+        .read_rule_variables(&variables, &mut values)
+        .await
+        .unwrap();
+    assert!(outcome.missing.is_empty(), "no variables should be missing");
+
+    assert_eq!(values.get("DIRECT"), Some(&55.5));
+}
+
+/// Locking the contract: measurement variables that have never been written
+/// (Redis field absent) MUST appear in `outcome.missing` so callers can skip
+/// the cycle. Substituting 0.0 would silently fire conditions like
+/// "current < 5A" on devices that never reported.
+#[tokio::test]
+async fn test_missing_measurement_appears_in_outcome_missing() {
+    let (_rtdb, executor) = new_executor();
+
+    let variables = vec![RuleVariable {
+        name: "GHOST".to_string(),
+        instance: Some(999),
+        point_type: Some("measurement".to_string()),
+        point: Some(1),
+        formula: vec![],
+    }];
+
+    let mut values = HashMap::new();
+    let outcome = executor
         .read_rule_variables(&variables, &mut values)
         .await
         .unwrap();
 
-    assert_eq!(values.get("DIRECT"), Some(&55.5));
+    assert_eq!(outcome.missing, vec!["GHOST".to_string()]);
+    assert!(
+        !values.contains_key("GHOST"),
+        "missing measurement must NOT be inserted with a 0.0 fallback — \
+         that would silently trigger threshold conditions"
+    );
+}
+
+/// Action variables (write targets) that are not yet written are NOT missing —
+/// "never written" is the normal initial state for an action point. Caller
+/// proceeds to evaluate/write. Locks the asymmetric semantics with measurement.
+#[tokio::test]
+async fn test_unset_action_var_is_not_treated_as_missing() {
+    let (_rtdb, executor) = new_executor();
+
+    let variables = vec![RuleVariable {
+        name: "Y_TARGET".to_string(),
+        instance: Some(999),
+        point_type: Some("action".to_string()),
+        point: Some(1),
+        formula: vec![],
+    }];
+
+    let mut values = HashMap::new();
+    let outcome = executor
+        .read_rule_variables(&variables, &mut values)
+        .await
+        .unwrap();
+
+    assert!(
+        outcome.missing.is_empty(),
+        "unwritten action point is NOT a missing-variable error"
+    );
+    assert!(
+        !values.contains_key("Y_TARGET"),
+        "still don't fabricate a 0.0 — values stays empty until something writes"
+    );
 }
 
 // =========================================================================

@@ -141,6 +141,21 @@ fn evaluate_token_formula(
     }
 }
 
+/// Outcome of one variable-read pass for a node.
+///
+/// Captures both "did anything change?" (for snapshot-cache reuse) and
+/// "which variables were unavailable?" (so callers can skip evaluation
+/// instead of substituting 0.0 for absent readings — silently triggering
+/// conditions like "current < threshold" on missing data).
+#[derive(Debug, Default)]
+pub(crate) struct RuleReadOutcome {
+    pub values_changed: bool,
+    /// Variables whose data was unavailable this cycle (no SHM hit, no Redis
+    /// field, or RPC failure). Caller MUST short-circuit rule evaluation when
+    /// non-empty.
+    pub missing: Vec<String>,
+}
+
 /// Result of executing a rule
 #[derive(Debug, Clone, Serialize)]
 pub struct RuleExecutionResult {
@@ -342,17 +357,26 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     rule: rules,
                     wires,
                 } => {
-                    // Read node-local variables
-                    let values_changed =
-                        match self.read_rule_variables(variables, &mut values).await {
-                            Ok(changed) => changed,
-                            Err(e) => {
-                                result.error = Some(format!("Failed to read variables: {}", e));
-                                // Save variable values even on error (wrap in Arc)
-                                result.variable_values = Arc::new(std::mem::take(&mut values));
-                                return Ok(result);
-                            },
-                        };
+                    // Read node-local variables. Missing variables → skip this
+                    // cycle so absent data can never trigger threshold rules
+                    // (a 0.0 fallback would fire "X1 < 5" on missing readings).
+                    let outcome = match self.read_rule_variables(variables, &mut values).await {
+                        Ok(o) => o,
+                        Err(e) => {
+                            result.error = Some(format!("Failed to read variables: {}", e));
+                            result.variable_values = Arc::new(std::mem::take(&mut values));
+                            return Ok(result);
+                        },
+                    };
+                    if !outcome.missing.is_empty() {
+                        result.error = Some(format!(
+                            "Rule cycle skipped: variables unavailable: {}",
+                            outcome.missing.join(", ")
+                        ));
+                        result.variable_values = Arc::new(std::mem::take(&mut values));
+                        return Ok(result);
+                    }
+                    let values_changed = outcome.values_changed;
 
                     // Snapshot values when entering this node (reuse cache if nothing changed)
                     let snapshot = snapshot_or_reuse(&mut values_snapshot, &values, values_changed);
@@ -391,15 +415,23 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     rule: assignments,
                     wires,
                 } => {
-                    // Read target variables
-                    let values_changed =
-                        match self.read_rule_variables(variables, &mut values).await {
-                            Ok(changed) => changed,
-                            Err(e) => {
-                                result.error = Some(format!("Failed to read variables: {}", e));
-                                return Ok(result);
-                            },
-                        };
+                    // Read target variables. Skip the cycle on missing data —
+                    // a 0.0 fallback would write meaningless action values.
+                    let outcome = match self.read_rule_variables(variables, &mut values).await {
+                        Ok(o) => o,
+                        Err(e) => {
+                            result.error = Some(format!("Failed to read variables: {}", e));
+                            return Ok(result);
+                        },
+                    };
+                    if !outcome.missing.is_empty() {
+                        result.error = Some(format!(
+                            "Rule cycle skipped: variables unavailable: {}",
+                            outcome.missing.join(", ")
+                        ));
+                        return Ok(result);
+                    }
+                    let values_changed = outcome.values_changed;
 
                     // Snapshot values when entering this node (before executing actions)
                     let input_snapshot =
@@ -498,13 +530,21 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         result: &mut RuleExecutionResult,
         rule_id: i64,
     ) -> Option<&'a str> {
-        let values_changed = match self.read_rule_variables(variables, values).await {
-            Ok(changed) => changed,
+        let outcome = match self.read_rule_variables(variables, values).await {
+            Ok(o) => o,
             Err(e) => {
                 result.error = Some(format!("Failed to read variables: {}", e));
                 return None;
             },
         };
+        if !outcome.missing.is_empty() {
+            result.error = Some(format!(
+                "Calculation skipped: variables unavailable: {}",
+                outcome.missing.join(", ")
+            ));
+            return None;
+        }
+        let values_changed = outcome.values_changed;
 
         let input_snapshot = snapshot_or_reuse(snapshot_cache, values, values_changed);
         result.variable_values = Arc::clone(&input_snapshot);
@@ -567,18 +607,29 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         rule_id: i64,
     ) -> Option<&'a str> {
         let input_vars = vec![input.clone()];
-        let values_changed = match self.read_rule_variables(&input_vars, values).await {
-            Ok(changed) => changed,
+        let outcome = match self.read_rule_variables(&input_vars, values).await {
+            Ok(o) => o,
             Err(e) => {
                 result.error = Some(format!("Failed to read input variable: {}", e));
                 return None;
             },
         };
+        if !outcome.missing.is_empty() {
+            result.error = Some(format!(
+                "PeriodDelta skipped: input variable unavailable: {}",
+                outcome.missing.join(", ")
+            ));
+            return None;
+        }
+        let values_changed = outcome.values_changed;
 
         let input_snapshot = snapshot_or_reuse(snapshot_cache, values, values_changed);
         result.variable_values = Arc::clone(&input_snapshot);
 
-        let input_value = values.get(&input.name).copied().unwrap_or(0.0);
+        // Safe: missing-check above guarantees the input is in `values`.
+        let input_value = *values
+            .get(&input.name)
+            .expect("input variable present after non-missing read_rule_variables");
         let calc_engine =
             CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule_id));
 
@@ -637,8 +688,8 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         &self,
         variables: &[RuleVariable],
         values: &mut HashMap<String, f64>,
-    ) -> Result<bool> {
-        let mut values_changed = false;
+    ) -> Result<RuleReadOutcome> {
+        let mut outcome = RuleReadOutcome::default();
         let keyspace = KeySpaceConfig::production_cached();
 
         // ★ Phase 1a: Try SHM first, collect Redis fallback requests
@@ -683,7 +734,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 {
                     // SharedMemory hit - fastest path.
                     // total_cmp avoids NaN != NaN busting the Arc snapshot every cycle.
-                    values_changed |= values
+                    outcome.values_changed |= values
                         .insert(var_name, val)
                         .is_none_or(|prev| prev.total_cmp(&val).is_ne());
                     continue;
@@ -704,36 +755,60 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         }
 
         // ★ Phase 1b: Batched Redis fetch using HMGET (single RTT per key)
-        for ((key, _is_action), var_fields) in redis_requests {
+        for ((key, is_action), var_fields) in redis_requests {
             let fields: Vec<&str> = var_fields.iter().map(|(_, f)| f.as_str()).collect();
             match self.rtdb.hash_mget(&key, &fields).await {
                 Ok(results) => {
                     for (i, (var_name, field)) in var_fields.into_iter().enumerate() {
-                        let val = results
-                            .get(i)
-                            .and_then(|opt| opt.as_ref())
-                            .and_then(|bytes| {
-                                let s = String::from_utf8_lossy(bytes);
-                                s.parse::<f64>().ok()
-                            })
-                            .unwrap_or_else(|| {
-                                tracing::warn!(
-                                    "Var {}: {}:{} not found or invalid",
+                        let parsed =
+                            results
+                                .get(i)
+                                .and_then(|opt| opt.as_ref())
+                                .and_then(|bytes| {
+                                    let s = String::from_utf8_lossy(bytes);
+                                    s.parse::<f64>().ok()
+                                });
+                        match parsed {
+                            Some(val) => {
+                                outcome.values_changed |= values
+                                    .insert(var_name, val)
+                                    .is_none_or(|prev| prev.total_cmp(&val).is_ne());
+                            },
+                            None if is_action => {
+                                // Action point variables are write targets; "never
+                                // written before" is the normal initial state. Don't
+                                // treat as missing — the rule may write to them.
+                                tracing::trace!(
+                                    "Action var {} ({}:{}) not yet written — leaving unset",
                                     var_name,
                                     key,
                                     field
                                 );
-                                0.0
-                            });
-                        values_changed |= values
-                            .insert(var_name, val)
-                            .is_none_or(|prev| prev.total_cmp(&val).is_ne());
+                            },
+                            None => {
+                                tracing::warn!(
+                                    "Var {}: {}:{} unavailable — rule will be skipped this cycle",
+                                    var_name,
+                                    key,
+                                    field
+                                );
+                                outcome.missing.push(var_name);
+                            },
+                        }
                     }
                 },
                 Err(e) => {
-                    tracing::error!("Redis HMGET error for {}: {}", key, e);
-                    for (var_name, _) in var_fields {
-                        values_changed |= values.insert(var_name, 0.0) != Some(0.0);
+                    tracing::error!(
+                        "Redis HMGET error for {} — variables marked missing: {}",
+                        key,
+                        e
+                    );
+                    // RPC failure on action keys is also "treat as unset" — we
+                    // can't tell whether the field would have existed.
+                    if !is_action {
+                        for (var_name, _) in var_fields {
+                            outcome.missing.push(var_name);
+                        }
                     }
                 },
             }
@@ -749,19 +824,19 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             let var_name = var.name.clone();
             match evaluate_token_formula(&var.formula, values) {
                 Some(result) => {
-                    values_changed |= values.insert(var_name, result) != Some(result);
+                    outcome.values_changed |= values.insert(var_name, result) != Some(result);
                 },
                 None => {
                     tracing::warn!(
-                        "Failed to evaluate formula for variable '{}', using 0.0",
+                        "Formula variable '{}' could not be evaluated — rule will be skipped",
                         var_name
                     );
-                    values_changed |= values.insert(var_name, 0.0) != Some(0.0);
+                    outcome.missing.push(var_name);
                 },
             }
         }
 
-        Ok(values_changed)
+        Ok(outcome)
     }
 
     /// Evaluate compact switch rules and return the next node ID with matched condition and port
