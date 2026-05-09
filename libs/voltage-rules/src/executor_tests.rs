@@ -415,6 +415,70 @@ async fn test_unset_action_var_is_not_treated_as_missing() {
     );
 }
 
+/// Locks the contract: assignment.value referencing an unknown variable name
+/// must NOT silently write 0 — it produces ActionResult { success: false }
+/// with NaN value, so the rule's failure is observable in logs/UI.
+#[tokio::test]
+async fn test_assignment_unknown_variable_does_not_write_zero() {
+    let (rtdb, executor) = new_executor();
+    // Action target exists but the variable referenced by the assignment
+    // ("PHANTOM") was never read into `values`.
+    let target = RuleVariable {
+        name: "Y".to_string(),
+        instance: Some(42),
+        point_type: Some("action".to_string()),
+        point: Some(7),
+        formula: vec![],
+    };
+    let assignment = RuleValueAssignment {
+        variables: "Y".to_string(),
+        value: json!("PHANTOM"),
+    };
+    let values = HashMap::new(); // PHANTOM not present, no numeric literal
+
+    let result = executor
+        .execute_rule_change(&target, &assignment, &values)
+        .await;
+    assert!(!result.success, "missing-var assignment must not succeed");
+    assert!(
+        result.value.is_nan(),
+        "skipped action carries NaN, not 0.0 — caller can distinguish"
+    );
+
+    // Crucially, no field was written to Redis.
+    let written = rtdb.hash_get("inst:42:A", "7").await.unwrap();
+    assert!(
+        written.is_none(),
+        "Redis must NOT have a 0.0 field after a skipped action"
+    );
+}
+
+/// Numeric literals encoded as strings (some frontends do this) still resolve.
+#[tokio::test]
+async fn test_assignment_numeric_string_literal_resolves() {
+    let (_rtdb, executor) = new_executor();
+    let target = RuleVariable {
+        name: "Y".to_string(),
+        instance: Some(1),
+        point_type: Some("action".to_string()),
+        point: Some(1),
+        formula: vec![],
+    };
+    let assignment = RuleValueAssignment {
+        variables: "Y".to_string(),
+        value: json!("3.14"),
+    };
+    let values = HashMap::new();
+
+    let result = executor
+        .execute_rule_change(&target, &assignment, &values)
+        .await;
+    assert_eq!(
+        result.value, 3.14,
+        "numeric-literal string must parse, not be looked up as variable"
+    );
+}
+
 // =========================================================================
 // Token Formula Tests (infix format from frontend)
 // =========================================================================

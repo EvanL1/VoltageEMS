@@ -141,6 +141,27 @@ fn evaluate_token_formula(
     }
 }
 
+/// Build an ActionResult marking that a rule action was skipped because the
+/// resolved value couldn't be determined (missing variable, unsupported type).
+/// Carries the variable's identity so caller and logs can attribute the skip.
+fn action_skipped(variable: &RuleVariable, reason: &str) -> ActionResult {
+    tracing::warn!(
+        "Rule action skipped (variable '{}', instance={:?}, point={:?}): {}",
+        variable.name,
+        variable.instance,
+        variable.point,
+        reason
+    );
+    ActionResult {
+        target_type: "instance",
+        target_id: variable.instance.unwrap_or(0),
+        point_type: point_type_to_static(variable.point_type.as_deref(), "A"),
+        point_id: variable.point.unwrap_or(0),
+        value: f64::NAN,
+        success: false,
+    }
+}
+
 /// Outcome of one variable-read pass for a node.
 ///
 /// Captures both "did anything change?" (for snapshot-cache reuse) and
@@ -992,15 +1013,33 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         assignment: &RuleValueAssignment,
         values: &HashMap<String, f64>,
     ) -> ActionResult {
-        // Resolve the value to write
+        // Resolve the value to write. No 0.0 fallback — silently writing 0
+        // when an assignment references a missing variable would corrupt
+        // control commands (e.g. "set Y = X1" when X1 is unavailable).
         let raw_value: f64 = if let Some(n) = assignment.value.as_f64() {
             n
         } else if let Some(n) = assignment.value.as_i64() {
             n as f64
         } else if let Some(s) = assignment.value.as_str() {
-            values.get(s).copied().unwrap_or(s.parse().unwrap_or(0.0))
+            // String form is either (a) a numeric literal or (b) a variable name.
+            if let Ok(n) = s.parse::<f64>() {
+                n
+            } else if let Some(&v) = values.get(s) {
+                v
+            } else {
+                tracing::warn!(
+                    "Rule action skipped: assignment value '{}' is neither a numeric \
+                     literal nor a known variable",
+                    s
+                );
+                return action_skipped(variable, "unknown variable in assignment");
+            }
         } else {
-            0.0
+            tracing::warn!(
+                "Rule action skipped: assignment value type unsupported: {:?}",
+                assignment.value
+            );
+            return action_skipped(variable, "unsupported assignment value type");
         };
 
         let (instance_id, point, value, pt) =
