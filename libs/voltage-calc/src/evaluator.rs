@@ -634,9 +634,16 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("V".to_string(), 220.0);
 
-        // rate_of_change(V)
+        // First call: no prior sample → NaN sentinel (not 0.0). Locks the
+        // contract that rate-of-change cannot fabricate a finite "rate" with
+        // only one sample; downstream validate_value drops the action so a
+        // freshly-deployed system never writes a bogus zero rate.
         let result = engine.evaluate("rate_of_change(V)", &vars).await.unwrap();
-        assert_eq!(result, 0.0); // First call returns 0
+        assert!(
+            result.is_nan(),
+            "first rate_of_change must be NaN, got {}",
+            result
+        );
     }
 
     #[tokio::test]

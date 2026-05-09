@@ -157,7 +157,12 @@ impl<S: StateStore> BuiltinFunctions<S> {
             serde_json::from_slice::<RateOfChangeState>(&data)
                 .map_err(|e| CalcError::state(format!("Failed to deserialize state: {}", e)))?
         } else {
-            // First call - store current and return 0
+            // First call - store current and return NaN. There is no defensible
+            // numeric answer with only one sample: returning 0.0 would mean
+            // "rate is zero" (a real measurement) and trigger downstream rules
+            // like "rate < threshold". NaN propagates through validate_value
+            // → action_skipped, so dependent writes are correctly suppressed
+            // until two samples exist.
             let initial = RateOfChangeState {
                 last_ts: now,
                 last_value: value,
@@ -165,15 +170,17 @@ impl<S: StateStore> BuiltinFunctions<S> {
             let data = serde_json::to_vec(&initial)
                 .map_err(|e| CalcError::state(format!("Failed to serialize state: {}", e)))?;
             self.state_store.set(&key, &data).await?;
-            return Ok(0.0);
+            return Ok(f64::NAN);
         };
 
-        // Calculate rate
+        // Calculate rate. Same dt==0 case: with no time elapsed, "rate" is
+        // ill-defined — return NaN rather than 0.0 (which would falsely
+        // assert "no change") so downstream rules skip the write.
         let dt = now - state.last_ts;
         let rate = if dt > 0.0 {
             (value - state.last_value) / dt
         } else {
-            0.0
+            f64::NAN
         };
 
         debug!(
@@ -221,7 +228,10 @@ impl<S: StateStore> BuiltinFunctions<S> {
     /// * `period` - Period type: "daily", "weekly", "monthly", "quarterly"
     ///
     /// # Returns
-    /// Delta value (current - snapshot), or 0.0 on first call
+    /// Delta value (current - snapshot). On the first call (no period baseline
+    /// yet) returns NaN so downstream `validate_value` skips writes — a 0.0
+    /// would falsely report "no consumption this period" before the first
+    /// snapshot is even captured.
     ///
     /// # Counter Reset Handling
     /// If value < snapshot (counter reset), snapshot is updated to current value
@@ -239,7 +249,11 @@ impl<S: StateStore> BuiltinFunctions<S> {
             serde_json::from_slice::<PeriodDeltaState>(&data)
                 .map_err(|e| CalcError::state(format!("Failed to deserialize state: {}", e)))?
         } else {
-            // First call - initialize with current value and period start
+            // First call - initialize with current value and period start.
+            // Return NaN, not 0.0: with no prior snapshot we cannot honestly
+            // report "delta == 0 for this period". 0.0 would fool downstream
+            // dashboards/rules into treating "no baseline yet" as "no
+            // consumption". NaN flows through validate_value → action_skipped.
             let initial = PeriodDeltaState {
                 snapshot: value,
                 period_start_ts: Self::get_period_start(now, period),
@@ -247,7 +261,7 @@ impl<S: StateStore> BuiltinFunctions<S> {
             let data = serde_json::to_vec(&initial)
                 .map_err(|e| CalcError::state(format!("Failed to serialize state: {}", e)))?;
             self.state_store.set(&key, &data).await?;
-            return Ok(0.0); // First call returns 0
+            return Ok(f64::NAN);
         };
 
         // Check if period has rotated
@@ -479,12 +493,53 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rate_of_change_basic() {
+    async fn test_rate_of_change_first_call_returns_nan() {
         let store = Arc::new(MemoryStateStore::new());
         let funcs = BuiltinFunctions::new(store, "test");
 
-        // First call returns 0
+        // First call has no baseline → NaN, not 0.0. Locks the contract:
+        // no two-sample comparison is possible yet, so any caller that
+        // forwards this into a SCADA write must be filtered out by
+        // validate_value's NaN-rejection rather than fooled by a fake zero.
         let rate = funcs.rate_of_change("voltage", 100.0).await.unwrap();
-        assert_eq!(rate, 0.0);
+        assert!(
+            rate.is_nan(),
+            "rate_of_change first call must return NaN sentinel, got {}",
+            rate
+        );
+    }
+
+    #[tokio::test]
+    async fn test_period_delta_first_call_returns_nan() {
+        let store = Arc::new(MemoryStateStore::new());
+        let funcs = BuiltinFunctions::new(store, "test");
+
+        // First call captures the snapshot but cannot compute a meaningful
+        // delta yet — must return NaN, not 0.0.
+        let delta = funcs
+            .period_delta("kwh_meter", 12345.0, "daily")
+            .await
+            .unwrap();
+        assert!(
+            delta.is_nan(),
+            "period_delta first call must return NaN sentinel, got {}",
+            delta
+        );
+
+        // Subsequent call within the same period: now there's a baseline,
+        // delta is well-defined (and finite).
+        let delta2 = funcs
+            .period_delta("kwh_meter", 12350.0, "daily")
+            .await
+            .unwrap();
+        assert!(
+            delta2.is_finite(),
+            "second call must return finite delta, got {}",
+            delta2
+        );
+        assert!(
+            delta2 >= 0.0,
+            "delta should be non-negative for a counter increase"
+        );
     }
 }

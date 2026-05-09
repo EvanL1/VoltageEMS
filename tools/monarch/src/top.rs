@@ -222,6 +222,10 @@ impl TopState {
     pub fn visible_points(&self) -> Vec<&PointRow> {
         self.points
             .iter()
+            // hide_zero hides only real zero readings. NaN (rendered "—",
+            // meaning "no data fetched") satisfies `value != 0.0` because
+            // NaN ≠ 0.0 in IEEE-754, so missing-data rows stay visible.
+            // Don't conflate "device returned zero" with "device offline".
             .filter(|p| !self.hide_zero || p.value != 0.0)
             .collect()
     }
@@ -577,7 +581,11 @@ async fn load_points(
         .into_iter()
         .map(|(pid, name, unit)| PointRow {
             point_id: pid,
-            value: live.get(&pid).copied().unwrap_or(0.0),
+            // Missing field → NaN sentinel (rendered as "—"). 0.0 used to
+            // mean both "real zero reading" and "no data fetched"; the
+            // ambiguity hid offline devices behind a fake reading and
+            // `hide_zero` then made them invisible.
+            value: live.get(&pid).copied().unwrap_or(f64::NAN),
             ts_ms: ts.get(&pid).copied().unwrap_or(0),
             name,
             unit,
@@ -707,7 +715,8 @@ async fn fetch_inst_points(
                 point_id: pid,
                 kind: "M",
                 name: p["name"].as_str().unwrap_or("").to_string(),
-                value: live_m.get(&pid).copied().unwrap_or(0.0),
+                // NaN = "no data fetched" (rendered "—"). See PointRow above.
+                value: live_m.get(&pid).copied().unwrap_or(f64::NAN),
                 unit: p["unit"].as_str().unwrap_or("").to_string(),
                 routing: format_routing(p, "←"),
                 ts_ms: ts,
@@ -721,7 +730,8 @@ async fn fetch_inst_points(
                 point_id: pid,
                 kind: "A",
                 name: p["name"].as_str().unwrap_or("").to_string(),
-                value: live_a.get(&pid).copied().unwrap_or(0.0),
+                // NaN = "no data fetched" (rendered "—"). See PointRow above.
+                value: live_a.get(&pid).copied().unwrap_or(f64::NAN),
                 unit: p["unit"].as_str().unwrap_or("").to_string(),
                 routing: format_routing(p, "→"),
                 ts_ms: 0, // Action timestamps not tracked

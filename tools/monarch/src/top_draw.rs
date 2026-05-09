@@ -403,7 +403,13 @@ fn focused_block<'a>(title: &'a str, focused: bool) -> Block<'a> {
 }
 
 pub fn fmt_val(v: f64) -> String {
-    if v == 0.0 {
+    if v.is_nan() {
+        // NaN is the in-memory marker for "no data fetched" (Redis miss /
+        // unwritten SHM slot). Render distinctly so the operator can tell
+        // "missing" from a real device reading of zero — these used to
+        // collapse into the same "0" cell and silently hide.
+        "—".to_string()
+    } else if v == 0.0 {
         "0".to_string()
     } else if v.fract() == 0.0 && v.abs() < 1_000_000.0 {
         format!("{v:.0}")
