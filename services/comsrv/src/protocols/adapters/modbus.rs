@@ -819,7 +819,16 @@ async fn write_single_command(
     client: &mut ModbusClientWrapper,
     cmd: &BatchCommand,
 ) -> std::result::Result<(), String> {
-    let raw_value = cmd.value.as_f64().unwrap_or(0.0);
+    // Refuse to encode a non-numeric command value into register 0 — silent
+    // 0 writes to a Modbus setpoint can stop a generator, open a contactor,
+    // or otherwise act as a destructive command. Caller surfaces this as a
+    // command failure to the requester (modsrv → upstream).
+    let raw_value = cmd.value.as_f64().ok_or_else(|| {
+        format!(
+            "Refusing write: non-numeric command value {:?} for slave {} reg {}",
+            cmd.value, cmd.slave_id, cmd.register_address
+        )
+    })?;
     let regs = encode_value(raw_value, cmd.data_format, cmd.byte_order).map_err(|e| {
         format!(
             "Encode error for slave {} reg {}: {}",
@@ -871,7 +880,25 @@ async fn execute_merged_fc16(
 
     for &i in &indices {
         let cmd = &commands[i];
-        let raw_value = cmd.value.as_f64().unwrap_or(0.0);
+        // Same as write_single_command: never silently encode a non-numeric
+        // command as register 0. Abort the whole merged batch — partial
+        // writes from a multi-register FC16 with one bad value are worse
+        // than skipping all of them.
+        let raw_value = match cmd.value.as_f64() {
+            Some(v) => v,
+            None => {
+                for &j in &indices {
+                    failures.push((
+                        commands[j].point_id,
+                        format!(
+                            "FC16 merge aborted: non-numeric value {:?} at reg {}",
+                            cmd.value, cmd.register_address
+                        ),
+                    ));
+                }
+                return Ok(0);
+            },
+        };
         match encode_value(raw_value, cmd.data_format, cmd.byte_order) {
             Ok(regs) => registers.extend(regs),
             Err(e) => {

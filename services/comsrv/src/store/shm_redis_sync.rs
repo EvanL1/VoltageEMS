@@ -46,8 +46,9 @@ use voltage_rtdb::Rtdb;
 use voltage_rtdb::numfmt::{f64_to_bytes, i64_to_bytes, precomputed};
 use voltage_rtdb_shm::ShmHandle;
 
-/// seq == 0 means the slot has never been written. Skip on scan to avoid
-/// flooding Redis with zero-value placeholders on startup.
+/// seq == 0 means the slot has never been written. Used as a fast-path
+/// pre-check; the canonical "unwritten" marker since SHM v3 is the NaN
+/// sentinel in `value_bits` (see `is_finite(value)` filter below).
 ///
 /// Note: after ~2^31 writes (~6.8 years at 10Hz), seq wraps back to 0 and
 /// this slot would be skipped until the next write (seq=2). Acceptable.
@@ -178,6 +179,17 @@ impl<R: Rtdb> ShmRedisSync<R> {
                 Some(data) => data,
                 None => continue, // torn read, retry next tick
             };
+
+            // Skip slots whose value is the unwritten NaN sentinel (SHM v3).
+            // Defence-in-depth on top of the seq check: if a writer ever
+            // bumped seq without finishing the data write, or a v2 snapshot
+            // somehow leaked through, we still don't push NaN to Redis.
+            // batch_to_updates already rejects non-finite from the protocol
+            // side, so this is the only remaining ingress point.
+            if !value.is_finite() || !raw.is_finite() {
+                self.last_seq[slot_idx] = seq;
+                continue;
+            }
 
             let origin = match reverse_index.get(slot_idx) {
                 Some(o) => o,

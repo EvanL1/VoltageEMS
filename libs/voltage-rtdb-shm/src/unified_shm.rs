@@ -44,7 +44,12 @@ use voltage_routing::RoutingCache;
 pub const UNIFIED_MAGIC: u64 = 0x564F4C544147455F;
 
 /// Current version
-pub const UNIFIED_VERSION: u32 = 2;
+/// SHM layout version. v3 changed the slot default from `(value=0.0, raw=0.0)`
+/// to `(value=NaN, raw=NaN)` so unwritten slots are self-describing instead
+/// of relying on the `seq==0` side channel. Snapshots from v2 are intentionally
+/// rejected at restore time — the writer starts fresh and the next protocol
+/// poll repopulates each slot with a finite value.
+pub const UNIFIED_VERSION: u32 = 3;
 
 /// Default max slots (100,000 points)
 pub const DEFAULT_MAX_SLOTS: u32 = 100_000;
@@ -460,6 +465,22 @@ impl UnifiedWriter {
         header._reserved = [0; 8];
         header.writer_generation.store(1, Ordering::Release);
 
+        // Initialize every PointSlot to the "unwritten" sentinel (NaN).
+        // `set_len` above zero-filled the file, so without this loop slots
+        // would default to (value=0.0, raw=0.0) — indistinguishable from a
+        // real device reading of zero. ShmRedisSync.full_scan and downstream
+        // readers rely on `is_finite(value)` to filter unwritten slots.
+        // SAFETY: `slots_ptr` points at the slot region inside the mmap;
+        // each slot index < slot_count is within the file range we just
+        // sized. PointSlot is `#[repr(C, align(32))]` so pointer arithmetic
+        // is well-defined and reads back as a valid PointSlot reference.
+        let slots_ptr =
+            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
+        for i in 0..slot_count {
+            let slot = unsafe { &*slots_ptr.add(i) };
+            slot.init_unwritten();
+        }
+
         // Flush header to backing file for cross-process visibility.
         // Without this, a reader on ARM64 mmap'ing the same file could see
         // partially-written header fields.
@@ -867,8 +888,14 @@ impl UnifiedWriter {
             );
         }
         if snap_version != UNIFIED_VERSION {
+            // v2 snapshots used 0.0 as the slot default — restoring them in v3
+            // would re-introduce the pseudo-zero contamination this layout
+            // bump fixed. Refuse the restore so the writer starts fresh; the
+            // next protocol poll repopulates each live slot with a finite
+            // value, and downstream readers see "missing" instead of
+            // counterfeit zeros for whatever hasn't been re-polled yet.
             bail!(
-                "Snapshot version mismatch: expected {}, got {}",
+                "Snapshot version mismatch: expected {}, got {} — refusing restore (start fresh)",
                 UNIFIED_VERSION,
                 snap_version
             );
@@ -909,6 +936,7 @@ impl UnifiedWriter {
 
         // Restore slots one by one with validation
         let mut restored_count = 0usize;
+        let mut skipped_unwritten = 0usize;
         let mut skipped_invalid = 0usize;
 
         for i in 0..slots_to_restore {
@@ -928,16 +956,24 @@ impl UnifiedWriter {
             let timestamp = read_u64_ne(sb, 8, "slot.timestamp")?;
             let raw = f64::from_bits(read_u64_ne(sb, 16, "slot.raw_bits")?);
 
-            // Validate data: skip NaN and Infinity
-            if value.is_nan() || value.is_infinite() || raw.is_nan() || raw.is_infinite() {
-                tracing::debug!(
-                    "Skipping invalid slot {}: value={}, raw={} (NaN or Infinity)",
+            // NaN is the "unwritten" sentinel in v3 — leave the writer at its
+            // create() default (already NaN). Skipping `set_direct` here also
+            // leaves seq=0, so ShmRedisSync.full_scan won't push these slots
+            // to Redis until the next protocol poll fills them.
+            if value.is_nan() && raw.is_nan() {
+                skipped_unwritten += 1;
+                continue;
+            }
+
+            // Reject infinities and half-NaN combinations as data corruption.
+            if !value.is_finite() || !raw.is_finite() {
+                tracing::warn!(
+                    "Skipping corrupt slot {}: value={}, raw={} (mixed finiteness or Infinity)",
                     i,
                     value,
                     raw
                 );
                 skipped_invalid += 1;
-                // Slot remains at default (0.0, 0.0, 0) from create()
                 continue;
             }
 
@@ -965,9 +1001,10 @@ impl UnifiedWriter {
             .store(now_ms, Ordering::Relaxed);
 
         tracing::info!(
-            "Snapshot restored: {:?}, restored={}, skipped_invalid={}, new_slots={}",
+            "Snapshot restored: {:?}, restored={}, skipped_unwritten={}, skipped_invalid={}, new_slots={}",
             snapshot_path,
             restored_count,
+            skipped_unwritten,
             skipped_invalid,
             new_slots
         );

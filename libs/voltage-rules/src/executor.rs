@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
-use voltage_model::{ValidationConfig, sanitize_value};
+use voltage_model::{ValidationConfig, validate_value};
 use voltage_routing::RoutingCache;
 use voltage_routing::set_action_point;
 use voltage_rtdb::KeySpaceConfig;
@@ -49,18 +49,32 @@ fn validate_write_target(
     context: &str,
 ) -> std::result::Result<(u32, u32, f64, &'static str), ActionResult> {
     let config = ValidationConfig::default();
-    let value = sanitize_value(raw_value, 0.0, &config);
-    if (raw_value - value).abs() > f64::EPSILON || raw_value.is_nan() {
-        tracing::warn!(
-            "{} sanitized: {} → {} (variable '{}')",
-            context,
-            raw_value,
-            value,
-            variable.name
-        );
-    }
-
     let pt = point_type_to_static(variable.point_type.as_deref(), default_point_type);
+
+    // Reject NaN/Inf/out-of-range — never silently coerce to 0.0. The old
+    // sanitize_value path turned a malformed compute result into a real
+    // SCADA write of 0, which is the exact failure mode this skill is
+    // sealing across the codebase. Caller treats Err as "skip this action".
+    let value = match validate_value(raw_value, &config) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                "{} skipped: value {} failed validation ({}) (variable '{}')",
+                context,
+                raw_value,
+                e,
+                variable.name
+            );
+            return Err(ActionResult {
+                target_type: "instance",
+                target_id: variable.instance.unwrap_or(0),
+                point_type: pt,
+                point_id: variable.point.unwrap_or(0),
+                value: f64::NAN,
+                success: false,
+            });
+        },
+    };
 
     let instance_id = variable.instance.ok_or_else(|| {
         tracing::error!(

@@ -52,16 +52,56 @@ impl Default for PointSlot {
     }
 }
 
+/// Bit pattern of a quiet f64 NaN, used as the "no data" sentinel for slot
+/// values. We hardcode the bits (instead of `f64::NAN.to_bits()`) so this
+/// remains usable from `const` contexts and is byte-stable across platforms.
+/// IEEE 754 binary64 quiet NaN: sign=0, exponent=all 1s, fraction MSB=1.
+pub const SLOT_UNWRITTEN_BITS: u64 = 0x7FF8_0000_0000_0000;
+
 impl PointSlot {
-    /// Create a new empty point slot
+    /// Create a new empty point slot.
+    ///
+    /// Both `value_bits` and `raw_bits` start as quiet NaN — the explicit
+    /// "no data has ever been written here" marker. Readers can probe the
+    /// returned value with `f64::is_nan()` (or use [`Self::is_unwritten`]).
+    /// This avoids the historical 0.0 ambiguity where a default-initialised
+    /// slot was indistinguishable from a real device reading of zero.
     pub const fn new() -> Self {
         Self {
-            value_bits: AtomicU64::new(0),
+            value_bits: AtomicU64::new(SLOT_UNWRITTEN_BITS),
             timestamp: AtomicU64::new(0),
-            raw_bits: AtomicU64::new(0),
+            raw_bits: AtomicU64::new(SLOT_UNWRITTEN_BITS),
             seq: AtomicU32::new(0),
             dirty: AtomicU32::new(0),
         }
+    }
+
+    /// True when the slot has never carried real data.
+    ///
+    /// A NaN `value_bits` is the canonical "unwritten" marker — every real
+    /// write path (PointSlot::set) overwrites both NaN sentinels with a
+    /// finite f64. Readers (ShmRedisSync, voltage-rules executor) use this
+    /// to skip pushing pseudo-zeros to downstream caches.
+    #[inline]
+    pub fn is_unwritten(&self) -> bool {
+        f64::from_bits(self.value_bits.load(Ordering::Relaxed)).is_nan()
+    }
+
+    /// Reset this slot to the "unwritten" sentinel state in-place.
+    ///
+    /// Used by `UnifiedWriter::create` after `set_len` zero-fills the mmap
+    /// region: zero-filled bytes decode as `(value=0.0, raw=0.0)` which is
+    /// the legacy ambiguous default, so we overwrite those into NaN here.
+    /// `timestamp`, `seq`, and `dirty` correctly stay 0 (their zero-bit
+    /// patterns already mean "no writes").
+    ///
+    /// **Single-writer init only.** Must not race with `set()`; intended for
+    /// the writer's startup loop before any reader has been published.
+    #[inline]
+    pub fn init_unwritten(&self) {
+        self.value_bits
+            .store(SLOT_UNWRITTEN_BITS, Ordering::Relaxed);
+        self.raw_bits.store(SLOT_UNWRITTEN_BITS, Ordering::Relaxed);
     }
 
     /// Get the engineering value
@@ -339,14 +379,36 @@ mod tests {
     }
 
     #[test]
-    fn test_load_consistent_zero_values() {
+    fn test_load_consistent_default_is_unwritten() {
+        // SHM v3: a freshly-created PointSlot is "unwritten" — value/raw are
+        // NaN sentinels, never the ambiguous 0.0 default of v2. ts/seq stay 0.
         let slot = PointSlot::new();
 
-        // Default values
+        assert!(slot.is_unwritten(), "fresh slot must report is_unwritten");
+
+        let (value, raw, ts) = slot.load_consistent().unwrap();
+        assert!(
+            value.is_nan(),
+            "default value must be NaN sentinel, got {}",
+            value
+        );
+        assert!(
+            raw.is_nan(),
+            "default raw must be NaN sentinel, got {}",
+            raw
+        );
+        assert_eq!(ts, 0);
+
+        // After a real write, NaN goes away and is_unwritten flips.
+        slot.set(0.0, 0.0, 1);
+        assert!(
+            !slot.is_unwritten(),
+            "real write of 0.0 must clear the NaN sentinel — 0 is a valid measurement"
+        );
         let (value, raw, ts) = slot.load_consistent().unwrap();
         assert_eq!(value, 0.0);
         assert_eq!(raw, 0.0);
-        assert_eq!(ts, 0);
+        assert_eq!(ts, 1);
     }
 
     #[test]
@@ -544,6 +606,12 @@ mod tests {
                         // of falling back to an unprotected read
                         if let Some((value, raw, ts)) = r_slot.try_load_consistent() {
                             consistent += 1;
+                            // SHM v3: a freshly-created slot is NaN ("unwritten")
+                            // before the writer's first set(). That's a legitimate
+                            // sentinel, not a torn read.
+                            if value.is_nan() {
+                                continue;
+                            }
                             if value != 0.0 {
                                 let raw_ok = (raw - value * 10.0).abs() < f64::EPSILON;
                                 let ts_ok = ts == value as u64;
