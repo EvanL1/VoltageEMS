@@ -65,6 +65,18 @@ pub async fn collect<R: Rtdb>(rtdb: &R, cfg: &ServiceConfig) -> Vec<DataPoint> {
                 };
 
                 let (value, string_value) = if let Ok(v) = raw.parse::<f64>() {
+                    // Reject NaN/±Inf: storing them in TimescaleDB would poison
+                    // aggregate queries (AVG/SUM propagate NaN to whole rollup).
+                    // A gap in the time series is the correct representation of
+                    // "no real data" — never write a sentinel that an analyst
+                    // can't distinguish from a real reading.
+                    if !v.is_finite() {
+                        debug!(
+                            "Skipping non-finite value {} from key='{}' field='{}'",
+                            v, key, field
+                        );
+                        continue;
+                    }
                     (Some(v), None)
                 } else {
                     (None, Some(raw.to_string()))
@@ -109,4 +121,72 @@ fn extract_timestamp(
         }
     }
     None
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use voltage_rtdb::Rtdb;
+    use voltage_rtdb::helpers::create_test_rtdb;
+
+    use crate::models::ServiceConfig;
+
+    #[tokio::test]
+    async fn collect_drops_non_finite_values() {
+        let rtdb = create_test_rtdb();
+
+        // Seed: real value, NaN, +Inf, -Inf, real zero, non-numeric string.
+        // Only "42.5" and "0" should make it through to TSDB.
+        rtdb.hash_set("inst:1:M", "100", Bytes::from("42.5"))
+            .await
+            .unwrap();
+        rtdb.hash_set("inst:1:M", "101", Bytes::from("NaN"))
+            .await
+            .unwrap();
+        rtdb.hash_set("inst:1:M", "102", Bytes::from("inf"))
+            .await
+            .unwrap();
+        rtdb.hash_set("inst:1:M", "103", Bytes::from("-inf"))
+            .await
+            .unwrap();
+        rtdb.hash_set("inst:1:M", "104", Bytes::from("0"))
+            .await
+            .unwrap();
+        rtdb.hash_set("inst:1:M", "105", Bytes::from("ERR"))
+            .await
+            .unwrap();
+
+        let cfg = ServiceConfig {
+            subscribe_patterns: vec!["inst:*:M".to_string()],
+            exclude_patterns: vec![],
+            ..ServiceConfig::default()
+        };
+
+        let points = collect(rtdb.as_ref(), &cfg).await;
+
+        // Numeric finite values: 100 and 104. Non-numeric "ERR" survives as
+        // string_value (analyst can audit). NaN/±Inf must be dropped entirely
+        // — they cannot land in the FLOAT8 column.
+        let numeric: Vec<_> = points.iter().filter(|p| p.value.is_some()).collect();
+        assert_eq!(
+            numeric.len(),
+            2,
+            "only 42.5 and 0 should keep numeric value"
+        );
+
+        for p in &points {
+            if let Some(v) = p.value {
+                assert!(v.is_finite(), "non-finite value {} leaked through", v);
+            }
+        }
+
+        // String fallback for "ERR" still allowed (post-mortem auditing).
+        assert!(
+            points
+                .iter()
+                .any(|p| p.point_id == "105" && p.string_value.as_deref() == Some("ERR"))
+        );
+    }
 }

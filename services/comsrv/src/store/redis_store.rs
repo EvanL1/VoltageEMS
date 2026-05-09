@@ -80,16 +80,15 @@ impl<R: Rtdb> RedisDataStore<R> {
     pub fn new(rtdb: Arc<R>, routing_cache: Arc<RoutingCache>) -> Self {
         // Create single broadcast channel - all subscribers share this sender
         let (event_sender, _) = tokio::sync::broadcast::channel(1024);
-        // 24h TTL on written keys: prevents stale data after service crash/restart.
-        // TTL is refreshed every 5 minutes by WriteBuffer's throttled expire logic.
-        let wb_config = WriteBufferConfig {
-            key_ttl_seconds: Some(86400),
-            ..WriteBufferConfig::default()
-        };
+        // No TTL on Redis keys: SHM is the source of truth, ShmRedisSync
+        // converges Redis to SHM on every startup via full_scan, and
+        // voltage_rtdb::cleanup reaps stale keys at startup using the routing
+        // table. A TTL would re-introduce the >24h-outage zero-out failure
+        // mode.
         Self {
             rtdb,
             routing_cache,
-            write_buffer: Arc::new(WriteBuffer::new(wb_config)),
+            write_buffer: Arc::new(WriteBuffer::new(WriteBufferConfig::default())),
             shm_handle: None,
             point_configs: DashMap::new(),
             event_sender,
@@ -187,15 +186,25 @@ impl<R: Rtdb> RedisDataStore<R> {
         let mut updates = Vec::with_capacity(batch.len());
 
         for point in batch.iter() {
-            // Use explicit point_type and id (no decoding needed)
+            // Reject non-numeric and non-finite values: do NOT downgrade them to 0.0.
+            // A silent 0 is indistinguishable from a real device reading of zero and,
+            // worse, propagates through C2M routing into inst:{id}:M and ultimately
+            // into hissrv's TimescaleDB hypertable as a permanent fake measurement.
             let value = match point.value.as_f64() {
-                Some(v) => v,
+                Some(v) if v.is_finite() => v,
+                Some(v) => {
+                    warn!(
+                        "Ch{} [{:?}] Point {}: non-finite value {} (NaN/Inf), skipping",
+                        channel_id, point.point_type, point.id, v
+                    );
+                    continue;
+                },
                 None => {
-                    trace!(
-                        "Ch{} [{:?}] Point {}: non-numeric value {:?}, defaulting to 0.0",
+                    warn!(
+                        "Ch{} [{:?}] Point {}: non-numeric value {:?}, skipping",
                         channel_id, point.point_type, point.id, point.value
                     );
-                    0.0
+                    continue;
                 },
             };
 
@@ -398,6 +407,44 @@ mod tests {
         // Second update should be Control with point_id=1
         assert_eq!(updates[1].point_type, PointType::Control);
         assert_eq!(updates[1].point_id, 1);
+        assert_eq!(updates[1].value, 0.0);
+    }
+
+    #[tokio::test]
+    async fn batch_to_updates_skips_non_finite_and_non_numeric() {
+        use crate::protocols::core::data::Value;
+
+        let rtdb = create_test_rtdb();
+        let routing_cache = Arc::new(RoutingCache::new());
+        let store = RedisDataStore::new(rtdb, routing_cache);
+
+        let mut batch = DataBatch::default();
+        // Real numeric reading — must be kept.
+        batch.add(DataPoint::telemetry(10, 42.0));
+        // NaN — must be dropped (would poison hissrv aggregates).
+        batch.add(DataPoint::telemetry(11, f64::NAN));
+        // +Inf — must be dropped.
+        batch.add(DataPoint::telemetry(12, f64::INFINITY));
+        // Null variant (e.g. plugin returned no value) — must be dropped, not coerced to 0.
+        batch.add(DataPoint::new(13, PointType::Telemetry, Value::Null));
+        // String variant (e.g. malformed protocol decode) — must be dropped, not coerced to 0.
+        batch.add(DataPoint::new(
+            14,
+            PointType::Telemetry,
+            Value::String("ERR".into()),
+        ));
+        // Real zero from a device — must be kept (legitimate measurement).
+        batch.add(DataPoint::telemetry(15, 0.0));
+
+        let updates = store.batch_to_updates(7, &batch);
+
+        let kept_ids: Vec<u32> = updates.iter().map(|u| u.point_id).collect();
+        assert_eq!(
+            kept_ids,
+            vec![10, 15],
+            "only finite numeric values should survive; NaN/Inf/Null/String must be dropped"
+        );
+        assert_eq!(updates[0].value, 42.0);
         assert_eq!(updates[1].value, 0.0);
     }
 }
