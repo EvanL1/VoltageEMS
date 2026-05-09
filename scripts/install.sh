@@ -1190,6 +1190,10 @@ $SUDO chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$INSTALL_DIR" 2>/dev/null || true
 if [[ "$LOG_DIR" == "/extp/logs" ]] && [[ -d "/extp" ]]; then
     $SUDO chown ${ACTUAL_UID}:${ACTUAL_GID} "/extp" 2>/dev/null || true
     $SUDO chmod 755 "/extp" 2>/dev/null || true
+    # Recursive chown for external log dir (not covered by INSTALL_DIR chown above);
+    # without this, /extp/logs/<service>/ subdirs stay root-owned and the container's
+    # UID=1000 apigateway/comsrv/... fail to init logging until they self-mkdir.
+    $SUDO chown -R ${ACTUAL_UID}:${ACTUAL_GID} "$LOG_DIR" 2>/dev/null || true
 fi
 
 # Set permissions: 755 for dirs, 777 for logs (container write access)
