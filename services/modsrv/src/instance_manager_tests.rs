@@ -706,6 +706,16 @@ async fn execute_action_rejects_when_target_channel_offline() {
         stored.is_none(),
         "instance action hash must not be written when channel is offline"
     );
+
+    // Channel hash MUST also be untouched — gate returns before
+    // set_action_point writes the downstream `comsrv:{ch}:A` hash.
+    use voltage_model::PointType;
+    let channel_key = config.channel_key(2, PointType::Adjustment);
+    let channel_value = rtdb.hash_get(&channel_key, "5").await.unwrap();
+    assert!(
+        channel_value.is_none(),
+        "channel hash must not be written when gate fires"
+    );
 }
 
 #[tokio::test]
