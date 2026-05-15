@@ -652,3 +652,125 @@ async fn test_execute_action_negative_values() {
     let stored = rtdb.hash_get(&action_key, "1").await.unwrap().unwrap();
     assert_eq!(stored.as_ref(), b"-50.5");
 }
+
+// ==================== M2C Control Gate Tests ====================
+//
+// Verify that execute_action() rejects writes targeting offline channels,
+// honoring the rule from CLAUDE.md "Instance 是纯物模型（不要染色）":
+// channel offline is a transparent dispatch failure, not an instance state.
+
+fn manager_with_m2c_route(
+    pool: SqlitePool,
+    rtdb: Arc<voltage_rtdb::MemoryRtdb>,
+) -> InstanceManager<voltage_rtdb::MemoryRtdb> {
+    let mut m2c_data = HashMap::new();
+    // 1001:A:1 → channel 2, point 5 (Adjustment)
+    m2c_data.insert("1001:A:1".to_string(), "2:A:5".to_string());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::from_maps(
+        HashMap::new(),
+        m2c_data,
+        HashMap::new(),
+    ));
+    let product_loader = create_test_product_loader(pool.clone());
+    InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch())
+}
+
+#[tokio::test]
+async fn execute_action_rejects_when_target_channel_offline() {
+    let (_temp_dir, pool) = create_test_database().await;
+    let rtdb = create_test_rtdb();
+    let manager = manager_with_m2c_route(pool, rtdb.clone());
+
+    // Mark channel 2 offline in the health cache (simulating comsrv publishing "0")
+    manager.channel_health().set_for_test(2, false);
+
+    let result = manager.execute_action(1001, "1", 75.0).await;
+
+    match result {
+        Err(crate::error::ModSrvError::ChannelUnreachable { channel_id }) => {
+            assert_eq!(channel_id, 2);
+        },
+        other => panic!(
+            "expected ChannelUnreachable {{ channel_id: 2 }}, got {:?}",
+            other
+        ),
+    }
+
+    // Critical: instance hash MUST NOT be written when the gate fires —
+    // otherwise stale "successful write" state lingers in inst:{id}:A.
+    use voltage_rtdb::Rtdb;
+    let config = voltage_rtdb::KeySpaceConfig::production();
+    let action_key = config.instance_action_key(1001);
+    let stored = rtdb.hash_get(&action_key, "1").await.unwrap();
+    assert!(
+        stored.is_none(),
+        "instance action hash must not be written when channel is offline"
+    );
+}
+
+#[tokio::test]
+async fn execute_action_proceeds_when_channel_online() {
+    let (_temp_dir, pool) = create_test_database().await;
+    let rtdb = create_test_rtdb();
+    let manager = manager_with_m2c_route(pool, rtdb.clone());
+
+    // Explicit online (also covers fail-open since the cache starts uninitialized)
+    manager.channel_health().set_for_test(2, true);
+
+    let result = manager.execute_action(1001, "1", 75.0).await;
+    assert!(
+        result.is_ok(),
+        "online channel must accept writes: {:?}",
+        result.err()
+    );
+
+    use voltage_rtdb::Rtdb;
+    let config = voltage_rtdb::KeySpaceConfig::production();
+    let stored = rtdb
+        .hash_get(&config.instance_action_key(1001), "1")
+        .await
+        .unwrap();
+    assert_eq!(stored.unwrap().as_ref(), b"75");
+}
+
+#[tokio::test]
+async fn execute_action_uninitialized_cache_fails_open() {
+    // At modsrv boot the cache hasn't pulled comsrv:online yet — control
+    // must keep working in that window, otherwise startup races brick the system.
+    let (_temp_dir, pool) = create_test_database().await;
+    let rtdb = create_test_rtdb();
+    let manager = manager_with_m2c_route(pool, rtdb);
+
+    assert!(
+        !manager.channel_health().is_initialized(),
+        "fresh cache must report uninitialized"
+    );
+
+    let result = manager.execute_action(1001, "1", 75.0).await;
+    assert!(
+        result.is_ok(),
+        "uninitialized cache must fail-open: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test]
+async fn execute_action_no_route_skips_gate() {
+    // No M2C route means no channel target — nothing to gate, action stores locally.
+    let (_temp_dir, pool) = create_test_database().await;
+    let rtdb = create_test_rtdb();
+    let product_loader = create_test_product_loader(pool.clone());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new()); // empty
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
+
+    // Even with the cache wired up and marking channel 2 offline, an unrouted
+    // action targets no channel and must not be rejected.
+    manager.channel_health().set_for_test(2, false);
+
+    let result = manager.execute_action(1001, "1", 42.0).await;
+    assert!(
+        result.is_ok(),
+        "unrouted action must not be gated: {:?}",
+        result.err()
+    );
+}

@@ -17,6 +17,7 @@ use voltage_rtdb::Rtdb;
 
 use crate::config::TopologyNode;
 use crate::error::ModSrvError;
+use crate::infra::channel_health::ChannelHealthCache;
 use crate::infra::shm_dispatch::ActionDispatch;
 use crate::product_loader::{CreateInstanceRequest, Instance, ProductLoader};
 
@@ -81,6 +82,10 @@ pub struct InstanceManager<R: Rtdb> {
     // ========== Action Dispatch (SHM/UDS or Noop) ==========
     /// Dispatches M2C action commands via SHM+UDS (production) or noop (tests)
     pub(crate) dispatch: Arc<dyn ActionDispatch>,
+    // ========== Channel Online Gate ==========
+    /// Mirrors `comsrv:online` so `execute_action()` can reject writes targeting
+    /// offline channels without per-call Redis round-trips. See `infra::channel_health`.
+    pub(crate) health_cache: Arc<ChannelHealthCache>,
 }
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
@@ -99,7 +104,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             name_cache: DashMap::new(),
             slot_runtime: crate::runtime::dynamic_slot_runtime::DynamicSlotRuntime::new(),
             dispatch,
+            health_cache: Arc::new(ChannelHealthCache::new()),
         }
+    }
+
+    /// Replace the channel health cache (production wires the shared instance
+    /// also driven by the background refresh task; tests inject one with
+    /// pre-seeded offline channels).
+    pub fn with_channel_health(mut self, cache: Arc<ChannelHealthCache>) -> Self {
+        self.health_cache = cache;
+        self
+    }
+
+    /// Borrow the channel health cache (for the bootstrap refresh task).
+    pub fn channel_health(&self) -> &Arc<ChannelHealthCache> {
+        &self.health_cache
     }
 
     /// Configure dynamic slot allocation (optional feature)

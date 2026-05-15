@@ -293,6 +293,22 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Spawn channel health refresh task: mirrors `comsrv:online` into a
+    // process-local cache so the M2C control gate in execute_action() can reject
+    // writes targeting offline channels without per-call Redis round-trips.
+    {
+        let cache = Arc::clone(state.instance_manager.channel_health());
+        let rtdb_for_health = Arc::clone(&rtdb);
+        let online_key = voltage_model::KeySpaceConfig::production_cached().channel_online_key();
+        modsrv::infra::channel_health::spawn_refresh_task(
+            cache,
+            rtdb_for_health,
+            online_key,
+            modsrv::infra::channel_health::DEFAULT_REFRESH_INTERVAL,
+            shutdown_token.clone(),
+        );
+    }
+
     // Load max_concurrency from global config (SQLite key-value table)
     let max_concurrency: usize = sqlx::query_scalar::<_, String>(
         "SELECT value FROM service_config WHERE service_name = 'global' AND key = 'rules.max_concurrency'",
