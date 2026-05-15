@@ -53,15 +53,28 @@ impl ChannelHealthCache {
 
     /// Replace the cache contents with a fresh snapshot of `comsrv:online`.
     /// Channels removed from the hash since the last refresh are dropped.
+    ///
+    /// Implementation note: we deliberately update in place rather than
+    /// `clear()` + repopulate so concurrent `is_online()` readers never
+    /// observe a transient "empty after initialized" state — which would
+    /// otherwise let known-offline channels briefly pass the gate every
+    /// refresh tick (fail-open default kicks in for missing entries).
     pub async fn refresh<R: Rtdb>(&self, rtdb: &R, online_key: &str) -> anyhow::Result<usize> {
         let snapshot = rtdb.hash_get_all(online_key).await?;
-        self.map.clear();
-        for (field, bytes) in snapshot.iter() {
-            let Ok(channel_id) = field.parse::<u32>() else {
-                continue;
-            };
-            let online = parse_online_value(bytes);
-            self.map.insert(channel_id, online);
+        let next: std::collections::HashMap<u32, bool> = snapshot
+            .iter()
+            .filter_map(|(field, bytes)| {
+                field
+                    .parse::<u32>()
+                    .ok()
+                    .map(|id| (id, parse_online_value(bytes)))
+            })
+            .collect();
+        // Drop channels comsrv has removed since the last tick; the remaining
+        // entries get overwritten with their current state below.
+        self.map.retain(|k, _| next.contains_key(k));
+        for (k, v) in next {
+            self.map.insert(k, v);
         }
         self.initialized.store(true, Ordering::Release);
         Ok(self.map.len())
@@ -154,6 +167,27 @@ mod tests {
         assert!(cache.is_initialized());
         assert!(cache.is_online(100));
         assert!(!cache.is_online(200));
+    }
+
+    #[tokio::test]
+    async fn refresh_preserves_known_offline_across_ticks() {
+        // Regression: previously `refresh()` cleared the map before
+        // repopulating, so during the ~10-100μs rebuild window every channel
+        // fell back to fail-open. Verify a known-offline channel stays
+        // offline at every observable point during back-to-back refreshes.
+        let rtdb = MemoryRtdb::new();
+        rtdb.hash_set("comsrv:online", "42", b"0".to_vec().into())
+            .await
+            .unwrap();
+        let cache = ChannelHealthCache::new();
+
+        cache.refresh(&rtdb, "comsrv:online").await.unwrap();
+        assert!(!cache.is_online(42), "first refresh registers offline");
+
+        // Same snapshot — channel must remain offline throughout the second
+        // refresh (the old impl would have transiently reported online here).
+        cache.refresh(&rtdb, "comsrv:online").await.unwrap();
+        assert!(!cache.is_online(42), "offline state survives refresh");
     }
 
     #[tokio::test]

@@ -306,9 +306,13 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
         // M2C control gate: reject writes to offline channels before they hit
         // the routing/SHM path. Without this the command is silently dropped
-        // by the device while modsrv thinks the write succeeded. Only enforced
-        // when the action has an M2C route (no-route writes go to the instance
-        // hash only and don't touch any channel).
+        // by the device while modsrv thinks the write succeeded.
+        //
+        // Non-numeric action_id can't reach a channel: RoutingCache stores
+        // structured keys (instance_id:point_type:point_id where point_id is
+        // u32), and lookup_m2c() rejects unparseable keys. So an action_id
+        // that doesn't parse won't have a route, the gate has nothing to
+        // check, and set_action_point will write to the instance hash only.
         if let Ok(point_id_u32) = action_id.parse::<u32>()
             && let Some(target) = self.routing_cache.lookup_m2c_by_parts(
                 instance_id,

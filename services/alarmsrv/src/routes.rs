@@ -188,6 +188,10 @@ async fn create_rule(
     if !is_valid_operator(&req.operator) {
         return bad_request("Invalid operator. Allowed: >, <, >=, <=, ==, !=");
     }
+    if let Err(msg) = validate_channel_online_shape(&req.service_type, &req.data_type, req.point_id)
+    {
+        return bad_request(&msg);
+    }
 
     // Reject duplicate rule name (case-insensitive)
     match db::find_rule_by_name(&state.db, &req.rule_name).await {
@@ -332,6 +336,29 @@ async fn update_rule(
         && !is_valid_operator(op)
     {
         return bad_request("Invalid operator. Allowed: >, <, >=, <=, ==, !=");
+    }
+    // If any of (service_type, data_type, point_id) is being updated we need
+    // to re-validate the sentinel shape against the resulting tuple. Pull the
+    // existing row and overlay the patch fields.
+    if req.service_type.is_some() || req.data_type.is_some() || req.point_id.is_some() {
+        match db::get_rule_by_id(&state.db, id).await {
+            Ok(Some(existing)) => {
+                let service_type = req
+                    .service_type
+                    .as_deref()
+                    .unwrap_or(&existing.service_type);
+                let data_type = req.data_type.as_deref().unwrap_or(&existing.data_type);
+                let point_id = req.point_id.unwrap_or(existing.point_id);
+                if let Err(msg) = validate_channel_online_shape(service_type, data_type, point_id) {
+                    return bad_request(&msg);
+                }
+            },
+            Ok(None) => return not_found("Rule not found"),
+            Err(e) => {
+                error!("update_rule fetch existing: {}", e);
+                return server_error("Failed to update rule");
+            },
+        }
     }
 
     // If renaming, ensure the new name does not clash with another rule
@@ -797,6 +824,26 @@ fn is_valid_operator(op: &str) -> bool {
     matches!(op, ">" | "<" | ">=" | "<=" | "==" | "!=")
 }
 
+/// Reject rules whose shape looks like a channel-online sentinel but with a
+/// non-zero `point_id` — `point_id` is ignored for online rules (the hash is
+/// keyed by `channel_id`), so a non-zero value misleads operators into
+/// thinking they bound the rule to a specific point.
+fn validate_channel_online_shape(
+    service_type: &str,
+    data_type: &str,
+    point_id: i64,
+) -> Result<(), String> {
+    let is_online = service_type == "comsrv" && data_type == AlertRule::CHANNEL_ONLINE_DATA_TYPE;
+    if is_online && point_id != 0 {
+        return Err(format!(
+            "Channel online rules (data_type=\"{}\") ignore point_id; pass point_id=0 (got {})",
+            AlertRule::CHANNEL_ONLINE_DATA_TYPE,
+            point_id,
+        ));
+    }
+    Ok(())
+}
+
 fn format_timestamp(ts: i64) -> String {
     chrono::Local
         .timestamp_opt(ts, 0)
@@ -827,4 +874,33 @@ fn server_error(msg: &str) -> Response {
         Json(json!({ "success": false, "message": msg, "data": null })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_online_shape_rejects_nonzero_point_id() {
+        let err = validate_channel_online_shape("comsrv", "online", 5).unwrap_err();
+        assert!(err.contains("ignore point_id"), "actual: {err}");
+    }
+
+    #[test]
+    fn channel_online_shape_accepts_zero_point_id() {
+        assert!(validate_channel_online_shape("comsrv", "online", 0).is_ok());
+    }
+
+    #[test]
+    fn channel_online_shape_only_applies_to_comsrv_service_type() {
+        // "inst:online" is a regular (if odd) rule; point_id is meaningful
+        // there, so don't reject it.
+        assert!(validate_channel_online_shape("inst", "online", 5).is_ok());
+    }
+
+    #[test]
+    fn channel_online_shape_ignores_regular_data_types() {
+        // A normal channel-telemetry rule must not get the sentinel check.
+        assert!(validate_channel_online_shape("comsrv", "T", 5).is_ok());
+    }
 }
