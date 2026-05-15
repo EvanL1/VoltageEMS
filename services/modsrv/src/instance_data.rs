@@ -304,6 +304,28 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     ) -> crate::error::Result<()> {
         // Route via application-layer cache, dispatch via SHM+UDS to comsrv
 
+        // M2C control gate: reject writes to offline channels before they hit
+        // the routing/SHM path. Without this the command is silently dropped
+        // by the device while modsrv thinks the write succeeded. Only enforced
+        // when the action has an M2C route (no-route writes go to the instance
+        // hash only and don't touch any channel).
+        if let Ok(point_id_u32) = action_id.parse::<u32>()
+            && let Some(target) = self.routing_cache.lookup_m2c_by_parts(
+                instance_id,
+                voltage_model::PointType::Adjustment,
+                point_id_u32,
+            )
+            && !self.health_cache.is_online(target.channel_id)
+        {
+            warn!(
+                "Action rejected: channel {} offline (instance {} action {})",
+                target.channel_id, instance_id, action_id
+            );
+            return Err(ModSrvError::ChannelUnreachable {
+                channel_id: target.channel_id,
+            });
+        }
+
         let outcome = voltage_routing::set_action_point(
             self.rtdb.as_ref(),
             &self.routing_cache,

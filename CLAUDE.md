@@ -80,6 +80,29 @@ workspace-hack/ — cargo-hakari 生成，统一 feature flags（勿手动编辑
 - **MemoryRtdb 是纯测试替身**，不是 SHM 的抽象。SHM（定长 PointSlot 数组 + seqlock）和 Rtdb（KV/Hash/List/Set）数据模型不兼容
 - **不要尝试**将 Rtdb trait 向其他服务传播或用于 SHM 抽象
 
+## Instance 是纯物模型（不要染色）
+
+Instance 表示**设备的逻辑结构 + 当前测量值**，不持有任何聚合状态字段：
+
+- ❌ 不加 `status` / `health` / `degraded` / `alarm_state` / `online` 字段到 `inst:{id}:*`
+- ❌ 不要把"channel 离线" / "有未恢复告警" / "控制写失败"等事件反向回写到 instance
+- ✅ 告警是**事件**，归 alarmsrv 的告警表（事件流通过 `instance_id + point_id` 外键引用 instance，反向不感知）
+- ✅ 通信链路状态在 `comsrv:online` hash（channel 维度，跟 instance 正交）
+- ✅ Instance 的"当前值"用 IEEE-754 NaN 表达"暂时拿不到"（见 SHM v3 NaN 哨兵），值本身就是数据，不需要额外状态标签
+
+四份数据**正交**，谁也不染色谁：
+
+| 数据 | 含义 | 写入方 |
+|------|------|--------|
+| `inst:{id}:M/A` | 物模型当前值（可能 NaN） | comsrv（M）/ modsrv（A） |
+| `comsrv:online` | 通信链路状态（per-channel） | comsrv |
+| 告警表 | 告警事件流 | alarmsrv |
+| `route:m2c` 等 | 路由配置（静态） | monarch sync |
+
+**控制写入失败**（如 channel 离线导致 modsrv `execute_action()` 拒写）应通过**返回值**透传给调用方（规则引擎 → action_skipped，HTTP → 503 + reason），**不持久化到 instance**。
+
+**前端要灰掉控制按钮**自己做 join：`instance.action_point → routing → channel_id → comsrv:online`，不要求后端在 instance 里聚合在线状态。
+
 ## 协议扩展
 
 comsrv 协议通过 `ChannelRuntime` trait（object-safe，`#[async_trait]`）+ 编译时 feature gates：

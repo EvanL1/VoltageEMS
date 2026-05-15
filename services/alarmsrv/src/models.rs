@@ -51,22 +51,44 @@ impl AlertRule {
         }
     }
 
+    /// Sentinel `data_type` that pins the rule onto the channel online hash
+    /// (`comsrv:online`, written by comsrv per `09d33ae`/`a419352`). When set,
+    /// `channel_id` is the channel being monitored — used as the hash field —
+    /// and `point_id` is unused. Threshold semantics: `==` 0 fires when the
+    /// channel is offline; `==` 1 fires when it is online (rare in practice).
+    pub const CHANNEL_ONLINE_DATA_TYPE: &'static str = "online";
+
+    fn is_channel_online_rule(&self) -> bool {
+        self.service_type == "comsrv" && self.data_type == Self::CHANNEL_ONLINE_DATA_TYPE
+    }
+
     /// Redis HGET key: `{service_type}:{channel_id}:{data_type}`
     ///
     /// This deliberately mirrors the format produced by `KeySpaceConfig::channel_key`
     /// (e.g. `comsrv:1001:T`) using the rule's `service_type` field as the prefix.
     /// The caller is responsible for storing the correct prefix in `service_type`
     /// (e.g. "comsrv" for channel data, "inst" for instance data).
+    ///
+    /// Special case: channel online rules (see `CHANNEL_ONLINE_DATA_TYPE`) map
+    /// to the singleton `comsrv:online` hash regardless of `channel_id`.
     pub fn redis_key(&self) -> String {
+        if self.is_channel_online_rule() {
+            return "comsrv:online".to_string();
+        }
         format!(
             "{}:{}:{}",
             self.service_type, self.channel_id, self.data_type
         )
     }
 
-    /// Redis HGET field: `{point_id}`
+    /// Redis HGET field: `{point_id}` (or `{channel_id}` for channel online rules,
+    /// since the online hash is keyed by channel rather than point).
     pub fn redis_field(&self) -> String {
-        self.point_id.to_string()
+        if self.is_channel_online_rule() {
+            self.channel_id.to_string()
+        } else {
+            self.point_id.to_string()
+        }
     }
 
     /// Serialise rule metadata as a JSON snapshot for storage in alert/event tables
@@ -326,4 +348,69 @@ fn default_true() -> bool {
 
 fn default_limit() -> i64 {
     20
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(service_type: &str, channel_id: i64, data_type: &str, point_id: i64) -> AlertRule {
+        AlertRule {
+            id: 1,
+            service_type: service_type.to_string(),
+            channel_id,
+            data_type: data_type.to_string(),
+            point_id,
+            rule_name: "t".to_string(),
+            warning_level: 2,
+            operator: "==".to_string(),
+            value: 0.0,
+            enabled: true,
+            description: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn channel_data_rule_uses_legacy_key_format() {
+        let r = rule("comsrv", 1001, "T", 5);
+        assert_eq!(r.redis_key(), "comsrv:1001:T");
+        assert_eq!(r.redis_field(), "5");
+    }
+
+    #[test]
+    fn channel_online_rule_pins_to_singleton_hash() {
+        let r = rule("comsrv", 1001, AlertRule::CHANNEL_ONLINE_DATA_TYPE, 0);
+        // Online state lives in a single `comsrv:online` hash regardless of channel
+        assert_eq!(r.redis_key(), "comsrv:online");
+        // ...and the channel_id is the field (point_id is meaningless here)
+        assert_eq!(r.redis_field(), "1001");
+    }
+
+    #[test]
+    fn channel_online_rule_evaluates_offline_as_zero() {
+        // A rule configured as `== 0.0` fires when comsrv writes "0" for the
+        // channel field — this is the standard "channel offline" alarm shape.
+        let r = AlertRule {
+            value: 0.0,
+            operator: "==".to_string(),
+            ..rule("comsrv", 1001, AlertRule::CHANNEL_ONLINE_DATA_TYPE, 0)
+        };
+        assert!(r.evaluate(0.0), "offline (Redis value '0') must trigger");
+        assert!(
+            !r.evaluate(1.0),
+            "online (Redis value '1') must not trigger"
+        );
+    }
+
+    #[test]
+    fn instance_rule_with_online_data_type_does_not_get_singleton_treatment() {
+        // The sentinel is scoped to service_type == "comsrv"; an "inst:online"
+        // rule (nonsensical but possible via the API) keeps the legacy format
+        // rather than silently pointing at the wrong hash.
+        let r = rule("inst", 42, AlertRule::CHANNEL_ONLINE_DATA_TYPE, 7);
+        assert_eq!(r.redis_key(), "inst:42:online");
+        assert_eq!(r.redis_field(), "7");
+    }
 }

@@ -90,6 +90,13 @@ pub enum ModSrvError {
     #[error("Dispatch degraded: {0}")]
     DispatchDegraded(String),
 
+    /// Target channel is offline — M2C control write rejected before reaching
+    /// the device. See `comsrv:online` Redis hash and ChannelHealthCache.
+    /// Maps to HTTP 503: device is currently unreachable, retry may succeed
+    /// after the channel comes back online.
+    #[error("Channel {channel_id} unreachable: device is offline")]
+    ChannelUnreachable { channel_id: u32 },
+
     // ============================================================================
     // Internal Errors
     // ============================================================================
@@ -134,6 +141,7 @@ impl errors::VoltageErrorTrait for ModSrvError {
 
             // Dispatch
             Self::DispatchDegraded(_) => "MODSRV_DISPATCH_DEGRADED",
+            Self::ChannelUnreachable { .. } => "MODSRV_CHANNEL_UNREACHABLE",
 
             // Internal
             Self::InternalError(_) => "MODSRV_INTERNAL_ERROR",
@@ -166,6 +174,9 @@ impl errors::VoltageErrorTrait for ModSrvError {
 
             // Dispatch degraded → Network (HTTP 502: downstream comsrv unreachable)
             Self::DispatchDegraded(_) => ErrorCategory::Network,
+
+            // Channel offline → ResourceBusy (HTTP 503: temporarily unavailable, retry-able)
+            Self::ChannelUnreachable { .. } => ErrorCategory::ResourceBusy,
 
             // Internal (execution, scheduling, serialization, etc.)
             Self::ExecutionError(_)
