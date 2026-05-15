@@ -753,22 +753,43 @@ impl UnifiedWriter {
             let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
             header.slot_count.load(Ordering::Acquire) as usize
         };
+        if old_slot_count > max_slots as usize {
+            bail!(
+                "Invalid SHM header: slot_count {} exceeds max_slots {}",
+                old_slot_count,
+                max_slots
+            );
+        }
 
         let (channel_layouts, slot_count) = allocate_layouts(channel_points);
         if slot_count > max_slots as usize {
             bail!("Too many slots: {} (max={})", slot_count, max_slots);
         }
 
-        // Zero only the previously-used slot region (not the entire 2GB sparse file).
-        // We clear max(old, new) slots to cover both old stale data and any new slots.
+        // Reset only the previously-used slot region (not the entire 2GB sparse file).
+        // Clear max(old, new) slots to cover both old stale data and any new slots.
         let clear_slots = old_slot_count.max(slot_count);
         let clear_end = slot_offset() + clear_slots * std::mem::size_of::<PointSlot>();
         mmap[slot_offset()..clear_end].fill(0);
 
-        // FULL BARRIER: ensure all zero-fills are globally visible
+        // SHM v3 uses NaN, not zero, as the "unwritten" sentinel. The byte
+        // clear above resets seq/dirty/timestamp; this pass restores value/raw
+        // to NaN so routing reload cannot fabricate real 0.0 readings.
+        // SAFETY: clear_end was computed from max(old_slot_count, slot_count),
+        // both bounded by max_slots. The mmap covers max_slots PointSlot values,
+        // and PointSlot is #[repr(C, align(32))].
+        let slots_ptr =
+            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
+        for i in 0..clear_slots {
+            // SAFETY: i < clear_slots and clear_slots is within the mmap slot region.
+            let slot = unsafe { &*slots_ptr.add(i) };
+            slot.init_unwritten();
+        }
+
+        // FULL BARRIER: ensure all slot resets are globally visible
         // before the new routing_hash/slot_count are published.
         // Without this fence, a reader on ARM64 could see the new
-        // routing_hash but read stale (non-zero) slot data.
+        // routing_hash but read stale slot data.
         fence(Ordering::SeqCst);
 
         let now_ms = std::time::SystemTime::now()
@@ -1471,5 +1492,52 @@ mod tests {
         let reader = UnifiedReader::open(&config, &channel_points).unwrap();
         let (val, _) = reader.get_channel(1001, 0, 0).unwrap();
         assert!((val - 99.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_reconfigure_resets_slots_to_unwritten_nan() {
+        let (_dir, config, channel_points) = setup_test_env();
+        let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
+        let slot = writer.lookup(1001, 0, 0).unwrap();
+        writer.set_direct(slot, 0.0, 0.0, 100);
+        assert!(
+            !writer.slot(slot).is_unwritten(),
+            "real 0.0 write must not be treated as unwritten"
+        );
+        drop(writer);
+
+        let writer = UnifiedWriter::reconfigure_existing(&config, &channel_points).unwrap();
+        let slot = writer.lookup(1001, 0, 0).unwrap();
+        let point = writer.slot(slot);
+        let (value, raw, timestamp) = point.load_consistent().unwrap();
+
+        assert!(value.is_nan(), "reconfigured value must be NaN sentinel");
+        assert!(raw.is_nan(), "reconfigured raw must be NaN sentinel");
+        assert_eq!(timestamp, 0);
+        assert_eq!(point.seq_raw(), 0);
+        assert!(point.is_unwritten());
+    }
+
+    #[test]
+    fn test_reconfigure_rejects_corrupt_slot_count() {
+        let (_dir, config, channel_points) = setup_test_env();
+        let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
+        let max_slots = writer.max_slots();
+        writer
+            .header()
+            .slot_count
+            .store(max_slots.saturating_add(1), Ordering::Release);
+        writer.flush().unwrap();
+        drop(writer);
+
+        let err = match UnifiedWriter::reconfigure_existing(&config, &channel_points) {
+            Ok(_) => panic!("reconfigure must reject corrupt slot_count"),
+            Err(err) => err,
+        };
+        let message = err.to_string();
+        assert!(
+            message.contains("slot_count") && message.contains("exceeds max_slots"),
+            "expected corrupt header error, got: {message}"
+        );
     }
 }

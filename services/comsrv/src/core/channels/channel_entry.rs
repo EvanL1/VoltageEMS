@@ -102,14 +102,29 @@ pub struct ChannelEntry<R: Rtdb> {
     /// has happened yet on this entry. Used by `is_connected()` to surface
     /// "TCP up but Modbus dead" zombies as disconnected to the UI.
     pub(crate) last_successful_read_ms: Arc<AtomicI64>,
+    /// Per-channel freshness window derived from poll interval.
+    data_freshness_timeout_ms: i64,
+    /// Per-channel first-poll grace window derived from poll interval.
+    first_poll_grace_ms: i64,
 }
 
-/// How long we tolerate TCP-up-but-no-successful-Modbus-read before reporting
-/// the channel as disconnected. Three nominal poll cycles at 30s = 90s.
-const DATA_FRESHNESS_TIMEOUT_MS: i64 = 90_000;
-/// Grace window after channel creation during which we trust TCP state alone
-/// (the first poll has not landed yet, so freshness can't be asserted).
-const FIRST_POLL_GRACE_MS: i64 = 60_000;
+/// Minimum freshness window: preserves the old behavior for fast poll intervals.
+const MIN_DATA_FRESHNESS_TIMEOUT_MS: i64 = 90_000;
+/// Minimum first-poll grace window: avoids startup flapping for fast channels.
+const MIN_FIRST_POLL_GRACE_MS: i64 = 60_000;
+
+fn scaled_poll_window_ms(poll_interval_ms: u64, multiplier: u64, minimum_ms: i64) -> i64 {
+    let scaled = poll_interval_ms.saturating_mul(multiplier);
+    scaled.max(minimum_ms as u64).min(i64::MAX as u64) as i64
+}
+
+fn data_freshness_timeout_ms(poll_interval_ms: u64) -> i64 {
+    scaled_poll_window_ms(poll_interval_ms, 3, MIN_DATA_FRESHNESS_TIMEOUT_MS)
+}
+
+fn first_poll_grace_ms(poll_interval_ms: u64) -> i64 {
+    scaled_poll_window_ms(poll_interval_ms, 2, MIN_FIRST_POLL_GRACE_MS)
+}
 
 impl<R: Rtdb> std::fmt::Debug for ChannelEntry<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -200,6 +215,8 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             .and_then(|v| v.as_u64())
             .map(|v| v as u32)
             .unwrap_or(5);
+        let data_freshness_timeout = data_freshness_timeout_ms(poll_interval_ms);
+        let first_poll_grace = first_poll_grace_ms(poll_interval_ms);
 
         // Spawn the unified channel task
         let ctx = ChannelPollContext {
@@ -240,6 +257,8 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
             reconnect_total_attempts,
             reconnect_failed,
             last_successful_read_ms,
+            data_freshness_timeout_ms: data_freshness_timeout,
+            first_poll_grace_ms: first_poll_grace,
         }
     }
 
@@ -279,8 +298,8 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
     /// silently stopped flowing:
     ///
     /// 1. The cached TCP-level connection state (set by the protocol runtime).
-    /// 2. Recency of the last successful poll — at least one point must have
-    ///    come back within `DATA_FRESHNESS_TIMEOUT_MS` (≈3 poll cycles).
+    /// 2. Recency of the last successful poll — at least one point must come
+    ///    back within the per-channel freshness window.
     ///
     /// The first poll has a `FIRST_POLL_GRACE_MS` window after channel creation
     /// so we don't flap to disconnected before the loop has a chance to run.
@@ -302,12 +321,12 @@ impl<R: Rtdb + 'static> ChannelEntry<R> {
                 .elapsed()
                 .as_millis()
                 .min(i64::MAX as u128) as i64;
-            return age_ms < FIRST_POLL_GRACE_MS;
+            return age_ms < self.first_poll_grace_ms;
         }
 
         // We have at least one historical successful poll — require freshness.
         let age_ms = unix_timestamp_ms().saturating_sub(last_read);
-        age_ms < DATA_FRESHNESS_TIMEOUT_MS
+        age_ms < self.data_freshness_timeout_ms
     }
 
     /// Get channel status.
@@ -534,4 +553,21 @@ fn parse_auto_recovery_policy(
         cooldown: std::time::Duration::from_secs(cooldown_secs),
         max_recovery_rounds: max_rounds,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn freshness_windows_keep_old_minimums_for_fast_polling() {
+        assert_eq!(data_freshness_timeout_ms(1_000), 90_000);
+        assert_eq!(first_poll_grace_ms(1_000), 60_000);
+    }
+
+    #[test]
+    fn freshness_windows_scale_for_slow_polling() {
+        assert_eq!(data_freshness_timeout_ms(120_000), 360_000);
+        assert_eq!(first_poll_grace_ms(120_000), 240_000);
+    }
 }

@@ -661,10 +661,23 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         let input_snapshot = snapshot_or_reuse(snapshot_cache, values, values_changed);
         result.variable_values = Arc::clone(&input_snapshot);
 
-        // Safe: missing-check above guarantees the input is in `values`.
-        let input_value = *values
-            .get(&input.name)
-            .expect("input variable present after non-missing read_rule_variables");
+        let input_value = match values.get(&input.name).copied() {
+            Some(v) if v.is_finite() => v,
+            Some(v) => {
+                result.error = Some(format!(
+                    "PeriodDelta skipped: input variable '{}' is non-finite ({})",
+                    input.name, v
+                ));
+                return None;
+            },
+            None => {
+                result.error = Some(format!(
+                    "PeriodDelta skipped: input variable '{}' unavailable after read",
+                    input.name
+                ));
+                return None;
+            },
+        };
         let calc_engine =
             CalcEngine::new(Arc::clone(&self.state_store), format!("rule_{}", rule_id));
 
@@ -767,6 +780,24 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 if let Some((val, _ts)) =
                     reader.get_instance(instance_id, instance_type, point, &self.routing_cache)
                 {
+                    if !val.is_finite() {
+                        if is_action {
+                            tracing::trace!(
+                                "Action var {} from SHM is non-finite ({}) — leaving unset",
+                                var_name,
+                                val
+                            );
+                        } else {
+                            tracing::warn!(
+                                "Var {} from SHM is non-finite ({}) — rule will be skipped this cycle",
+                                var_name,
+                                val
+                            );
+                            outcome.missing.push(var_name);
+                        }
+                        continue;
+                    }
+
                     // SharedMemory hit - fastest path.
                     // total_cmp avoids NaN != NaN busting the Arc snapshot every cycle.
                     outcome.values_changed |= values
@@ -804,10 +835,29 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                                     s.parse::<f64>().ok()
                                 });
                         match parsed {
-                            Some(val) => {
+                            Some(val) if val.is_finite() => {
                                 outcome.values_changed |= values
                                     .insert(var_name, val)
                                     .is_none_or(|prev| prev.total_cmp(&val).is_ne());
+                            },
+                            Some(val) if is_action => {
+                                tracing::trace!(
+                                    "Action var {} ({}:{}) is non-finite ({}) — leaving unset",
+                                    var_name,
+                                    key,
+                                    field,
+                                    val
+                                );
+                            },
+                            Some(val) => {
+                                tracing::warn!(
+                                    "Var {}: {}:{} is non-finite ({}) — rule will be skipped this cycle",
+                                    var_name,
+                                    key,
+                                    field,
+                                    val
+                                );
+                                outcome.missing.push(var_name);
                             },
                             None if is_action => {
                                 // Action point variables are write targets; "never

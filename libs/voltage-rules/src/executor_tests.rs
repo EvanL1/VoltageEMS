@@ -384,6 +384,34 @@ async fn test_missing_measurement_appears_in_outcome_missing() {
     );
 }
 
+#[tokio::test]
+async fn test_non_finite_measurement_appears_in_outcome_missing() {
+    let (rtdb, executor) = new_executor();
+    rtdb.hash_set("inst:5:M", "3", Bytes::from("NaN"))
+        .await
+        .unwrap();
+
+    let variables = vec![RuleVariable {
+        name: "BAD".to_string(),
+        instance: Some(5),
+        point_type: Some("measurement".to_string()),
+        point: Some(3),
+        formula: vec![],
+    }];
+
+    let mut values = HashMap::new();
+    let outcome = executor
+        .read_rule_variables(&variables, &mut values)
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.missing, vec!["BAD".to_string()]);
+    assert!(
+        !values.contains_key("BAD"),
+        "NaN/Inf measurements must be treated as missing, not valid rule input"
+    );
+}
+
 /// Action variables (write targets) that are not yet written are NOT missing —
 /// "never written" is the normal initial state for an action point. Caller
 /// proceeds to evaluate/write. Locks the asymmetric semantics with measurement.
@@ -466,7 +494,7 @@ async fn test_assignment_numeric_string_literal_resolves() {
     };
     let assignment = RuleValueAssignment {
         variables: "Y".to_string(),
-        value: json!("3.14"),
+        value: json!("3.125"),
     };
     let values = HashMap::new();
 
@@ -474,7 +502,7 @@ async fn test_assignment_numeric_string_literal_resolves() {
         .execute_rule_change(&target, &assignment, &values)
         .await;
     assert_eq!(
-        result.value, 3.14,
+        result.value, 3.125,
         "numeric-literal string must parse, not be looked up as variable"
     );
 }

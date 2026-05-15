@@ -6,11 +6,11 @@
 #
 # Two modes:
 #   review  — triggered on PR open/sync, reads + comments only (no push)
-#   fix     — triggered by "claude-fix" label OR comment containing "@claude fix"
+#   fix     — triggered by maintainers applying the "claude-fix" label
 #
-# Trigger fix mode: apply label "claude-fix" to a PR, or comment "@claude fix" on it.
+# Trigger fix mode: apply label "claude-fix" to a PR.
 # Note: anthropics/claude-code-action@v1 does NOT support the `push` event,
-# so review only runs on pull_request and issue_comment.
+# so review only runs on pull_request.
 
 name: Claude Review
 
@@ -18,8 +18,6 @@ on:
   pull_request:
     branches: [develop]
     types: [opened, synchronize, reopened, labeled]
-  issue_comment:
-    types: [created]
 
 concurrency:
   group: claude-review-${{ github.ref }}
@@ -61,16 +59,13 @@ jobs:
             Skip issues already caught by clippy/fmt (rustfmt + clippy run in the Code Check CI).
             Post findings as a PR comment. If nothing significant: post "No significant issues found."
 
-  # Fix mode: edit files and commit, gated behind label or @claude trigger
+  # Fix mode: edit files and commit, gated behind maintainer-applied label
   fix:
     name: AI Fix
     runs-on: ubuntu-latest
     if: >
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'claude-fix')) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '@claude fix'))
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'claude-fix')
     permissions:
       contents: write
       pull-requests: write
