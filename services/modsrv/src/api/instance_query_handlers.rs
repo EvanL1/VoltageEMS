@@ -607,8 +607,12 @@ pub async fn set_instance_measurement(
 // Topology Query Handlers
 // ============================================================================
 
-/// Get direct child instances of a given parent
+/// Get direct child instances of a given parent.
 ///
+/// One-level descent on the `parent_id` foreign key — does **not**
+/// recurse. Returns each child's full instance row. For deep
+/// hierarchies (Station → ESS → Battery → BMS) call this repeatedly
+/// or use a separate tree-walk endpoint.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/instances/{id}/children",

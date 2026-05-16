@@ -538,7 +538,13 @@ async fn update_config(
 // Storage backend config & control
 // ============================================================================
 
-/// GET /hisApi/storage – return current storage config and connection status.
+/// 查看历史存储后端的配置和连接状态。
+///
+/// 返回当前激活的 backend kind（Null / Postgres / Timescale / Influx）
+/// 和它的连接参数（主机、端口、数据库名等，**密码字段被遮蔽**），加上
+/// 实际的连接状态（connected:true/false + 最后一次错误）。运维用来确认
+/// 历史落盘链路是否健康。改配置走 `PUT /hisApi/storage`，测试连通走
+/// `POST /hisApi/storage/test`。
 #[utoipa::path(get, path = "/hisApi/storage", tag = "Storage",
     responses((status = 200, description = "当前存储后端配置与连接状态")))]
 async fn get_storage(State(state): State<Arc<AppState>>) -> Json<Value> {
