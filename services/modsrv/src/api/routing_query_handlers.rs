@@ -43,12 +43,6 @@ fn parse_direction(direction: Option<String>) -> Result<RoutingDirection, String
 /// Get all routing entries for an instance
 ///
 /// Returns measurement and action routing configuration categorized by type.
-///
-/// @route GET /api/instances/{id}/routing
-/// @input Path(id): u16 - Instance ID
-/// @output Json<SuccessResponse<serde_json::Value>> - Categorized routing entries
-/// @status 200 - Success with categorized routing lists
-/// @status 500 - Database error
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/routing",
@@ -137,6 +131,14 @@ pub async fn get_instance_routing_handler(
     }))))
 }
 
+/// Global routing table dump (C2M measurements + M2C actions, all instances).
+///
+/// Top-level path `/api/routing` (no `{id}`) returns every routing entry in
+/// both tables, optionally filtered by query params. Used by the operations
+/// console for system-wide audits ("what routes does this comsrv channel
+/// fan out to") and by the E2E test to spot-check exact (instance, point)
+/// → (channel, type, point) mappings. Response can be large on big sites;
+/// E2E expects ~58 measurement + ~12 action rows for the test fixture.
 #[utoipa::path(
     get,
     path = "/api/routing",

@@ -129,6 +129,11 @@ pub struct ApiDoc;
 // Service meta
 // ============================================================================
 
+/// Service banner with name and version.
+///
+/// Returns the alarmsrv build metadata. Used by deployment scripts and the
+/// gateway's service-discovery UI to confirm the binary is reachable and to
+/// surface the running version.
 #[utoipa::path(get, path = "/", tag = "Meta",
     responses((status = 200, description = "Service basic info")))]
 async fn service_info() -> Json<Value> {
@@ -143,6 +148,10 @@ async fn service_info() -> Json<Value> {
     }))
 }
 
+/// Liveness probe.
+///
+/// Always returns 200 if the HTTP server is up. Does **not** verify SQLite or
+/// Redis reachability — use `/alarmApi/monitor/status` for that.
 #[utoipa::path(get, path = "/health", tag = "Meta",
     responses((status = 200, description = "Health check")))]
 async fn health() -> Json<Value> {
@@ -153,6 +162,16 @@ async fn health() -> Json<Value> {
 // Alert rules
 // ============================================================================
 
+/// List alarm rules (paged, filterable).
+///
+/// Returns the full rule definition (threshold, operator, target point,
+/// warning level, enabled flag). Supports keyword search, filter by
+/// `service_type` / `channel_id` / `data_type` / `enabled` / `warning_level`,
+/// and either page/page_size or skip/limit pagination.
+///
+/// Channel-online sentinel rules (`service_type=comsrv, data_type=online`)
+/// are listed alongside regular threshold rules; the consumer can tell them
+/// apart by `data_type`.
 #[utoipa::path(get, path = "/alarmApi/rules", tag = "Rules",
     params(RuleQueryParams),
     responses(
@@ -174,6 +193,22 @@ async fn list_rules(
     }
 }
 
+/// Create a new alarm rule.
+///
+/// Binds a (service_type, channel_id, data_type, point_id) Redis target to a
+/// threshold comparison. The monitor loop polls that target every
+/// `data_fetch_interval` seconds and fires an alert when `evaluate(value)`
+/// becomes true.
+///
+/// **Sentinel shape for channel-online rules**: set
+/// `service_type=comsrv, data_type=online, point_id=0` and the rule pins to
+/// the singleton `comsrv:online` hash with `channel_id` as the field. A
+/// non-zero `point_id` is rejected with 400 because that field is ignored
+/// for online rules.
+///
+/// Two conflict modes return 409 with a `conflict` field in the body:
+/// * `duplicate_name`: rule_name already taken (case-insensitive)
+/// * `duplicate_point`: another rule already monitors the same point
 #[utoipa::path(post, path = "/alarmApi/rules", tag = "Rules",
     request_body = CreateRuleRequest,
     responses(
@@ -295,6 +330,11 @@ async fn create_rule(
     }
 }
 
+/// Get one alarm rule by its primary key.
+///
+/// Response wraps the rule in `{ total: 1, list: [rule] }` for
+/// compatibility with the legacy Python-era frontend that consumed
+/// `data.list[0]`. Use `list_rules` for multi-rule queries.
 #[utoipa::path(get, path = "/alarmApi/rules/{id}", tag = "Rules",
     params(("id" = i64, Path, description = "Rule ID")),
     responses(
@@ -319,6 +359,17 @@ async fn get_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> im
     }
 }
 
+/// Update an alarm rule (partial patch).
+///
+/// All fields in `UpdateRuleRequest` are optional; only those supplied are
+/// written. After a successful update, `monitor::on_rule_updated` runs — if
+/// the rule's `enabled` flag flipped to false, its active alerts are
+/// resolved with reason "规则被禁用".
+///
+/// If the patch touches `service_type` / `data_type` / `point_id`, the
+/// resulting tuple is re-validated against the channel-online sentinel
+/// shape (see POST), so partial updates can't sneak a malformed rule
+/// through.
 #[utoipa::path(put, path = "/alarmApi/rules/{id}", tag = "Rules",
     params(("id" = i64, Path, description = "Rule ID")),
     request_body = UpdateRuleRequest,
@@ -414,6 +465,13 @@ async fn update_rule(
     }
 }
 
+/// Delete an alarm rule.
+///
+/// Cascade behavior: any active alerts produced by this rule are first
+/// resolved with reason "规则被删除" (broadcast to the WebSocket so the UI
+/// clears them), then the `alert_rule` row is removed. `alert_event` rows
+/// (the historical event log) are kept — they reference the rule by id
+/// only and survive deletion for audit.
 #[utoipa::path(delete, path = "/alarmApi/rules/{id}", tag = "Rules",
     params(("id" = i64, Path, description = "Rule ID")),
     responses(
@@ -442,6 +500,10 @@ async fn delete_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) ->
     }
 }
 
+/// Enable a rule (set `enabled=true`).
+///
+/// The rule joins the polling loop on the next tick. Convenience shortcut
+/// over PUT with `{"enabled": true}`.
 #[utoipa::path(patch, path = "/alarmApi/rules/{id}/enable", tag = "Rules",
     params(("id" = i64, Path, description = "Rule ID")),
     responses(
@@ -459,6 +521,12 @@ async fn enable_rule(State(state): State<Arc<AppState>>, Path(id): Path<i64>) ->
     }
 }
 
+/// Disable a rule (set `enabled=false`).
+///
+/// Stops the monitor from evaluating this rule on the next tick AND resolves
+/// any currently-active alerts produced by it (reason "规则被禁用"), so the
+/// UI clears stale alerts immediately rather than waiting for them to age
+/// out. Convenience over PUT with `{"enabled": false}` plus the side effect.
 #[utoipa::path(patch, path = "/alarmApi/rules/{id}/disable", tag = "Rules",
     params(("id" = i64, Path, description = "Rule ID")),
     responses(
@@ -482,6 +550,11 @@ async fn disable_rule(
     }
 }
 
+/// List all rules bound to a given channel.
+///
+/// Convenience over `list_rules?channel_id=N` that returns the full set
+/// (not paged) wrapped in `PagedData` for response-shape consistency. Used
+/// by the channel-detail UI to render "alarms watching this channel".
 #[utoipa::path(get, path = "/alarmApi/rules/channel/{channel_id}", tag = "Rules",
     params(("channel_id" = i64, Path, description = "Channel ID")),
     responses((status = 200, description = "Rules for the given channel")))]
@@ -515,6 +588,12 @@ async fn rules_by_channel(
 // Alerts
 // ============================================================================
 
+/// List currently active alerts (paged).
+///
+/// Returns rows from the `alert` table (status=active only — resolved
+/// alerts have been moved to `alert_event`). Supports keyword search and
+/// filter by warning_level / service_type / channel_id. For historical
+/// alerts (resolved or trigger events) use `/alarmApi/alert-events`.
 #[utoipa::path(get, path = "/alarmApi/alerts", tag = "Alerts",
     params(AlertQueryParams),
     responses((status = 200, description = "Active alert list")))]
@@ -535,6 +614,11 @@ async fn list_alerts(
     }
 }
 
+/// Get one active alert by id.
+///
+/// Same legacy-compat `{ total: 1, list: [alert] }` envelope as
+/// `get_rule`. Returns 404 once the alert is resolved (it has moved to
+/// `alert_event`).
 #[utoipa::path(get, path = "/alarmApi/alerts/{id}", tag = "Alerts",
     params(("id" = i64, Path, description = "Alert ID")),
     responses(
@@ -559,6 +643,18 @@ async fn get_alert(State(state): State<Arc<AppState>>, Path(id): Path<i64>) -> i
     }
 }
 
+/// Manually resolve an active alert.
+///
+/// Operator-driven recovery for the case where the underlying condition has
+/// cleared but the polling loop hasn't seen the new value yet (or the rule's
+/// data source is broken). Moves the row from `alert` → `alert_event`,
+/// captures the current value as `recovery_value`, and broadcasts a
+/// `send_alarm_recovery` event with reason "manually resolved" to the
+/// WebSocket so the UI clears.
+///
+/// The recovery is permanent for this alert id; if the underlying condition
+/// is still true, the next monitor tick will create a NEW alert with a new
+/// id, not resurrect this one.
 #[utoipa::path(patch, path = "/alarmApi/alerts/{id}/resolve", tag = "Alerts",
     params(("id" = i64, Path, description = "Alert ID")),
     responses(
@@ -605,6 +701,17 @@ async fn resolve_alert(
 // Alert events
 // ============================================================================
 
+/// Query the historical alert event log (paged).
+///
+/// `alert_event` records every trigger and recovery transition, so a single
+/// alarm episode is two rows (one `event_type=trigger`, one
+/// `event_type=recovery`). Supports filter by rule_id / event_type /
+/// service_type / warning_level / time range (start_time/end_time, epoch
+/// seconds).
+///
+/// Active (unresolved) alerts live in `alert` and only appear here once they
+/// recover or are deleted — use `/alarmApi/alerts` if you want "currently
+/// firing".
 #[utoipa::path(get, path = "/alarmApi/alert-events", tag = "Events",
     params(EventQueryParams),
     responses((status = 200, description = "Alert event history list")))]
@@ -625,6 +732,16 @@ async fn list_events(
     }
 }
 
+/// Export alert events as CSV.
+///
+/// Accepts the same filters as `list_events` but bypasses pagination —
+/// returns all matching rows in one CSV stream with
+/// `Content-Disposition: attachment; filename=alert_events.csv`. Used for
+/// regulatory / operations report export.
+///
+/// Beware of unbounded result sets: an empty filter dumps the entire
+/// `alert_event` table. Frontend should encourage operators to set a time
+/// range.
 #[utoipa::path(get, path = "/alarmApi/alert-events/export", tag = "Events",
     params(EventQueryParams),
     responses(
@@ -714,6 +831,11 @@ async fn export_events_csv(
 // Statistics & monitor
 // ============================================================================
 
+/// Aggregate alert statistics for dashboards.
+///
+/// Returns counts by warning level, by service_type, today vs this-week
+/// totals, etc. — whatever `db::get_statistics` happens to roll up. The UI
+/// uses this for the alarm overview cards on the home page.
 #[utoipa::path(get, path = "/alarmApi/alert-statistics", tag = "Monitor",
     responses((status = 200, description = "Alert statistics")))]
 async fn alert_statistics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -726,6 +848,14 @@ async fn alert_statistics(State(state): State<Arc<AppState>>) -> impl IntoRespon
     }
 }
 
+/// Monitor loop liveness and configuration snapshot.
+///
+/// Returns `running` (is the polling task alive), `last_check_time` (epoch
+/// seconds of the most recent successful `check_all_rules` pass),
+/// `check_interval` (configured `data_fetch_interval`), and `redis_url`.
+/// Use this to verify alarmsrv is actually evaluating rules rather than
+/// silently hung — `running=true` + `last_check_time` stale by N×interval
+/// is the diagnostic signal.
 #[utoipa::path(get, path = "/alarmApi/monitor/status", tag = "Monitor",
     responses((status = 200, description = "Monitor loop status", body = MonitorStatus)))]
 async fn monitor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -741,6 +871,16 @@ async fn monitor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse
     ))
 }
 
+/// Manually trigger a single rule evaluation (debug helper).
+///
+/// Reads the rule's Redis target right now, runs `evaluate()`, and returns
+/// the value, threshold comparison, and whether an active alert currently
+/// exists — without going through the normal poll loop. Does NOT
+/// create / resolve alerts; this is a read-only diagnostic.
+///
+/// Useful for debugging "why isn't my rule firing" without waiting for the
+/// next monitor tick, and for verifying the Redis target after configuring
+/// a new rule.
 #[utoipa::path(post, path = "/alarmApi/monitor/check-rule/{id}", tag = "Monitor",
     params(("id" = i64, Path, description = "Rule ID")),
     responses(
@@ -765,6 +905,12 @@ async fn manual_check_rule(
     }
 }
 
+/// Rebroadcast all currently active alerts to the WebSocket.
+///
+/// Doesn't change any state — re-publishes the current active alert set on
+/// the broadcast channel and refreshes the alarm-count counter. Used when a
+/// frontend client reconnects or wakes up after sleep and needs to catch up
+/// without polling individual endpoints.
 #[utoipa::path(post, path = "/alarmApi/call-data", tag = "Monitor",
     responses((status = 200, description = "Broadcast all active alerts")))]
 async fn call_data(State(state): State<Arc<AppState>>) -> impl IntoResponse {

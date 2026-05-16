@@ -40,11 +40,6 @@ struct RoutingEntry {
 /// Get all routing configurations (measurement and action)
 ///
 /// Returns all routing entries in the system, categorized by type.
-///
-/// @route GET /api/routing
-/// @output `Json<SuccessResponse<Value>>` - All routing configurations
-/// @status 200 - Success with all routing entries
-/// @status 500 - Database error
 #[utoipa::path(
     get,
     path = "/api/routing",
@@ -162,13 +157,6 @@ pub async fn get_all_routing_handler(
 /// Delete all routing configurations (DANGEROUS)
 ///
 /// Removes all routing entries from the system. Requires confirmation parameter.
-///
-/// @route DELETE /api/routing?confirm=true
-/// @input Query(confirm): bool - Confirmation flag (must be true)
-/// @output `Json<SuccessResponse<Value>>` - Deletion result
-/// @status 200 - Success with deletion counts
-/// @status 400 - Confirmation not provided
-/// @status 500 - Database error
 #[utoipa::path(
     delete,
     path = "/api/routing",
@@ -238,12 +226,6 @@ pub async fn delete_all_routing_handler(
 /// Get routing by channel ID
 ///
 /// Returns all routing entries (uplink and downlink) for a specific channel.
-///
-/// @route GET /api/routing/by-channel/{channel_id}
-/// @input Path(channel_id): u16 - Channel ID
-/// @output `Json<SuccessResponse<Value>>` - Channel routing entries
-/// @status 200 - Success with uplink and downlink routing
-/// @status 500 - Database error
 #[utoipa::path(
     get,
     path = "/api/routing/by-channel/{channel_id}",
@@ -328,12 +310,6 @@ pub async fn get_routing_by_channel_handler(
 /// Delete all routing for an instance
 ///
 /// Removes all routing entries (measurement and action) for a specific instance.
-///
-/// @route DELETE /api/routing/instances/{instance_name}
-/// @input Path(instance_name): String - Instance name
-/// @output `Json<SuccessResponse<Value>>` - Deletion result
-/// @status 200 - Success with deletion counts
-/// @status 500 - Database error
 #[utoipa::path(
     delete,
     path = "/api/routing/instances/{instance_name}",
@@ -402,12 +378,6 @@ pub async fn delete_instance_routing_handler(
 /// Delete all routing for a channel
 ///
 /// Removes all routing entries (uplink and downlink) for a specific channel.
-///
-/// @route DELETE /api/routing/channels/{channel_id}
-/// @input Path(channel_id): u16 - Channel ID
-/// @output `Json<SuccessResponse<Value>>` - Deletion result
-/// @status 200 - Success with deletion counts
-/// @status 500 - Database error
 #[utoipa::path(
     delete,
     path = "/api/routing/channels/{channel_id}",

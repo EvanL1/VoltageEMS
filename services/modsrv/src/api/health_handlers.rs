@@ -18,10 +18,6 @@ use crate::app_state::AppState;
 /// Performs actual connectivity checks on dependencies.
 /// Returns 503 if any critical dependency is unhealthy.
 ///
-/// @route GET /health
-/// @output Json<SuccessResponse<serde_json::Value>> - Service health metrics
-/// @status 200 - Service is healthy (all dependencies reachable)
-/// @status 503 - Service is unhealthy (one or more dependencies failed)
 pub async fn health_check(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SuccessResponse<serde_json::Value>>, AppError> {

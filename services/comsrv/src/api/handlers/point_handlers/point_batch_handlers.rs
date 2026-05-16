@@ -23,14 +23,6 @@ use super::point_types::*;
 /// Process multiple point operations in a single request. Supports creating,
 /// updating, and deleting points of any type (T/S/C/A). Operations are processed
 /// independently - a single failure does not affect other operations.
-///
-/// @route POST /api/channels/{channel_id}/points/batch
-/// @input Path(channel_id): u16 - Channel identifier
-/// @input Json(request): PointBatchRequest - Batch operations request
-/// @output `Json<SuccessResponse<PointBatchResult>>` - Batch operation results
-/// @status 200 - Batch operation completed (may contain partial failures)
-/// @status 400 - Invalid request (empty operations)
-/// @status 404 - Channel not found
 #[utoipa::path(
     post,
     path = "/api/channels/{channel_id}/points/batch",

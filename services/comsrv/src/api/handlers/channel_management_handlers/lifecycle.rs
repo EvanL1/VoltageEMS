@@ -15,9 +15,6 @@ use voltage_rtdb::Rtdb;
 ///
 /// Enable or disable a channel, controlling its runtime lifecycle.
 /// This is a higher-level operation than update - it manages whether the channel should run.
-///
-/// @route PUT /api/channels/{id}/enabled
-/// @side-effects Updates SQLite and starts/stops channel
 #[utoipa::path(
     put,
     path = "/api/channels/{id}/enabled",
@@ -184,10 +181,12 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
     Ok(Json(SuccessResponse::new(result)))
 }
 
-/// Delete a channel with hot stop
+/// 删除一个通道并立刻热停止（无需重启 comsrv）。
 ///
-/// @route DELETE /api/channels/{id}
-/// @side-effects Stops channel and removes from SQLite
+/// 步骤：先 disconnect 协议适配器（关 TCP / 释放串口）、撤销 channel
+/// manager 注册、从 SQLite 删 channel + 关联点位 + routing。**SHM 布局
+/// 会缩小**，触发 routing_hash 变化和 modsrv 端的 SHM rebuild。
+/// **破坏性操作**：所有引用该 channel 的路由级联删除。
 #[utoipa::path(
     delete,
     path = "/api/channels/{id}",

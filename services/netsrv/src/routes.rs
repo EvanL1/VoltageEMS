@@ -107,6 +107,11 @@ pub struct ApiDoc;
 // Root / ping
 // ============================================================================
 
+/// netsrv 服务横幅。
+///
+/// 返回名称、版本、描述。给运维确认 netsrv 进程在线且版本对得上。
+/// 不依赖 MQTT 连接 —— 即使 broker 挂了也会 200。MQTT 状态查
+/// `/netApi/health` 或 `/netApi/mqtt/status`。
 #[utoipa::path(get, path = "/", tag = "Health",
     responses((status = 200, description = "服务基本信息")))]
 async fn root() -> Json<Value> {
@@ -117,6 +122,10 @@ async fn root() -> Json<Value> {
     }))
 }
 
+/// 极简存活探测，返回字符串 "pong"。
+///
+/// 跟 `/` 的区别：响应体是纯字符串，不带 JSON 框架开销，适合高频
+/// liveness probe / 负载均衡器探活。
 #[utoipa::path(get, path = "/ping", tag = "Health",
     responses((status = 200, description = "pong")))]
 async fn ping() -> &'static str {
@@ -127,6 +136,12 @@ async fn ping() -> &'static str {
 // Health
 // ============================================================================
 
+/// 健康检查：返回 MQTT 连接状态 + 设备身份信息。
+///
+/// 检测实际的 MQTT broker 连接（不是缓存状态）。返回 `mqtt_connected`
+/// （bool）、broker 地址、设备 client_id 等。**进程活着但 MQTT 没连
+/// 上**时仍然回 200 + connected:false，运维 dashboard 据此区分"进程
+/// 死了"和"进程活着但上云链路断了"。
 #[utoipa::path(get, path = "/netApi/health", tag = "Health",
     responses((status = 200, description = "MQTT 连接状态与设备身份信息")))]
 async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -146,8 +161,12 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 // Alarm
 // ============================================================================
 
-/// 将告警 JSON 透传发布到 MQTT 告警 Topic。
-/// 请求体为任意 JSON 对象，内容不做校验，直接转发。
+/// 把告警 JSON 透传发布到 MQTT 告警 Topic。
+///
+/// 请求体为任意 JSON 对象，内容不做校验，整体发到配置的告警 Topic
+/// （`netApi/alarm/config` 可查 Topic 名）。**云端订阅方负责解析**——
+/// 上游 alarmsrv 发出的告警事件会经过这条链路上云。MQTT 没连接时本
+/// 接口仍返回 200 但消息可能丢失（QoS 取决于 MQTT 配置）。
 #[utoipa::path(post, path = "/netApi/alarm/broadcast", tag = "Alarm",
     request_body = AlarmBroadcastRequest,
     responses(
@@ -170,6 +189,11 @@ async fn alarm_broadcast(
         })
 }
 
+/// 查看告警上云的配置（Topic 名 + MQTT 状态）。
+///
+/// 返回当前 alarm broadcast 用的 MQTT Topic 名字（如 `voltageems/
+/// alarm/{device_id}`）和 MQTT 连接是否在线。前端"上云配置页"用，让
+/// 运维确认告警发到哪个 Topic、链路是否通。
 #[utoipa::path(get, path = "/netApi/alarm/config", tag = "Alarm",
     responses((status = 200, description = "告警 Topic 名称与 MQTT 连接状态")))]
 async fn alarm_config(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -187,6 +211,11 @@ async fn alarm_config(State(state): State<Arc<AppState>>) -> Json<Value> {
 // MQTT config
 // ============================================================================
 
+/// 查看当前 MQTT 配置（broker / 证书路径 / 主题前缀等）。
+///
+/// 只读。返回 `NetConfig` 结构 —— broker_host、port、client_id、是否
+/// 用 TLS、证书文件名、各类 topic 模板等。**不返回**敏感信息（如证书
+/// 私钥内容）。要改配置走 `POST /netApi/mqtt/config`。
 #[utoipa::path(get, path = "/netApi/mqtt/config", tag = "MQTT",
     responses((status = 200, description = "当前 MQTT 配置", body = NetConfig)))]
 async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -195,6 +224,11 @@ async fn mqtt_get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
 }
 
 /// 更新 MQTT 配置并立即触发重连，无需重启服务。
+///
+/// 写入新配置后立刻 disconnect 当前 MQTT session、用新参数 reconnect。
+/// 期间会有几秒 MQTT 不可用窗口 —— 期间发的告警可能丢失（看 QoS 配
+/// 置）。改 broker 地址 / 证书 / TLS 开关都走这一条路。如果新参数错误
+/// 导致连不上，会留在 disconnected 状态，运维要再调一次正确的配置。
 #[utoipa::path(post, path = "/netApi/mqtt/config", tag = "MQTT",
     request_body = NetConfig,
     responses(
@@ -221,6 +255,11 @@ async fn mqtt_update_config(
     ))
 }
 
+/// 实时 MQTT 连接状态（轮询端点）。
+///
+/// 返回 connected/disconnected/connecting、最后一次连接成功 / 失败时间、
+/// 失败原因（如果有）、累计重连次数。前端"上云状态"小绿灯就轮询这个
+/// 接口。比 `/netApi/health` 信息更细，但更新频率相同（无后台缓存）。
 #[utoipa::path(get, path = "/netApi/mqtt/status", tag = "MQTT",
     responses((status = 200, description = "当前 MQTT 连接状态、Broker 地址与设备信息")))]
 async fn mqtt_status(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -238,6 +277,12 @@ async fn mqtt_status(State(state): State<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
+/// 手动断开 MQTT 连接，并**暂停自动重连**。
+///
+/// 跟 `reconnect` 是对应的开关。调用后 netsrv 关闭当前 MQTT session
+/// 并设置一个"禁止自动重连"标志位 —— 之后即使 broker 可达也不会主动
+/// 连回去，直到 `reconnect` 显式打开开关。**运维窗口期**用：升级
+/// broker、临时禁止上云告警等场景。
 #[utoipa::path(post, path = "/netApi/mqtt/disconnect", tag = "MQTT",
     responses((status = 200, description = "断开 MQTT 连接，停止自动重连，直到调用 reconnect")))]
 async fn mqtt_disconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -254,6 +299,11 @@ async fn mqtt_disconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({"success": true, "message": "MQTT disconnected, auto-reconnect paused"}))
 }
 
+/// 触发 MQTT 重连，并**恢复自动重连**。
+///
+/// 跟 `disconnect` 是对应的开关。调用后清除"禁止自动重连"标志、立刻
+/// 触发一次连接尝试。返回 200 不代表连上了 —— 实际是后台异步 connect，
+/// 结果要查 `/netApi/mqtt/status`。运维窗口结束后调这个让上云链路恢复。
 #[utoipa::path(post, path = "/netApi/mqtt/reconnect", tag = "MQTT",
     responses((status = 200, description = "触发重连，后台异步执行")))]
 async fn mqtt_reconnect(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -425,6 +475,12 @@ async fn cert_upload(
     })))
 }
 
+/// 查看证书目录状态：路径 + 各证书文件是否存在。
+///
+/// 检查 CA / 客户端证书 / 私钥三个文件是否在配置的证书目录里。**不返
+/// 回证书内容或指纹**（避免私钥泄露风险），只返回 exists:true/false。
+/// 用于"上云配置检查"页面的预检 —— 如果显示缺少私钥，运维知道要重新
+/// upload。
 #[utoipa::path(get, path = "/netApi/certificate/info", tag = "Certificate",
     responses((status = 200, description = "证书目录路径及各证书文件是否存在")))]
 async fn cert_info(State(state): State<Arc<AppState>>) -> Json<Value> {

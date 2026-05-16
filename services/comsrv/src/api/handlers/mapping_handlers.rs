@@ -166,14 +166,6 @@ fn parse_protocol_json(json_str: Option<&str>, table: &str, point_id: i64) -> se
 /// Get all mapping configurations for a channel
 ///
 /// Returns all protocol-specific mapping configurations for the channel.
-///
-/// @route GET /api/channels/{id}/mappings
-/// @input Path(channel_id): u16 - Channel ID
-/// @input State(state): AppState - Application state
-/// @output `Json<ApiResponse<GroupedMappings>>` - Grouped point mappings by type
-/// @status 200 - Mappings retrieved successfully
-/// @status 404 - Channel not found
-/// @status 500 - Database error
 #[utoipa::path(
     get,
     path = "/api/channels/{id}/mappings",
@@ -240,16 +232,6 @@ pub async fn get_channel_mappings_handler<R: Rtdb>(
 /// Updates all protocol-specific mapping configurations for the channel in a single transaction.
 /// Supports validate-only mode for pre-checking without writing.
 /// Can optionally trigger automatic channel reload.
-///
-/// @route PUT /api/channels/{id}/mappings
-/// @input Path(channel_id): u16 - Channel ID
-/// @input State(state): AppState - Application state
-/// @input Json(req): MappingBatchUpdateRequest - Batch mapping update request
-/// @output `Json<ApiResponse<MappingBatchUpdateResult>>` - Update result
-/// @status 200 - Mappings updated successfully
-/// @status 400 - Validation error
-/// @status 404 - Channel not found
-/// @status 500 - Database error
 #[utoipa::path(
     put,
     path = "/api/channels/{id}/mappings",
@@ -1008,9 +990,6 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
 /// ### Virtual Protocol
 /// - No numeric normalization needed (expression-based)
 ///
-/// @param protocol: Protocol name (modbus_tcp/modbus_rtu/can/virt)
-/// @param value: protocol_data JSON value to normalize
-/// @return Normalized JSON value with corrected types
 fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_json::Value {
     use serde_json::{Number, Value};
 

@@ -73,6 +73,12 @@ fn require_admin(
 
 // ── POST /api/v1/auth/register ────────────────────────────────────────────────
 
+/// 注册新用户账号。
+///
+/// 公开端点（不需要 token）。校验用户名长度 3-50、用户名唯一，bcrypt
+/// 哈希密码后入库。默认 role_id=3（普通用户），可由请求体覆盖 —— 但匿名
+/// 调用方填什么都不会获得管理员权限，因为本端点不检查 caller 身份，配
+/// 置上一般会在网关层把它锁起来或加邀请码（当前实现没锁）。
 #[utoipa::path(post, path = "/api/v1/auth/register", tag = "Auth",
     request_body = UserCreate,
     responses((status = 200, description = "注册成功"), (status = 400, description = "参数错误")))]
@@ -141,6 +147,12 @@ pub async fn register(
 
 // ── POST /api/v1/auth/login ───────────────────────────────────────────────────
 
+/// 用户名 + 密码登录，签发 access / refresh token 对。
+///
+/// 返回 `TokenResponse { access_token, refresh_token, expires_in, role }`。
+/// access token 用于后续接口 `Authorization: Bearer ...`，过期时间短；
+/// refresh token 用于换发新的 access token，签到 `refresh_tokens` 表内
+/// 可单点吊销。`is_active=false` 的账号会被拒绝（401）。
 #[utoipa::path(post, path = "/api/v1/auth/login", tag = "Auth",
     request_body = UserLogin,
     responses((status = 200, description = "登录成功", body = TokenResponse), (status = 401, description = "认证失败")))]
@@ -220,6 +232,11 @@ pub async fn login(
 
 // ── POST /api/v1/auth/refresh ─────────────────────────────────────────────────
 
+/// 用 refresh token 换发新的 access token 对。
+///
+/// 旧的 refresh token 在校验通过后会被吊销并替换为新发的一对（rotation
+/// 策略），防止泄露的 refresh token 被长期复用。如果 refresh token 已被
+/// 吊销、过期或签名无效，返回 401，客户端需要走重新登录流程。
 #[utoipa::path(post, path = "/api/v1/auth/refresh", tag = "Auth",
     request_body = RefreshTokenRequest,
     responses((status = 200, description = "刷新成功", body = TokenResponse), (status = 401, description = "Token 无效")))]
@@ -323,6 +340,12 @@ pub async fn refresh_token(
 
 // ── POST /api/v1/auth/logout ──────────────────────────────────────────────────
 
+/// 退出登录，吊销当前 refresh token。
+///
+/// access token 是无状态 JWT，本身无法服务端吊销，依赖其短过期时间自然
+/// 失效。退出操作主要做两件事：从 `refresh_tokens` 注册表移除当前 refresh
+/// token，让对方无法再用它换新 access token；并把这次会话从可观测列表中
+/// 摘出。即使没传 refresh_token，也会返回 200（幂等）。
 #[utoipa::path(post, path = "/api/v1/auth/logout", tag = "Auth",
     security(("bearer_auth" = [])),
     request_body = RefreshTokenRequest,
@@ -346,6 +369,11 @@ pub async fn logout(
 
 // ── GET /api/v1/auth/me ───────────────────────────────────────────────────────
 
+/// 返回当前 access token 持有人的用户档案。
+///
+/// 不带密码哈希，包含 role 关联（join roles 表）。前端用于显示用户头像/
+/// 用户名/角色，以及决定 UI 上哪些管理员功能要显示。401 表示 token 失效,
+/// 客户端应触发 refresh 流程或跳登录。
 #[utoipa::path(get, path = "/api/v1/auth/me", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "当前用户信息", body = UserWithRole), (status = 401, description = "未认证")))]
@@ -380,6 +408,11 @@ pub async fn get_me(State(state): State<Arc<AppState>>, headers: HeaderMap) -> i
 
 // ── PUT /api/v1/auth/me ───────────────────────────────────────────────────────
 
+/// 当前用户修改自己的档案。
+///
+/// 普通用户只能改基础字段（如显示名）；`role_id` / `is_active` 这两个字段
+/// 只有 Admin 角色可写，普通用户传了会被 403 拒绝。改密码走单独端点
+/// `PUT /me/password`，不在这里。
 #[utoipa::path(put, path = "/api/v1/auth/me", tag = "Auth",
     security(("bearer_auth" = [])),
     request_body = UserUpdate,
@@ -408,6 +441,12 @@ pub async fn update_me(
 
 // ── PUT /api/v1/auth/me/password ──────────────────────────────────────────────
 
+/// 当前用户改自己的密码。
+///
+/// 必须提供 `old_password` 并通过 bcrypt 比对，防止 token 被劫持后被改
+/// 密码。改成功后**不会**主动吊销已发的 refresh token（其他登录会话仍然
+/// 有效），调用方如需"全设备登出"应自己再调 `/cleanup-tokens` 或登出
+/// 流程。
 #[utoipa::path(put, path = "/api/v1/auth/me/password", tag = "Auth",
     security(("bearer_auth" = [])),
     request_body = PasswordChange,
@@ -433,6 +472,11 @@ pub async fn change_password(
 
 // ── GET /api/v1/auth/roles ────────────────────────────────────────────────────
 
+/// 列出系统中定义的角色。
+///
+/// 角色是 `(id, name, description)` 的静态枚举，目前是 Admin / Operator /
+/// Viewer 等。给前端"创建/编辑用户"对话框做下拉选项用，所有已登录用户都
+/// 能查（不限管理员）。
 #[utoipa::path(get, path = "/api/v1/auth/roles", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "角色列表")))]
@@ -454,6 +498,11 @@ pub async fn get_roles(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 
 // ── GET /api/v1/auth/users ────────────────────────────────────────────────────
 
+/// 列出全部用户（管理员视图）。
+///
+/// 返回每个用户的基础信息 + 角色 + 最后登录时间 + 激活状态。**响应里已经
+/// 剥掉密码哈希字段**，可以安全地透传给前端。用于管理员的用户管理界面。
+/// 当前实现允许任何已登录用户调用（应该限制为 Admin，是个 known TODO）。
 #[utoipa::path(get, path = "/api/v1/auth/users", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "用户列表（仅管理员）")))]
@@ -492,6 +541,10 @@ pub async fn get_all_users(State(state): State<Arc<AppState>>) -> impl IntoRespo
 
 // ── GET /api/v1/auth/users/:id (admin) ───────────────────────────────────────
 
+/// 查看指定用户的档案（管理员）。
+///
+/// 跟 `/auth/me` 返回相同 schema，但 caller 必须是 Admin 才能查别人。
+/// 普通用户调用返回 403。密码哈希同样被剥掉。
 #[utoipa::path(get, path = "/api/v1/auth/users/{id}", tag = "Auth",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "用户 ID")),
@@ -530,6 +583,12 @@ pub async fn admin_get_user(
 
 // ── PUT /api/v1/auth/users/:id (admin) ───────────────────────────────────────
 
+/// 管理员修改任意用户（包含角色和激活状态）。
+///
+/// 跟 `PUT /auth/me` 共用 `UserUpdate` schema，但是这里管理员可以改
+/// `role_id` 和 `is_active`，普通用户调用直接 403。把 `is_active=false`
+/// 设置进去**不会**立刻吊销该用户已发的 token —— 实际效果要等 token 自然
+/// 过期，或调用方走 `/cleanup-tokens` 一刀切。
 #[utoipa::path(put, path = "/api/v1/auth/users/{id}", tag = "Auth",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "用户 ID")),
@@ -550,6 +609,11 @@ pub async fn admin_update_user(
 
 // ── DELETE /api/v1/auth/users/:id (admin) ────────────────────────────────────
 
+/// 管理员删除用户。
+///
+/// 硬删除 `users` 表的行（不是 soft-delete `is_active=false`），关联的
+/// refresh token 也一并清掉。默认管理员账号 `admin` 受保护，删除尝试返
+/// 回 400 —— 防止自把系统锁死的脚滑事故。
 #[utoipa::path(delete, path = "/api/v1/auth/users/{id}", tag = "Auth",
     security(("bearer_auth" = [])),
     params(("id" = i64, Path, description = "用户 ID")),
@@ -604,6 +668,11 @@ pub async fn admin_delete_user(
 
 // ── GET /api/v1/auth/stats (admin) ───────────────────────────────────────────
 
+/// 认证子系统的运行统计。
+///
+/// 返回当前活跃的 refresh token 数量、活跃 / 总用户数、按角色分布等指标
+/// 给运维看（监控 dashboard、容量预估）。不返回任何用户身份信息，只是聚
+/// 合数字。
 #[utoipa::path(get, path = "/api/v1/auth/stats", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "认证统计信息")))]
@@ -638,6 +707,11 @@ pub async fn get_auth_stats(
 
 // ── POST /api/v1/auth/cleanup-tokens (admin) ─────────────────────────────────
 
+/// 清理已过期或被吊销的 refresh token。
+///
+/// 维护操作：扫一遍 refresh token 注册表，删除 `expires_at < now()` 的
+/// 行。正常情况这些已经无效，留着只是占空间 —— 周期性调用以控制表大小。
+/// 不影响在用的有效 token。
 #[utoipa::path(post, path = "/api/v1/auth/cleanup-tokens", tag = "Auth",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "清理过期 token")))]

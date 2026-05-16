@@ -227,6 +227,10 @@ pub async fn connect_storage_backend(
 // Root / ping
 // ============================================================================
 
+/// hissrv 服务横幅。
+///
+/// 返回名称、版本、描述。给运维确认 hissrv 进程在线且版本对得上。
+/// 不依赖存储后端 —— 即使 TimescaleDB / InfluxDB 挂了也会 200。
 #[utoipa::path(get, path = "/", tag = "Health",
     responses((status = 200, description = "服务基本信息")))]
 async fn root() -> Json<Value> {
@@ -237,6 +241,10 @@ async fn root() -> Json<Value> {
     }))
 }
 
+/// 最简单的存活探测，返回字符串 "pong"。
+///
+/// 与 `/` 区别：`/ping` 响应体是纯字符串，不带 JSON 框架开销，适合
+/// 高频探活（liveness probe / load balancer）。
 #[utoipa::path(get, path = "/ping", tag = "Health",
     responses((status = 200, description = "pong")))]
 async fn ping() -> &'static str {
@@ -247,6 +255,13 @@ async fn ping() -> &'static str {
 // Health
 // ============================================================================
 
+/// 后端存储连接健康检查。
+///
+/// 检测当前激活的 `StorageBackend`（Null / Postgres / Timescale / Influx
+/// 之一）能否被实际访问 —— 走真实的 ping/查询，不是缓存状态。如果存储
+/// 后端挂了，hissrv 自己仍然回 200 但 data 字段会显示 `connected:false`
+/// + 错误原因。运维 dashboard 用它区分"hissrv 进程死了"和"hissrv 活
+/// 着但后端不通"。
 #[utoipa::path(get, path = "/hisApi/health", tag = "Health",
     responses((status = 200, description = "存储后端健康状态")))]
 async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -271,6 +286,13 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 // Data queries
 // ============================================================================
 
+/// 查询历史数据时间范围。
+///
+/// 主查询接口：按 `(channel_id, data_type, point_id)` 定位点位，按
+/// `start_ts` / `end_ts`（epoch ms）切时间窗，可选 `step` 做降采样聚合。
+/// 返回 `[(ts, value), ...]` 时序点列表。降采样目前是后端原生的（Timescale
+/// continuous aggregate / Influx group-by），不在 hissrv 内做。**未配置
+/// 存储后端时返回空集合**，不是错误。
 #[utoipa::path(get, path = "/hisApi/data/query", tag = "Data",
     params(QueryRangeParams),
     responses(
@@ -324,6 +346,12 @@ async fn query_range(
     }
 }
 
+/// 取每个指定点位的最新一条历史值。
+///
+/// 用于"打开页面立刻显示最近一个值"，避免发起完整的时序查询。`points`
+/// 参数批量接受 `channel_id:data_type:point_id` 字符串，返回每个点的
+/// 最新 `(ts, value)`。注意"最新"是历史库里的最新（hissrv 落盘频率），
+/// 不是 SHM/Redis 的实时值 —— 后者用 modsrv / apigateway。
 #[utoipa::path(get, path = "/hisApi/data/latest", tag = "Data",
     params(LatestParams),
     responses(
@@ -359,6 +387,11 @@ async fn query_latest(
     }
 }
 
+/// 历史数据的整体时间跨度和总量。
+///
+/// 不接受任何过滤参数 —— 返回整个存储后端的全局指标：最早一条记录的
+/// ts、最新一条的 ts、总行数、唯一通道数。给运维"我们存了多少历史"
+/// 一眼概览，也用于估算后续 query 的扫描成本。
 #[utoipa::path(get, path = "/hisApi/data/range", tag = "Data",
     responses(
         (status = 200, description = "数据时间范围与整体统计", body = DataStats),
@@ -394,6 +427,11 @@ async fn data_range(
 // Metadata
 // ============================================================================
 
+/// 列出目前历史库里有数据的通道。
+///
+/// 返回 `[channel_id, ...]`。**只列已经落过盘的通道**，跟 comsrv 当前
+/// 实际配置的通道集可能不一致 —— 新加的通道在采到第一个点之前不会出现
+/// 这里。前端"选哪个通道查历史"下拉用。
 #[utoipa::path(get, path = "/hisApi/channels", tag = "Meta",
     responses(
         (status = 200, description = "已存储数据的通道列表"),
@@ -420,6 +458,12 @@ async fn list_channels(
     }
 }
 
+/// hissrv 进程内的运行指标。
+///
+/// 返回从启动至今的累计统计：写入成功的总点数、跳过 NaN 的点数、当前
+/// 缓冲区深度、最后一次刷盘耗时等。给运维监控"hissrv 是否在跟上数据
+/// 流"。缓冲深度持续增长 = 写入比采集慢，要么后端慢、要么写入策略不够
+/// 激进。
 #[utoipa::path(get, path = "/hisApi/metrics", tag = "Meta",
     responses((status = 200, description = "服务运行指标（总点数、通道数、缓冲区大小等）")))]
 async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -448,6 +492,10 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
 // General service config CRUD (intervals, patterns, etc.)
 // ============================================================================
 
+/// 查看 hissrv 的运行配置。
+///
+/// 返回采集间隔、写入批量大小、点位过滤 pattern、保留期等。**不**包含存
+/// 储后端连接参数（那些在 `/hisApi/storage`，分开管理）。
 #[utoipa::path(get, path = "/hisApi/config", tag = "Config",
     responses((status = 200, description = "当前服务配置", body = ServiceConfig)))]
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -455,6 +503,11 @@ async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(json!({ "success": true, "message": "OK", "data": cfg }))
 }
 
+/// 修改 hissrv 运行配置（覆盖式）。
+///
+/// 写入 SQLite 后**立即热应用** —— 不需要重启 hissrv。改写入间隔、批量
+/// 大小、点位 pattern 等都即刻生效。存储后端连接参数改不到这里（用
+/// `PUT /hisApi/storage`）。
 #[utoipa::path(put, path = "/hisApi/config", tag = "Config",
     request_body = ServiceConfig,
     responses(
@@ -485,7 +538,13 @@ async fn update_config(
 // Storage backend config & control
 // ============================================================================
 
-/// GET /hisApi/storage – return current storage config and connection status.
+/// 查看历史存储后端的配置和连接状态。
+///
+/// 返回当前激活的 backend kind（Null / Postgres / Timescale / Influx）
+/// 和它的连接参数（主机、端口、数据库名等，**密码字段被遮蔽**），加上
+/// 实际的连接状态（connected:true/false + 最后一次错误）。运维用来确认
+/// 历史落盘链路是否健康。改配置走 `PUT /hisApi/storage`，测试连通走
+/// `POST /hisApi/storage/test`。
 #[utoipa::path(get, path = "/hisApi/storage", tag = "Storage",
     responses((status = 200, description = "当前存储后端配置与连接状态")))]
 async fn get_storage(State(state): State<Arc<AppState>>) -> Json<Value> {

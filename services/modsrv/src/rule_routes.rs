@@ -313,7 +313,12 @@ pub struct UpdateRuleRequest {
     pub flow_json: Option<serde_json::Value>,
 }
 
-/// List all rules
+/// List all rules.
+///
+/// Returns the full rule definitions including both `nodes_json` (compact
+/// execution topology used by the scheduler) and `flow_json` (Vue Flow
+/// layout used by the frontend editor). No pagination — rule count is
+/// typically small. Use `/api/rules/{id}` for a single rule.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/rules",
@@ -428,7 +433,11 @@ pub async fn create_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
     }))))
 }
 
-/// Get rule by ID
+/// Get one rule by ID.
+///
+/// Same shape as the entries in `GET /api/rules` but a single object.
+/// Returns 404 when the id doesn't exist. Frontend rule-editor opens
+/// this to populate the canvas before edit.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/rules/{id}",
@@ -570,7 +579,12 @@ pub async fn update_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
     }))))
 }
 
-/// Delete rule
+/// Delete a rule and remove it from the scheduler.
+///
+/// Stops the scheduler from invoking this rule on the next tick, then
+/// removes the row from the `rules` table. Last execution result in
+/// Redis (`rule:{id}:exec`, 24h TTL) is left to expire naturally —
+/// active dashboards may still show the last status briefly.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     delete,
     path = "/api/rules/{id}",
@@ -602,7 +616,12 @@ pub async fn delete_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
     )))
 }
 
-/// Enable rule
+/// Enable a rule (joins the scheduler on the next tick).
+///
+/// Sets `enabled=true` in the `rules` table and refreshes the scheduler's
+/// in-memory enabled set. The rule's next evaluation lands within
+/// `tick_ms` (default 100ms). Convenience over PUT with `{"enabled":
+/// true}`. Returns 404 if the rule id doesn't exist.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/enable",
@@ -634,7 +653,12 @@ pub async fn enable_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
     )))
 }
 
-/// Disable rule
+/// Disable a rule (skipped by the scheduler from the next tick on).
+///
+/// Sets `enabled=false`. The rule definition stays in the table — re-
+/// enabling later picks up the same flow. Currently-running invocations
+/// finish; subsequent ticks skip it. Use this to safely pause control
+/// rules during maintenance without losing their definition.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/rules/{id}/disable",
@@ -734,7 +758,12 @@ pub async fn execute_rule_now<R: Rtdb + Send + Sync + 'static, S: StateStore + '
     Ok(Json(SuccessResponse::new(response)))
 }
 
-/// Get scheduler status
+/// Rule scheduler runtime status.
+///
+/// Returns `running` flag, number of enabled / total rules, tick interval
+/// (ms), last tick timestamp, max concurrency. Used by the operations
+/// console to diagnose "rules aren't firing" — `running=false` or
+/// `last_tick` stale by N×interval flags a hung scheduler.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/scheduler/status",
@@ -756,7 +785,12 @@ pub async fn scheduler_status<R: Rtdb + Send + Sync + 'static, S: StateStore + '
     }))))
 }
 
-/// Reload scheduler rules from database
+/// Force the scheduler to re-read rules from SQLite right now.
+///
+/// Normally the scheduler picks up rule changes after the next tick;
+/// this endpoint forces an immediate reload, useful after bulk import
+/// or `monarch sync` so admins don't wait. Doesn't restart in-flight
+/// invocations, just refreshes the enabled set the next tick will use.
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     post,
     path = "/api/scheduler/reload",

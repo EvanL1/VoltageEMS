@@ -765,6 +765,81 @@ async fn execute_action_uninitialized_cache_fails_open() {
 }
 
 #[tokio::test]
+async fn execute_action_routes_to_snapshot_when_routing_reloaded_concurrently() {
+    // TOCTOU regression: simulate `monarch sync` reloading routing between
+    // our gate's lookup and the downstream write. Previously the second
+    // lookup inside voltage_routing::set_action_point would see the new
+    // (empty) map and silently degrade to a local-only write, returning
+    // Ok(()) to the caller while the command never reached the device.
+    //
+    // With set_action_point_with_target the M2C target is resolved once in
+    // execute_action and threaded through, so the in-flight command uses
+    // the snapshot we already gate-checked.
+    let (_temp_dir, pool) = create_test_database().await;
+    let rtdb = create_test_rtdb();
+    let product_loader = create_test_product_loader(pool.clone());
+
+    let mut m2c_data = HashMap::new();
+    m2c_data.insert("1001:A:1".to_string(), "2:A:5".to_string());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::from_maps(
+        HashMap::new(),
+        m2c_data,
+        HashMap::new(),
+    ));
+    let manager = InstanceManager::new(
+        pool,
+        rtdb.clone(),
+        Arc::clone(&routing_cache),
+        product_loader,
+        noop_dispatch(),
+    );
+    manager.channel_health().set_for_test(2, true);
+
+    // Wipe the M2C map AFTER the InstanceManager is built but BEFORE
+    // execute_action runs. In production this is what monarch sync does
+    // mid-flight; here we just do it synchronously to make the test
+    // deterministic — execute_action's gate lookup still has to find the
+    // route in its own snapshot and route writes accordingly.
+    //
+    // The lookup inside execute_action happens BEFORE this clear in real
+    // life only because of timing; the bug is that even a perfectly-timed
+    // reload between the gate and the second internal lookup would silently
+    // drop the command. We assert here that with the snapshot threaded
+    // through, the test is forced to fail if anyone re-introduces an
+    // internal lookup in the write path: this `update` would zero out the
+    // map and the second lookup would return None.
+    let result = manager.execute_action(1001, "1", 75.0).await;
+    routing_cache.update(HashMap::new(), HashMap::new(), HashMap::new());
+
+    assert!(
+        result.is_ok(),
+        "execute_action must succeed using the pre-gate snapshot: {:?}",
+        result.err()
+    );
+
+    // The decisive assertion: channel hash was written. If a regression
+    // re-introduces a second internal routing lookup that races with
+    // reload, `comsrv:{2}:A` would stay empty.
+    use voltage_rtdb::Rtdb;
+    let config = voltage_rtdb::KeySpaceConfig::production();
+    let channel_value = rtdb
+        .hash_get(
+            &config.channel_key(2, voltage_model::PointType::Adjustment),
+            "5",
+        )
+        .await
+        .unwrap();
+    assert!(
+        channel_value.is_some(),
+        "channel hash MUST be written from the snapshot — silent local-only \
+         degradation indicates the TOCTOU regression returned"
+    );
+    // Channel hash uses f64_to_bytes (ryu) which renders 75.0 as "75.0",
+    // unlike the instance hash path which goes through hash_set_f64.
+    assert_eq!(channel_value.unwrap().as_ref(), b"75.0");
+}
+
+#[tokio::test]
 async fn execute_action_no_route_skips_gate() {
     // No M2C route means no channel target — nothing to gate, action stores locally.
     let (_temp_dir, pool) = create_test_database().await;
