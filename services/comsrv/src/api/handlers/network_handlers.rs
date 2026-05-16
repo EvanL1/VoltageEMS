@@ -443,11 +443,6 @@ async fn find_interface_config(name: &str) -> Result<(PathBuf, NetworkInterfaceC
 /// List all network interfaces
 ///
 /// Returns all network interfaces with their current configuration.
-///
-/// @route GET /api/network/interfaces
-/// @output `Json<SuccessResponse<NetworkInterfaceList>>` - List of interfaces
-/// @status 200 - Success
-/// @status 500 - Internal server error (e.g., cannot read config files)
 #[utoipa::path(
     get,
     path = "/api/network/interfaces",
@@ -472,11 +467,6 @@ pub async fn list_network_interfaces<R: Rtdb>(
 /// Get network interface configuration
 ///
 /// Returns the configuration for a specific network interface.
-///
-/// @route GET /api/network/interfaces/{name}
-/// @output `Json<SuccessResponse<NetworkInterfaceConfig>>` - Interface configuration
-/// @status 200 - Success
-/// @status 404 - Interface not found
 #[utoipa::path(
     get,
     path = "/api/network/interfaces/{name}",
@@ -503,13 +493,6 @@ pub async fn get_network_interface<R: Rtdb>(
 /// Updates the configuration for a specific network interface.
 /// Changes are written to the configuration file but not immediately applied.
 /// Use POST /api/network/apply to apply changes.
-///
-/// @route PUT /api/network/interfaces/{name}
-/// @input `Json<NetworkConfigUpdateRequest>` - New configuration
-/// @output `Json<SuccessResponse<NetworkConfigUpdateResult>>` - Update result
-/// @status 200 - Success
-/// @status 400 - Invalid configuration
-/// @status 404 - Interface not found
 #[utoipa::path(
     put,
     path = "/api/network/interfaces/{name}",
@@ -611,11 +594,6 @@ pub async fn update_network_interface<R: Rtdb>(
 ///
 /// Applies all pending network configuration changes by reloading systemd-networkd.
 /// This will briefly interrupt network connectivity.
-///
-/// @route POST /api/network/apply
-/// @output `Json<SuccessResponse<NetworkApplyResult>>` - Apply result
-/// @status 200 - Success
-/// @status 500 - Failed to apply changes
 #[utoipa::path(
     post,
     path = "/api/network/apply",

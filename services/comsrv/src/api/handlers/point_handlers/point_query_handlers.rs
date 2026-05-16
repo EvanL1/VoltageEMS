@@ -15,9 +15,13 @@ use super::point_helpers::{
     fetch_grouped_points, parse_protocol_mapping_json, point_type_to_table, validate_channel_exists,
 };
 
-/// Get point information including value, timestamp and raw value
+/// 读单个点的实时值（value + ts + raw）。
 ///
-/// @route GET /api/channels/{channel_id}/{telemetry_type}/{point_id}
+/// 从 Redis hash 读 `comsrv:{channel_id}:{T|S|C|A}` 对应 field，返回工
+/// 程量值（经过线性变换后）、时间戳、原始寄存器值。**实时性以 Redis
+/// 为准**，跟 SHM 实时层有 ~100ms 滞后（ShmRedisSync 异步同步周期）。
+/// 405/406 表示点位定义不存在；数据为 NaN（未首次成功 poll 或离线）时
+/// 返回 value=null。
 #[utoipa::path(
     get,
     path = "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
@@ -94,8 +98,6 @@ pub async fn get_point_info_handler<R: Rtdb>(
 ///
 /// Returns all point definitions for the specified channel.
 /// Supports filtering by point type (T, S, C, A).
-///
-/// @route GET /api/channels/{id}/points
 #[utoipa::path(
     get,
     path = "/api/channels/{id}/points",
@@ -151,8 +153,6 @@ pub async fn get_channel_points_handler<R: Rtdb>(
 /// Get mapping for a specific point with explicit four-remote type
 ///
 /// Unique identifier: (channel_id, four_remote_type, point_id)
-///
-/// @route GET /api/channels/{channel_id}/{type}/points/{point_id}/mapping
 #[utoipa::path(
     get,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}/mapping",
@@ -214,9 +214,11 @@ pub async fn get_point_mapping_with_type_handler<R: Rtdb>(
 // Get Point Configuration Handler
 // ----------------------------------------------------------------------------
 
-/// Get point configuration from database
+/// 读点位的**配置**（不是运行时值）。
 ///
-/// @route GET /api/channels/{channel_id}/{type}/points/{point_id}/config
+/// 从 SQLite 读点位定义：寄存器地址、字节序、缩放系数、单位、报警上下
+/// 限等。不查 Redis、不查 SHM，只读静态配置。前端"编辑点位"对话框预填
+/// 用；实时值走 `/api/channels/{id}/points/{point_id}`。
 #[utoipa::path(
     get,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}/config",
@@ -299,8 +301,6 @@ async fn get_point_config_handler_inner<R: Rtdb>(
 /// Get unmapped points for a channel (points without protocol_mappings)
 ///
 /// **Unmapped Definition**: Points where `protocol_mappings IS NULL OR '' OR '{}' OR 'null'`
-///
-/// @route GET /api/channels/{id}/unmapped-points
 #[utoipa::path(
     get,
     path = "/api/channels/{id}/unmapped-points",

@@ -23,16 +23,6 @@ use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
 ///
 /// Creates a new channel-to-instance point routing. Validates that both
 /// the channel and instance points exist before creating.
-///
-/// @route POST /api/instances/{id}/routing
-/// @input Path(id): u16 - Instance ID
-/// @input Json(routing): RoutingRequest - Routing configuration
-/// @output Json<SuccessResponse<serde_json::Value>> - Creation result
-/// @status 200 - Success with routing details
-/// @status 400 - Validation error
-/// @status 404 - Instance not found
-/// @status 500 - Database error
-/// @side-effects Inserts into point_routing table and Redis route:c2m
 #[utoipa::path(
     post,
     path = "/api/instances/{id}/routing",
@@ -218,14 +208,6 @@ pub async fn create_instance_routing(
 /// - Points NOT in the request: remain unchanged (not deleted)
 ///
 /// Uses a transaction to ensure atomic operation.
-///
-/// @route PUT /api/instances/{id}/routing
-/// @input Path(id): u16 - Instance ID
-/// @input Json(routings): `Vec<RoutingRequest>` - Routings to upsert
-/// @output Json<SuccessResponse<serde_json::Value>> - Update result
-/// @status 200 - Success with count
-/// @status 400 - Validation errors
-/// @status 500 - Transaction error
 #[utoipa::path(
     put,
     path = "/api/instances/{id}/routing",
@@ -453,15 +435,13 @@ pub async fn update_instance_routing(
     }
 }
 
-/// Delete all routings for an instance
+/// 删除某 instance 的所有 C2M + M2C 路由。
 ///
-/// @route DELETE /api/instances/{id}/routing
-/// @input id: `Path<u32>` - Instance ID
-/// @output Json<SuccessResponse<serde_json::Value>> - Success status with deleted count
-/// @throws sqlx::Error - Database deletion error
-/// @redis-delete route:c2m - Removes all routings for instance
-/// @transaction Atomic deletion of all instance routings
-/// @side-effects Removes all channel-to-instance routing
+/// **破坏性**：清空 `measurement_routing` + `action_routing` 表上所有
+/// `instance_id = ?` 的行。删完 instance 仍存在（物模型不动），但断
+/// 开了它跟所有 channel 的关联 —— 测量值不再流入、控制命令无路可下
+/// 发。常见用法：换底层设备前先清旧路由再重配。完成后会触发路由缓存
+/// reload。
 #[utoipa::path(
     delete,
     path = "/api/instances/{id}/routing",
@@ -509,15 +489,13 @@ pub async fn delete_instance_routing(
     }
 }
 
-/// Validate routing for an instance
+/// 校验 instance 的路由配置是否完整、是否有孤儿。
 ///
-/// @route POST /api/instances/{id}/routing/validate
-/// @input id: `Path<u32>` - Instance ID
-/// @input routings: `Json<Vec<RoutingRequest>>` - Routings to validate
-/// @output Json<SuccessResponse<serde_json::Value>> - Validation results for each routing
-/// @throws None - Validation errors are returned in response
-/// @redis-read Products and instance configurations
-/// @side-effects None (validation only)
+/// 检查：每个 instance.measurement_point 是否都映射到了一个真实存在的
+/// channel 点位、action_point 同理；channel 是否启用；引用的 point_id
+/// 在对应 `{type}_points` 表里实际存在；类型匹配（M 必映 T/S，A 必映
+/// C/A）。返回 issues 列表，前端"配置健康检查"页用。只读，不改任何状
+/// 态。
 #[utoipa::path(
     post,
     path = "/api/instances/{id}/routing/validate",

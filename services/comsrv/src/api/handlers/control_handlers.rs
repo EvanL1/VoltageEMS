@@ -18,16 +18,19 @@ use voltage_model::PointType;
 use voltage_rtdb::KeySpaceConfig;
 use voltage_rtdb::Rtdb;
 
-/// Control channel operation (start/stop/restart)
+/// Connect / disconnect / restart a channel's protocol runtime.
 ///
-/// @route POST /api/channels/{id}/control
-/// @input State(state): AppState - Application state with factory
-/// @input Path(id): String - Channel identifier
-/// @input Json(operation): ChannelOperation - Operation to perform (start/stop/restart)
-/// @output `Json<ApiResponse<String>>` - Operation result message
-/// @status 200 - Operation completed successfully
-/// @status 404 - Channel not found
-/// @status 500 - Operation failed
+/// `operation` accepts `start` (connect to device, begin polling),
+/// `stop` (disconnect cleanly, stop polling), or `restart` (cycle the
+/// connection without rewriting routing/SHM). Hot operations: SHM
+/// layout and routing cache are unaffected — only the protocol
+/// adapter's TCP / serial / CAN socket gets opened or closed.
+///
+/// 404 when the channel id doesn't exist in `channels` table; 500
+/// when the protocol-level connect fails (wrong address, timeout,
+/// permission denied on serial port, etc.). Use this for operator-
+/// driven device cycling; channels normally auto-reconnect via the
+/// reconnect helper with exponential backoff.
 #[utoipa::path(
     post,
     path = "/api/channels/{id}/control",
@@ -166,8 +169,6 @@ pub async fn control_channel<R: Rtdb>(
 ///   ]
 /// }
 /// ```
-///
-/// @route POST /api/channels/{channel_id}/write
 #[utoipa::path(
     post,
     path = "/api/channels/{channel_id}/write",
@@ -410,15 +411,15 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
     }
 }
 
-/// Set channel log level dynamically
+/// Change a channel's log verbosity at runtime, no restart needed.
 ///
-/// @route PUT /api/channels/{id}/logging
-/// @input Path(id): u32 - Channel identifier
-/// @input Json(req): SetLogLevelRequest - Log level to set (debug/info/error)
-/// @output `Json<SuccessResponse<String>>` - Operation result
-/// @status 200 - Log level updated successfully
-/// @status 400 - Invalid log level
-/// @status 404 - Channel not found
+/// Per-channel knob (overrides global `RUST_LOG`) for trace-level
+/// debugging without flooding everyone else's logs. Accepted levels:
+/// `debug` / `verbose` (full protocol frames), `info` / `standard`
+/// (default), `error` (only failures). Applies both to the protocol
+/// adapter's internal logging config and the per-channel log file
+/// handler. Effect persists for the channel's lifetime — restart the
+/// channel and it goes back to the configured default.
 #[utoipa::path(
     put,
     path = "/api/channels/{id}/logging",

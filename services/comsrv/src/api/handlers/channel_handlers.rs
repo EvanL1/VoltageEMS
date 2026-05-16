@@ -45,7 +45,13 @@ fn extract_description_from_config(
         .map(String::from))
 }
 
-/// List all channels with pagination and filtering
+/// 分页列出所有通道（含配置和运行状态摘要）。
+///
+/// 默认按 channel_id 升序。可按 `enabled` / `protocol` / `keyword`
+/// （在 name / address 上模糊匹配）过滤。每条记录包含连接状态
+/// （connected / disconnected）、最后成功 poll 时间、累计错误数等运
+/// 行指标，但**不**包含完整的点位列表（点位查 `/channels/{id}` 或
+/// `/points`）。响应较重，前端列表页务必传 page_size 限制。
 #[utoipa::path(
     get,
     path = "/api/channels",
@@ -168,7 +174,12 @@ pub async fn get_all_channels<R: Rtdb>(
     Ok(Json(SuccessResponse::new(paginated_response)))
 }
 
-/// Get channel status
+/// 通道当前运行状态（轻量）。
+///
+/// 仅返回 `is_connected` 和 `last_update` 时间戳，不查 channel 配置也
+/// 不查点位 —— 用于前端轮询小绿灯。全量信息走 `/channels/{id}/details`。
+/// 注意 `is_connected` 同时校验"TCP 状态 + 数据新鲜度"（详见 09d33ae /
+/// a419352），单纯 TCP 在线但 90s 没收到数据也会返回 false。
 #[utoipa::path(
     get,
     path = "/api/channels/{id}/status",
@@ -241,7 +252,12 @@ pub async fn get_channel_status<R: Rtdb>(
     }
 }
 
-/// Get complete channel details (configuration + runtime + statistics)
+/// 通道详情大全：配置 + 运行时 + 累计统计。
+///
+/// 一次性返回 channel 的所有面向运维的信息：协议配置（驱动、地址、轮询
+/// 间隔、超时等）、当前连接状态、累计 read/write 次数和错误次数、最后
+/// 一次诊断快照、登记的点位数量等。前端"通道详情页"用。响应较大；
+/// 列表页用 `/channels` 拿摘要、详情页才调这个。
 #[utoipa::path(
     get,
     path = "/api/channels/{id}",
@@ -451,8 +467,6 @@ pub async fn get_channel_detail_handler<R: Rtdb>(
 /// URL format: `/api/channels/search?{keyword}`
 /// - The keyword is passed directly as the raw query string (no parameter name needed)
 /// - Empty keyword returns all channels
-///
-/// @route GET /api/channels/search?{keyword}
 #[utoipa::path(
     get,
     path = "/api/channels/search",
@@ -659,9 +673,11 @@ pub async fn search_channels<R: Rtdb>(
     )))
 }
 
-/// List all channels (lightweight: id + name + protocol)
+/// 极简通道列表（id + name + protocol，不分页）。
 ///
-/// @route GET /api/channels/list
+/// 给前端下拉框 / 路由表关联等"我要选一个 channel"的场景用。一次性返
+/// 回所有通道但只 3 个字段，避免大表查询。要详情或运行状态走
+/// `/channels` 分页接口或 `/channels/{id}/details`。
 #[utoipa::path(
     get,
     path = "/api/channels/list",
@@ -713,9 +729,13 @@ pub struct PointsQuery {
     pub keyword: Option<String>,
 }
 
-/// List all points across channels (global search)
+/// 跨通道的全局点位搜索。
 ///
-/// @route GET /api/points
+/// 联合查询所有通道的 telemetry_points / signal_points / control_points
+/// / adjustment_points 四张表，按 `keyword`（在 signal_name 上模糊匹配）
+/// + 可选的 `channel_id` / `point_type` 过滤，分页返回。用于"找一个我
+/// 知道名字但不知道在哪个通道的点"的场景。响应里每条记录带它所属
+/// channel_id 和 point_type，便于前端定位。
 #[utoipa::path(
     get,
     path = "/api/points",

@@ -13,13 +13,11 @@ use crate::api::routes::{AppState, get_service_start_time};
 use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
 use voltage_rtdb::Rtdb;
 
-/// Get service status endpoint
+/// comsrv 运行时概况：总通道数、活跃通道数、运行时长、版本。
 ///
-/// @route GET /api/status
-/// @input State(state): AppState - Application state with factory
-/// @output `Json<SuccessResponse<ServiceStatus>>` - Service status including channels
-/// @status 200 - Success with {total_channels, active_channels, uptime, version}
-/// @status 500 - Internal server error
+/// 不做依赖检查（不 ping Redis / SQLite），只读内存里的 channel manager
+/// 状态。给 dashboard 显示"comsrv 跑了多久 / 管着多少 channel"用。
+/// 真正的健康检查走 `/health`，那个会 fail 503。
 #[utoipa::path(
     get,
     path = "/api/status",
@@ -57,12 +55,6 @@ pub async fn get_service_status<R: Rtdb>(
 ///
 /// Performs actual connectivity checks on Redis and SQLite dependencies.
 /// Returns 503 if any critical dependency is unhealthy.
-///
-/// @route GET /health
-/// @input State(state): AppState - Application state with rtdb and sqlite
-/// @output `Json<SuccessResponse<HealthStatus>>` - Health status with component checks
-/// @status 200 - Service is healthy (all dependencies reachable)
-/// @status 503 - Service is unhealthy (one or more dependencies failed)
 #[utoipa::path(
     get,
     path = "/health",

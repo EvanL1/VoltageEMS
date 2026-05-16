@@ -103,10 +103,6 @@ impl From<&crate::protocols::ParameterMetadata> for ParameterInfo {
 ///
 /// Returns metadata about all protocols supported by this service,
 /// including their drivers, configuration parameters, and example configs.
-///
-/// @route GET /api/protocols
-/// @output `Json<SuccessResponse<Vec<ProtocolInfo>>>` - List of available protocols
-/// @status 200 - Success with protocol metadata
 #[utoipa::path(
     get,
     path = "/api/protocols",

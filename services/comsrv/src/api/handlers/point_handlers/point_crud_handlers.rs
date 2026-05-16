@@ -97,9 +97,12 @@ fn extract_create_fields(
 // Create Point Handlers
 // ----------------------------------------------------------------------------
 
-/// Create a telemetry point (T)
+/// 新建一个遥测点（Telemetry / "T" 类型）。
 ///
-/// @route POST /api/channels/{channel_id}/T/points/{point_id}
+/// T 是只读的浮点测量量（电压、电流、温度、SOC 等），周期性从设备读
+/// 出。写入 `telemetry_points` 表 + 注册对应 SHM 槽位（如果 channel 已
+/// 启动）。寄存器地址 / 字节序 / 缩放线性变换 / 单位等都在 request 里。
+/// 单 channel 内 point_id 必须唯一。
 #[utoipa::path(
     post,
     path = "/api/channels/{channel_id}/T/points/{point_id}",
@@ -168,9 +171,11 @@ pub async fn create_telemetry_point_handler<R: Rtdb>(
     })))
 }
 
-/// Create a signal point (S) - has extra normal_state field
+/// 新建一个信号点（Signal / "S" 类型）。
 ///
-/// @route POST /api/channels/{channel_id}/S/points/{point_id}
+/// S 是只读的开关量 / 状态位（断路器 on/off、运行/故障旗标、报警位
+/// 等），从设备的离散输入读取。比 T 多一个 `normal_state` 字段表示
+/// "正常态"是 0 还是 1 —— 后续告警规则用它判断"翻转"。其余流程同 T。
 #[utoipa::path(
     post,
     path = "/api/channels/{channel_id}/S/points/{point_id}",
@@ -291,9 +296,12 @@ async fn create_ca_point_inner<R: Rtdb>(
     })))
 }
 
-/// Create a control point (C)
+/// 新建一个控制点（Control / "C" 类型）。
 ///
-/// @route POST /api/channels/{channel_id}/C/points/{point_id}
+/// C 是可写的开关量（FC05 写线圈），用于"启动/停止"、"打开/关闭"等离散
+/// 控制命令。modsrv → SHM C 槽 → UDS notify → comsrv 下发设备的链路终
+/// 点。新建后该点立刻可写，但下发到设备前要先有 M2C 路由配置（指向某
+/// 个 instance.action_point）。
 #[utoipa::path(
     post,
     path = "/api/channels/{channel_id}/C/points/{point_id}",
@@ -328,9 +336,11 @@ pub async fn create_control_point_handler<R: Rtdb>(
     .await
 }
 
-/// Create an adjustment point (A)
+/// 新建一个调节点（Adjustment / "A" 类型）。
 ///
-/// @route POST /api/channels/{channel_id}/A/points/{point_id}
+/// A 是可写的浮点量（FC06 写寄存器 / FC16 多寄存器），用于"功率设定"、
+/// "频率调节"、"电压设定"等连续值控制。跟 C 是平行的可写类型，区别只
+/// 是值域：C 是 0/1，A 是浮点。其余规则相同（需 M2C 路由才下发设备）。
 #[utoipa::path(
     post,
     path = "/api/channels/{channel_id}/A/points/{point_id}",
@@ -369,9 +379,12 @@ pub async fn create_adjustment_point_handler<R: Rtdb>(
 // Update Point Handler (Universal for all types)
 // ----------------------------------------------------------------------------
 
-/// Update a point (supports all four types: T/S/C/A)
+/// 修改任意类型点位的定义（统一入口）。
 ///
-/// @route PUT /api/channels/{channel_id}/{type}/points/{point_id}
+/// 跟 4 个 create 端点配对的统一 update：path 里带 `point_type` 判定改
+/// 哪张表。可改寄存器地址、缩放系数、单位、报警限等；改 point_id 或
+/// channel_id 不允许（要删了重建，避免破坏 SHM 槽映射）。改完后下次
+/// poll 就用新配置，无需重启 channel。
 #[utoipa::path(
     put,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}",
@@ -521,9 +534,12 @@ pub(super) async fn update_point_handler_inner<R: Rtdb>(
 // Delete Point Handler
 // ----------------------------------------------------------------------------
 
-/// Delete a point
+/// 删除一个点位（任意类型）。
 ///
-/// @route DELETE /api/channels/{channel_id}/{type}/points/{point_id}
+/// 从对应 `{type}_points` 表删行，关联的 protocol_mappings 也清理。
+/// **会让该点对应的 SHM 槽闲置**（不立刻回收，保持 routing_hash 稳定，
+/// 减少 modsrv 端 rebuild 风暴）。如果该点是某个 M2C 路由的目标，路由
+/// 失效但不级联删 —— 需要单独清理孤儿路由。
 #[utoipa::path(
     delete,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}",

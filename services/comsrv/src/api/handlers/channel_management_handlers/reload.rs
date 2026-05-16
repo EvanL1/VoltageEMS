@@ -9,10 +9,13 @@ use axum::{extract::State, response::Json};
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 
-/// Reload all channels from SQLite configuration
+/// 从 SQLite 整体重新加载所有 channel 配置。
 ///
-/// @route POST /api/channels/reload
-/// @side-effects Synchronizes runtime with SQLite configuration
+/// monarch sync 把新配置写入 SQLite 后调这个让 comsrv 感知改动。会做
+/// 增量 diff：新增 channel 启动协议适配器、删除的停止、修改的重启。
+/// 整个过程是热操作，对未受影响的 channel 没有干扰。重大变更（routing
+/// 拓扑变化）会触发 SHM rebuild + writer_generation 递增，modsrv 端会
+/// 自动重新打开 SHM。返回每个 channel 的处理结果。
 #[utoipa::path(
     post,
     path = "/api/channels/reload",
@@ -163,10 +166,12 @@ pub async fn reload_configuration_handler<R: Rtdb>(
     Ok(Json(SuccessResponse::new(result)))
 }
 
-/// Reload routing cache from SQLite configuration
+/// 只重新加载路由缓存（不动 channel）。
 ///
-/// @route POST /api/routing/reload
-/// @side-effects Updates in-memory routing cache with latest data from SQLite
+/// 跟 `/reload` 区别：这个只刷 C2M / M2C / C2C 路由表，不触碰 channel
+/// 协议层。改路由不改点位的场景用 —— 比起 `/reload` 更轻、更快、不会
+/// 中断设备连接。背后用 ArcSwap 原子替换路由表。注意：modsrv 端的路由
+/// 缓存独立，需要等 modsrv 自己周期性 reload 才会同步。
 #[utoipa::path(
     post,
     path = "/api/routing/reload",

@@ -243,9 +243,11 @@ async fn snapshot_channel_mappings(
 // Handlers
 // ============================================================================
 
-/// List all templates (metadata only)
+/// 列出已保存的设备模板（仅元数据）。
 ///
-/// @route GET /api/templates
+/// 模板是从某个 channel 的点位定义 + 协议映射"快照"出来的复用单元——
+/// 新部署导入模板能省去手工配 1000+ 点。本接口只返回名称、描述、创建
+/// 时间等元数据，不含完整 snapshot（数据大，走 `/templates/{id}`）。
 #[utoipa::path(
     get,
     path = "/api/templates",
@@ -321,9 +323,11 @@ pub async fn list_templates<R: Rtdb>(
     Ok(Json(SuccessResponse::new(items)))
 }
 
-/// Get template detail (includes full snapshots)
+/// 模板完整内容（元数据 + 点位 snapshot + 协议映射 snapshot）。
 ///
-/// @route GET /api/templates/{id}
+/// 一条模板可能携带几千个点位定义，响应体可能上 MB。仅在"准备应用模
+/// 板"或"管理员查看模板内容"时调用，不要做轮询。404 表示 template_id
+/// 不存在。
 #[utoipa::path(
     get,
     path = "/api/templates/{id}",
@@ -408,8 +412,6 @@ pub async fn get_template<R: Rtdb>(
 /// Create template from an existing channel
 ///
 /// Snapshots the channel's current point definitions and protocol mappings.
-///
-/// @route POST /api/templates/from-channel/{channel_id}
 #[utoipa::path(
     post,
     path = "/api/templates/from-channel/{channel_id}",
@@ -504,9 +506,11 @@ pub async fn create_template_from_channel<R: Rtdb>(
     })))
 }
 
-/// Create template manually (direct JSON)
+/// 直接用 JSON 上传一个完整模板（不从现有 channel 抓取）。
 ///
-/// @route POST /api/templates
+/// 跟"从 channel 创建模板"对应的另一条路径：调用方自己提供完整的点位
+/// 定义和协议映射数组。用于"导入别处导出的模板 JSON"或"用脚本生成模
+/// 板"的场景。schema 校验不通过返回 400，名称重复返回 409。
 #[utoipa::path(
     post,
     path = "/api/templates",
@@ -569,9 +573,11 @@ pub async fn create_template<R: Rtdb>(
     })))
 }
 
-/// Update template metadata (name/description only)
+/// 修改模板名称 / 描述（不动 snapshot）。
 ///
-/// @route PUT /api/templates/{id}
+/// 改 snapshot 没有专门的接口 —— 想替换内容只能 DELETE 后重新 POST。
+/// 这个限制是有意的：模板被多个 channel 引用时改 snapshot 会破坏一致
+/// 性，明确不允许。
 #[utoipa::path(
     put,
     path = "/api/templates/{id}",
@@ -648,9 +654,11 @@ pub async fn update_template<R: Rtdb>(
     )))
 }
 
-/// Delete a template
+/// 删除一个模板。
 ///
-/// @route DELETE /api/templates/{id}
+/// 已经基于此模板创建出来的 channel **不受影响**（模板和 channel 是
+/// "拷贝时一次性应用"的关系，不是软链接）。模板删除只是从 `templates`
+/// 表去掉一行，未来不再能选它来 apply。
 #[utoipa::path(
     delete,
     path = "/api/templates/{id}",
@@ -697,8 +705,6 @@ pub async fn delete_template<R: Rtdb>(
 ///
 /// Uses `ON CONFLICT DO UPDATE` (not `INSERT OR REPLACE`) to avoid triggering
 /// `AFTER DELETE` cascade triggers that would remove routing table entries.
-///
-/// @route POST /api/templates/{id}/apply/{channel_id}
 #[utoipa::path(
     post,
     path = "/api/templates/{id}/apply/{channel_id}",

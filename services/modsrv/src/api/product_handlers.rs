@@ -22,9 +22,6 @@ use crate::error::ModSrvError;
 /// This endpoint is optimized for frontend dropdown lists and product selection interfaces.
 /// For detailed product information including measurements/actions/properties, use GET /api/products/{product_name}/points.
 ///
-/// @route GET /api/products
-/// @output Json<SuccessResponse<serde_json::Value>> - Lightweight list with {count, products}
-/// @status 200 - Success with array of {product_name, parent_name}
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/products",
@@ -76,11 +73,6 @@ pub async fn list_products(
 /// Returns detailed product information including all measurement,
 /// action, and property points.
 ///
-/// @route GET /api/products/{product_name}/points
-/// @input Path(product_name): String - Product identifier
-/// @output Json<SuccessResponse<serde_json::Value>> - Product with measurement/action/property points
-/// @status 200 - Success with {product}
-/// @status 404 - Product not found
 #[cfg_attr(feature = "swagger-ui", utoipa::path(
     get,
     path = "/api/products/{product_name}/points",

@@ -43,12 +43,6 @@ fn parse_direction(direction: Option<String>) -> Result<RoutingDirection, String
 /// Get all routing entries for an instance
 ///
 /// Returns measurement and action routing configuration categorized by type.
-///
-/// @route GET /api/instances/{id}/routing
-/// @input Path(id): u16 - Instance ID
-/// @output Json<SuccessResponse<serde_json::Value>> - Categorized routing entries
-/// @status 200 - Success with categorized routing lists
-/// @status 500 - Database error
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/routing",

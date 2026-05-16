@@ -29,16 +29,14 @@ use serde_json::json;
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 
-/// Create a new channel with hot startup
+/// 创建一个新的通信通道并立即启动（无需重启 comsrv）。
 ///
-/// @route POST /api/channels
-/// @input State(state): AppState - Application state with manager and SQLite
-/// @input Json(req): ChannelCreateRequest - Channel configuration
-/// @output `Json<ApiResponse<ChannelCrudResult>>` - Creation result
-/// @status 200 - Channel created and started successfully
-/// @status 400 - Invalid request or validation error
-/// @status 500 - Database or runtime error
-/// @side-effects Creates channel in SQLite and starts it in runtime
+/// 写入 `channels` 表 + 在 channel manager 注册 + 启动协议适配器（连接
+/// 设备开始 polling）。**SHM 布局会随之扩展**，重新计算 routing_hash —
+/// 这会触发 modsrv 检测到 generation 不匹配并自动 rebuild SHM writer。
+/// 协议种类由 request body 的 `driver` 字段决定（modbus_tcp / iec104 /
+/// dlt645 / mqtt 等 13 种），具体参数 schema 因协议而异。失败常见原因：
+/// channel_id 冲突、driver 名拼错、连接参数缺失。
 #[utoipa::path(
     post,
     path = "/api/channels",
@@ -311,9 +309,6 @@ pub async fn create_channel_handler<R: Rtdb>(
 /// the channel will be migrated to the new ID. This includes:
 /// - Updating all related tables (points, mappings, routing)
 /// - Restarting the channel with the new ID
-///
-/// @route PUT /api/channels/{id}
-/// @side-effects Updates SQLite and hot-reloads if running; migrates all data if channel_id changed
 #[utoipa::path(
     put,
     path = "/api/channels/{id}",
