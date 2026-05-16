@@ -375,12 +375,6 @@ where
 ///
 /// Updates the reverse index (inst:name:index) and the name key (inst:{id}:name).
 /// Routing keys (route:c2m, route:m2c) use instance_id, so they don't need updates.
-///
-/// @input redis: &R - Redis client
-/// @input instance_id: u32 - Instance ID
-/// @input old_name: &str - Old instance name
-/// @input new_name: &str - New instance name
-/// @output Result<()> - Success or error
 pub async fn rename_instance_in_redis<R>(
     redis: &R,
     instance_id: u32,
