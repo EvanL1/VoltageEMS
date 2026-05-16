@@ -85,6 +85,15 @@ pub struct RouteContext {
 /// SHM writes (shared memory) and UDS notifications should be handled by the caller
 /// using [`RouteContext`] fields for the target channel/point/timestamp.
 ///
+/// # TOCTOU note
+///
+/// This function performs its own M2C lookup. Callers that have already
+/// consulted the routing cache (e.g. modsrv's channel-offline gate) should
+/// prefer [`set_action_point_with_target`] and pass the resolved target as a
+/// parameter — otherwise a routing reload between the caller's check and this
+/// function's lookup silently degrades a routed action into a local-store-only
+/// write, with no error returned to the operator.
+///
 /// # Arguments
 /// * `redis` - RTDB trait object
 /// * `routing_cache` - M2C routing cache
@@ -105,6 +114,42 @@ pub async fn set_action_point<R>(
 where
     R: Rtdb,
 {
+    // Lookup M2C routing target (zero-allocation path when point_id is numeric)
+    let target_opt = if let Ok(point_id_u32) = point_id.parse::<u32>() {
+        // Fast path: use structured key lookup (no string allocation)
+        routing_cache.lookup_m2c_by_parts(instance_id, PointType::Adjustment, point_id_u32)
+    } else {
+        // Fallback: build string key for non-numeric point_id (rare)
+        let route_key = format!("{}:A:{}", instance_id, point_id);
+        routing_cache.lookup_m2c(&route_key)
+    };
+    set_action_point_with_target(redis, instance_id, point_id, value, target_opt).await
+}
+
+/// Execute action routing with a caller-resolved M2C target.
+///
+/// Behaves like [`set_action_point`] but skips the internal routing lookup —
+/// the target (or its absence) is passed in by the caller. Use this when the
+/// caller has its own reason to consult routing first (e.g. an offline-channel
+/// gate) and needs the writes to use the same snapshot, immune to concurrent
+/// routing reload.
+///
+/// Semantics of `target`:
+/// * `Some(M2CTarget)` — caller decided this action routes to that channel;
+///   writes go to both the instance hash and the downstream channel hash.
+/// * `None` — caller decided no M2C route exists; only the instance hash is
+///   written (local-only "store but don't dispatch"). This is meaningful, so
+///   `None` must be a deliberate decision, not a "I don't know" placeholder.
+pub async fn set_action_point_with_target<R>(
+    redis: &R,
+    instance_id: u32,
+    point_id: &str,
+    value: f64,
+    target: Option<M2CTarget>,
+) -> Result<ActionRouteOutcome>
+where
+    R: Rtdb,
+{
     // Validate value before M2C routing (prevents NaN/Infinity from reaching devices)
     let validation_config = ValidationConfig::default();
     let value = validate_value(value, &validation_config).map_err(|e| {
@@ -118,16 +163,6 @@ where
 
     let config = voltage_rtdb::KeySpaceConfig::production_cached();
 
-    // Lookup M2C routing target (zero-allocation path when point_id is numeric)
-    let target_opt = if let Ok(point_id_u32) = point_id.parse::<u32>() {
-        // Fast path: use structured key lookup (no string allocation)
-        routing_cache.lookup_m2c_by_parts(instance_id, PointType::Adjustment, point_id_u32)
-    } else {
-        // Fallback: build string key for non-numeric point_id (rare)
-        let route_key = format!("{}:A:{}", instance_id, point_id);
-        routing_cache.lookup_m2c(&route_key)
-    };
-
     // Timestamp (epoch-ms) is computed up-front so the same value is written
     // to both the instance sidecar (inst:{id}:A:ts) and the downstream channel
     // hash (comsrv:{ch}:{A|...}:ts). Needed by the apigateway WebSocket which
@@ -135,7 +170,7 @@ where
     use voltage_rtdb::{SystemTimeProvider, TimeProvider};
     let timestamp_ms = SystemTimeProvider.now_millis();
 
-    if let Some(target) = target_opt {
+    if let Some(target) = target {
         // M2CTarget is now a structured type - no parsing needed
         let channel_id = target.channel_id;
         let point_type_enum = target.point_type;

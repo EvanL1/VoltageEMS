@@ -302,23 +302,36 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         action_id: &str,
         value: f64,
     ) -> crate::error::Result<()> {
-        // Route via application-layer cache, dispatch via SHM+UDS to comsrv
-
-        // M2C control gate: reject writes to offline channels before they hit
-        // the routing/SHM path. Without this the command is silently dropped
-        // by the device while modsrv thinks the write succeeded.
+        // Route via application-layer cache, dispatch via SHM+UDS to comsrv.
+        //
+        // Routing is resolved ONCE here and threaded through both the gate and
+        // the write path via `set_action_point_with_target`. A second internal
+        // lookup inside set_action_point would race with `monarch sync`
+        // reloading the routing cache between our check and the write — the
+        // TOCTOU window silently degrades a routed action to a local-only
+        // store, returning Ok(()) to the caller while the command never
+        // reaches the device. Snapshotting once eliminates that window: the
+        // routing decision in flight is whatever we saw at gate time.
         //
         // Non-numeric action_id can't reach a channel: RoutingCache stores
         // structured keys (instance_id:point_type:point_id where point_id is
         // u32), and lookup_m2c() rejects unparseable keys. So an action_id
-        // that doesn't parse won't have a route, the gate has nothing to
-        // check, and set_action_point will write to the instance hash only.
-        if let Ok(point_id_u32) = action_id.parse::<u32>()
-            && let Some(target) = self.routing_cache.lookup_m2c_by_parts(
+        // that doesn't parse resolves to None, the gate has nothing to check,
+        // and the local-only write path runs.
+        let m2c_target = if let Ok(point_id_u32) = action_id.parse::<u32>() {
+            self.routing_cache.lookup_m2c_by_parts(
                 instance_id,
                 voltage_model::PointType::Adjustment,
                 point_id_u32,
             )
+        } else {
+            None
+        };
+
+        // M2C control gate: reject writes to offline channels before they hit
+        // the routing/SHM path. Without this the command is silently dropped
+        // by the device while modsrv thinks the write succeeded.
+        if let Some(target) = &m2c_target
             && !self.health_cache.is_online(target.channel_id)
         {
             warn!(
@@ -330,12 +343,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             });
         }
 
-        let outcome = voltage_routing::set_action_point(
+        let outcome = voltage_routing::set_action_point_with_target(
             self.rtdb.as_ref(),
-            &self.routing_cache,
             instance_id,
             action_id,
             value,
+            m2c_target,
         )
         .await
         .map_err(|e| ModSrvError::InternalError(e.to_string()))?;
