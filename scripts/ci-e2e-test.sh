@@ -339,11 +339,23 @@ def check_mark(ok):
 # Connect to Redis
 r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
 
-# Expected channels and their point counts
+# Expected channels and their point counts at this stage.
+#
+# Phase 5 runs BEFORE modsrv is started and BEFORE any control command has
+# been issued (Phase 7 is the first FC05/FC06 write, Phase 9 is the first
+# M2C action). T/S come from the simulator's read loop and are populated
+# within the 8s collection window; C/A are write-only point types that no
+# one has written to yet, so the channel hash legitimately has zero
+# entries here.
+#
+# This used to be 50/50 because comsrv eagerly zero-seeded C/A on startup
+# (initialize_channel_redis_storage). That was removed by 7f9fa17/0dc42af
+# so the system no longer fabricates writes that never happened — Phase 7
+# and Phase 9 each do their own readback so C/A coverage is verified there.
 channels = {
-    1001: {"name": "PV", "T": 800, "S": 100, "C": 50, "A": 50},
-    1002: {"name": "Battery", "T": 800, "S": 100, "C": 50, "A": 50},
-    1003: {"name": "Diesel", "T": 800, "S": 100, "C": 50, "A": 50},
+    1001: {"name": "PV", "T": 800, "S": 100, "C": 0, "A": 0},
+    1002: {"name": "Battery", "T": 800, "S": 100, "C": 0, "A": 0},
+    1003: {"name": "Diesel", "T": 800, "S": 100, "C": 0, "A": 0},
     1004: {"name": "Load", "T": 800, "S": 100, "C": 0, "A": 0},
 }
 
