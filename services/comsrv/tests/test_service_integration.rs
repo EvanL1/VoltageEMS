@@ -161,8 +161,11 @@ logging:
         Ok(())
     }
 
-    /// Initialize test database using Monarch
-    /// @param db_dir - Directory where database will be created (not the file path)
+    /// Initialize test database using Monarch.
+    ///
+    /// `db_dir` is the **directory** that will contain the database files,
+    /// not the path to a `.db` file itself — Monarch creates the file
+    /// inside it.
     async fn setup_test_database(&self, db_dir: &str) -> Result<()> {
         // Create database directory
         std::fs::create_dir_all(db_dir)?;

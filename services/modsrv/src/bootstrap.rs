@@ -565,10 +565,6 @@ pub async fn create_app_state(service_info: &ServiceInfo) -> Result<Arc<AppState
 /// (inst:name:index Hash) for O(1) instance name lookups. This is needed for:
 /// - Migration from old deployment without the index
 /// - Recovery after index corruption
-///
-/// @input pool: SQLite connection pool
-/// @input rtdb: Redis RTDB instance
-/// @output `Result<usize>` - Number of instances indexed
 async fn rebuild_instance_name_index<R: voltage_rtdb::Rtdb>(
     pool: &SqlitePool,
     rtdb: &R,

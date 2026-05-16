@@ -149,10 +149,6 @@ impl ProductLoader {
     // ============ Product Query Methods (from compile-time data) ============
 
     /// Get a complete product with nested structure
-    ///
-    /// @input product_name: &str - Product identifier to retrieve
-    /// @output `Result<Product>` - Product with all point definitions
-    /// @throws anyhow::Error - Product not found
     pub fn get_product(&self, product_name: &str) -> Result<Product> {
         if let Some(lib) = &self.library {
             let builtin = lib

@@ -236,13 +236,12 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         self.name_cache.remove(instance_name);
     }
 
-    /// Create a new instance based on a product template
+    /// Create a new instance based on a product template.
     ///
-    /// @input req: CreateInstanceRequest - Instance configuration
-    /// @output `Result<Instance>` - Created instance with all point routings
-    /// @throws anyhow::Error - Instance exists, product not found, database error
-    /// @side-effects Creates instance in SQLite, initializes Redis keys
-    /// @transaction Full creation is atomic
+    /// Writes the instance row to SQLite and initializes the corresponding
+    /// Redis keys (`inst:{id}:M`, `inst:{id}:A`, name index). The whole
+    /// creation is wrapped in a transaction so either everything lands or
+    /// nothing does — partial state never persists.
     pub async fn create_instance(
         &self,
         req: CreateInstanceRequest,
