@@ -98,6 +98,11 @@ async fn read_upgrade_status() -> serde_json::Value {
 
 // ── GET /api/v1/config/check ──────────────────────────────────────────────────
 
+/// 配置目录健康检查。
+///
+/// 扫描 `config/` 目录结构（products / instances / routing 等子目录）和
+/// SQLite 同步状态，返回每个子模块的存在性 + 完整性 + 与 DB 是否一致。
+/// 用于"配置导入/升级前"的预检，以及运维 dashboard 的健康指示。**只读**。
 #[utoipa::path(get, path = "/api/v1/config/check", tag = "Config",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "配置目录检查结果")))]
@@ -145,6 +150,12 @@ pub async fn check_config() -> impl IntoResponse {
 
 // ── GET /api/v1/config/export ─────────────────────────────────────────────────
 
+/// 导出当前完整配置为 ZIP。
+///
+/// 把 `config/` 目录树（产品定义、实例、路由、规则等）打包成一个 ZIP 流
+/// 给前端下载，`Content-Disposition: attachment`。用于站点间配置迁移、
+/// 升级前备份、远程支持复现。导出**不**包含 Redis 运行时数据，只是静态
+/// 配置。
 #[utoipa::path(get, path = "/api/v1/config/export", tag = "Config",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "返回 ZIP 文件流")))]
@@ -243,6 +254,12 @@ fn walkdir_simple(dir: &Path) -> Vec<std::path::PathBuf> {
 
 // ── POST /api/v1/config/import ────────────────────────────────────────────────
 
+/// 上传并应用配置 ZIP（覆盖式）。
+///
+/// 接收 multipart 上传的 ZIP（`file` 字段），解压到 `config/`，**覆盖现
+/// 有目录**。一般跟 `POST /restart-services` 配合使用让新配置生效。
+/// **破坏性操作**：导入前应当先调 `/config/export` 留备份。校验失败的
+/// ZIP（schema 错、缺关键文件）会被拒绝，原有 `config/` 不动。
 #[utoipa::path(post, path = "/api/v1/config/import", tag = "Config",
     security(("bearer_auth" = [])),
     request_body(content_type = "multipart/form-data", description = "上传 ZIP 配置文件（字段名 file）"),
@@ -393,6 +410,12 @@ fn extract_zip(data: &[u8], target: &Path) -> io::Result<usize> {
 
 // ── POST /api/v1/config/restart-services ─────────────────────────────────────
 
+/// 重启核心服务（让配置改动生效）。
+///
+/// 调用 systemd 重启 comsrv / modsrv / hissrv / netsrv / alarmsrv 等核
+/// 心服务进程。配置改完（无论是 PUT 单点还是 ZIP 导入）通常都要走这一
+/// 步。期间这些服务有短暂不可用窗口；comsrv 启动顺序敏感（必须先于
+/// modsrv），脚本里处理好了。返回每个服务的重启成功/失败。
 #[utoipa::path(post, path = "/api/v1/config/restart-services", tag = "Config",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "服务重启结果")))]
@@ -441,6 +464,13 @@ pub async fn restart_services() -> impl IntoResponse {
 
 // ── POST /api/v1/config/upgrade ───────────────────────────────────────────────
 
+/// 上传升级包并启动升级流程。
+///
+/// 接收 multipart 上传的 `.run` 安装器（`scripts/build-installer.sh`
+/// 产出物），落盘到临时目录后异步触发升级脚本。升级过程在后台跑，本端
+/// 点立即返回 200 + 升级任务 id，进度通过 `GET /upgrade/status` 查看。
+/// **过程中服务会重启**，前端要做好暂时无响应的处理。文件 size 限制 +
+/// 签名校验在脚本层做。
 #[utoipa::path(post, path = "/api/v1/config/upgrade", tag = "Config",
     security(("bearer_auth" = [])),
     request_body(content_type = "multipart/form-data", description = "上传升级包"),
@@ -953,6 +983,12 @@ pub async fn start_upgrade(headers: HeaderMap, mut multipart: Multipart) -> impl
 
 // ── POST /api/v1/config/upgrade/abort ────────────────────────────────────────
 
+/// 中止正在进行的升级。
+///
+/// 给升级脚本发 SIGTERM。**只在升级处于"准备"或"下载"等可中断阶段时有
+/// 效**；一旦进入"写入分区 / 替换 binary"阶段就已经无法干净回滚，调用
+/// 会返回 200 但实际效果有限。中断后系统状态可能介于"老版本"和"新版
+/// 本"之间，应该结合 `/upgrade/status` 决定下一步动作。
 #[utoipa::path(post, path = "/api/v1/config/upgrade/abort", tag = "Config",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "升级已中断")))]
@@ -1018,6 +1054,12 @@ pub async fn abort_upgrade() -> impl IntoResponse {
 
 // ── GET /api/v1/config/upgrade/status ────────────────────────────────────────
 
+/// 查询升级进度。
+///
+/// 轮询端点，返回当前升级阶段（idle / uploading / verifying / installing
+/// / restarting / done / failed）、进度百分比、最新一行日志、上次失败原
+/// 因（如有）。前端升级页面用它驱动进度条。`idle` 状态表示当前无升级任
+/// 务，可以再次 POST /upgrade 上传新包。
 #[utoipa::path(get, path = "/api/v1/config/upgrade/status", tag = "Config",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "升级状态")))]

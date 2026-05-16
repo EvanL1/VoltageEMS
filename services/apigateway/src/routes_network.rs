@@ -218,6 +218,12 @@ pub struct LanQuery {
 
 // ── GET /api/v1/network ───────────────────────────────────────────────────────
 
+/// 查看主机网卡配置（LAN/WAN）。
+///
+/// 解析当前 systemd-networkd / NetworkManager 配置并返回结构化结果：
+/// 网卡名、IP、子网掩码、网关、DNS、是否 DHCP。可按 `lan` query 过滤
+/// 只看 LAN 网段。**只读**，要应用改动走 `PUT /network` + `POST
+/// /network/apply`。
 #[utoipa::path(get, path = "/api/v1/network", tag = "Network",
     security(("bearer_auth" = [])),
     params(LanQuery),
@@ -258,6 +264,12 @@ pub async fn get_network_config(
 
 // ── PUT /api/v1/network ───────────────────────────────────────────────────────
 
+/// 暂存网卡配置改动（不立即生效）。
+///
+/// 把请求体写入配置文件草稿，**但不重启网络栈** —— 这一步只是"准备好新
+/// 配置"，调用方接着应该调 `POST /network/apply` 让改动真正生效。这种
+/// 两步设计是为了避免"改 IP 后自己把自己 SSH 断开"的脚本事故，操作员
+/// 可以在 apply 前最后审阅一遍草稿。
 #[utoipa::path(put, path = "/api/v1/network", tag = "Network",
     security(("bearer_auth" = [])),
     request_body = NetworkUpdateRequest,
@@ -349,6 +361,12 @@ pub async fn update_network_config(
 
 // ── POST /api/v1/network/apply ────────────────────────────────────────────────
 
+/// 把暂存的网卡配置真正下发到内核。
+///
+/// 调 systemctl restart networking / `nmcli connection reload` 让最近一
+/// 次 PUT /network 的草稿生效。**这一步可能让 HTTP 连接被切断**——如果
+/// 改的就是管理 IP，下一秒前端就连不上了，必须按新地址重连。返回 500 表
+/// 示重启过程失败，老配置可能仍在用、也可能半残，请运维登机器排查。
 #[utoipa::path(post, path = "/api/v1/network/apply", tag = "Network",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "网络配置已应用"), (status = 500, description = "操作失败")))]

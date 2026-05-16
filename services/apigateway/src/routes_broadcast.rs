@@ -8,6 +8,12 @@ use crate::state::AppState;
 
 // ── POST /api/v1/broadcast ────────────────────────────────────────────────────
 
+/// 向所有 WebSocket 客户端广播一条 JSON 消息。
+///
+/// 把请求体原样转发给当前所有已连接的 WebSocket 客户端，**不做订阅过滤**
+/// —— 即使客户端只订阅了特定 channel，仍会收到这条广播。返回投递到的客
+/// 户端数量和它们的元信息。运维场景用：手动推送系统提示、强制刷新前端
+/// 缓存、debug WebSocket 链路。
 #[utoipa::path(post, path = "/api/v1/broadcast", tag = "WebSocket",
     security(("bearer_auth" = [])),
     request_body(content = serde_json::Value, description = "任意 JSON 消息，广播给所有 WS 客户端"),
@@ -40,6 +46,12 @@ pub async fn broadcast_message(
 
 // ── GET /api/v1/broadcast/status ─────────────────────────────────────────────
 
+/// WebSocket 集线器当前的连接状态总览。
+///
+/// 返回总连接数、已订阅（订阅了至少一个 channel 或 data_type 的）客户
+/// 端数、每个连接的元信息（client_id、连接时间）以及完整订阅表。运维
+/// 排查"客户端为什么没收到推送"用：先看连接是不是在、再看订阅是不是命
+/// 中。
 #[utoipa::path(get, path = "/api/v1/broadcast/status", tag = "WebSocket",
     security(("bearer_auth" = [])),
     responses((status = 200, description = "WebSocket 连接状态")))]
