@@ -435,13 +435,15 @@ pub async fn update_instance_routing(
     }
 }
 
-/// 删除某 instance 的所有 C2M + M2C 路由。
+/// Delete all C2M and M2C routings for an instance.
 ///
-/// **破坏性**：清空 `measurement_routing` + `action_routing` 表上所有
-/// `instance_id = ?` 的行。删完 instance 仍存在（物模型不动），但断
-/// 开了它跟所有 channel 的关联 —— 测量值不再流入、控制命令无路可下
-/// 发。常见用法：换底层设备前先清旧路由再重配。完成后会触发路由缓存
-/// reload。
+/// **Destructive**: removes every row matching `instance_id = ?` from both
+/// `measurement_routing` and `action_routing`. The instance itself is
+/// preserved (product model unchanged), but all channel associations are
+/// severed — measurements stop flowing in and control commands have no
+/// path to the device. Typical use: clear old routings before
+/// reconfiguring a replaced device. Triggers a routing-cache reload on
+/// completion.
 #[utoipa::path(
     delete,
     path = "/api/instances/{id}/routing",
@@ -489,13 +491,14 @@ pub async fn delete_instance_routing(
     }
 }
 
-/// 校验 instance 的路由配置是否完整、是否有孤儿。
+/// Validate routing completeness and integrity for an instance.
 ///
-/// 检查：每个 instance.measurement_point 是否都映射到了一个真实存在的
-/// channel 点位、action_point 同理；channel 是否启用；引用的 point_id
-/// 在对应 `{type}_points` 表里实际存在；类型匹配（M 必映 T/S，A 必映
-/// C/A）。返回 issues 列表，前端"配置健康检查"页用。只读，不改任何状
-/// 态。
+/// Checks that every `measurement_point` maps to a real channel point, that
+/// every `action_point` does the same, that the referenced channel is enabled,
+/// that each `point_id` exists in the corresponding `{type}_points` table, and
+/// that types are compatible (M must map to T/S; A must map to C/A). Returns
+/// an `issues` list for use in the configuration health-check UI. Read-only —
+/// no state is modified.
 #[utoipa::path(
     post,
     path = "/api/instances/{id}/routing/validate",

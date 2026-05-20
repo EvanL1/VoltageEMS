@@ -110,9 +110,10 @@ pub struct CommandReply {
 
 // ── Dynamic service configuration ────────────────────────────────────────────
 
-/// MQTT 网关服务配置（`POST /netApi/mqtt/config`）
+/// MQTT gateway service configuration (`POST /netApi/mqtt/config`).
 ///
-/// 修改后立即触发 MQTT 重连，无需重启服务。
+/// Changes take effect immediately — netsrv reconnects to the broker without
+/// requiring a service restart.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = json!({
     "product_sn": "MonarchHub",
@@ -136,92 +137,101 @@ pub struct CommandReply {
 }))]
 pub struct NetConfig {
     // -- Device identity --
-    /// 产品序列号，用于构造 MQTT Topic 前缀，如 `status/{product_sn}/{device_sn}`
+    /// Product serial number, used to construct MQTT topic prefixes such as
+    /// `status/{product_sn}/{device_sn}`.
     #[schema(example = "MonarchHub")]
     pub product_sn: String,
 
-    /// 设备序列号。填 `"auto"` 时从硬件自动读取（依次尝试 `/proc/device-tree/serial-number`、
-    /// 环境变量 `DEVICE_SN`、主机名）。
+    /// Device serial number. Set to `"auto"` to read from hardware (tried in
+    /// order: `/proc/device-tree/serial-number`, env var `DEVICE_SN`, hostname).
     #[schema(example = "auto")]
     pub device_sn: String,
 
     // -- MQTT broker --
-    /// MQTT Broker 主机地址（IP 或域名）
+    /// MQTT broker host address (IP or hostname).
     #[schema(example = "mqtt.example.com")]
     pub broker_host: String,
 
-    /// MQTT Broker 端口，TLS 通常为 8883，明文通常为 1883
+    /// MQTT broker port. Typically 8883 for TLS, 1883 for plain-text.
     #[schema(example = 8883, minimum = 1, maximum = 65535)]
     pub broker_port: u16,
 
-    /// MQTT Keep-Alive 间隔（秒），超时未收到心跳则断线重连
+    /// MQTT keep-alive interval in seconds. The connection is re-established if
+    /// no heartbeat is received within this period.
     #[schema(example = 120, minimum = 5)]
     pub broker_keepalive_secs: u64,
 
-    /// MQTT 客户端 ID。填 `"auto"` 时使用已解析的 `device_sn`。
+    /// MQTT client ID. Set to `"auto"` to use the resolved `device_sn`.
     #[schema(example = "auto")]
     pub client_id: String,
 
     // -- Auth --
-    /// MQTT 用户名（可选，为空则不发送认证信息）
+    /// MQTT username (optional). Omit or set to null to connect without credentials.
     #[schema(example = json!(null))]
     #[serde(default)]
     pub username: Option<String>,
 
-    /// MQTT 密码（可选，与 username 配合使用）
+    /// MQTT password (optional). Used together with `username`.
     #[schema(example = json!(null))]
     #[serde(default)]
     pub password: Option<String>,
 
     // -- TLS --
-    /// 是否启用 TLS/SSL 加密连接。
-    /// 证书目录固定为容器内 `/app/config/cert`（可通过 `CERT_DIR` 环境变量覆盖），
-    /// 启动时通过 Docker volume 挂载到宿主机目录，不可通过 API 修改。
+    /// Enable TLS/SSL encrypted connection. The certificate directory is fixed
+    /// at `/app/config/cert` inside the container (override with `CERT_DIR` env
+    /// var); it is bind-mounted from the host at startup and cannot be changed
+    /// via this API.
     #[schema(example = false)]
     pub ssl_enabled: bool,
 
     // -- Reconnect --
-    /// 断线后等待多少秒再重连
+    /// Seconds to wait before attempting a reconnect after a disconnect.
     #[schema(example = 10, minimum = 1)]
     pub reconnect_delay_secs: u64,
 
-    /// 最大重连尝试次数，超过后停止重连直到手动触发
+    /// Maximum number of reconnect attempts before giving up. Reconnection
+    /// resumes only after a manual trigger.
     #[schema(example = 50, minimum = 1)]
     pub reconnect_max_attempts: u32,
 
     // -- Data forwarding --
-    /// 数据上报间隔（秒），每隔此时间将 Redis 数据批量发布到 MQTT
+    /// Telemetry reporting interval in seconds. Redis data is batch-published to
+    /// MQTT at this cadence.
     #[schema(example = 50, minimum = 1)]
     pub report_interval_secs: u64,
 
-    /// 单次上报最大数据点数，超出部分留到下次
+    /// Maximum number of data points per reporting batch. Excess points are
+    /// deferred to the next interval.
     #[schema(example = 50, minimum = 1)]
     pub report_batch_size: usize,
 
     // -- System monitor --
-    /// 是否启用系统资源监控（CPU / 内存 / 磁盘 / 网络），通过 MQTT 定期上报
+    /// Enable periodic system resource monitoring (CPU, memory, disk, network)
+    /// published via MQTT.
     #[schema(example = true)]
     pub system_monitor_enabled: bool,
 
-    /// 系统资源采集间隔（秒）
+    /// System resource sampling interval in seconds.
     #[schema(example = 10, minimum = 1)]
     pub system_monitor_interval_secs: u64,
 
     // -- Redis source --
-    /// Redis Key 订阅模式列表（**glob 语法**，同 Redis SCAN）
+    /// List of Redis key subscription patterns (**glob syntax**, same as Redis SCAN).
     ///
-    /// 只采集匹配这些模式的 Key，例如 `inst:*:M` 匹配所有遥测数据。
+    /// Only keys matching at least one of these patterns are collected. Example:
+    /// `inst:*:M` matches all telemetry keys.
     #[schema(example = json!(["inst:*:M", "inst:*:A"]))]
     pub subscribe_patterns: Vec<String>,
 
-    /// 排除模式列表（**正则表达式语法**，与 subscribe_patterns 的 glob 不同）
+    /// Exclusion patterns (**regular-expression syntax**, unlike the glob patterns above).
     ///
-    /// 命中任意一条正则的 Key 不上报。示例：`["^inst:0:"]` 排除通道 0。
+    /// Any key matching at least one pattern is excluded from reporting. Example:
+    /// `["^inst:0:"]` excludes all keys for channel 0.
     #[schema(example = json!([]))]
     pub exclude_patterns: Vec<String>,
 
     // -- Service URLs --
-    /// alarmsrv 服务地址，用于告警广播时反向通知
+    /// alarmsrv base URL, used for reverse alarm-broadcast notifications.
     #[schema(example = "http://localhost:6007")]
     pub alarmsrv_url: String,
 }
@@ -294,26 +304,27 @@ mod config_tests {
 
 // ── HTTP API models ───────────────────────────────────────────────────────────
 
-/// 告警广播请求体（JSON 对象，内容透传至 MQTT 告警 Topic）
+/// Alarm broadcast request body (arbitrary JSON object forwarded as-is to the MQTT alarm topic).
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AlarmBroadcastRequest(pub serde_json::Value);
 
-/// TLS 证书上传表单（`POST /netApi/certificate/upload`，multipart/form-data）
+/// TLS certificate upload form (`POST /netApi/certificate/upload`, multipart/form-data).
 ///
-/// 每次上传一个证书文件，通过 `cert_type` 指定类型，文件名任意。
+/// Upload one certificate file per request. Use `cert_type` to specify the
+/// certificate role; the original filename is ignored.
 #[allow(dead_code)]
 #[derive(ToSchema)]
 pub struct CertUploadForm {
-    /// 证书类型，可选值：`ca_cert` | `client_cert` | `client_key`
+    /// Certificate type. Accepted values: `ca_cert` | `client_cert` | `client_key`.
     #[schema(example = "ca_cert")]
     pub cert_type: String,
 
-    /// 证书文件（支持 .pem .crt .key .cer 等格式，最大 1MB）
+    /// Certificate file. Supported formats: .pem .crt .key .cer .p12 .pfx. Maximum 1 MB.
     #[schema(format = Binary, value_type = String)]
     pub file: String,
 }
 
-/// 系统资源快照
+/// System resource snapshot.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SystemMetrics {
     pub cpu_usage_percent: f32,

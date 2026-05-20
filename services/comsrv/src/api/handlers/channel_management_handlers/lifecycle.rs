@@ -181,12 +181,13 @@ pub async fn set_channel_enabled_handler<R: Rtdb>(
     Ok(Json(SuccessResponse::new(result)))
 }
 
-/// 删除一个通道并立刻热停止（无需重启 comsrv）。
+/// Delete a channel and hot-stop it immediately (no comsrv restart required).
 ///
-/// 步骤：先 disconnect 协议适配器（关 TCP / 释放串口）、撤销 channel
-/// manager 注册、从 SQLite 删 channel + 关联点位 + routing。**SHM 布局
-/// 会缩小**，触发 routing_hash 变化和 modsrv 端的 SHM rebuild。
-/// **破坏性操作**：所有引用该 channel 的路由级联删除。
+/// Sequence: disconnect the protocol adapter (closes TCP / releases serial port),
+/// deregister from the channel manager, then delete the channel, its associated points,
+/// and routing entries from SQLite. **SHM layout shrinks**, triggering a `routing_hash`
+/// change and an SHM rebuild on the modsrv side.
+/// **Destructive**: all routing entries that reference this channel are cascade-deleted.
 #[utoipa::path(
     delete,
     path = "/api/channels/{id}",

@@ -42,12 +42,13 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// 分页列出 instance（含每个实例的物模型摘要）。
+/// List instances with pagination (includes product-model summary per instance).
 ///
-/// 可按 `product_name` 过滤（同型号设备）。返回每条记录的 instance_id
-/// / instance_name / product_name / parent_id / properties JSON。
-/// **不**包含测量值（运行时数据走 `/api/instances/{id}/data`）。前端
-/// "实例列表页"用，响应较轻。
+/// Optionally filter by `product_name` to narrow to a specific device type.
+/// Each record contains `instance_id`, `instance_name`, `product_name`,
+/// `parent_id`, and `properties` JSON. Does **not** include live measurement
+/// values — for runtime data use `/api/instances/{id}/data`. Intended for the
+/// instance-list view where a lightweight response is preferred.
 #[utoipa::path(
     get,
     path = "/api/instances",
@@ -282,10 +283,11 @@ pub async fn search_instances(
     Ok(Json(SuccessResponse::new(json!({ "list": list }))))
 }
 
-/// 极简实例列表（仅 id + name，不分页）。
+/// Minimal instance list (id + name only, no pagination).
 ///
-/// 给前端下拉框 / 路由绑定等"我要选一个 instance"的场景用。一次性返回
-/// 所有实例但只 2 个字段，避免大表查询的网络开销。要详情走分页接口。
+/// For dropdown menus, routing-bind pickers, and other "pick an instance"
+/// scenarios. Returns all instances in one shot with only two fields,
+/// minimising response size. For full details use the paginated endpoint.
 #[utoipa::path(
     get,
     path = "/api/instances/list",
@@ -318,12 +320,13 @@ pub async fn list_instances_slim(
     Ok(Json(SuccessResponse::new(json!({ "list": list }))))
 }
 
-/// 单条 instance 的物模型详情。
+/// Get product-model details for a single instance.
 ///
-/// 返回 instance 完整定义：基础字段 + properties + 测量点列表
-/// (measurement_mappings) + 动作点列表 (action_mappings)。这是**物模
-/// 型**视图（结构定义），不含实时值；实时数据走 `/api/instances/{id}/
-/// data`。404 表示 instance_id 不存在。
+/// Returns the full instance definition: base fields, properties, measurement
+/// point list (`measurement_mappings`), and action point list
+/// (`action_mappings`). This is the **product-model** view (structure
+/// definition) and contains no live values; for runtime data use
+/// `/api/instances/{id}/data`. Returns 404 when `instance_id` does not exist.
 #[utoipa::path(
     get,
     path = "/api/instances/{id}",

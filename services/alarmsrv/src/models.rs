@@ -264,9 +264,9 @@ pub struct EventQueryParams {
     pub limit: i64,
 }
 
-/// 统一计算分页参数：返回 `(effective_limit, offset, resolved_page, resolved_page_size)`。
+/// Resolve pagination parameters; returns `(effective_limit, offset, resolved_page, resolved_page_size)`.
 ///
-/// 优先使用 `page`/`page_size`；若未提供则回退到 `skip`/`limit`。
+/// Prefers `page`/`page_size`; falls back to `skip`/`limit` when neither page param is present.
 pub fn resolve_pagination(
     page: Option<i64>,
     page_size: Option<i64>,

@@ -45,13 +45,14 @@ fn extract_description_from_config(
         .map(String::from))
 }
 
-/// 分页列出所有通道（含配置和运行状态摘要）。
+/// List all channels with pagination (configuration and runtime status summary).
 ///
-/// 默认按 channel_id 升序。可按 `enabled` / `protocol` / `keyword`
-/// （在 name / address 上模糊匹配）过滤。每条记录包含连接状态
-/// （connected / disconnected）、最后成功 poll 时间、累计错误数等运
-/// 行指标，但**不**包含完整的点位列表（点位查 `/channels/{id}` 或
-/// `/points`）。响应较重，前端列表页务必传 page_size 限制。
+/// Results are ordered by `channel_id` ascending by default. Supports filtering by
+/// `enabled`, `protocol`, and `keyword` (fuzzy match on name / address). Each record
+/// includes connection state (connected / disconnected), last successful poll time, and
+/// cumulative error counts, but **excludes** the full point list (query points via
+/// `/channels/{id}` or `/points`). The response is moderately heavy; always supply a
+/// `page_size` limit from the frontend list page.
 #[utoipa::path(
     get,
     path = "/api/channels",
@@ -174,12 +175,13 @@ pub async fn get_all_channels<R: Rtdb>(
     Ok(Json(SuccessResponse::new(paginated_response)))
 }
 
-/// 通道当前运行状态（轻量）。
+/// Current channel runtime status (lightweight).
 ///
-/// 仅返回 `is_connected` 和 `last_update` 时间戳，不查 channel 配置也
-/// 不查点位 —— 用于前端轮询小绿灯。全量信息走 `/channels/{id}/details`。
-/// 注意 `is_connected` 同时校验"TCP 状态 + 数据新鲜度"（详见 09d33ae /
-/// a419352），单纯 TCP 在线但 90s 没收到数据也会返回 false。
+/// Returns only `is_connected` and `last_update` timestamp without querying channel
+/// configuration or points — intended for frontend status indicator polling. For full
+/// information use `/channels/{id}/details`. Note: `is_connected` checks both TCP state
+/// and data freshness; a channel that is TCP-connected but has not received data for
+/// 90 s will return `false`.
 #[utoipa::path(
     get,
     path = "/api/channels/{id}/status",
@@ -252,12 +254,14 @@ pub async fn get_channel_status<R: Rtdb>(
     }
 }
 
-/// 通道详情大全：配置 + 运行时 + 累计统计。
+/// Full channel details: configuration + runtime state + cumulative statistics.
 ///
-/// 一次性返回 channel 的所有面向运维的信息：协议配置（驱动、地址、轮询
-/// 间隔、超时等）、当前连接状态、累计 read/write 次数和错误次数、最后
-/// 一次诊断快照、登记的点位数量等。前端"通道详情页"用。响应较大；
-/// 列表页用 `/channels` 拿摘要、详情页才调这个。
+/// Returns all operations-facing information for a channel in a single response:
+/// protocol configuration (driver, address, poll interval, timeouts), current connection
+/// state, cumulative read/write counts and error counts, the latest diagnostic snapshot,
+/// and registered point counts. Use this for the channel detail page in the frontend.
+/// The response is large — use `/channels` (paginated) for list summaries and call this
+/// only for the detail page.
 #[utoipa::path(
     get,
     path = "/api/channels/{id}",
@@ -673,11 +677,12 @@ pub async fn search_channels<R: Rtdb>(
     )))
 }
 
-/// 极简通道列表（id + name + protocol，不分页）。
+/// Minimal channel list (id + name + protocol, no pagination).
 ///
-/// 给前端下拉框 / 路由表关联等"我要选一个 channel"的场景用。一次性返
-/// 回所有通道但只 3 个字段，避免大表查询。要详情或运行状态走
-/// `/channels` 分页接口或 `/channels/{id}/details`。
+/// Designed for "select a channel" scenarios such as frontend dropdowns and routing
+/// table association. Returns all channels but only three fields, avoiding a heavy
+/// query. For detailed configuration or runtime status use the paginated `/channels`
+/// endpoint or `/channels/{id}/details`.
 #[utoipa::path(
     get,
     path = "/api/channels/list",
@@ -729,13 +734,13 @@ pub struct PointsQuery {
     pub keyword: Option<String>,
 }
 
-/// 跨通道的全局点位搜索。
+/// Global cross-channel point search.
 ///
-/// 联合查询所有通道的 telemetry_points / signal_points / control_points
-/// / adjustment_points 四张表，按 `keyword`（在 signal_name 上模糊匹配）
-/// + 可选的 `channel_id` / `point_type` 过滤，分页返回。用于"找一个我
-/// 知道名字但不知道在哪个通道的点"的场景。响应里每条记录带它所属
-/// channel_id 和 point_type，便于前端定位。
+/// Queries all four point tables (telemetry_points, signal_points, control_points,
+/// adjustment_points) across all channels, filtered by `keyword` (fuzzy match on
+/// `signal_name`) and optional `channel_id` / `point_type`. Use this to find a point
+/// by name when the owning channel is unknown. Each result record includes `channel_id`
+/// and `point_type` to help the frontend locate the point.
 #[utoipa::path(
     get,
     path = "/api/points",

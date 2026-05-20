@@ -22,7 +22,9 @@ impl StorageBackend for NullBackend {
     }
 
     async fn write_batch(&self, _points: Vec<DataPoint>) -> anyhow::Result<usize> {
-        anyhow::bail!("存储后端未配置，请先通过 PUT /hisApi/storage 配置并启用存储")
+        anyhow::bail!(
+            "Storage backend not configured. Use PUT /hisApi/storage to configure and enable storage first"
+        )
     }
 
     async fn query_range(
@@ -32,7 +34,7 @@ impl StorageBackend for NullBackend {
         _max_page_size: i64,
         _max_time_range_days: i64,
     ) -> anyhow::Result<(Vec<HistoryRecord>, i64)> {
-        anyhow::bail!("存储后端未配置")
+        anyhow::bail!("Storage backend not configured")
     }
 
     async fn query_latest(
@@ -40,19 +42,19 @@ impl StorageBackend for NullBackend {
         _redis_key: &str,
         _point_id: &str,
     ) -> anyhow::Result<Option<HistoryRecord>> {
-        anyhow::bail!("存储后端未配置")
+        anyhow::bail!("Storage backend not configured")
     }
 
     async fn get_stats(&self) -> anyhow::Result<DataStats> {
-        anyhow::bail!("存储后端未配置")
+        anyhow::bail!("Storage backend not configured")
     }
 
     async fn list_channels(&self) -> anyhow::Result<Vec<String>> {
-        anyhow::bail!("存储后端未配置")
+        anyhow::bail!("Storage backend not configured")
     }
 
     async fn cleanup_old_data(&self, _older_than_days: i32) -> anyhow::Result<u64> {
-        anyhow::bail!("存储后端未配置")
+        anyhow::bail!("Storage backend not configured")
     }
 
     async fn health_check(&self) -> bool {

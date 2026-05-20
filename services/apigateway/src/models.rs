@@ -52,11 +52,11 @@ pub struct RoleInfo {
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({"username": "operator1", "password": "e10adc3949ba59abbe56e057f20f883e", "role_id": 2}))]
 pub struct UserCreate {
-    /// 用户名
+    /// Username
     pub username: String,
-    /// 前端传入的 MD5 密码
+    /// MD5-hashed password supplied by the frontend
     pub password: String,
-    /// 角色 ID（默认 Viewer）
+    /// Role ID (defaults to Viewer)
     pub role_id: Option<i64>,
 }
 
@@ -64,7 +64,7 @@ pub struct UserCreate {
 #[schema(example = json!({"username": "admin", "password": "e10adc3949ba59abbe56e057f20f883e"}))]
 pub struct UserLogin {
     pub username: String,
-    /// 前端传入的 MD5 密码
+    /// MD5-hashed password supplied by the frontend
     pub password: String,
 }
 
@@ -77,7 +77,7 @@ pub struct UserUpdate {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
-#[schema(example = json!({"old_password": "e10adc3949ba59abbe56e057f20f883e", "new_password": "新密码的MD5哈希值"}))]
+#[schema(example = json!({"old_password": "e10adc3949ba59abbe56e057f20f883e", "new_password": "<MD5 hash of new password>"}))]
 pub struct PasswordChange {
     pub old_password: String,
     pub new_password: String,
@@ -152,7 +152,7 @@ pub struct NetworkConfig {
     "dns2": "8.8.4.4"
 }))]
 pub struct NetworkUpdateRequest {
-    /// LAN 口编号（1 或 2）
+    /// LAN port number (1 or 2)
     pub lan: u8,
     pub dhcp: bool,
     pub ip: Option<String>,

@@ -21,12 +21,13 @@ use crate::error::ModSrvError;
 // Measurement Point Handlers
 // ============================================================================
 
-/// 读单条测量点位的完整信息（定义 + 路由 + 当前值）。
+/// Get full details for a single measurement point (definition + routing + current value).
 ///
-/// 一次性返回 `instance.measurement_points` 表的点位定义、关联的 C2M
-/// 路由（指向哪个 channel 哪个点）、以及 `inst:{id}:M` 上的最新测量
-/// 值。前端"点位详情对话框"用。404 表示 instance 或该 point_id 不存
-/// 在。
+/// Returns the point definition from `instance.measurement_points`, the
+/// associated C2M routing (which channel and channel-point it maps to), and
+/// the latest measurement value from `inst:{id}:M`. Used by the point-detail
+/// dialog on the frontend. Returns 404 if the instance or `point_id` does
+/// not exist.
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/measurements/{point_id}",
@@ -58,12 +59,13 @@ pub async fn get_measurement_point(
     }
 }
 
-/// 给单条测量点位创建或修改 C2M 路由（UPSERT 语义）。
+/// Create or update the C2M routing for a single measurement point (UPSERT semantics).
 ///
-/// 把 `instance.measurement_point` 指向 `channel.{T|S}.point` —— 这之
-/// 后该 channel 点位的新值会自动同步到 `inst:{id}:M`。已有路由会被覆
-/// 盖。改动立即触发路由缓存 reload，下个 ShmRedisSync 周期开始走新映
-/// 射。
+/// Binds `instance.measurement_point` to a `channel.{T|S}.point` — after
+/// this, new values arriving at that channel point are automatically synced
+/// to `inst:{id}:M`. An existing routing is overwritten. The change
+/// immediately triggers a routing-cache reload; the new mapping takes effect
+/// from the next ShmRedisSync cycle.
 #[utoipa::path(
     put,
     path = "/api/instances/{id}/measurements/{point_id}/routing",
@@ -110,11 +112,12 @@ pub async fn upsert_measurement_routing(
     }))))
 }
 
-/// 删除单条测量点位的 C2M 路由。
+/// Delete the C2M routing for a single measurement point.
 ///
-/// 删除路由，但**保留点位定义** —— instance 的物模型不变。删后该测量
-/// 点不再有数据流入，`inst:{id}:M` 上对应字段不再更新，保持最后一次
-/// 已写入的值（last-known-good）。
+/// Removes the routing but **preserves the point definition** — the instance
+/// product model is unchanged. After deletion no data flows into this
+/// measurement point; the corresponding field in `inst:{id}:M` stops
+/// updating and retains its last-known-good value.
 #[utoipa::path(
     delete,
     path = "/api/instances/{id}/measurements/{point_id}/routing",
@@ -166,11 +169,13 @@ pub async fn delete_measurement_routing(
     }))))
 }
 
-/// 切换单条测量点位 C2M 路由的启用/禁用。
+/// Enable or disable the C2M routing for a single measurement point.
 ///
-/// 比"删除路由"轻 —— 保留路由定义但暂停数据流。禁用后 `inst:{id}:M`
-/// 上该字段不再更新（保留 last-known-good），启用恢复正常同步。常用于
-/// 临时屏蔽某个故障点位的数据上行。
+/// Lighter-weight than deletion — the routing definition is retained but
+/// data flow is paused. When disabled, the field in `inst:{id}:M` stops
+/// updating (last-known-good is preserved); enabling it resumes normal
+/// sync. Commonly used to temporarily silence a faulty point's upstream
+/// data.
 #[utoipa::path(
     patch,
     path = "/api/instances/{id}/measurements/{point_id}/routing",
@@ -233,11 +238,12 @@ pub async fn toggle_measurement_routing(
 // Action Point Handlers
 // ============================================================================
 
-/// 读单条动作点位的完整信息（定义 + M2C 路由 + 最近一次写入值）。
+/// Get full details for a single action point (definition + M2C routing + last written value).
 ///
-/// 跟 `/measurement-point/{id}` 对应的动作点版本。返回 action_point 定
-/// 义、关联的 M2C 路由（指向哪个 channel 的 C/A 点）、以及
-/// `inst:{id}:A` 上最近一次写入的命令值。
+/// The action-point counterpart of `/measurement-point/{id}`. Returns the
+/// `action_point` definition, the associated M2C routing (which channel
+/// C/A point it targets), and the most recently written command value from
+/// `inst:{id}:A`.
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/actions/{point_id}",
@@ -269,12 +275,13 @@ pub async fn get_action_point(
     }
 }
 
-/// 给单条动作点位创建或修改 M2C 路由（UPSERT 语义）。
+/// Create or update the M2C routing for a single action point (UPSERT semantics).
 ///
-/// 把 `instance.action_point` 指向 `channel.{C|A}.point` —— 这之后通
-/// 过 `POST /api/instances/{id}/action` 或规则引擎发出的命令会经 SHM
-/// + UDS 到达该 channel 下发设备。改动后路由缓存 reload，下一次
-/// execute_action 走新路由。
+/// Binds `instance.action_point` to a `channel.{C|A}.point` — commands
+/// issued via `POST /api/instances/{id}/action` or the rules engine then
+/// travel through SHM + UDS to that channel and are dispatched to the
+/// device. The routing cache is reloaded immediately; the next
+/// `execute_action` call uses the new routing.
 #[utoipa::path(
     put,
     path = "/api/instances/{id}/actions/{point_id}/routing",
@@ -321,10 +328,12 @@ pub async fn upsert_action_routing(
     }))))
 }
 
-/// 删除单条动作点位的 M2C 路由。
+/// Delete the M2C routing for a single action point.
 ///
-/// 删除后该 action 不再能下发到设备：execute_action() 走"无路由"分支
-/// 只写 `inst:{id}:A` 本地存储但 dispatch=None。点位定义保留。
+/// After deletion the action can no longer be dispatched to the device:
+/// `execute_action()` takes the "no-routing" branch — it writes to local
+/// `inst:{id}:A` storage but `dispatch=None`. The point definition is
+/// preserved.
 #[utoipa::path(
     delete,
     path = "/api/instances/{id}/actions/{point_id}/routing",
@@ -376,11 +385,13 @@ pub async fn delete_action_routing(
     }))))
 }
 
-/// 切换单条动作点位 M2C 路由的启用/禁用。
+/// Enable or disable the M2C routing for a single action point.
 ///
-/// 禁用时 execute_action() 走无路由分支：写本地 inst:{id}:A 但**不下
-/// 发**设备。用于临时屏蔽某个控制点（如调试期间防止误触发设备）。启
-/// 用后下次 action 会正常下发。
+/// When disabled, `execute_action()` takes the no-routing branch: the
+/// command is written to local `inst:{id}:A` but **not dispatched** to the
+/// device. Use this to temporarily suppress a control point (e.g. prevent
+/// accidental device triggers during debugging). Re-enabling restores
+/// normal dispatch on the next action.
 #[utoipa::path(
     patch,
     path = "/api/instances/{id}/actions/{point_id}/routing",

@@ -29,14 +29,15 @@ use serde_json::json;
 use std::sync::Arc;
 use voltage_rtdb::Rtdb;
 
-/// 创建一个新的通信通道并立即启动（无需重启 comsrv）。
+/// Create a new communication channel and start it immediately (no comsrv restart required).
 ///
-/// 写入 `channels` 表 + 在 channel manager 注册 + 启动协议适配器（连接
-/// 设备开始 polling）。**SHM 布局会随之扩展**，重新计算 routing_hash —
-/// 这会触发 modsrv 检测到 generation 不匹配并自动 rebuild SHM writer。
-/// 协议种类由 request body 的 `driver` 字段决定（modbus_tcp / iec104 /
-/// dlt645 / mqtt 等 13 种），具体参数 schema 因协议而异。失败常见原因：
-/// channel_id 冲突、driver 名拼错、连接参数缺失。
+/// Writes to the `channels` table, registers the channel with the channel manager, and
+/// starts the protocol adapter (connects to the device and begins polling). **SHM layout
+/// expands** and `routing_hash` is recomputed — modsrv detects the generation mismatch
+/// and automatically rebuilds its SHM writer. The protocol is determined by the `driver`
+/// field in the request body (modbus_tcp / iec104 / dlt645 / mqtt, 13 protocols total);
+/// parameter schema varies by protocol. Common failure causes: channel_id conflict,
+/// misspelled driver name, missing connection parameters.
 #[utoipa::path(
     post,
     path = "/api/channels",

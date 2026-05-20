@@ -13,11 +13,12 @@ use crate::api::routes::{AppState, get_service_start_time};
 use crate::dto::{AppError, HealthStatus, ServiceStatus, SuccessResponse};
 use voltage_rtdb::Rtdb;
 
-/// comsrv 运行时概况：总通道数、活跃通道数、运行时长、版本。
+/// comsrv runtime summary: total channels, active channels, uptime, and version.
 ///
-/// 不做依赖检查（不 ping Redis / SQLite），只读内存里的 channel manager
-/// 状态。给 dashboard 显示"comsrv 跑了多久 / 管着多少 channel"用。
-/// 真正的健康检查走 `/health`，那个会 fail 503。
+/// Does not perform dependency checks (no Redis / SQLite ping) — reads only the
+/// in-memory channel manager state. Use this to display "how long comsrv has been
+/// running / how many channels it manages" on the dashboard. For actual health checks
+/// use `/health`, which returns 503 on failure.
 #[utoipa::path(
     get,
     path = "/api/status",

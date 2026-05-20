@@ -72,10 +72,11 @@ pub struct DataStats {
 
 // ── Dynamic service configuration ────────────────────────────────────────────
 
-/// 服务运行参数配置（`/hisApi/config`）
+/// Service runtime configuration (`/hisApi/config`).
 ///
-/// 控制数据采集频率、写入批量、查询限制和 Redis 监听规则。
-/// 存储后端连接参数请通过 `/hisApi/storage` 单独管理。
+/// Controls collection frequency, write batch size, query limits, and
+/// Redis subscription patterns. Storage backend connection parameters are
+/// managed separately via `/hisApi/storage`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(example = json!({
     "collection_interval_secs": 30,
@@ -90,83 +91,94 @@ pub struct DataStats {
     "exclude_patterns": []
 }))]
 pub struct ServiceConfig {
-    /// 采集间隔（秒）
+    /// Collection interval in seconds.
     ///
-    /// 每隔多少秒从 Redis 扫描一次数据并写入内存缓冲区。
-    /// 值越小数据越实时，但 Redis 压力越大，建议范围 10 ~ 300。
+    /// How often the collector scans Redis and writes data into the in-memory
+    /// buffer. Shorter intervals increase data freshness but add Redis load.
+    /// Recommended range: 10–300.
     #[schema(example = 30, minimum = 1)]
     pub collection_interval_secs: u64,
 
-    /// 刷盘间隔（秒）
+    /// Flush interval in seconds.
     ///
-    /// 每隔多少秒将内存缓冲区的数据批量写入数据库。
-    /// 建议不低于 `collection_interval_secs`，范围 30 ~ 600。
+    /// How often the in-memory buffer is batch-written to the database.
+    /// Should not be shorter than `collection_interval_secs`.
+    /// Recommended range: 30–600.
     #[schema(example = 60, minimum = 1)]
     pub flush_interval_secs: u64,
 
-    /// 单批写入上限（条）
+    /// Maximum records per flush batch.
     ///
-    /// 每次刷盘最多写入多少条记录。超出部分留到下次刷盘。
-    /// 建议范围 100 ~ 5000，过大会增加单次数据库事务耗时。
+    /// Records beyond this limit are deferred to the next flush cycle.
+    /// Larger values increase single-transaction latency.
+    /// Recommended range: 100–5000.
     #[schema(example = 1000, minimum = 1)]
     pub batch_size: usize,
 
-    /// 是否启用历史数据清理
+    /// Enable automatic data retention cleanup.
     ///
-    /// 开启后，每天凌晨 02:00 UTC 自动删除超过保留期限的旧数据。
+    /// When enabled, a daily job at 02:00 UTC deletes records older than
+    /// `cleanup_older_than_days`.
     #[schema(example = true)]
     pub cleanup_enabled: bool,
 
-    /// 数据保留天数
+    /// Data retention period in days.
     ///
-    /// 清理任务会删除距今超过此天数的所有历史记录。
-    /// 仅在 `cleanup_enabled = true` 时生效，建议范围 7 ~ 3650。
+    /// The cleanup job removes all records older than this value.
+    /// Only effective when `cleanup_enabled = true`.
+    /// Recommended range: 7–3650.
     #[schema(example = 30, minimum = 1)]
     pub cleanup_older_than_days: i32,
 
-    /// 默认分页大小（条/页）
+    /// Default page size (records per page).
     ///
-    /// 查询历史数据时，不传 `page_size` 参数时使用此值。
+    /// Used when the caller omits the `page_size` query parameter.
     #[schema(example = 100, minimum = 1)]
     pub default_page_size: i64,
 
-    /// 最大分页大小（条/页）
+    /// Maximum allowed page size (records per page).
     ///
-    /// 前端传入的 `page_size` 超过此值时会被截断，防止单次查询过大。
+    /// Client-supplied `page_size` values exceeding this limit are clamped
+    /// to prevent oversized single queries.
     #[schema(example = 1000, minimum = 1)]
     pub max_page_size: i64,
 
-    /// 最大查询时间跨度（天）
+    /// Maximum query time span in days.
     ///
-    /// 单次查询的时间范围（`start_time` 到 `end_time`）不能超过此值，
-    /// 超出则返回错误。建议范围 1 ~ 3650。
+    /// A single query's `start_time`-to-`end_time` range may not exceed this
+    /// value; requests exceeding it are rejected. Recommended range: 1–3650.
     #[schema(example = 365, minimum = 1)]
     pub max_time_range_days: i64,
 
-    /// Redis Key 订阅模式列表（**glob 语法**，与 Redis SCAN 相同）
+    /// Redis key subscription patterns (**glob syntax**, same as Redis SCAN).
     ///
-    /// 采集器只扫描匹配这些模式的 Redis Key。使用 glob 语法：
-    /// - `*` 匹配任意长度的任意字符
-    /// - `?` 匹配单个任意字符
+    /// The collector only scans Redis keys matching at least one of these
+    /// patterns. Glob syntax:
+    /// - `*` — matches any sequence of characters
+    /// - `?` — matches any single character
     ///
-    /// 示例：`inst:*:M` 匹配所有通道的遥测数据，`inst:*:A` 匹配遥信数据。
+    /// Example: `inst:*:M` matches telemetry for all channels;
+    /// `inst:*:A` matches status data.
     #[schema(example = json!(["inst:*:M", "inst:*:A"]))]
     pub subscribe_patterns: Vec<String>,
 
-    /// 排除模式列表（**正则表达式语法**，与 subscribe_patterns 的 glob 语法不同）
+    /// Exclusion patterns (**regex syntax** — distinct from the glob syntax
+    /// used in `subscribe_patterns`).
     ///
-    /// 命中任意一条正则的 Redis Key 将被跳过，不采集。留空表示不排除任何 Key。
+    /// Any Redis key matching at least one regex is skipped. Leave empty to
+    /// collect all matched keys.
     ///
-    /// 正则常用符号：
-    /// - `.`  匹配任意单个字符
-    /// - `.*` 匹配任意长度的任意字符串（相当于 glob 的 `*`）
-    /// - `^`  匹配开头，`$` 匹配结尾
+    /// Common regex constructs:
+    /// - `.`  — any single character
+    /// - `.*` — any sequence of characters (equivalent to glob `*`)
+    /// - `^`  — start of string; `$` — end of string
     ///
-    /// 示例：
-    /// - `["^inst:0:"]` 排除通道 0 的所有数据
-    /// - `["^inst:0:.*", "^inst:1:.*"]` 同时排除通道 0 和通道 1
+    /// Examples:
+    /// - `["^inst:0:"]` — exclude all data for channel 0
+    /// - `["^inst:0:.*", "^inst:1:.*"]` — exclude channels 0 and 1
     ///
-    /// ⚠️ 注意：此处 **不能** 用 glob 语法，`inst:0:*` 在正则中含义错误。
+    /// Note: glob syntax is **not** valid here — `inst:0:*` has incorrect
+    /// meaning as a regex.
     #[schema(example = json!([]))]
     pub exclude_patterns: Vec<String>,
 }
@@ -246,37 +258,37 @@ pub struct StorageSettings {
 
 // ── Storage configuration request ────────────────────────────────────────────
 
-/// 存储后端连接参数（`PUT /hisApi/storage`）
-/// 连通性测试请求（`POST /hisApi/storage/test`）
+/// Connectivity test request body (`POST /hisApi/storage/test`).
 ///
-/// 探测时**不写入任何数据、不修改任何运行状态**。  
-/// 对 PostgreSQL / TimescaleDB：连接内置 `postgres` 维护库并执行 `SELECT 1`，
-/// 因此**业务数据库不需要提前存在**即可通过测试。
+/// The probe **does not write any data or modify any runtime state**.
+/// For PostgreSQL / TimescaleDB it connects to the built-in `postgres`
+/// maintenance database and executes `SELECT 1`, so **the target business
+/// database does not need to exist** for the test to pass.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct StorageTestRequest {
-    /// 数据库类型
+    /// Database backend type.
     ///
-    /// - `postgres` — 标准 PostgreSQL
-    /// - `timescaledb` — PostgreSQL + TimescaleDB 扩展（连接参数与 postgres 相同）
-    /// - `influxdb` — InfluxDB（预留，暂未实现）
+    /// - `postgres` — standard PostgreSQL
+    /// - `timescaledb` — PostgreSQL + TimescaleDB extension (same connection params as postgres)
+    /// - `influxdb` — InfluxDB (reserved; not yet implemented)
     #[schema(example = "timescaledb")]
     pub backend: String,
 
-    /// 数据库主机地址（IP 或域名）
+    /// Database host address (IP or hostname).
     #[schema(example = "192.168.20.21")]
     pub host: String,
 
-    /// 数据库端口
+    /// Database port.
     ///
-    /// PostgreSQL / TimescaleDB 默认 `5432`；InfluxDB 默认 `8086`。
+    /// Default: `5432` for PostgreSQL / TimescaleDB; `8086` for InfluxDB.
     #[schema(example = 5432, minimum = 1, maximum = 65535)]
     pub port: Option<u16>,
 
-    /// 数据库用户名（PostgreSQL / TimescaleDB）
+    /// Database username (PostgreSQL / TimescaleDB).
     #[schema(example = "postgres")]
     pub username: String,
 
-    /// 数据库密码（PostgreSQL / TimescaleDB）
+    /// Database password (PostgreSQL / TimescaleDB).
     #[schema(example = "secret")]
     pub password: String,
 }
@@ -304,11 +316,12 @@ impl StorageTestRequest {
     }
 }
 
-/// PUT /hisApi/storage 请求体
+/// Request body for `PUT /hisApi/storage`.
 ///
-/// 此接口**只保存参数**，不会立即建立数据库连接。
-/// 保存后通过 `POST /hisApi/storage/reconnect` 应用并连接，
-/// 或通过 `POST /hisApi/storage/test` 提前验证连通性。
+/// This endpoint **only persists parameters**; it does not establish a
+/// database connection immediately. After saving, apply and connect via
+/// `POST /hisApi/storage/reconnect`, or verify connectivity first via
+/// `POST /hisApi/storage/test`.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[schema(example = json!({
     "enabled": true,
@@ -320,44 +333,46 @@ impl StorageTestRequest {
     "password": "postgres"
 }))]
 pub struct StorageConfigRequest {
-    /// 是否启用历史存储
+    /// Enable historical storage.
     ///
-    /// `true`：服务启动或重连后开始采集并写入历史数据。
-    /// `false`：停止写入（已存数据不受影响）。
+    /// `true`: collection and writes begin after service startup or reconnect.
+    /// `false`: writes are stopped (existing data is unaffected).
     #[schema(example = true)]
     pub enabled: bool,
 
-    /// 数据库类型
+    /// Database backend type.
     ///
-    /// - `postgres`：标准 PostgreSQL，适合普通历史数据存储。
-    /// - `timescaledb`：PostgreSQL + TimescaleDB 扩展，针对时序数据优化，
-    ///   查询大量历史数据时性能更好，**推荐生产环境使用**。
+    /// - `postgres`: standard PostgreSQL, suitable for general historical storage.
+    /// - `timescaledb`: PostgreSQL + TimescaleDB extension, optimised for
+    ///   time-series data; recommended for production.
     #[schema(example = "timescaledb")]
     pub backend: String,
 
-    /// 数据库主机地址
+    /// Database host address.
     ///
-    /// IP 地址或域名，例如 `192.168.20.21` 或 `db.example.com`。
+    /// IP address or hostname, e.g. `192.168.20.21` or `db.example.com`.
     #[schema(example = "192.168.20.21")]
     pub host: String,
 
-    /// 数据库端口，默认 `5432`
+    /// Database port (default `5432`).
     #[schema(example = 5432, minimum = 1, maximum = 65535)]
     pub port: Option<u16>,
 
-    /// 数据库名称
+    /// Database name.
     ///
-    /// 历史数据将写入此数据库，**数据库须已存在**，首次连接时会自动建表。
+    /// Historical data is written to this database. The database is created
+    /// automatically on first connect; tables are initialised on first use.
     #[schema(example = "hissrv")]
     pub database: String,
 
-    /// 数据库用户名
+    /// Database username.
     #[schema(example = "postgres")]
     pub username: String,
 
-    /// 数据库密码
+    /// Database password.
     ///
-    /// 密码中包含特殊字符（如 `@` `#` `:`）时无需手动转义，后端会自动处理。
+    /// Special characters (`@`, `#`, `:`, etc.) do not need to be
+    /// percent-encoded — the backend handles URL-encoding automatically.
     #[schema(example = "postgres")]
     pub password: String,
 }

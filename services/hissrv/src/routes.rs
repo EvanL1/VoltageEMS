@@ -32,9 +32,11 @@ use crate::storage::StorageBackend;
 async fn probe_backend(req: &StorageTestRequest) -> anyhow::Result<()> {
     match req.backend.as_str() {
         "postgres" | "timescaledb" => probe_pg(&req.pg_probe_dsn()).await,
-        "influxdb" => anyhow::bail!("InfluxDB 后端尚未实现，暂不支持连通性测试"),
+        "influxdb" => anyhow::bail!(
+            "InfluxDB backend is not yet implemented; connectivity test not supported"
+        ),
         other => anyhow::bail!(
-            "未知的后端类型 '{}'，可选：postgres | timescaledb | influxdb",
+            "Unknown backend type '{}'. Valid options: postgres | timescaledb | influxdb",
             other
         ),
     }
@@ -50,11 +52,11 @@ async fn probe_pg(url: &str) -> anyhow::Result<()> {
         .acquire_timeout(std::time::Duration::from_secs(5))
         .connect(url)
         .await
-        .map_err(|e| anyhow::anyhow!("连接失败: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Connection failed: {}", e))?;
 
     pool.execute("SELECT 1")
         .await
-        .map_err(|e| anyhow::anyhow!("探测查询失败: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Probe query failed: {}", e))?;
     pool.close().await;
     Ok(())
 }
@@ -134,16 +136,16 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         StorageTestRequest,
     )),
     tags(
-        (name = "Data",    description = "历史数据查询"),
-        (name = "Meta",    description = "元数据与指标"),
-        (name = "Config",  description = "服务配置"),
-        (name = "Storage", description = "存储后端配置与控制"),
-        (name = "Health",  description = "健康检查"),
+        (name = "Data",    description = "Historical data queries"),
+        (name = "Meta",    description = "Metadata and runtime metrics"),
+        (name = "Config",  description = "Service configuration"),
+        (name = "Storage", description = "Storage backend configuration and control"),
+        (name = "Health",  description = "Health checks"),
     ),
     info(
         title = "VoltageEMS History Service",
         version = "1.0.0",
-        description = "历史数据采集、存储与查询（支持 PostgreSQL / TimescaleDB 后端）"
+        description = "Historical data collection, storage and query (PostgreSQL / TimescaleDB backends)"
     )
 )]
 pub struct ApiDoc;
@@ -174,7 +176,7 @@ pub async fn connect_storage_backend(
         .acquire_timeout(std::time::Duration::from_secs(10))
         .connect(&maintenance_url)
         .await
-        .map_err(|e| anyhow::anyhow!("无法连接数据库服务器: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Cannot connect to database server: {}", e))?;
 
     let exists: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
@@ -190,7 +192,9 @@ pub async fn connect_storage_backend(
         sqlx::query(&create_sql)
             .execute(&maint_pool)
             .await
-            .map_err(|e| anyhow::anyhow!("自动创建数据库 '{}' 失败: {}", target_db, e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to auto-create database '{}': {}", target_db, e)
+            })?;
         info!("Database '{}' created automatically", target_db);
     }
     maint_pool.close().await;
@@ -200,7 +204,7 @@ pub async fn connect_storage_backend(
         .max_connections(10)
         .connect(url)
         .await
-        .map_err(|e| anyhow::anyhow!("连接数据库 '{}' 失败: {}", target_db, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to connect to database '{}': {}", target_db, e))?;
 
     let storage: Arc<dyn StorageBackend> = match backend {
         "timescaledb" => {
@@ -227,12 +231,14 @@ pub async fn connect_storage_backend(
 // Root / ping
 // ============================================================================
 
-/// hissrv 服务横幅。
+/// hissrv service banner.
 ///
-/// 返回名称、版本、描述。给运维确认 hissrv 进程在线且版本对得上。
-/// 不依赖存储后端 —— 即使 TimescaleDB / InfluxDB 挂了也会 200。
+/// Returns service name, version, and status. Use this to confirm the hissrv
+/// process is alive and the expected version is deployed.
+/// Does not depend on any storage backend — returns 200 even if
+/// TimescaleDB / InfluxDB is down.
 #[utoipa::path(get, path = "/", tag = "Health",
-    responses((status = 200, description = "服务基本信息")))]
+    responses((status = 200, description = "Service name, version, and status")))]
 async fn root() -> Json<Value> {
     Json(json!({
         "service": "hissrv",
@@ -241,10 +247,11 @@ async fn root() -> Json<Value> {
     }))
 }
 
-/// 最简单的存活探测，返回字符串 "pong"。
+/// Minimal liveness probe — returns the string "pong".
 ///
-/// 与 `/` 区别：`/ping` 响应体是纯字符串，不带 JSON 框架开销，适合
-/// 高频探活（liveness probe / load balancer）。
+/// Unlike `/`, the response body is a plain string with no JSON overhead,
+/// making it suitable for high-frequency liveness probes and load balancer
+/// health checks.
 #[utoipa::path(get, path = "/ping", tag = "Health",
     responses((status = 200, description = "pong")))]
 async fn ping() -> &'static str {
@@ -255,15 +262,16 @@ async fn ping() -> &'static str {
 // Health
 // ============================================================================
 
-/// 后端存储连接健康检查。
+/// Storage backend connectivity health check.
 ///
-/// 检测当前激活的 `StorageBackend`（Null / Postgres / Timescale / Influx
-/// 之一）能否被实际访问 —— 走真实的 ping/查询，不是缓存状态。如果存储
-/// 后端挂了，hissrv 自己仍然回 200 但 data 字段会显示 `connected:false`
-/// + 错误原因。运维 dashboard 用它区分"hissrv 进程死了"和"hissrv 活
-/// 着但后端不通"。
+/// Probes the active `StorageBackend` (Null / Postgres / Timescale / Influx)
+/// with a real ping or query, not a cached status flag.
+/// If the backend is unreachable, hissrv still returns HTTP 200 but the
+/// response `data` object will contain `connected: false` plus the error
+/// reason. Use this to distinguish "hissrv process is dead" from
+/// "hissrv is alive but the backend is unreachable".
 #[utoipa::path(get, path = "/hisApi/health", tag = "Health",
-    responses((status = 200, description = "存储后端健康状态")))]
+    responses((status = 200, description = "Storage backend health status")))]
 async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
     let backend = state.storage.read().await.clone();
     let storage_ok = backend.health_check().await;
@@ -272,7 +280,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 
     Json(json!({
         "success": storage_ok,
-        "message": if storage_ok { "存储后端运行正常" } else { "存储后端异常或未连接" },
+        "message": if storage_ok { "Storage backend healthy" } else { "Storage backend unavailable or not connected" },
         "data": {
             "backend":          backend.name(),
             "storage_enabled":  storage_enabled,
@@ -286,18 +294,20 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
 // Data queries
 // ============================================================================
 
-/// 查询历史数据时间范围。
+/// Query historical data within a time range.
 ///
-/// 主查询接口：按 `(channel_id, data_type, point_id)` 定位点位，按
-/// `start_ts` / `end_ts`（epoch ms）切时间窗，可选 `step` 做降采样聚合。
-/// 返回 `[(ts, value), ...]` 时序点列表。降采样目前是后端原生的（Timescale
-/// continuous aggregate / Influx group-by），不在 hissrv 内做。**未配置
-/// 存储后端时返回空集合**，不是错误。
+/// Primary query endpoint. Identifies a point by `(redis_key, point_id)` and
+/// slices the time window using `start_time` / `end_time`. An optional `step`
+/// parameter enables downsampling aggregation. Returns a paginated list of
+/// `[(timestamp, value), ...]` records. Downsampling is handled natively by
+/// the backend (TimescaleDB continuous aggregate / InfluxDB group-by); hissrv
+/// itself does not resample. **Returns an empty set when no storage backend
+/// is configured** — this is not an error condition.
 #[utoipa::path(get, path = "/hisApi/data/query", tag = "Data",
     params(QueryRangeParams),
     responses(
-        (status = 200, description = "分页历史数据", body = QueryResult),
-        (status = 500, description = "查询失败"),
+        (status = 200, description = "Paginated historical records", body = QueryResult),
+        (status = 500, description = "Query failed"),
     ))]
 async fn query_range(
     State(state): State<Arc<AppState>>,
@@ -346,18 +356,20 @@ async fn query_range(
     }
 }
 
-/// 取每个指定点位的最新一条历史值。
+/// Fetch the latest stored value for a given point.
 ///
-/// 用于"打开页面立刻显示最近一个值"，避免发起完整的时序查询。`points`
-/// 参数批量接受 `channel_id:data_type:point_id` 字符串，返回每个点的
-/// 最新 `(ts, value)`。注意"最新"是历史库里的最新（hissrv 落盘频率），
-/// 不是 SHM/Redis 的实时值 —— 后者用 modsrv / apigateway。
+/// Designed for "show the most recent value on page load" use-cases,
+/// avoiding a full time-range query. Returns the latest `(timestamp, value)`
+/// pair that hissrv has persisted for the specified `(redis_key, point_id)`.
+/// Note: "latest" means the most recent value in the historical store (subject
+/// to the configured flush interval) — not the real-time SHM / Redis value.
+/// For the live reading, use modsrv / apigateway instead.
 #[utoipa::path(get, path = "/hisApi/data/latest", tag = "Data",
     params(LatestParams),
     responses(
-        (status = 200, description = "该点位最新一条历史记录", body = HistoryRecord),
-        (status = 404, description = "暂无数据"),
-        (status = 500, description = "查询失败"),
+        (status = 200, description = "Most recent historical record for the point", body = HistoryRecord),
+        (status = 404, description = "No data available yet"),
+        (status = 500, description = "Query failed"),
     ))]
 async fn query_latest(
     State(state): State<Arc<AppState>>,
@@ -387,15 +399,16 @@ async fn query_latest(
     }
 }
 
-/// 历史数据的整体时间跨度和总量。
+/// Overall time span and record count of stored historical data.
 ///
-/// 不接受任何过滤参数 —— 返回整个存储后端的全局指标：最早一条记录的
-/// ts、最新一条的 ts、总行数、唯一通道数。给运维"我们存了多少历史"
-/// 一眼概览，也用于估算后续 query 的扫描成本。
+/// Accepts no filter parameters. Returns global metrics for the entire
+/// storage backend: earliest record timestamp, latest record timestamp,
+/// total row count, and unique channel count. Use this for an at-a-glance
+/// overview of how much history is stored and to estimate query scan cost.
 #[utoipa::path(get, path = "/hisApi/data/range", tag = "Data",
     responses(
-        (status = 200, description = "数据时间范围与整体统计", body = DataStats),
-        (status = 500, description = "查询失败"),
+        (status = 200, description = "Data time range and aggregate statistics", body = DataStats),
+        (status = 500, description = "Query failed"),
     ))]
 async fn data_range(
     State(state): State<Arc<AppState>>,
@@ -427,15 +440,17 @@ async fn data_range(
 // Metadata
 // ============================================================================
 
-/// 列出目前历史库里有数据的通道。
+/// List channels that have persisted historical data.
 ///
-/// 返回 `[channel_id, ...]`。**只列已经落过盘的通道**，跟 comsrv 当前
-/// 实际配置的通道集可能不一致 —— 新加的通道在采到第一个点之前不会出现
-/// 这里。前端"选哪个通道查历史"下拉用。
+/// Returns `[channel_id, ...]`. **Only channels that have at least one
+/// written record are included** — this may differ from the set of channels
+/// currently configured in comsrv, because newly added channels do not
+/// appear until their first data point is flushed. Intended for populating
+/// "select a channel" dropdowns in the frontend.
 #[utoipa::path(get, path = "/hisApi/channels", tag = "Meta",
     responses(
-        (status = 200, description = "已存储数据的通道列表"),
-        (status = 500, description = "查询失败"),
+        (status = 200, description = "List of channels with persisted data"),
+        (status = 500, description = "Query failed"),
     ))]
 async fn list_channels(
     State(state): State<Arc<AppState>>,
@@ -458,14 +473,14 @@ async fn list_channels(
     }
 }
 
-/// hissrv 进程内的运行指标。
+/// Runtime metrics for the hissrv process.
 ///
-/// 返回从启动至今的累计统计：写入成功的总点数、跳过 NaN 的点数、当前
-/// 缓冲区深度、最后一次刷盘耗时等。给运维监控"hissrv 是否在跟上数据
-/// 流"。缓冲深度持续增长 = 写入比采集慢，要么后端慢、要么写入策略不够
-/// 激进。
+/// Returns cumulative statistics since startup: total points written,
+/// NaN-skipped points, current write-buffer depth, and last flush
+/// duration. A continuously growing buffer depth indicates the backend
+/// write throughput is not keeping up with the collection rate.
 #[utoipa::path(get, path = "/hisApi/metrics", tag = "Meta",
-    responses((status = 200, description = "服务运行指标（总点数、通道数、缓冲区大小等）")))]
+    responses((status = 200, description = "Runtime metrics (total points, channel count, buffer depth, etc.)")))]
 async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
     let backend = state.storage.read().await.clone();
     let stats = backend.get_stats().await.unwrap_or_else(|_| DataStats {
@@ -492,27 +507,29 @@ async fn metrics(State(state): State<Arc<AppState>>) -> Json<Value> {
 // General service config CRUD (intervals, patterns, etc.)
 // ============================================================================
 
-/// 查看 hissrv 的运行配置。
+/// Retrieve the current hissrv runtime configuration.
 ///
-/// 返回采集间隔、写入批量大小、点位过滤 pattern、保留期等。**不**包含存
-/// 储后端连接参数（那些在 `/hisApi/storage`，分开管理）。
+/// Returns collection interval, write batch size, point filter patterns,
+/// retention period, and related settings. Storage backend connection
+/// parameters are **not** included here — manage those via `/hisApi/storage`.
 #[utoipa::path(get, path = "/hisApi/config", tag = "Config",
-    responses((status = 200, description = "当前服务配置", body = ServiceConfig)))]
+    responses((status = 200, description = "Current service configuration", body = ServiceConfig)))]
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<Value> {
     let cfg = state.config.read().await.clone();
     Json(json!({ "success": true, "message": "OK", "data": cfg }))
 }
 
-/// 修改 hissrv 运行配置（覆盖式）。
+/// Update the hissrv runtime configuration (full replacement).
 ///
-/// 写入 SQLite 后**立即热应用** —— 不需要重启 hissrv。改写入间隔、批量
-/// 大小、点位 pattern 等都即刻生效。存储后端连接参数改不到这里（用
-/// `PUT /hisApi/storage`）。
+/// Persists the new configuration to SQLite and **applies it immediately**
+/// without restarting hissrv. Changes to collection interval, batch size,
+/// and point patterns take effect at once. Storage backend connection
+/// parameters cannot be changed here — use `PUT /hisApi/storage` instead.
 #[utoipa::path(put, path = "/hisApi/config", tag = "Config",
     request_body = ServiceConfig,
     responses(
-        (status = 200, description = "配置已更新"),
-        (status = 500, description = "保存失败"),
+        (status = 200, description = "Configuration updated"),
+        (status = 500, description = "Failed to persist configuration"),
     ))]
 async fn update_config(
     State(state): State<Arc<AppState>>,
@@ -538,15 +555,16 @@ async fn update_config(
 // Storage backend config & control
 // ============================================================================
 
-/// 查看历史存储后端的配置和连接状态。
+/// Retrieve the current storage backend configuration and connection status.
 ///
-/// 返回当前激活的 backend kind（Null / Postgres / Timescale / Influx）
-/// 和它的连接参数（主机、端口、数据库名等，**密码字段被遮蔽**），加上
-/// 实际的连接状态（connected:true/false + 最后一次错误）。运维用来确认
-/// 历史落盘链路是否健康。改配置走 `PUT /hisApi/storage`，测试连通走
-/// `POST /hisApi/storage/test`。
+/// Returns the active backend kind (Null / Postgres / Timescale / Influx),
+/// its connection parameters (host, port, database name, etc.; **password
+/// field is masked**), and the live connection status (`connected: true/false`
+/// plus last error detail if any). Use this to verify the historical write
+/// path is healthy. To change the configuration use `PUT /hisApi/storage`;
+/// to test connectivity use `POST /hisApi/storage/test`.
 #[utoipa::path(get, path = "/hisApi/storage", tag = "Storage",
-    responses((status = 200, description = "当前存储后端配置与连接状态")))]
+    responses((status = 200, description = "Current storage backend configuration and connection status")))]
 async fn get_storage(State(state): State<Arc<AppState>>) -> Json<Value> {
     let ss = state.storage_settings.read().await.clone();
     let backend = state.storage.read().await.clone();
@@ -571,18 +589,19 @@ async fn get_storage(State(state): State<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
-/// PUT /hisApi/storage – 保存存储后端连接参数（**不会立即建立连接**）
+/// Save storage backend connection parameters (**does not connect immediately**).
 ///
-/// 此接口只负责持久化配置，不尝试连接数据库，不影响当前运行状态。
-/// 保存后可通过以下接口继续操作：
-/// - `POST /hisApi/storage/test` — 验证连通性
-/// - `POST /hisApi/storage/reconnect` — 应用新配置并正式建立连接
+/// This endpoint only persists configuration; it does not attempt a database
+/// connection and does not affect the currently active backend.
+/// After saving, use the following endpoints:
+/// - `POST /hisApi/storage/test` — verify connectivity
+/// - `POST /hisApi/storage/reconnect` — apply the new config and connect
 #[utoipa::path(put, path = "/hisApi/storage", tag = "Storage",
     request_body = StorageConfigRequest,
     responses(
-        (status = 200, description = "参数已保存"),
-        (status = 400, description = "参数错误（缺少必填字段）"),
-        (status = 500, description = "保存失败"),
+        (status = 200, description = "Parameters saved"),
+        (status = 400, description = "Invalid parameters (missing required fields)"),
+        (status = 500, description = "Failed to persist parameters"),
     ))]
 async fn update_storage(
     State(state): State<Arc<AppState>>,
@@ -626,16 +645,17 @@ async fn update_storage(
     })))
 }
 
-/// POST /hisApi/storage/test – 用前端传入的参数测试数据库连通性
+/// Test database connectivity using the supplied parameters.
 ///
-/// 探测时连接 PostgreSQL 内置的 `postgres` 维护库（该库在任何 PG/TimescaleDB 服务器上
-/// 都存在），因此**业务数据库不需要提前存在**即可通过测试。
-/// 不修改任何运行状态，不写入任何数据。
+/// Probes by connecting to the built-in `postgres` maintenance database (which
+/// exists on every PostgreSQL / TimescaleDB server), so **the target business
+/// database does not need to exist** for the test to pass.
+/// Does not modify any runtime state or write any data.
 #[utoipa::path(post, path = "/hisApi/storage/test", tag = "Storage",
     request_body = StorageTestRequest,
     responses(
-        (status = 200, description = "连接测试成功"),
-        (status = 500, description = "连接失败，返回具体错误信息"),
+        (status = 200, description = "Connection test successful"),
+        (status = 500, description = "Connection failed; error detail in response body"),
     ))]
 async fn test_storage(
     Json(req): Json<StorageTestRequest>,
@@ -654,15 +674,16 @@ async fn test_storage(
     }
 }
 
-/// POST /hisApi/storage/reconnect – 使用已保存的参数正式建立连接
+/// Connect (or reconnect) to the storage backend using the saved parameters.
 ///
-/// 连接成功后立即开始采集并写入历史数据。
-/// 若当前 `enabled = false`，调用此接口也不会建立连接（需先通过 PUT 将 enabled 设为 true）。
+/// On success, historical data collection begins immediately. If `enabled`
+/// is currently `false`, this call has no effect — set `enabled = true` via
+/// `PUT /hisApi/storage` first.
 #[utoipa::path(post, path = "/hisApi/storage/reconnect", tag = "Storage",
     responses(
-        (status = 200, description = "重连成功"),
-        (status = 400, description = "存储未配置或未启用"),
-        (status = 500, description = "重连失败"),
+        (status = 200, description = "Reconnected successfully"),
+        (status = 400, description = "Storage not configured or not enabled"),
+        (status = 500, description = "Reconnection failed"),
     ))]
 async fn reconnect_storage(
     State(state): State<Arc<AppState>>,

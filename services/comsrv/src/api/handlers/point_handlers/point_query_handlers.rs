@@ -15,13 +15,14 @@ use super::point_helpers::{
     fetch_grouped_points, parse_protocol_mapping_json, point_type_to_table, validate_channel_exists,
 };
 
-/// 读单个点的实时值（value + ts + raw）。
+/// Read the real-time value of a single point (value + timestamp + raw).
 ///
-/// 从 Redis hash 读 `comsrv:{channel_id}:{T|S|C|A}` 对应 field，返回工
-/// 程量值（经过线性变换后）、时间戳、原始寄存器值。**实时性以 Redis
-/// 为准**，跟 SHM 实时层有 ~100ms 滞后（ShmRedisSync 异步同步周期）。
-/// 405/406 表示点位定义不存在；数据为 NaN（未首次成功 poll 或离线）时
-/// 返回 value=null。
+/// Reads from the Redis hash `comsrv:{channel_id}:{T|S|C|A}`, returning the
+/// engineering-unit value (after linear scaling), the timestamp, and the raw register
+/// value. **Freshness is Redis-based** — approximately 100 ms behind the SHM real-time
+/// layer (ShmRedisSync async sync interval). 405/406 indicates the point definition does
+/// not exist; if the value is NaN (not yet successfully polled or device offline),
+/// `value` is returned as `null`.
 #[utoipa::path(
     get,
     path = "/api/channels/{channel_id}/{telemetry_type}/{point_id}",
@@ -214,11 +215,12 @@ pub async fn get_point_mapping_with_type_handler<R: Rtdb>(
 // Get Point Configuration Handler
 // ----------------------------------------------------------------------------
 
-/// 读点位的**配置**（不是运行时值）。
+/// Read the **configuration** of a point (not its runtime value).
 ///
-/// 从 SQLite 读点位定义：寄存器地址、字节序、缩放系数、单位、报警上下
-/// 限等。不查 Redis、不查 SHM，只读静态配置。前端"编辑点位"对话框预填
-/// 用；实时值走 `/api/channels/{id}/points/{point_id}`。
+/// Reads the point definition from SQLite: register address, byte order, scale factor,
+/// unit, alarm limits, etc. Does not query Redis or SHM — returns static configuration
+/// only. Use this to pre-populate the "edit point" dialog in the frontend. For the
+/// real-time value use `/api/channels/{id}/points/{point_id}`.
 #[utoipa::path(
     get,
     path = "/api/channels/{channel_id}/{type}/points/{point_id}/config",

@@ -99,14 +99,14 @@ use crate::ws::WsHub;
         models::NetworkUpdateRequest,
     )),
     tags(
-        (name = "Auth", description = "认证与用户管理"),
-        (name = "Homepage", description = "首页计算点位 CRUD"),
-        (name = "Network", description = "网络接口配置"),
-        (name = "Config", description = "系统配置导出/导入/升级"),
-        (name = "WebSocket", description = "WebSocket 广播与状态"),
+        (name = "Auth", description = "Authentication and user management"),
+        (name = "Homepage", description = "Homepage calculated point CRUD"),
+        (name = "Network", description = "Network interface configuration"),
+        (name = "Config", description = "System configuration export / import / upgrade"),
+        (name = "WebSocket", description = "WebSocket broadcast and status"),
     ),
     modifiers(&SecurityAddon),
-    info(title = "VoltageEMS API Gateway", version = "1.0.0", description = "VoltageEMS 统一 API 网关")
+    info(title = "VoltageEMS API Gateway", version = "1.0.0", description = "VoltageEMS unified API gateway")
 )]
 struct ApiDoc;
 

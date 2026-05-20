@@ -25,15 +25,16 @@ pub struct PointsQuery {
 
 // ── GET /api/v1/homepage ──────────────────────────────────────────────────────
 
-/// 列出主页面板配置的点位（分页）。
+/// List homepage panel points (paginated).
 ///
-/// "主页点位"是运维在前端主页上拖拽显示的若干关键数值（如总功率、总
-/// SOC、并网频率等），通常是基于 instance measurement 计算出来的。每个
-/// 点位定义保存在 SQLite，可按 `name` 关键词过滤。
+/// "Homepage points" are the key metrics displayed on the operator's main
+/// dashboard (e.g. total power, total SOC, grid frequency). They are typically
+/// calculated points derived from instance measurements. Each point definition
+/// is stored in SQLite and can be filtered by the `name` keyword.
 #[utoipa::path(get, path = "/api/v1/homepage", tag = "Homepage",
     security(("bearer_auth" = [])),
     params(PointsQuery),
-    responses((status = 200, description = "计算点位列表")))]
+    responses((status = 200, description = "Calculated point list")))]
 pub async fn list_points(
     State(state): State<Arc<AppState>>,
     Query(q): Query<PointsQuery>,
@@ -71,14 +72,15 @@ pub async fn list_points(
 
 // ── GET /api/v1/homepage/:id ──────────────────────────────────────────────────
 
-/// 查看单个主页点位的完整定义。
+/// Retrieve the full definition of a single homepage point.
 ///
-/// 包含显示名、计算公式 / 取值来源、单位、阈值告警配置等，用于"编辑点
-/// 位"对话框预填。404 表示点位 id 不存在。
+/// Includes display name, formula/source, unit, and threshold alarm settings.
+/// Used to pre-populate the "edit point" dialog. Returns 404 if the point ID
+/// does not exist.
 #[utoipa::path(get, path = "/api/v1/homepage/{id}", tag = "Homepage",
     security(("bearer_auth" = [])),
-    params(("id" = i64, Path, description = "点位 ID")),
-    responses((status = 200, description = "点位详情", body = CalculatedPoint), (status = 404, description = "不存在")))]
+    params(("id" = i64, Path, description = "Point ID")),
+    responses((status = 200, description = "Point definition", body = CalculatedPoint), (status = 404, description = "Not found")))]
 pub async fn get_point(
     State(state): State<Arc<AppState>>,
     Path(point_id): Path<i64>,
@@ -108,16 +110,17 @@ pub async fn get_point(
 
 // ── PUT /api/v1/homepage/:id ──────────────────────────────────────────────────
 
-/// 修改单个主页点位（部分更新）。
+/// Update a single homepage point (partial update).
 ///
-/// 所有字段可选，未传字段保留原值。前端拖拽布局、改公式、改阈值都走这
-/// 个端点。改动立即生效 —— 下一次前端拉取主页或下一次 WebSocket 推送
-/// 就会用新定义。
+/// All fields are optional; omitted fields retain their current values. Used
+/// for drag-and-drop layout changes, formula edits, and threshold updates.
+/// Changes take effect immediately — the next frontend poll or WebSocket push
+/// will use the new definition.
 #[utoipa::path(put, path = "/api/v1/homepage/{id}", tag = "Homepage",
     security(("bearer_auth" = [])),
-    params(("id" = i64, Path, description = "点位 ID")),
+    params(("id" = i64, Path, description = "Point ID")),
     request_body = CalculatedPointUpdate,
-    responses((status = 200, description = "更新成功", body = CalculatedPoint), (status = 404, description = "不存在")))]
+    responses((status = 200, description = "Point updated", body = CalculatedPoint), (status = 404, description = "Not found")))]
 pub async fn update_point(
     State(state): State<Arc<AppState>>,
     Path(point_id): Path<i64>,
@@ -180,15 +183,16 @@ pub async fn update_point(
 
 // ── POST /api/v1/homepage/reset ───────────────────────────────────────────────
 
-/// 恢复主页点位到出厂默认配置。
+/// Reset homepage points to factory defaults.
 ///
-/// 清空当前所有点位定义，重新插入项目自带的默认点位（电站总功率、
-/// SOC、温度、并网状态等）。运维场景：调乱了想"重置"，或者升级后想拉
-/// 取新版默认点位。**破坏性操作**：用户自定义的点位定义会被覆盖，不可
-/// 撤销。
+/// Clears all current point definitions and re-inserts the built-in defaults
+/// (total plant power, SOC, temperature, grid-tie status, etc.). Use when the
+/// configuration has been corrupted or after an upgrade to pull in new default
+/// points. **Destructive operation** — all user-customised point definitions
+/// are overwritten and cannot be recovered.
 #[utoipa::path(post, path = "/api/v1/homepage/reset", tag = "Homepage",
     security(("bearer_auth" = [])),
-    responses((status = 200, description = "已恢复默认点位")))]
+    responses((status = 200, description = "Default points restored")))]
 pub async fn reset_points(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match db::reset_calculated_points(&state.db).await {
         Ok(count) => Json(json!({
