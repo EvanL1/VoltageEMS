@@ -142,6 +142,70 @@ async fn test_create_instance_with_properties() {
 }
 
 #[tokio::test]
+async fn test_load_instance_points_returns_properties() {
+    let (_temp_dir, pool) = create_test_database().await;
+    // load_instance_points LEFT JOINs telemetry_points/signal_points/etc. (comsrv tables)
+    // for routing display names — those tables must exist for the SQL to execute.
+    common::test_utils::schema::init_comsrv_schema(&pool)
+        .await
+        .expect("init comsrv schema");
+    let product_loader = create_test_product_loader(pool.clone());
+    let rtdb = create_test_rtdb();
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
+    let ess_id = setup_hierarchy(&manager).await;
+
+    // PCS product declares 6 property templates: "Max Power", "Max Voltage",
+    // "Max Current AC", "Max Current DC", "Rated Frequency", "Conversion Efficiency".
+    // Set values for two of them; the rest should come back with no `value`.
+    let mut properties = HashMap::new();
+    properties.insert("Max Power".to_string(), serde_json::json!(5000.0));
+    properties.insert("Max Voltage".to_string(), serde_json::json!(800));
+
+    manager
+        .create_instance(CreateInstanceRequest {
+            instance_id: Some(4001),
+            instance_name: "pcs_with_props".to_string(),
+            product_name: "PCS".to_string(),
+            parent_id: Some(ess_id),
+            properties,
+        })
+        .await
+        .expect("create PCS instance");
+
+    let (_m, _a, props) = manager
+        .load_instance_points(4001)
+        .await
+        .expect("load_instance_points should succeed");
+
+    // All 6 PCS templates should be present, in template order
+    assert_eq!(props.len(), 6, "PCS has 6 property templates");
+
+    let by_name: HashMap<&str, &crate::dto::InstancePropertyPoint> =
+        props.iter().map(|p| (p.name.as_str(), p)).collect();
+
+    let max_power = by_name
+        .get("Max Power")
+        .expect("Max Power template present");
+    assert_eq!(max_power.value, Some(serde_json::json!(5000.0)));
+
+    let max_voltage = by_name
+        .get("Max Voltage")
+        .expect("Max Voltage template present");
+    assert_eq!(max_voltage.value, Some(serde_json::json!(800)));
+
+    // Unset property: template metadata present, value absent
+    let max_current_ac = by_name
+        .get("Max Current AC")
+        .expect("Max Current AC template present");
+    assert!(
+        max_current_ac.value.is_none(),
+        "unset property must omit value, got {:?}",
+        max_current_ac.value
+    );
+}
+
+#[tokio::test]
 async fn test_create_instance_already_exists() {
     let (_temp_dir, pool) = create_test_database().await;
     let product_loader = create_test_product_loader(pool.clone());

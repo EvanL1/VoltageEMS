@@ -354,10 +354,41 @@ pub struct InstanceActionPoint {
     pub routing: Option<PointRouting>,
 }
 
+/// Runtime property point (Product template + Instance value)
+///
+/// Properties are static instance metadata (rated power, manufacturer, etc.) — they do
+/// **not** carry routing because they are not part of the device data flow. The template
+/// (`property_id`, `name`, `unit`, `description`) comes from the product, and `value`
+/// is the per-instance value stored in `instances.properties` (keyed by `name`).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InstancePropertyPoint {
+    /// Property ID (from product template)
+    #[schema(example = 1)]
+    pub property_id: i32,
+
+    /// Property name (used as key in instances.properties JSON)
+    #[schema(example = "rated_power")]
+    pub name: String,
+
+    /// Unit of the property
+    #[schema(example = "kW")]
+    pub unit: Option<String>,
+
+    /// Property description
+    #[schema(example = "Rated active power")]
+    pub description: Option<String>,
+
+    /// Current value from instance.properties (None if not configured for this instance)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>, example = json!(5000.0))]
+    pub value: Option<serde_json::Value>,
+}
+
 /// Response for GET /api/instances/{name}/points
 ///
-/// Returns all measurement and action points for an instance,
-/// with their routing configurations embedded as point attributes.
+/// Returns all measurement, action, and property points for an instance.
+/// Measurements and actions include their routing configurations; properties carry
+/// the per-instance value (no routing — they are static metadata, not data-flow points).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InstancePointsResponse {
     /// Instance name
@@ -369,6 +400,9 @@ pub struct InstancePointsResponse {
 
     /// Action points with routing
     pub actions: Vec<InstanceActionPoint>,
+
+    /// Property points with current values (no routing)
+    pub properties: Vec<InstancePropertyPoint>,
 }
 
 // === Unit Tests ===

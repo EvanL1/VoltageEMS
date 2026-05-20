@@ -30,32 +30,52 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
 
     /// Load instance points with routing configuration (runtime merge)
     ///
-    /// Two-step query + in-memory merge:
-    /// 1. Product point definitions from built-in products (compile-time constants)
-    /// 2. Routing data from measurement_routing/action_routing tables (real tables)
-    /// 3. Merge in application layer using HashMap
+    /// Returns (measurements, actions, properties). Measurements/actions carry routing;
+    /// properties carry the per-instance value from `instances.properties` (no routing —
+    /// they are static metadata, not data-flow points).
+    ///
+    /// Query plan:
+    /// 1. Fetch `product_name` + `properties` JSON from `instances` (single row)
+    /// 2. Look up Product template (compile-time constants)
+    /// 3. Query routing data from `measurement_routing` / `action_routing` (parallel)
+    /// 4. Merge in application layer
     pub async fn load_instance_points(
         &self,
         instance_id: u32,
     ) -> Result<(
         Vec<crate::dto::InstanceMeasurementPoint>,
         Vec<crate::dto::InstanceActionPoint>,
+        Vec<crate::dto::InstancePropertyPoint>,
     )> {
-        use crate::dto::{InstanceActionPoint, InstanceMeasurementPoint, PointRouting};
+        use crate::dto::{
+            InstanceActionPoint, InstanceMeasurementPoint, InstancePropertyPoint, PointRouting,
+        };
 
-        // 1. Get product_name and product definition
-        let product_name = sqlx::query_scalar::<_, String>(
-            "SELECT product_name FROM instances WHERE instance_id = ?",
-        )
-        .bind(instance_id as i64)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
+        // 1. Get product_name + per-instance properties JSON in one query
+        let (product_name, properties_json): (String, Option<String>) =
+            sqlx::query_as("SELECT product_name, properties FROM instances WHERE instance_id = ?")
+                .bind(instance_id as i64)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| anyhow!("Instance {} not found: {}", instance_id, e))?;
 
         let product = self
             .product_loader
             .get_product(&product_name)
             .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
+
+        // Parse instance properties JSON (key = property name, value = JSON value).
+        // Missing/empty → empty map (no values configured yet).
+        let instance_props: HashMap<String, serde_json::Value> = match properties_json {
+            Some(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|e| {
+                anyhow!(
+                    "Invalid properties JSON for instance {}: {}",
+                    instance_id,
+                    e
+                )
+            })?,
+            _ => HashMap::new(),
+        };
 
         // 2. Query routing data from real tables (parallel)
         let m_routing_query = sqlx::query_as::<
@@ -169,7 +189,21 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             })
             .collect();
 
-        Ok((measurements, actions))
+        // Properties: merge product template with per-instance value (no routing).
+        let mut instance_props = instance_props;
+        let properties = product
+            .properties
+            .iter()
+            .map(|pt| InstancePropertyPoint {
+                property_id: pt.property_id,
+                name: pt.name.clone(),
+                unit: pt.unit.clone(),
+                description: pt.description.clone(),
+                value: instance_props.remove(&pt.name),
+            })
+            .collect();
+
+        Ok((measurements, actions, properties))
     }
 
     /// Get instance points (built-in product definitions = single source of truth)

@@ -429,9 +429,8 @@ pub async fn get_instance_data(
 
 /// Get point definitions with routing for an instance
 ///
-/// Returns measurement and action points with their routing configurations.
-/// Each point includes both the product template definition and the instance-specific
-/// routing configuration (if configured).
+/// Returns measurement, action, and property points. Measurements and actions carry
+/// their routing configurations; properties carry the per-instance value (no routing).
 #[utoipa::path(
     get,
     path = "/api/instances/{id}/points",
@@ -439,7 +438,7 @@ pub async fn get_instance_data(
         ("id" = u16, Path, description = "Instance ID")
     ),
     responses(
-        (status = 200, description = "Instance points with routing configurations",
+        (status = 200, description = "Instance points with routing/values",
             body = InstancePointsResponse,
             example = json!({
                 "instance_name": "pv_inverter_01",
@@ -476,6 +475,20 @@ pub async fn get_instance_data(
                             "enabled": true
                         }
                     }
+                ],
+                "properties": [
+                    {
+                        "property_id": 1,
+                        "name": "rated_power",
+                        "unit": "kW",
+                        "description": "Rated active power",
+                        "value": 5000.0
+                    },
+                    {
+                        "property_id": 2,
+                        "name": "manufacturer",
+                        "description": "Device manufacturer"
+                    }
                 ]
             })
         ),
@@ -498,11 +511,12 @@ pub async fn get_instance_points(
     })?;
 
     match state.instance_manager.load_instance_points(id).await {
-        Ok((measurements, actions)) => {
+        Ok((measurements, actions, properties)) => {
             let response = InstancePointsResponse {
                 instance_name: instance.instance_name().to_string(),
                 measurements,
                 actions,
+                properties,
             };
             Ok(Json(SuccessResponse::new(response)))
         },
