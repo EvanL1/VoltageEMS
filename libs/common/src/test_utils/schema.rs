@@ -189,6 +189,24 @@ pub const ACTION_ROUTING_TABLE: &str = r#"
     )
 "#;
 
+/// Instance property values table DDL
+///
+/// One row per (instance_id, property_id). `value_json` holds the property's
+/// current value as a JSON-encoded string (any JSON type is accepted —
+/// number, string, bool, null, object, array). `property_id` references the
+/// PropertyTemplate declared by the instance's product (a compile-time
+/// constant in the `voltage-model` crate, so no foreign key is possible —
+/// handlers validate the id against the template).
+pub const INSTANCE_PROPERTIES_TABLE: &str = r#"
+    CREATE TABLE IF NOT EXISTS instance_properties (
+        instance_id INTEGER NOT NULL REFERENCES instances(instance_id) ON DELETE CASCADE,
+        property_id INTEGER NOT NULL,
+        value_json  TEXT    NOT NULL,
+        updated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (instance_id, property_id)
+    )
+"#;
+
 // ============================================================================
 // Rules Table DDL
 // ============================================================================
@@ -280,6 +298,9 @@ pub async fn init_modsrv_schema(pool: &SqlitePool) -> Result<()> {
     // Routing tables
     sqlx::query(MEASUREMENT_ROUTING_TABLE).execute(pool).await?;
     sqlx::query(ACTION_ROUTING_TABLE).execute(pool).await?;
+
+    // Instance property values (one row per property)
+    sqlx::query(INSTANCE_PROPERTIES_TABLE).execute(pool).await?;
 
     Ok(())
 }

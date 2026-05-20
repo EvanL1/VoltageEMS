@@ -114,9 +114,11 @@ async fn test_create_instance_with_properties() {
     let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
     let ess_id = setup_hierarchy(&manager).await;
 
+    // Use real PCS PropertyTemplate names — unknown keys are now rejected
+    // at the schema level since v5.
     let mut properties = HashMap::new();
-    properties.insert("location".to_string(), serde_json::json!("Roof A"));
-    properties.insert("capacity".to_string(), serde_json::json!(5000));
+    properties.insert("Max Power".to_string(), serde_json::json!(5000.0));
+    properties.insert("Max Voltage".to_string(), serde_json::json!(800));
 
     let req = CreateInstanceRequest {
         instance_id: Some(2001),
@@ -132,13 +134,21 @@ async fn test_create_instance_with_properties() {
     let instance = result.unwrap();
     assert_eq!(instance.core.properties.len(), 2);
     assert_eq!(
-        instance.core.properties.get("location").unwrap(),
-        &serde_json::json!("Roof A")
+        instance.core.properties.get("Max Power").unwrap(),
+        &serde_json::json!(5000.0)
     );
     assert_eq!(
-        instance.core.properties.get("capacity").unwrap(),
-        &serde_json::json!(5000)
+        instance.core.properties.get("Max Voltage").unwrap(),
+        &serde_json::json!(800)
     );
+
+    // Verify the values land in the dedicated table, not the legacy column.
+    let row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM instance_properties WHERE instance_id = 2001")
+            .fetch_one(&manager.pool)
+            .await
+            .unwrap();
+    assert_eq!(row_count, 2);
 }
 
 #[tokio::test]
@@ -203,6 +213,135 @@ async fn test_load_instance_points_returns_properties() {
         "unset property must omit value, got {:?}",
         max_current_ac.value
     );
+}
+
+#[tokio::test]
+async fn test_upsert_single_property_writes_to_dedicated_table() {
+    let (_temp_dir, pool) = create_test_database().await;
+    common::test_utils::schema::init_comsrv_schema(&pool)
+        .await
+        .expect("init comsrv schema");
+    let product_loader = create_test_product_loader(pool.clone());
+    let rtdb = create_test_rtdb();
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
+    let ess_id = setup_hierarchy(&manager).await;
+
+    manager
+        .create_instance(CreateInstanceRequest {
+            instance_id: Some(5001),
+            instance_name: "pcs_single_prop".to_string(),
+            product_name: "PCS".to_string(),
+            parent_id: Some(ess_id),
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create instance");
+
+    // PCS property_id=1 is "Max Power"
+    let updated = manager
+        .upsert_single_property(5001, 1, serde_json::json!(7500))
+        .await
+        .expect("upsert succeeds");
+    assert_eq!(updated.name, "Max Power");
+    assert_eq!(updated.value, Some(serde_json::json!(7500)));
+
+    // The row landed in the dedicated table
+    let value_json: String = sqlx::query_scalar(
+        "SELECT value_json FROM instance_properties WHERE instance_id = 5001 AND property_id = 1",
+    )
+    .fetch_one(&manager.pool)
+    .await
+    .unwrap();
+    assert_eq!(value_json, "7500");
+
+    // Upserting again replaces the value
+    manager
+        .upsert_single_property(5001, 1, serde_json::json!(8000))
+        .await
+        .unwrap();
+    let value_json: String = sqlx::query_scalar(
+        "SELECT value_json FROM instance_properties WHERE instance_id = 5001 AND property_id = 1",
+    )
+    .fetch_one(&manager.pool)
+    .await
+    .unwrap();
+    assert_eq!(value_json, "8000");
+}
+
+#[tokio::test]
+async fn test_upsert_single_property_rejects_unknown_id() {
+    let (_temp_dir, pool) = create_test_database().await;
+    common::test_utils::schema::init_comsrv_schema(&pool)
+        .await
+        .expect("init comsrv schema");
+    let product_loader = create_test_product_loader(pool.clone());
+    let rtdb = create_test_rtdb();
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
+    let ess_id = setup_hierarchy(&manager).await;
+
+    manager
+        .create_instance(CreateInstanceRequest {
+            instance_id: Some(5002),
+            instance_name: "pcs_bad_prop".to_string(),
+            product_name: "PCS".to_string(),
+            parent_id: Some(ess_id),
+            properties: HashMap::new(),
+        })
+        .await
+        .unwrap();
+
+    // property_id 999 doesn't exist in PCS template
+    let err = manager
+        .upsert_single_property(5002, 999, serde_json::json!(42))
+        .await
+        .expect_err("should reject unknown property_id");
+    assert!(
+        matches!(err, crate::error::ModSrvError::InvalidData(_)),
+        "expected InvalidData, got {:?}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn test_delete_single_property_removes_row() {
+    let (_temp_dir, pool) = create_test_database().await;
+    common::test_utils::schema::init_comsrv_schema(&pool)
+        .await
+        .expect("init comsrv schema");
+    let product_loader = create_test_product_loader(pool.clone());
+    let rtdb = create_test_rtdb();
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::new());
+    let manager = InstanceManager::new(pool, rtdb, routing_cache, product_loader, noop_dispatch());
+    let ess_id = setup_hierarchy(&manager).await;
+
+    let mut props = HashMap::new();
+    props.insert("Max Power".to_string(), serde_json::json!(5000.0));
+    manager
+        .create_instance(CreateInstanceRequest {
+            instance_id: Some(5003),
+            instance_name: "pcs_del_prop".to_string(),
+            product_name: "PCS".to_string(),
+            parent_id: Some(ess_id),
+            properties: props,
+        })
+        .await
+        .unwrap();
+
+    let updated = manager
+        .delete_single_property(5003, 1)
+        .await
+        .expect("delete succeeds");
+    assert_eq!(updated.name, "Max Power");
+    assert!(updated.value.is_none());
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM instance_properties WHERE instance_id = 5003")
+            .fetch_one(&manager.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[tokio::test]

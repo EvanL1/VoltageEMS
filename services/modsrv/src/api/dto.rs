@@ -129,6 +129,17 @@ pub struct ToggleRoutingRequest {
     pub enabled: bool,
 }
 
+/// Request to upsert a single instance property value.
+///
+/// The `value` is an arbitrary JSON value (number, string, bool, object).
+/// `property_id` is passed in the URL path; the handler rejects ids that
+/// don't appear in the instance's product PropertyTemplate.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct UpsertPropertyRequest {
+    #[schema(value_type = Object, example = json!(5000.0))]
+    pub value: serde_json::Value,
+}
+
 /// Default value for enabled field (true)
 fn default_enabled() -> bool {
     true

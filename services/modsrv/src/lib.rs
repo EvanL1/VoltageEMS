@@ -22,6 +22,7 @@ pub mod api {
     pub mod instance_management_handlers;
     pub mod instance_query_handlers;
     pub mod product_handlers;
+    pub mod property_handlers;
     pub mod routing_management_handlers;
     pub mod routing_query_handlers;
     pub mod single_point_handlers;

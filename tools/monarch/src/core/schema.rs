@@ -11,8 +11,8 @@ use tracing::{info, warn};
 // Import DDL constants from common (shared schema definitions)
 use common::test_utils::schema::{
     ACTION_ROUTING_TABLE, ADJUSTMENT_POINTS_TABLE, CHANNEL_TEMPLATES_TABLE, CHANNELS_TABLE,
-    CONTROL_POINTS_TABLE, INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE, SERVICE_CONFIG_TABLE,
-    SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
+    CONTROL_POINTS_TABLE, INSTANCE_PROPERTIES_TABLE, INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE,
+    SERVICE_CONFIG_TABLE, SIGNAL_POINTS_TABLE, SYNC_METADATA_TABLE, TELEMETRY_POINTS_TABLE,
 };
 
 use super::file_utils;
@@ -91,7 +91,7 @@ const RULE_HISTORY_TABLE: &str = r#"
 //   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
 
 /// Current schema structure version — increment when adding migrations
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 /// Run pending schema migrations based on `PRAGMA user_version`
 ///
@@ -126,6 +126,10 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 
     if current < 4 {
         migrate_v4(&mut conn).await.context("Migration v4 failed")?;
+    }
+
+    if current < 5 {
+        migrate_v5(&mut conn).await.context("Migration v5 failed")?;
     }
 
     sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
@@ -316,6 +320,179 @@ async fn migrate_v4(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     Ok(())
 }
 
+/// v5: Move per-instance property values out of `instances.properties` JSON
+/// column into a dedicated `instance_properties` table, then drop the column.
+///
+/// Old shape: each instance row had a `properties TEXT` column holding a
+/// `{name: value}` JSON map. That made single-property writes require a
+/// read-modify-write of the whole map (last-write-wins on concurrent edits)
+/// and left no schema-level constraint on which keys are valid.
+///
+/// New shape: one row per (instance_id, property_id) in `instance_properties`
+/// — mirrors `measurement_routing` / `action_routing`. `property_id` is
+/// resolved by looking up each JSON key against the instance's product's
+/// PropertyTemplate (compile-time constants in the `voltage-model` crate).
+/// Keys that don't match any template are dropped with a warning — they
+/// were unreachable from the existing `/api/instances/{id}/points` response
+/// anyway, since that endpoint only emits points declared by the product.
+async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    info!("Migration v5: instance properties JSON column -> instance_properties table");
+
+    // 1) Create the new table (idempotent — `init_database` also creates it
+    //    on fresh installs, but a partial v4→v5 upgrade hits this first).
+    sqlx::query(INSTANCE_PROPERTIES_TABLE)
+        .execute(&mut **conn)
+        .await?;
+
+    // 2) Bail early if `instances` doesn't exist yet (very fresh DB before
+    //    any DDL ran). Nothing to migrate.
+    let has_instances: bool =
+        sqlx::query_scalar("SELECT 1 FROM sqlite_master WHERE type='table' AND name='instances'")
+            .fetch_optional(&mut **conn)
+            .await?
+            .unwrap_or(false);
+
+    if !has_instances {
+        info!("Migration v5: instances table missing, skipping data migration");
+        return Ok(());
+    }
+
+    // 3) Check if the legacy `properties` column actually exists. Re-running
+    //    migrate_v5 on a v5+ database (column already dropped) should no-op.
+    let has_properties_col: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM pragma_table_info('instances') WHERE name = 'properties'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
+    if !has_properties_col {
+        info!("Migration v5: properties column already dropped, nothing to migrate");
+        return Ok(());
+    }
+
+    // 4) Read every (instance_id, product_name, properties_json) and translate
+    //    each JSON entry to a row in instance_properties. We do this BEFORE
+    //    dropping the column so failure mid-migration leaves data recoverable.
+    let rows: Vec<(i64, String, Option<String>)> =
+        sqlx::query_as("SELECT instance_id, product_name, properties FROM instances")
+            .fetch_all(&mut **conn)
+            .await?;
+
+    let mut migrated_values = 0_usize;
+    let mut dropped_keys = 0_usize;
+
+    for (instance_id, product_name, properties_json) in rows {
+        let Some(json_str) = properties_json else {
+            continue;
+        };
+        let trimmed = json_str.trim();
+        if trimmed.is_empty() || trimmed == "{}" {
+            continue;
+        }
+
+        let map: serde_json::Map<String, serde_json::Value> = match serde_json::from_str(trimmed) {
+            Ok(serde_json::Value::Object(m)) => m,
+            Ok(_other) => {
+                warn!(
+                    "Migration v5: instance {} properties JSON is not an object, skipping",
+                    instance_id
+                );
+                continue;
+            },
+            Err(e) => {
+                warn!(
+                    "Migration v5: instance {} properties JSON unparseable ({}), skipping",
+                    instance_id, e
+                );
+                continue;
+            },
+        };
+
+        let Some(product) = voltage_model::product_lib::get_builtin_product(&product_name) else {
+            warn!(
+                "Migration v5: instance {} references unknown product '{}', dropping {} properties",
+                instance_id,
+                product_name,
+                map.len()
+            );
+            dropped_keys += map.len();
+            continue;
+        };
+
+        for (name, value) in map {
+            let Some(tpl) = product.properties.iter().find(|p| p.name == name) else {
+                warn!(
+                    "Migration v5: instance {} key '{}' not in product '{}' PropertyTemplate, dropping",
+                    instance_id, name, product_name
+                );
+                dropped_keys += 1;
+                continue;
+            };
+            let value_json =
+                serde_json::to_string(&value).context("encode property value to JSON")?;
+            sqlx::query(
+                "INSERT OR REPLACE INTO instance_properties \
+                 (instance_id, property_id, value_json) VALUES (?, ?, ?)",
+            )
+            .bind(instance_id)
+            .bind(tpl.id as i64)
+            .bind(value_json)
+            .execute(&mut **conn)
+            .await?;
+            migrated_values += 1;
+        }
+    }
+
+    info!(
+        "Migration v5: migrated {} property values, dropped {} unrecognized keys",
+        migrated_values, dropped_keys
+    );
+
+    // 5) Rebuild `instances` without the `properties` column. SQLite < 3.35
+    //    cannot DROP COLUMN, and even on newer versions table rebuild keeps
+    //    behaviour consistent across deployments.
+    sqlx::query("PRAGMA foreign_keys=OFF")
+        .execute(&mut **conn)
+        .await?;
+
+    sqlx::query(
+        "CREATE TABLE instances_new (
+            instance_id INTEGER NOT NULL PRIMARY KEY,
+            instance_name TEXT NOT NULL UNIQUE,
+            product_name TEXT NOT NULL,
+            parent_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (parent_id) REFERENCES instances(instance_id) ON DELETE SET NULL
+        )",
+    )
+    .execute(&mut **conn)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO instances_new \
+            (instance_id, instance_name, product_name, parent_id, created_at, updated_at) \
+         SELECT instance_id, instance_name, product_name, parent_id, created_at, updated_at \
+         FROM instances",
+    )
+    .execute(&mut **conn)
+    .await?;
+
+    sqlx::query("DROP TABLE instances")
+        .execute(&mut **conn)
+        .await?;
+    sqlx::query("ALTER TABLE instances_new RENAME TO instances")
+        .execute(&mut **conn)
+        .await?;
+
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(&mut **conn)
+        .await?;
+
+    info!("Migration v5: complete (properties column dropped)");
+    Ok(())
+}
+
 // ============================================================================
 // Legacy Ad-hoc Migrations (kept for backward compatibility)
 // ============================================================================
@@ -407,6 +584,9 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
         .execute(&pool)
         .await?;
     sqlx::query(ACTION_ROUTING_TABLE).execute(&pool).await?;
+    sqlx::query(INSTANCE_PROPERTIES_TABLE)
+        .execute(&pool)
+        .await?;
 
     // === Rule tables (rules engine) ===
     sqlx::query(RULE_CHAINS_TABLE).execute(&pool).await?;

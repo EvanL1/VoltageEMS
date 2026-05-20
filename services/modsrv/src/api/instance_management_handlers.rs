@@ -150,31 +150,75 @@ pub async fn update_instance(
         }
     }
 
-    // Handle properties update
+    // Handle properties update.
+    //
+    // Semantics: this endpoint replaces the property map atomically — keys
+    // omitted from `dto.properties` are removed. (For single-point edits use
+    // PUT /api/instances/{id}/properties/{property_id}, which does not touch
+    // sibling properties.)
     if let Some(ref properties) = dto.properties {
-        let properties_json = match serde_json::to_string(properties) {
-            Ok(j) => j,
-            Err(e) => {
-                return Err(ModSrvError::InternalError(format!(
-                    "Failed to serialize properties: {}",
-                    e
-                )));
-            },
-        };
+        let product_name: String =
+            match sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
+                .bind(id as i64)
+                .fetch_one(&state.instance_manager.pool)
+                .await
+            {
+                Ok(name) => name,
+                Err(_) => return Err(ModSrvError::InstanceNotFound(id.to_string())),
+            };
 
-        // Update properties in SQLite
-        let result = sqlx::query(
-            r#"UPDATE instances SET properties = ?, updated_at = CURRENT_TIMESTAMP WHERE instance_id = ?"#,
-        )
-        .bind(&properties_json)
-        .bind(id as i32)
-        .execute(&state.instance_manager.pool)
-        .await;
+        let mut tx = state
+            .instance_manager
+            .pool
+            .begin()
+            .await
+            .map_err(|e| ModSrvError::DatabaseError(format!("Failed to begin tx: {}", e)))?;
 
-        if let Err(e) = result {
-            error!("Failed to update properties for instance {}: {}", id, e);
-            return Err(ModSrvError::InternalError(format!(
+        // Wipe existing rows so omitted keys disappear (replace, not merge).
+        if let Err(e) = sqlx::query("DELETE FROM instance_properties WHERE instance_id = ?")
+            .bind(id as i64)
+            .execute(&mut *tx)
+            .await
+        {
+            error!("Failed to clear properties for instance {}: {}", id, e);
+            let _ = tx.rollback().await;
+            return Err(ModSrvError::DatabaseError(format!(
                 "Database update failed: {}",
+                e
+            )));
+        }
+
+        if let Err(e) = state
+            .instance_manager
+            .write_properties_tx(&mut tx, id, &product_name, properties)
+            .await
+        {
+            error!("Failed to write properties for instance {}: {}", id, e);
+            let _ = tx.rollback().await;
+            return Err(ModSrvError::InvalidData(format!(
+                "Failed to write properties: {}",
+                e
+            )));
+        }
+
+        if let Err(e) =
+            sqlx::query("UPDATE instances SET updated_at = CURRENT_TIMESTAMP WHERE instance_id = ?")
+                .bind(id as i64)
+                .execute(&mut *tx)
+                .await
+        {
+            error!("Failed to bump updated_at for instance {}: {}", id, e);
+            let _ = tx.rollback().await;
+            return Err(ModSrvError::DatabaseError(format!(
+                "Database update failed: {}",
+                e
+            )));
+        }
+
+        if let Err(e) = tx.commit().await {
+            error!("Failed to commit properties tx for instance {}: {}", id, e);
+            return Err(ModSrvError::DatabaseError(format!(
+                "Database commit failed: {}",
                 e
             )));
         }

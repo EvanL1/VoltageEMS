@@ -95,7 +95,7 @@ pub use common::SYNC_METADATA_TABLE;
 /// monarch and modsrv reads these constants; the Schema-macro variants that
 /// previously lived here drifted from the canonical SQL.)
 pub use common::test_utils::schema::{
-    ACTION_ROUTING_TABLE, INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE,
+    ACTION_ROUTING_TABLE, INSTANCE_PROPERTIES_TABLE, INSTANCES_TABLE, MEASUREMENT_ROUTING_TABLE,
 };
 
 // ============================================================================

@@ -47,6 +47,8 @@ use crate::api::single_point_handlers::{
     upsert_measurement_routing,
 };
 
+use crate::api::property_handlers::{delete_property, upsert_property};
+
 use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
 
 // OpenAPI documentation - only compiled when swagger-ui feature is enabled
@@ -81,6 +83,9 @@ use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_f
         crate::api::single_point_handlers::upsert_action_routing,
         crate::api::single_point_handlers::delete_action_routing,
         crate::api::single_point_handlers::toggle_action_routing,
+        // Single property handlers
+        crate::api::property_handlers::upsert_property,
+        crate::api::property_handlers::delete_property,
         // Global routing handlers (unified database)
         crate::api::global_routing_handlers::get_all_routing_handler,
         crate::api::global_routing_handlers::delete_all_routing_handler,
@@ -194,6 +199,12 @@ pub fn create_routes(state: Arc<AppState>) -> Router {
             axum::routing::put(upsert_action_routing)
                 .delete(delete_action_routing)
                 .patch(toggle_action_routing),
+        )
+
+        // Single property value endpoints (instance_properties table)
+        .route(
+            "/api/instances/{id}/properties/{property_id}",
+            axum::routing::put(upsert_property).delete(delete_property),
         )
 
         // Global routing management endpoints (new unified database APIs)

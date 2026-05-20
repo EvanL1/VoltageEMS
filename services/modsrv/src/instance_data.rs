@@ -31,14 +31,15 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Load instance points with routing configuration (runtime merge)
     ///
     /// Returns (measurements, actions, properties). Measurements/actions carry routing;
-    /// properties carry the per-instance value from `instances.properties` (no routing —
-    /// they are static metadata, not data-flow points).
+    /// properties carry per-instance values from the `instance_properties` table
+    /// (no routing — properties are static metadata, not data-flow points).
     ///
     /// Query plan:
-    /// 1. Fetch `product_name` + `properties` JSON from `instances` (single row)
+    /// 1. Fetch `product_name` from `instances`
     /// 2. Look up Product template (compile-time constants)
     /// 3. Query routing data from `measurement_routing` / `action_routing` (parallel)
-    /// 4. Merge in application layer
+    /// 4. Query property values from `instance_properties`
+    /// 5. Merge in application layer
     pub async fn load_instance_points(
         &self,
         instance_id: u32,
@@ -51,9 +52,8 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             InstanceActionPoint, InstanceMeasurementPoint, InstancePropertyPoint, PointRouting,
         };
 
-        // 1. Get product_name + per-instance properties JSON in one query
-        let (product_name, properties_json): (String, Option<String>) =
-            sqlx::query_as("SELECT product_name, properties FROM instances WHERE instance_id = ?")
+        let product_name: String =
+            sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
                 .bind(instance_id as i64)
                 .fetch_one(&self.pool)
                 .await
@@ -64,18 +64,28 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             .get_product(&product_name)
             .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
 
-        // Parse instance properties JSON (key = property name, value = JSON value).
-        // Missing/empty → empty map (no values configured yet).
-        let instance_props: HashMap<String, serde_json::Value> = match properties_json {
-            Some(s) if !s.trim().is_empty() => serde_json::from_str(&s).map_err(|e| {
+        // Property values are keyed by property_id in the dedicated table.
+        // Build property_id -> JSON value so the template-driven merge below
+        // can look up directly (no name lookup needed).
+        let prop_rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT property_id, value_json FROM instance_properties WHERE instance_id = ?",
+        )
+        .bind(instance_id as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut instance_props_by_id: HashMap<i32, serde_json::Value> =
+            HashMap::with_capacity(prop_rows.len());
+        for (property_id, value_json) in prop_rows {
+            let value: serde_json::Value = serde_json::from_str(&value_json).map_err(|e| {
                 anyhow!(
-                    "Invalid properties JSON for instance {}: {}",
+                    "Invalid value_json for instance {} property {}: {}",
                     instance_id,
+                    property_id,
                     e
                 )
-            })?,
-            _ => HashMap::new(),
-        };
+            })?;
+            instance_props_by_id.insert(property_id as i32, value);
+        }
 
         // 2. Query routing data from real tables (parallel)
         let m_routing_query = sqlx::query_as::<
@@ -190,7 +200,6 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             .collect();
 
         // Properties: merge product template with per-instance value (no routing).
-        let mut instance_props = instance_props;
         let properties = product
             .properties
             .iter()
@@ -199,7 +208,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 name: pt.name.clone(),
                 unit: pt.unit.clone(),
                 description: pt.description.clone(),
-                value: instance_props.remove(&pt.name),
+                value: instance_props_by_id.remove(&pt.property_id),
             })
             .collect();
 
@@ -212,25 +221,47 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
         instance_id: u32,
         data_type: Option<&str>,
     ) -> Result<serde_json::Value> {
-        // Get instance metadata (product_name, properties)
-        let instance_row: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT product_name, properties FROM instances WHERE instance_id = ?")
+        let product_name: Option<String> =
+            sqlx::query_scalar("SELECT product_name FROM instances WHERE instance_id = ?")
                 .bind(instance_id as i64)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| anyhow!("Failed to load instance {} metadata: {}", instance_id, e))?;
 
-        let Some((product_name, properties_json)) = instance_row else {
+        let Some(product_name) = product_name else {
             return Err(anyhow!("Instance {} not found", instance_id));
         };
-
-        let properties_json = properties_json.unwrap_or_else(|| "{}".to_string());
 
         // Get product from built-in definitions (compile-time constants)
         let product = self
             .product_loader
             .get_product(&product_name)
             .map_err(|e| anyhow!("Product '{}' not found: {}", product_name, e))?;
+
+        // Load property values from instance_properties table when needed.
+        // Returns a map keyed by property name so the JSON response mirrors
+        // the legacy `instances.properties` JSON shape callers expect.
+        let load_props_map = || async {
+            let rows: Vec<(i64, String)> = sqlx::query_as(
+                "SELECT property_id, value_json FROM instance_properties WHERE instance_id = ?",
+            )
+            .bind(instance_id as i64)
+            .fetch_all(&self.pool)
+            .await?;
+            let mut props = serde_json::Map::new();
+            for (property_id, value_json) in rows {
+                let Some(tpl) = product
+                    .properties
+                    .iter()
+                    .find(|p| i64::from(p.property_id) == property_id)
+                else {
+                    continue;
+                };
+                let value: serde_json::Value = serde_json::from_str(&value_json)?;
+                props.insert(tpl.name.clone(), value);
+            }
+            Ok::<_, anyhow::Error>(props)
+        };
 
         match data_type {
             Some("measurement") => {
@@ -260,19 +291,10 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                 Ok(serde_json::Value::Object(result))
             },
             Some("property") => {
-                // Return instance properties (stored as JSON in instances table)
-                let properties: serde_json::Value = serde_json::from_str(&properties_json)
-                    .map_err(|e| {
-                        anyhow!(
-                            "Invalid properties JSON for instance {}: {}",
-                            instance_id,
-                            e
-                        )
-                    })?;
-                Ok(properties)
+                let props = load_props_map().await?;
+                Ok(serde_json::Value::Object(props))
             },
             None => {
-                // Return all three: measurements, actions, properties
                 let mut m_map = serde_json::Map::new();
                 for m in &product.measurements {
                     let point = serde_json::json!({
@@ -295,14 +317,7 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                     a_map.insert(a.name.clone(), point);
                 }
 
-                let properties: serde_json::Value = serde_json::from_str(&properties_json)
-                    .map_err(|e| {
-                        anyhow!(
-                            "Invalid properties JSON for instance {}: {}",
-                            instance_id,
-                            e
-                        )
-                    })?;
+                let properties = load_props_map().await?;
 
                 Ok(serde_json::json!({
                     "measurements": m_map,
