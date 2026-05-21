@@ -783,8 +783,11 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Connect to database (will create if not exists)
-    let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_path.display()))
+    // Connect to database with shared options (foreign_keys=ON, WAL, create_if_missing)
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(common::bootstrap_database::sqlite_connect_options(
+            db_path.to_str().unwrap_or_default(),
+        ))
         .await
         .with_context(|| "Failed to connect to database")?;
 

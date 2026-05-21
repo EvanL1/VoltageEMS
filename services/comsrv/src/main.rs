@@ -79,8 +79,9 @@ async fn main() -> VoltageResult<()> {
     let config_manager = Arc::new(ConfigManager::load().await?);
     let app_config = config_manager.config();
 
-    // Create SQLite pool for API endpoints
-    let sqlite_pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db_path))
+    // Create SQLite pool for API endpoints (foreign_keys=ON via shared helper)
+    let sqlite_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(common::bootstrap_database::sqlite_connect_options(&db_path))
         .await
         .map_err(|e| ComSrvError::ConfigError(format!("Failed to create SQLite pool: {}", e)))?;
 

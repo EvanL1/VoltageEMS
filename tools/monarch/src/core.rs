@@ -56,7 +56,10 @@ impl MonarchCore {
             std::fs::create_dir_all(parent).context("Failed to create database directory")?;
         }
 
-        let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_file.display()))
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                db_file.to_str().unwrap_or_default(),
+            ))
             .await
             .context("Failed to connect to database in read-write mode")?;
 

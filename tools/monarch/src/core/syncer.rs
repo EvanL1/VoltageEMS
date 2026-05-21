@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use common::validation::CsvFields;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, Transaction};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
@@ -369,7 +369,11 @@ impl ConfigSyncer {
 
         // Start transaction
         let db_file = self.db_path.join("voltage.db");
-        let pool = SqlitePool::connect(&format!("sqlite:{}", db_file.display())).await?;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                db_file.to_str().unwrap_or_default(),
+            ))
+            .await?;
         let mut tx = pool.begin().await?;
 
         // Insert global configuration
@@ -450,7 +454,10 @@ impl ConfigSyncer {
         schema::init_database(&db_file).await?;
 
         // Connect to database
-        let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_file.display()))
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                db_file.to_str().unwrap_or_default(),
+            ))
             .await
             .context("Failed to connect to comsrv database")?;
 
@@ -554,7 +561,10 @@ impl ConfigSyncer {
         schema::init_database(&db_file).await?;
 
         // Connect to database
-        let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", db_file.display()))
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(common::bootstrap_database::sqlite_connect_options(
+                db_file.to_str().unwrap_or_default(),
+            ))
             .await
             .context("Failed to connect to modsrv database")?;
 
@@ -1399,11 +1409,11 @@ mod tests {
 
     /// Create test environment with in-memory SQLite and temp directory
     #[allow(dead_code)] // May be used by future tests
-    async fn setup_test_env() -> (SqlitePool, TempDir, PathBuf) {
+    async fn setup_test_env() -> (sqlx::SqlitePool, TempDir, PathBuf) {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("test.db");
 
-        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
             .await
             .expect("Failed to create SQLite pool");
 

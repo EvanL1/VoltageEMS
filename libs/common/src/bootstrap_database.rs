@@ -5,7 +5,9 @@
 
 use errors::{VoltageError, VoltageResult};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -38,7 +40,27 @@ impl Default for DatabaseConfig {
     }
 }
 
-/// Setup SQLite database connection pool
+/// Build `SqliteConnectOptions` for a VoltageEMS database path.
+///
+/// All pools across the system should be constructed with this so that
+/// connection-scoped pragmas (`foreign_keys=ON`, `journal_mode=WAL`,
+/// `create_if_missing=true`) are applied uniformly. SQLite's
+/// `PRAGMA foreign_keys` is per-connection, so without this every newly
+/// opened connection in a pool would default to FK enforcement OFF and
+/// silently ignore declared constraints.
+pub fn sqlite_connect_options(db_path: &str) -> SqliteConnectOptions {
+    // `from_str` parses the URL form; we then layer concrete options on top.
+    // Falls back to a path-based builder if URL parsing fails (it shouldn't,
+    // but keep the helper total).
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}?mode=rwc", db_path))
+        .unwrap_or_else(|_| SqliteConnectOptions::new().filename(db_path));
+    opts.create_if_missing(true)
+        .foreign_keys(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+}
+
+/// Setup SQLite database connection pool with FK enforcement enabled.
 pub async fn setup_sqlite_pool(db_path: &str) -> VoltageResult<SqlitePool> {
     // Check if database file exists
     if !Path::new(db_path).exists() {
@@ -51,29 +73,34 @@ pub async fn setup_sqlite_pool(db_path: &str) -> VoltageResult<SqlitePool> {
 
     info!("SQLite: {}", db_path);
 
-    // Create connection pool with configuration
-    let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path))
+    let pool = SqlitePoolOptions::new()
+        .connect_with(sqlite_connect_options(db_path))
         .await
         .map_err(|e| {
             VoltageError::Database(format!("Failed to connect to SQLite database: {}", e))
         })?;
 
-    // Test the connection
-    sqlx::query("SELECT 1")
+    // Confirm FK enforcement is live for this pool — if a future sqlx upgrade
+    // ever changes default ordering, fail loudly instead of silently allowing
+    // orphans to slip in.
+    let fk_on: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
         .fetch_one(&pool)
         .await
-        .map_err(|e| VoltageError::Database(format!("Failed to test SQLite connection: {}", e)))?;
+        .map_err(|e| {
+            VoltageError::Database(format!("Failed to verify PRAGMA foreign_keys: {}", e))
+        })?;
+    if fk_on != 1 {
+        return Err(VoltageError::Database(
+            "PRAGMA foreign_keys did not engage on new pool".to_string(),
+        ));
+    }
 
-    debug!("SQLite pool ready");
+    debug!("SQLite pool ready (foreign_keys=ON, journal_mode=WAL)");
     Ok(pool)
 }
 
-/// Setup SQLite with custom configuration
+/// Setup SQLite with custom configuration (still applies FK + WAL via shared options).
 pub async fn setup_sqlite_with_config(config: &DatabaseConfig) -> VoltageResult<SqlitePool> {
-    let pool_options = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(config.sqlite_max_connections)
-        .acquire_timeout(std::time::Duration::from_secs(config.connection_timeout));
-
     // Check if database file exists
     if !Path::new(&config.sqlite_path).exists() {
         error!("DB not found: {}", config.sqlite_path);
@@ -85,8 +112,10 @@ pub async fn setup_sqlite_with_config(config: &DatabaseConfig) -> VoltageResult<
 
     info!("SQLite: {}", config.sqlite_path);
 
-    let pool = pool_options
-        .connect(&format!("sqlite:{}?mode=rwc", config.sqlite_path))
+    let pool = SqlitePoolOptions::new()
+        .max_connections(config.sqlite_max_connections)
+        .acquire_timeout(std::time::Duration::from_secs(config.connection_timeout))
+        .connect_with(sqlite_connect_options(&config.sqlite_path))
         .await
         .map_err(|e| VoltageError::Database(format!("Failed to connect to SQLite: {}", e)))?;
 

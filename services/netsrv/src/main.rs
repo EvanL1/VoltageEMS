@@ -60,7 +60,9 @@ async fn main() -> anyhow::Result<()> {
     }
     let sqlite = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&format!("sqlite:{}?mode=rwc", env.db_path))
+        .connect_with(common::bootstrap_database::sqlite_connect_options(
+            &env.db_path,
+        ))
         .await
         .map_err(|e| anyhow::anyhow!("SQLite connect failed: {} path={}", e, env.db_path))?;
 

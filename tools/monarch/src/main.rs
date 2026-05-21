@@ -884,14 +884,15 @@ async fn export_command(
 /// Run database consistency checks (duplicates, references)
 /// Returns true if any errors were found
 async fn run_db_checks(db_path: &Path, json: bool) -> Result<bool> {
-    use sqlx::SqlitePool;
-
     if !json {
         println!("{}", "Checking database consistency...".bright_cyan());
     }
 
     let db_file = db_path.join("voltage.db");
-    let pool = SqlitePool::connect(&format!("sqlite:{}", db_file.display()))
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(common::bootstrap_database::sqlite_connect_options(
+            db_file.to_str().unwrap_or_default(),
+        ))
         .await
         .context("Failed to connect to database")?;
 
