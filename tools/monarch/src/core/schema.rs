@@ -48,33 +48,40 @@ const JSON_POINT_MAPPINGS_TABLE: &str = r#"
 // Rules DDL (defined locally since rules are managed by monarch)
 // ============================================================================
 
-/// Rules table SQL
+/// Rules table SQL — mirrors `libs/common::test_utils::schema::RULE_CHAINS_TABLE`.
+///
+/// `id` uses AUTOINCREMENT so deleted rowids are never reused, which prevents
+/// `rule_history` rows from silently being re-bound to a new rule with the
+/// same id. All booleans are stored as INTEGER 1/0 for cross-version SQLite
+/// compatibility; timestamps as TEXT (CURRENT_TIMESTAMP) for consistency
+/// with the rest of the schema.
 const RULE_CHAINS_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS rules (
-        id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         description TEXT,
-        enabled BOOLEAN DEFAULT TRUE,
+        enabled INTEGER DEFAULT 1,
         priority INTEGER DEFAULT 0,
         cooldown_ms INTEGER DEFAULT 0,
         trigger_config TEXT,
         nodes_json TEXT NOT NULL,
         flow_json TEXT,
         format TEXT DEFAULT 'vue-flow',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
 "#;
 
-/// Rule history table SQL
+/// Rule history table SQL — `rule_id` cascades on rule delete to prevent
+/// orphaned history rows (which would silently rebind under AUTOINCREMENT
+/// ID reuse — see v6 migration notes).
 const RULE_HISTORY_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS rule_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rule_id INTEGER NOT NULL,
-        triggered_at TIMESTAMP NOT NULL,
+        rule_id INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+        triggered_at TEXT NOT NULL,
         execution_result TEXT,
-        error TEXT,
-        FOREIGN KEY (rule_id) REFERENCES rules(id)
+        error TEXT
     )
 "#;
 
@@ -91,7 +98,7 @@ const RULE_HISTORY_TABLE: &str = r#"
 //   3. Add `if current < N { migrate_vN(&mut conn).await?; }` in run_migrations()
 
 /// Current schema structure version — increment when adding migrations
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 /// Run pending schema migrations based on `PRAGMA user_version`
 ///
@@ -113,6 +120,7 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     let mut conn = pool.acquire().await?;
 
     if current < 1 {
+        migrate_v0(&mut conn).await.context("Migration v0 failed")?;
         migrate_v1(&mut conn).await.context("Migration v1 failed")?;
     }
 
@@ -132,11 +140,46 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         migrate_v5(&mut conn).await.context("Migration v5 failed")?;
     }
 
+    if current < 6 {
+        migrate_v6(&mut conn).await.context("Migration v6 failed")?;
+    }
+
     sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
         .execute(&mut *conn)
         .await?;
 
     info!("Schema migration complete: v{SCHEMA_VERSION}");
+    Ok(())
+}
+
+/// v0: Legacy ad-hoc rules-table rebuild (originally `migrate_rules_table_if_needed`).
+///
+/// Old prototype shape used `id TEXT` on the `rules` table. If we encounter
+/// such a table on a freshly-imported DB, drop both `rules` and `rule_history`
+/// so the post-migration `CREATE TABLE IF NOT EXISTS` recreates them with
+/// the correct schema. Gated by `current < 1` in run_migrations so it only
+/// runs on databases that pre-date the user_version system.
+async fn migrate_v0(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    let row = sqlx::query("SELECT type FROM pragma_table_info('rules') WHERE name = 'id'")
+        .fetch_optional(&mut **conn)
+        .await?;
+
+    let Some(row) = row else {
+        return Ok(()); // no rules table yet, nothing to do
+    };
+
+    let col_type: String = row.try_get("type")?;
+    if !col_type.eq_ignore_ascii_case("TEXT") {
+        return Ok(()); // already INTEGER-keyed, skip
+    }
+
+    warn!("Migration v0: legacy rules table (id TEXT) detected — dropping for rebuild");
+    sqlx::query("DROP TABLE IF EXISTS rule_history")
+        .execute(&mut **conn)
+        .await?;
+    sqlx::query("DROP TABLE IF EXISTS rules")
+        .execute(&mut **conn)
+        .await?;
     Ok(())
 }
 
@@ -338,6 +381,18 @@ async fn migrate_v4(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
     info!("Migration v5: instance properties JSON column -> instance_properties table");
 
+    // Wrap the entire migration in a transaction so a mid-flight crash leaves
+    // no partial work behind. PRAGMA foreign_keys must be set outside any
+    // transaction (SQLite no-ops it inside), so we toggle around the BEGIN.
+    sqlx::query("PRAGMA foreign_keys=OFF")
+        .execute(&mut **conn)
+        .await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut **conn).await?;
+
+    // From here on, any `?` early-return propagates an error AFTER triggering
+    // implicit rollback (sqlx wraps the connection state). We explicitly
+    // COMMIT at the end if everything succeeded.
+
     // 1) Create the new table (idempotent — `init_database` also creates it
     //    on fresh installs, but a partial v4→v5 upgrade hits this first).
     sqlx::query(INSTANCE_PROPERTIES_TABLE)
@@ -451,10 +506,6 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     // 5) Rebuild `instances` without the `properties` column. SQLite < 3.35
     //    cannot DROP COLUMN, and even on newer versions table rebuild keeps
     //    behaviour consistent across deployments.
-    sqlx::query("PRAGMA foreign_keys=OFF")
-        .execute(&mut **conn)
-        .await?;
-
     sqlx::query(
         "CREATE TABLE instances_new (
             instance_id INTEGER NOT NULL PRIMARY KEY,
@@ -485,6 +536,8 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
         .execute(&mut **conn)
         .await?;
 
+    // Commit atomic block, then re-enable FK enforcement for this connection.
+    sqlx::query("COMMIT").execute(&mut **conn).await?;
     sqlx::query("PRAGMA foreign_keys=ON")
         .execute(&mut **conn)
         .await?;
@@ -493,38 +546,223 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     Ok(())
 }
 
-// ============================================================================
-// Legacy Ad-hoc Migrations (kept for backward compatibility)
-// ============================================================================
-
-/// Migrate legacy rules table if needed
+/// v6: Structural integrity pass.
 ///
-/// Checks if the rules table uses the old schema (id TEXT) and rebuilds it
-/// with the correct schema (id INTEGER). This handles upgrades from older versions.
-async fn migrate_rules_table_if_needed(pool: &SqlitePool) -> Result<()> {
-    // Check if rules table exists and get id column type
-    let row = sqlx::query("SELECT type FROM pragma_table_info('rules') WHERE name = 'id'")
-        .fetch_optional(pool)
+/// Rolls up several long-overdue fixes in one shot:
+/// - `rules.id` gains AUTOINCREMENT so deleted ids are never reused
+/// - `rule_history.rule_id` gains `ON DELETE CASCADE` (no more orphan history)
+/// - `channel_templates.source_channel_id` gains FK to channels + an index
+/// - Drops 2 unused indexes on `alert_rule` (description and created_at —
+///   the former never matched equality, the latter rarely queried)
+///
+/// All work runs inside a single transaction with FK off; if anything fails
+/// we leave the DB untouched.
+async fn migrate_v6(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()> {
+    info!("Migration v6: structural integrity pass");
+
+    sqlx::query("PRAGMA foreign_keys=OFF")
+        .execute(&mut **conn)
         .await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut **conn).await?;
 
-    if let Some(row) = row {
-        let col_type: String = row.try_get("type")?;
-        // Optimization: eq_ignore_ascii_case avoids to_uppercase() allocation
-        if col_type.eq_ignore_ascii_case("TEXT") {
-            warn!("Detected legacy rules table (id TEXT), rebuilding with INTEGER schema...");
+    // ── 1. Rebuild `rules` with AUTOINCREMENT ────────────────────────────
+    let rules_has_autoinc: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM sqlite_master \
+         WHERE type='table' AND name='rules' AND sql LIKE '%AUTOINCREMENT%'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
 
-            // Drop old tables (will be recreated with correct schema)
-            sqlx::query("DROP TABLE IF EXISTS rule_history")
-                .execute(pool)
-                .await?;
-            sqlx::query("DROP TABLE IF EXISTS rules")
-                .execute(pool)
-                .await?;
-
-            info!("Legacy rules table dropped, will be recreated with correct schema");
-        }
+    if !rules_has_autoinc {
+        sqlx::query(
+            "CREATE TABLE rules_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                enabled INTEGER DEFAULT 1,
+                priority INTEGER DEFAULT 0,
+                cooldown_ms INTEGER DEFAULT 0,
+                trigger_config TEXT,
+                nodes_json TEXT NOT NULL,
+                flow_json TEXT,
+                format TEXT DEFAULT 'vue-flow',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut **conn)
+        .await?;
+        sqlx::query(
+            "INSERT INTO rules_new \
+                (id, name, description, enabled, priority, cooldown_ms, trigger_config, \
+                 nodes_json, flow_json, format, created_at, updated_at) \
+             SELECT id, name, description, enabled, priority, cooldown_ms, trigger_config, \
+                    nodes_json, flow_json, format, created_at, updated_at \
+             FROM rules",
+        )
+        .execute(&mut **conn)
+        .await?;
+        // Seed sqlite_sequence so AUTOINCREMENT continues past the highest id.
+        sqlx::query(
+            "INSERT OR REPLACE INTO sqlite_sequence (name, seq) \
+             SELECT 'rules_new', COALESCE(MAX(id), 0) FROM rules_new",
+        )
+        .execute(&mut **conn)
+        .await?;
+        sqlx::query("DROP TABLE rules").execute(&mut **conn).await?;
+        sqlx::query("ALTER TABLE rules_new RENAME TO rules")
+            .execute(&mut **conn)
+            .await?;
+        // Rename the sequence row too so it matches the renamed table.
+        sqlx::query("UPDATE sqlite_sequence SET name='rules' WHERE name='rules_new'")
+            .execute(&mut **conn)
+            .await?;
+        info!("Migration v6: rules table rebuilt with AUTOINCREMENT");
     }
 
+    // ── 2. Rebuild `rule_history` with ON DELETE CASCADE ─────────────────
+    let history_has_cascade: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM sqlite_master \
+         WHERE type='table' AND name='rule_history' AND sql LIKE '%ON DELETE CASCADE%'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
+    let history_exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='rule_history'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
+    if history_exists && !history_has_cascade {
+        // Clean orphaned history rows first — they would block the FK CHECK
+        // once enforcement is enabled at the pool level (P1-1 follow-up).
+        let orphans: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM rule_history \
+             WHERE rule_id NOT IN (SELECT id FROM rules)",
+        )
+        .fetch_one(&mut **conn)
+        .await?;
+        if orphans > 0 {
+            warn!(
+                "Migration v6: deleting {} orphaned rule_history rows (no matching rule)",
+                orphans
+            );
+            sqlx::query("DELETE FROM rule_history WHERE rule_id NOT IN (SELECT id FROM rules)")
+                .execute(&mut **conn)
+                .await?;
+        }
+
+        sqlx::query(
+            "CREATE TABLE rule_history_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
+                triggered_at TEXT NOT NULL,
+                execution_result TEXT,
+                error TEXT
+            )",
+        )
+        .execute(&mut **conn)
+        .await?;
+        sqlx::query(
+            "INSERT INTO rule_history_new (id, rule_id, triggered_at, execution_result, error) \
+             SELECT id, rule_id, triggered_at, execution_result, error FROM rule_history",
+        )
+        .execute(&mut **conn)
+        .await?;
+        sqlx::query("DROP TABLE rule_history")
+            .execute(&mut **conn)
+            .await?;
+        sqlx::query("ALTER TABLE rule_history_new RENAME TO rule_history")
+            .execute(&mut **conn)
+            .await?;
+        info!("Migration v6: rule_history rebuilt with ON DELETE CASCADE");
+    }
+
+    // ── 3. Rebuild `channel_templates` with FK + index ───────────────────
+    let templates_has_fk: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM sqlite_master \
+         WHERE type='table' AND name='channel_templates' \
+           AND sql LIKE '%REFERENCES channels%'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
+    let templates_exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM sqlite_master \
+         WHERE type='table' AND name='channel_templates'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
+    if templates_exists && !templates_has_fk {
+        // Null out any source_channel_id that no longer points at a real
+        // channel — once FK is declared, those rows would fail constraint.
+        sqlx::query(
+            "UPDATE channel_templates SET source_channel_id = NULL \
+             WHERE source_channel_id IS NOT NULL \
+               AND source_channel_id NOT IN (SELECT channel_id FROM channels)",
+        )
+        .execute(&mut **conn)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE channel_templates_new (
+                template_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                name              TEXT NOT NULL UNIQUE,
+                description       TEXT,
+                protocol          TEXT NOT NULL,
+                points_snapshot   TEXT NOT NULL,
+                mappings_snapshot TEXT NOT NULL,
+                source_channel_id INTEGER REFERENCES channels(channel_id) ON DELETE SET NULL,
+                created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut **conn)
+        .await?;
+        sqlx::query(
+            "INSERT INTO channel_templates_new \
+                (template_id, name, description, protocol, points_snapshot, \
+                 mappings_snapshot, source_channel_id, created_at, updated_at) \
+             SELECT template_id, name, description, protocol, points_snapshot, \
+                    mappings_snapshot, source_channel_id, created_at, updated_at \
+             FROM channel_templates",
+        )
+        .execute(&mut **conn)
+        .await?;
+        sqlx::query("DROP TABLE channel_templates")
+            .execute(&mut **conn)
+            .await?;
+        sqlx::query("ALTER TABLE channel_templates_new RENAME TO channel_templates")
+            .execute(&mut **conn)
+            .await?;
+        info!("Migration v6: channel_templates rebuilt with source_channel_id FK");
+    }
+
+    // Always (re)create the index — cheap if it already exists.
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_channel_templates_source \
+         ON channel_templates(source_channel_id)",
+    )
+    .execute(&mut **conn)
+    .await?;
+
+    // ── 4. Drop unused alert_rule indexes ────────────────────────────────
+    sqlx::query("DROP INDEX IF EXISTS idx_alert_rule_description")
+        .execute(&mut **conn)
+        .await?;
+    sqlx::query("DROP INDEX IF EXISTS idx_alert_rule_created_at")
+        .execute(&mut **conn)
+        .await?;
+
+    // Commit the whole block, then restore FK enforcement.
+    sqlx::query("COMMIT").execute(&mut **conn).await?;
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(&mut **conn)
+        .await?;
+
+    info!("Migration v6: complete");
     Ok(())
 }
 
@@ -553,11 +791,10 @@ pub async fn init_database(db_path: impl AsRef<Path>) -> Result<()> {
     // Set file permissions for Docker compatibility
     file_utils::set_database_permissions(db_path)?;
 
-    // Run versioned schema migrations (PRAGMA user_version based)
+    // Run versioned schema migrations (PRAGMA user_version based).
+    // The legacy "id TEXT" rules-table rebuild is now `migrate_v0`, gated on
+    // `current < 1` — there is no separate post-migration step any more.
     run_migrations(&pool).await?;
-
-    // Run legacy ad-hoc migrations (detection-based, kept for backward compatibility)
-    migrate_rules_table_if_needed(&pool).await?;
 
     // === Shared tables ===
     sqlx::query(SERVICE_CONFIG_TABLE).execute(&pool).await?;
@@ -622,6 +859,13 @@ async fn create_indexes(pool: &SqlitePool) -> Result<()> {
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_adjustment_points_channel ON adjustment_points(channel_id)",
+    )
+    .execute(pool)
+    .await?;
+
+    // Channel templates index for source_channel_id lookups (added in v6)
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_channel_templates_source ON channel_templates(source_channel_id)",
     )
     .execute(pool)
     .await?;

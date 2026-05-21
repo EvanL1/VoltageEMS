@@ -126,11 +126,15 @@ pub const CHANNEL_TEMPLATES_TABLE: &str = r#"
         protocol          TEXT NOT NULL,
         points_snapshot   TEXT NOT NULL,
         mappings_snapshot TEXT NOT NULL,
-        source_channel_id INTEGER,
+        source_channel_id INTEGER REFERENCES channels(channel_id) ON DELETE SET NULL,
         created_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
 "#;
+
+/// Index on channel_templates.source_channel_id — accelerates lookups by source
+/// channel and lets `ON DELETE SET NULL` cascade cheaply.
+pub const CHANNEL_TEMPLATES_SOURCE_INDEX: &str = "CREATE INDEX IF NOT EXISTS idx_channel_templates_source ON channel_templates(source_channel_id)";
 
 // ============================================================================
 // Modsrv Table DDL (matches modsrv::config schemas)
@@ -144,7 +148,6 @@ pub const INSTANCES_TABLE: &str = r#"
         instance_name TEXT NOT NULL UNIQUE,
         product_name TEXT NOT NULL,
         parent_id INTEGER,
-        properties TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (parent_id) REFERENCES instances(instance_id) ON DELETE SET NULL
@@ -211,10 +214,14 @@ pub const INSTANCE_PROPERTIES_TABLE: &str = r#"
 // Rules Table DDL
 // ============================================================================
 
-/// Rule chains table DDL (Vue Flow format)
+/// Rule chains table DDL (Vue Flow format).
+///
+/// `id` uses AUTOINCREMENT to prevent SQLite from reusing rowids of deleted
+/// rules — otherwise rule_history rows referencing a deleted rule could be
+/// silently re-bound to a new rule with the same id.
 pub const RULE_CHAINS_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS rules (
-        id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         description TEXT,
         enabled INTEGER DEFAULT 1,
@@ -229,11 +236,12 @@ pub const RULE_CHAINS_TABLE: &str = r#"
     )
 "#;
 
-/// Rule history table DDL
+/// Rule history table DDL — `rule_id` cascades so deleting a rule purges its
+/// historical execution records (no orphaned history rows).
 pub const RULE_HISTORY_TABLE: &str = r#"
     CREATE TABLE IF NOT EXISTS rule_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rule_id INTEGER NOT NULL REFERENCES rules(id),
+        rule_id INTEGER NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
         triggered_at TEXT NOT NULL,
         execution_result TEXT,
         error TEXT
@@ -268,6 +276,9 @@ pub async fn init_comsrv_schema(pool: &SqlitePool) -> Result<()> {
 
     // Channel templates table
     sqlx::query(CHANNEL_TEMPLATES_TABLE).execute(pool).await?;
+    sqlx::query(CHANNEL_TEMPLATES_SOURCE_INDEX)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

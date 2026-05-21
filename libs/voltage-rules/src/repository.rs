@@ -12,7 +12,7 @@ use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 pub async fn list_rules(pool: &SqlitePool) -> Result<Vec<Value>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms
+        SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms, trigger_config
         FROM rules
         ORDER BY priority DESC, id ASC
         "#,
@@ -46,7 +46,7 @@ pub async fn list_rules_paginated(
     // Paged rows
     let rows = sqlx::query(
         r#"
-        SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms
+        SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms, trigger_config
         FROM rules
         ORDER BY priority DESC, id ASC
         LIMIT ? OFFSET ?
@@ -69,7 +69,7 @@ pub async fn list_rules_paginated(
 pub async fn get_rule(pool: &SqlitePool, id: i64) -> Result<Value> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms
+        SELECT id, name, description, nodes_json, flow_json, format, enabled, priority, cooldown_ms, trigger_config
         FROM rules
         WHERE id = ?
         "#,
@@ -271,6 +271,7 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
     let enabled: i64 = row.try_get("enabled")?;
     let priority: i64 = row.try_get("priority")?;
     let cooldown_ms: i64 = row.try_get("cooldown_ms")?;
+    let trigger_config_str: Option<String> = row.try_get("trigger_config")?;
 
     // Parse compact flow (for execution info)
     let flow: Value = serde_json::from_str(&nodes_json_str)
@@ -283,6 +284,14 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
         .transpose()
         .map_err(|e| RuleError::SerializationError(format!("flow_json: {}", e)))?;
 
+    // Parse trigger_config JSON column into an object so the frontend can
+    // edit it directly without a second decode step.
+    let trigger_config: Option<Value> = trigger_config_str
+        .as_ref()
+        .map(|s| serde_json::from_str(s))
+        .transpose()
+        .map_err(|e| RuleError::SerializationError(format!("trigger_config: {}", e)))?;
+
     Ok(serde_json::json!({
         "id": id,
         "name": name,
@@ -292,7 +301,8 @@ fn hydrate_rule_json(row: SqliteRow) -> Result<Value> {
         "priority": priority,
         "cooldown_ms": cooldown_ms,
         "flow": flow,
-        "flow_json": flow_json
+        "flow_json": flow_json,
+        "trigger_config": trigger_config
     }))
 }
 
