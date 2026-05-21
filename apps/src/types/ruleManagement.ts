@@ -3,6 +3,27 @@
 // 操作符类型
 export type Operator = '>' | '>=' | '<' | '<=' | '=' | 'gt' | 'gte' | 'lt' | 'lte' | 'eq'
 
+// Trigger config — mirrors backend TriggerConfig enum (serde snake_case tag)
+export interface TriggerConfigInterval {
+  type: 'interval'
+  interval_ms: number
+}
+
+export interface PointRef {
+  instance: number
+  point_type: 'measurement' | 'action'
+  point: number
+}
+
+export interface TriggerConfigOnChange {
+  type: 'on_change'
+  point_refs: PointRef[]
+  time_deadband_ms: number | null
+  value_deadband: null
+}
+
+export type TriggerConfig = TriggerConfigInterval | TriggerConfigOnChange
+
 // 规则表单模型类型
 export interface RuleFormModel {
   rule_name: string
@@ -15,6 +36,7 @@ export interface RuleFormModel {
   value: number | null
   description?: string
   enabled: boolean
+  trigger_config?: TriggerConfig
 }
 
 // 规则信息类型
@@ -33,6 +55,7 @@ export interface RuleInfo {
   description?: string
   created_at: number // Unix 时间戳（秒）
   updated_at?: number // Unix 时间戳（秒）
+  trigger_config?: string | null // stored as JSON string in DB
 }
 
 // 对话框暴露类型

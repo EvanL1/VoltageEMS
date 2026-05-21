@@ -21,7 +21,9 @@ use tracing::{debug, error, info, warn};
 use utoipa::OpenApi;
 use voltage_calc::StateStore;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rules::{self as rule_repository, RuleNode, RuleScheduler, RuleVariable};
+use voltage_rules::{
+    self as rule_repository, RuleNode, RuleScheduler, RuleVariable, TriggerConfig,
+};
 
 /// Rule Engine state shared across handlers
 ///
@@ -311,6 +313,16 @@ pub struct UpdateRuleRequest {
     /// Vue Flow complete data (nodes, edges, viewport)
     #[cfg_attr(feature = "swagger-ui", schema(value_type = Option<Object>))]
     pub flow_json: Option<serde_json::Value>,
+
+    /// Trigger configuration (optional). Replaces legacy `cooldown_ms`-based
+    /// interval triggers with explicit per-rule trigger semantics.
+    ///
+    /// Two variants, discriminated by `"type"`:
+    /// - `{"type":"interval","interval_ms":1000}` — periodic execution
+    /// - `{"type":"on_change","point_refs":[{"instance":1,"point_type":"measurement","point":0}],"time_deadband_ms":200,"value_deadband":null}`
+    ///   — event-sampling execution gated by time/value deadbands
+    #[cfg_attr(feature = "swagger-ui", schema(value_type = Option<Object>))]
+    pub trigger_config: Option<serde_json::Value>,
 }
 
 /// List all rules.
@@ -520,6 +532,9 @@ pub async fn update_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
         updates.push("flow_json = ?");
         updates.push("nodes_json = ?"); // Also update compact format for execution
     }
+    if req.trigger_config.is_some() {
+        updates.push("trigger_config = ?");
+    }
 
     if updates.is_empty() {
         return Err(ModSrvError::InvalidRule("No fields to update".to_string()));
@@ -556,6 +571,15 @@ pub async fn update_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
         let nodes_str = serde_json::to_string(&compact_flow)
             .map_err(|e| ModSrvError::SerializationError(e.to_string()))?;
         query = query.bind(nodes_str);
+    }
+    if let Some(trig) = &req.trigger_config {
+        // Validate by parsing into the strongly-typed enum; reject malformed
+        // configs at the API boundary rather than at scheduler load time.
+        let _: TriggerConfig = serde_json::from_value(trig.clone())
+            .map_err(|e| ModSrvError::InvalidRule(format!("Invalid trigger_config: {}", e)))?;
+        let trig_str = serde_json::to_string(trig)
+            .map_err(|e| ModSrvError::SerializationError(e.to_string()))?;
+        query = query.bind(trig_str);
     }
     query = query.bind(id);
 

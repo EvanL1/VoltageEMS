@@ -50,7 +50,10 @@ pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
 #[cfg(unix)]
 pub use logger::{RuleLogger, RuleLoggerManager, format_conditions};
 #[cfg(unix)]
-pub use scheduler::{DEFAULT_TICK_MS, RuleScheduler, SchedulerStatus, TriggerConfig};
+pub use scheduler::{
+    DEFAULT_TICK_MS, OnChangeState, PointKind, PointRef, RuleScheduler, SchedulerStatus,
+    TriggerConfig, ValueDeadband, should_trigger_onchange,
+};
 
 // Re-export rule types for convenience
 pub use types::{

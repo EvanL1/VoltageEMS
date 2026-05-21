@@ -2,8 +2,12 @@
 //!
 //! Manages rule execution based on trigger configurations:
 //! - Interval: Execute rules at fixed intervals
+//! - OnChange: Execute rules when subscribed points change beyond a deadband
 //!
-//! Current implementation uses a simple tick-based approach with 100ms granularity.
+//! Implementation uses a 100ms tick-based approach. OnChange triggers are
+//! evaluated by sampling subscribed point values once per tick (no separate
+//! event-driven IPC); change detection compares against per-rule last-trigger
+//! state guarded by both time and value deadbands.
 
 use crate::error::Result;
 use crate::executor::{RuleExecutionResult, RuleExecutor};
@@ -12,6 +16,7 @@ use crate::repository;
 use crate::types::Rule;
 use bytes::Bytes;
 use sqlx::SqlitePool;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -27,10 +32,78 @@ use voltage_rtdb_shm::{ShmNotifier, UnifiedReader, UnifiedWriter};
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
 
+/// Reference to a single point inside an instance.
+///
+/// Used by `TriggerConfig::OnChange` to identify which points a rule
+/// subscribes to. The on-disk JSON shape is:
+/// `{"instance": 1, "point_type": "measurement", "point": 0}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct PointRef {
+    pub instance: u32,
+    pub point_type: PointKind,
+    pub point: u32,
+}
+
+impl PointRef {
+    /// Stable string key used both as snapshot key and per-rule state key.
+    /// Format: `"M:{instance}:{point}"` or `"A:{instance}:{point}"`.
+    pub fn cache_key(&self) -> String {
+        let prefix = match self.point_type {
+            PointKind::Measurement => 'M',
+            PointKind::Action => 'A',
+        };
+        format!("{}:{}:{}", prefix, self.instance, self.point)
+    }
+}
+
+/// Point kind discriminator (mirrors voltage-model's PointType but kept local
+/// to avoid adding a cross-crate dependency for serialization only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointKind {
+    Measurement,
+    Action,
+}
+
+/// Value deadband — filters out value changes smaller than the threshold.
+///
+/// JSON shapes:
+/// - `{"type": "absolute", "threshold": 0.5}` — |new - last| > 0.5
+/// - `{"type": "percent",  "threshold": 1.0}` — |new - last| / |last| > 1%
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ValueDeadband {
+    Absolute { threshold: f64 },
+    Percent { threshold: f64 },
+}
+
+impl ValueDeadband {
+    /// Returns true if `(last, new)` constitutes a "real" change.
+    ///
+    /// Both inputs must be finite (callers filter NaN upstream).
+    pub fn exceeds(&self, last: f64, new: f64) -> bool {
+        let delta = (new - last).abs();
+        match self {
+            Self::Absolute { threshold } => delta > *threshold,
+            Self::Percent { threshold } => {
+                let basis = last.abs();
+                if basis == 0.0 {
+                    // Crossing zero: any non-zero new value is a change.
+                    new != 0.0
+                } else {
+                    (delta / basis) * 100.0 > *threshold
+                }
+            },
+        }
+    }
+}
+
 /// Rule trigger configuration
 ///
 /// Supports JSON deserialization for database storage:
 /// - `{"type": "interval", "interval_ms": 1000}`
+/// - `{"type": "on_change", "point_refs": [...], "time_deadband_ms": 200,
+///    "value_deadband": {"type": "absolute", "threshold": 0.5}}`
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TriggerConfig {
@@ -38,6 +111,24 @@ pub enum TriggerConfig {
     Interval {
         /// Interval in milliseconds
         interval_ms: u64,
+    },
+    /// Execute rule when any subscribed point's value changes beyond the
+    /// configured deadbands.
+    ///
+    /// Both deadbands are optional and combined with AND semantics:
+    /// - `time_deadband_ms` limits trigger frequency (defaults to 0 — every tick)
+    /// - `value_deadband` filters out micro-fluctuations (defaults to None —
+    ///   any non-equal finite value counts as a change)
+    ///
+    /// NaN handling: NaN values are skipped (not treated as a change). The
+    /// first finite value after observation triggers once (initial sample or
+    /// recovery from NaN).
+    OnChange {
+        point_refs: Vec<PointRef>,
+        #[serde(default)]
+        time_deadband_ms: Option<u64>,
+        #[serde(default)]
+        value_deadband: Option<ValueDeadband>,
     },
 }
 
@@ -48,6 +139,62 @@ impl Default for TriggerConfig {
     }
 }
 
+/// Per-rule OnChange state — updated only after a successful trigger.
+#[derive(Debug, Default, Clone)]
+pub struct OnChangeState {
+    /// Last triggered finite value, keyed by `PointRef::cache_key()`.
+    /// Missing entry → never triggered for that point (first observation
+    /// will fire).
+    pub last_value: HashMap<String, f64>,
+    /// Last trigger instant (rule-level, not per-point) for time deadband.
+    pub last_trigger: Option<Instant>,
+}
+
+/// Pure decision function — returns true if an OnChange rule should fire
+/// given the current snapshot and prior state.
+///
+/// Extracted as a free function so unit tests and benchmarks can exercise
+/// deadband logic without setting up a full RuleScheduler.
+pub fn should_trigger_onchange(
+    state: &OnChangeState,
+    point_refs: &[PointRef],
+    time_deadband_ms: Option<u64>,
+    value_deadband: Option<&ValueDeadband>,
+    snapshot: &HashMap<String, Option<f64>>,
+    now: Instant,
+) -> bool {
+    // Time deadband gate (rule-level)
+    if let (Some(td), Some(last)) = (time_deadband_ms, state.last_trigger) {
+        let elapsed = now.duration_since(last).as_millis() as u64;
+        if elapsed < td {
+            return false;
+        }
+    }
+
+    // Trigger if any subscribed point exhibits a change beyond value deadband
+    for pref in point_refs {
+        let key = pref.cache_key();
+        let new_value = match snapshot.get(&key) {
+            Some(Some(v)) if v.is_finite() => *v,
+            _ => continue, // missing or NaN → ignore this point
+        };
+
+        match state.last_value.get(&key) {
+            None => return true, // first finite observation triggers
+            Some(last) => {
+                let changed = match value_deadband {
+                    Some(vd) => vd.exceeds(*last, new_value),
+                    None => last.total_cmp(&new_value).is_ne(),
+                };
+                if changed {
+                    return true;
+                }
+            },
+        }
+    }
+    false
+}
+
 /// Runtime state for a scheduled rule
 struct ScheduledRule {
     /// Rule wrapped in Arc to avoid cloning during execution
@@ -56,6 +203,9 @@ struct ScheduledRule {
     last_execution: Option<Instant>,
     /// Track last cooldown trigger time
     last_cooldown_start: Option<Instant>,
+    /// OnChange-specific state (last seen values + last trigger time).
+    /// Default for Interval rules; populated only for OnChange rules.
+    onchange_state: OnChangeState,
 }
 
 /// Rule Scheduler - manages periodic rule execution
@@ -194,6 +344,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                     trigger,
                     last_execution: None,
                     last_cooldown_start: None,
+                    onchange_state: OnChangeState::default(),
                 }
             })
             .collect();
@@ -257,17 +408,36 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
     /// Single scheduler tick - check all rules and execute if due
     ///
     /// Snapshot execution pattern for minimal lock hold time
-    /// - Phase 1: Read lock to collect rules due for execution (~10μs)
+    /// - Phase 0: Collect OnChange subscriptions, batch-fetch values (no lock held)
+    /// - Phase 1: Read lock to filter rules due for execution (~10μs)
     /// - Phase 2: Execute rules without holding any lock (bulk of time)
-    /// - Phase 3: Write lock to update timestamps (~100μs)
-    ///
-    /// This reduces write lock hold time from 100ms+ to ~100μs.
+    /// - Phase 3: Write lock to update timestamps + onchange state (~100μs)
     async fn tick(&self) -> Result<()> {
         let now = Instant::now();
 
-        // Phase 1: Read lock to collect rules that need execution (fast)
-        // Use Arc<Rule> to avoid cloning entire rule structure (~2KB → 8B pointer copy)
-        let rules_to_execute: Vec<(usize, Arc<Rule>)> = {
+        // ── Phase 0: collect unique OnChange subscriptions ──────────────────
+        let subscriptions: HashSet<PointRef> = {
+            let rules = self.rules.read().await;
+            rules
+                .iter()
+                .filter(|s| s.rule.enabled)
+                .filter_map(|s| match &s.trigger {
+                    TriggerConfig::OnChange { point_refs, .. } => Some(point_refs.clone()),
+                    _ => None,
+                })
+                .flatten()
+                .collect()
+        };
+
+        // ── Phase 0.5: batch-fetch current values (None = missing/non-finite) ─
+        let snapshot: HashMap<String, Option<f64>> = if subscriptions.is_empty() {
+            HashMap::new()
+        } else {
+            self.fetch_point_snapshot(&subscriptions).await
+        };
+
+        // ── Phase 1: read-lock filter (sync, fast) ──────────────────────────
+        let rules_to_execute: Vec<(usize, Arc<Rule>, bool)> = {
             let rules = self.rules.read().await;
             rules
                 .iter()
@@ -277,6 +447,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                         return None;
                     }
 
+                    let is_onchange = matches!(scheduled.trigger, TriggerConfig::OnChange { .. });
                     let should_execute = match &scheduled.trigger {
                         TriggerConfig::Interval { interval_ms } => {
                             match scheduled.last_execution {
@@ -287,6 +458,18 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                                 },
                             }
                         },
+                        TriggerConfig::OnChange {
+                            point_refs,
+                            time_deadband_ms,
+                            value_deadband,
+                        } => should_trigger_onchange(
+                            &scheduled.onchange_state,
+                            point_refs,
+                            *time_deadband_ms,
+                            value_deadband.as_ref(),
+                            &snapshot,
+                            now,
+                        ),
                     };
 
                     // Check cooldown
@@ -303,7 +486,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                     };
 
                     if should_execute && cooldown_ok {
-                        Some((idx, Arc::clone(&scheduled.rule)))
+                        Some((idx, Arc::clone(&scheduled.rule), is_onchange))
                     } else {
                         None
                     }
@@ -323,26 +506,30 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             idx: usize,
             rule_id: i64,
             rule_name: String,
+            is_onchange: bool,
             result: Result<RuleExecutionResult>,
         }
 
         // Execute rules concurrently (max self.max_concurrency parallel)
         let executor = Arc::clone(&self.executor);
-        let execution_futures = rules_to_execute.into_iter().map(|(idx, rule)| {
-            let executor = Arc::clone(&executor);
-            async move {
-                debug!("Executing rule: {}", rule.id);
-                let rule_id = rule.id;
-                let rule_name = rule.name.clone();
-                let result = executor.execute(&rule).await;
-                ExecutionOutcome {
-                    idx,
-                    rule_id,
-                    rule_name,
-                    result,
+        let execution_futures = rules_to_execute
+            .into_iter()
+            .map(|(idx, rule, is_onchange)| {
+                let executor = Arc::clone(&executor);
+                async move {
+                    debug!("Executing rule: {}", rule.id);
+                    let rule_id = rule.id;
+                    let rule_name = rule.name.clone();
+                    let result = executor.execute(&rule).await;
+                    ExecutionOutcome {
+                        idx,
+                        rule_id,
+                        rule_name,
+                        is_onchange,
+                        result,
+                    }
                 }
-            }
-        });
+            });
 
         let execution_results: Vec<ExecutionOutcome> = stream::iter(execution_futures)
             .buffer_unordered(self.max_concurrency)
@@ -354,6 +541,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             idx: usize,
             rule_id: i64,
             start_cooldown: bool,
+            is_onchange: bool,
         }
         let mut updates: Vec<TimestampUpdate> = Vec::with_capacity(execution_results.len());
 
@@ -386,6 +574,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                         idx: outcome.idx,
                         rule_id: outcome.rule_id,
                         start_cooldown,
+                        is_onchange: outcome.is_onchange,
                     });
                 },
                 Err(e) => {
@@ -395,22 +584,42 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                         idx: outcome.idx,
                         rule_id: outcome.rule_id,
                         start_cooldown: false,
+                        is_onchange: outcome.is_onchange,
                     });
                 },
             }
         }
 
-        // Phase 3: Write lock to update timestamps (fast)
+        // Phase 3: Write lock to update timestamps + onchange state (fast)
         if !updates.is_empty() {
             let mut rules = self.rules.write().await;
             for update in updates {
                 if let Some(scheduled) = rules.get_mut(update.idx) {
                     // Verify rule ID matches (safety check against concurrent modifications)
-                    if scheduled.rule.id == update.rule_id {
-                        scheduled.last_execution = Some(now);
-                        if update.start_cooldown {
-                            scheduled.last_cooldown_start = Some(now);
+                    if scheduled.rule.id != update.rule_id {
+                        continue;
+                    }
+                    scheduled.last_execution = Some(now);
+                    if update.start_cooldown {
+                        scheduled.last_cooldown_start = Some(now);
+                    }
+                    // For OnChange rules, advance per-point last_value to the
+                    // values we just sampled in Phase 0. This is what gives
+                    // the deadband its memory: future ticks compare against
+                    // the value at the moment of this trigger, not the
+                    // ever-changing latest sample.
+                    if update.is_onchange
+                        && let TriggerConfig::OnChange { point_refs, .. } = &scheduled.trigger
+                    {
+                        for pref in point_refs {
+                            let key = pref.cache_key();
+                            if let Some(Some(v)) = snapshot.get(&key)
+                                && v.is_finite()
+                            {
+                                scheduled.onchange_state.last_value.insert(key, *v);
+                            }
                         }
+                        scheduled.onchange_state.last_trigger = Some(now);
                     }
                 }
             }
@@ -444,6 +653,61 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
 
         // Execute it
         self.executor.execute(&rule).await
+    }
+
+    /// Batch-fetch current values for all subscribed points.
+    ///
+    /// Groups by instance hash key (`inst:{id}:M` / `inst:{id}:A`) and does
+    /// one HMGET per group. Returns a map keyed by `PointRef::cache_key()`,
+    /// where `None` means the value is missing or non-finite (NaN, which
+    /// downstream treats as "ignore this point this tick").
+    async fn fetch_point_snapshot(
+        &self,
+        subscriptions: &HashSet<PointRef>,
+    ) -> HashMap<String, Option<f64>> {
+        let keyspace = voltage_rtdb::KeySpaceConfig::production_cached();
+        let mut grouped: HashMap<(String, PointKind), Vec<PointRef>> = HashMap::new();
+        for pref in subscriptions {
+            let hash_key = match pref.point_type {
+                PointKind::Measurement => keyspace.instance_measurement_key(pref.instance),
+                PointKind::Action => keyspace.instance_action_key(pref.instance),
+            };
+            grouped
+                .entry((hash_key, pref.point_type))
+                .or_default()
+                .push(*pref);
+        }
+
+        let mut out: HashMap<String, Option<f64>> = HashMap::with_capacity(subscriptions.len());
+        for ((hash_key, _kind), refs) in grouped {
+            let fields: Vec<String> = refs.iter().map(|p| p.point.to_string()).collect();
+            let field_refs: Vec<&str> = fields.iter().map(|s| s.as_str()).collect();
+            match self.rtdb.hash_mget(&hash_key, &field_refs).await {
+                Ok(results) => {
+                    for (i, pref) in refs.iter().enumerate() {
+                        let parsed = results
+                            .get(i)
+                            .and_then(|opt| opt.as_ref())
+                            .and_then(|bytes| {
+                                let s = String::from_utf8_lossy(bytes);
+                                s.parse::<f64>().ok()
+                            })
+                            .filter(|v| v.is_finite());
+                        out.insert(pref.cache_key(), parsed);
+                    }
+                },
+                Err(e) => {
+                    warn!(
+                        "OnChange snapshot fetch failed for {}: {} — points treated as missing",
+                        hash_key, e
+                    );
+                    for pref in &refs {
+                        out.insert(pref.cache_key(), None);
+                    }
+                },
+            }
+        }
+        out
     }
 
     /// Write rule execution result to Redis
@@ -515,8 +779,9 @@ mod tests {
 
     #[test]
     fn test_trigger_config_default() {
-        let config = TriggerConfig::default();
-        let TriggerConfig::Interval { interval_ms } = config;
+        let TriggerConfig::Interval { interval_ms } = TriggerConfig::default() else {
+            panic!("Default should be Interval");
+        };
         assert_eq!(interval_ms, 1000);
     }
 
@@ -557,6 +822,7 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 500 },
             last_execution: None,
             last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
         };
 
         // Verify trigger config
@@ -564,6 +830,7 @@ mod tests {
             TriggerConfig::Interval { interval_ms } => {
                 assert_eq!(interval_ms, 500);
             },
+            TriggerConfig::OnChange { .. } => panic!("Expected Interval"),
         }
     }
 
@@ -578,6 +845,7 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 100 },
             last_execution: None,
             last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
         };
 
         let scheduled2 = ScheduledRule {
@@ -585,6 +853,7 @@ mod tests {
             trigger: TriggerConfig::Interval { interval_ms: 200 },
             last_execution: None,
             last_cooldown_start: None,
+            onchange_state: OnChangeState::default(),
         };
 
         // Verify they are independent
@@ -616,5 +885,340 @@ mod tests {
         // Verify all values are processed correctly
         let sum: i32 = results.iter().map(|(_, v)| v).sum();
         assert_eq!(sum, 200); // (10+20+30+40) * 2 = 200
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // OnChange + Deadband tests
+    // ────────────────────────────────────────────────────────────────────
+
+    fn pref(instance: u32, point: u32) -> PointRef {
+        PointRef {
+            instance,
+            point_type: PointKind::Measurement,
+            point,
+        }
+    }
+
+    fn snap(pairs: &[(&PointRef, Option<f64>)]) -> HashMap<String, Option<f64>> {
+        pairs.iter().map(|(p, v)| (p.cache_key(), *v)).collect()
+    }
+
+    #[test]
+    fn point_ref_cache_key_format() {
+        let p = pref(7, 42);
+        assert_eq!(p.cache_key(), "M:7:42");
+        let pa = PointRef {
+            instance: 1,
+            point_type: PointKind::Action,
+            point: 0,
+        };
+        assert_eq!(pa.cache_key(), "A:1:0");
+    }
+
+    #[test]
+    fn value_deadband_absolute() {
+        let db = ValueDeadband::Absolute { threshold: 0.5 };
+        assert!(!db.exceeds(220.0, 220.4));
+        assert!(!db.exceeds(220.0, 220.5)); // boundary, not strictly greater
+        assert!(db.exceeds(220.0, 220.6));
+        assert!(db.exceeds(220.0, 219.0)); // direction-agnostic
+    }
+
+    #[test]
+    fn value_deadband_percent() {
+        let db = ValueDeadband::Percent { threshold: 1.0 };
+        assert!(!db.exceeds(220.0, 221.0)); // ~0.45%
+        assert!(db.exceeds(220.0, 223.0)); // ~1.36%
+    }
+
+    #[test]
+    fn value_deadband_percent_from_zero_basis() {
+        let db = ValueDeadband::Percent { threshold: 5.0 };
+        assert!(db.exceeds(0.0, 0.001));
+        assert!(!db.exceeds(0.0, 0.0));
+    }
+
+    #[test]
+    fn trigger_config_serde_interval() {
+        let json = r#"{"type":"interval","interval_ms":1000}"#;
+        let parsed: TriggerConfig = serde_json::from_str(json).unwrap();
+        let TriggerConfig::Interval { interval_ms } = parsed else {
+            panic!("expected Interval");
+        };
+        assert_eq!(interval_ms, 1000);
+    }
+
+    #[test]
+    fn trigger_config_serde_onchange_full() {
+        let json = r#"{
+            "type":"on_change",
+            "point_refs":[{"instance":1,"point_type":"measurement","point":0}],
+            "time_deadband_ms":200,
+            "value_deadband":{"type":"absolute","threshold":0.5}
+        }"#;
+        let parsed: TriggerConfig = serde_json::from_str(json).unwrap();
+        match parsed {
+            TriggerConfig::OnChange {
+                point_refs,
+                time_deadband_ms,
+                value_deadband,
+            } => {
+                assert_eq!(point_refs.len(), 1);
+                assert_eq!(point_refs[0].instance, 1);
+                assert_eq!(point_refs[0].point_type, PointKind::Measurement);
+                assert_eq!(time_deadband_ms, Some(200));
+                assert!(matches!(
+                    value_deadband,
+                    Some(ValueDeadband::Absolute { threshold }) if threshold == 0.5
+                ));
+            },
+            _ => panic!("expected OnChange"),
+        }
+    }
+
+    #[test]
+    fn trigger_config_serde_onchange_minimal_defaults() {
+        let json = r#"{
+            "type":"on_change",
+            "point_refs":[{"instance":2,"point_type":"action","point":3}]
+        }"#;
+        let parsed: TriggerConfig = serde_json::from_str(json).unwrap();
+        match parsed {
+            TriggerConfig::OnChange {
+                point_refs,
+                time_deadband_ms,
+                value_deadband,
+            } => {
+                assert_eq!(point_refs[0].point_type, PointKind::Action);
+                assert!(time_deadband_ms.is_none());
+                assert!(value_deadband.is_none());
+            },
+            _ => panic!("expected OnChange"),
+        }
+    }
+
+    #[test]
+    fn onchange_first_observation_triggers() {
+        let state = OnChangeState::default();
+        let p = pref(1, 0);
+        let snapshot = snap(&[(&p, Some(220.0))]);
+        assert!(should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            None,
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_no_change_no_trigger() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 220.0);
+        let snapshot = snap(&[(&p, Some(220.0))]);
+        assert!(!should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            None,
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_value_deadband_filters_noise() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 220.0);
+        let snapshot = snap(&[(&p, Some(220.3))]);
+        let db = ValueDeadband::Absolute { threshold: 0.5 };
+        assert!(!should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            Some(&db),
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_value_deadband_passes_real_change() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 220.0);
+        let snapshot = snap(&[(&p, Some(221.0))]);
+        let db = ValueDeadband::Absolute { threshold: 0.5 };
+        assert!(should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            Some(&db),
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_time_deadband_blocks_recent_trigger() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 220.0);
+        state.last_trigger = Some(Instant::now());
+
+        let snapshot = snap(&[(&p, Some(230.0))]);
+        assert!(!should_trigger_onchange(
+            &state,
+            &[p],
+            Some(500),
+            None,
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_time_deadband_allows_after_window() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 220.0);
+        state.last_trigger = Some(Instant::now() - Duration::from_millis(600));
+
+        let snapshot = snap(&[(&p, Some(230.0))]);
+        assert!(should_trigger_onchange(
+            &state,
+            &[p],
+            Some(500),
+            None,
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_both_deadbands_anded() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 220.0);
+        state.last_trigger = Some(Instant::now() - Duration::from_millis(600));
+
+        let value_db = ValueDeadband::Absolute { threshold: 0.5 };
+
+        let snapshot_small = snap(&[(&p, Some(220.2))]);
+        assert!(!should_trigger_onchange(
+            &state,
+            &[p],
+            Some(500),
+            Some(&value_db),
+            &snapshot_small,
+            Instant::now()
+        ));
+
+        let snapshot_big = snap(&[(&p, Some(221.0))]);
+        assert!(should_trigger_onchange(
+            &state,
+            &[p],
+            Some(500),
+            Some(&value_db),
+            &snapshot_big,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_nan_inbound_does_not_trigger() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 220.0);
+        let now = Instant::now();
+
+        let mut snapshot: HashMap<String, Option<f64>> = HashMap::new();
+        snapshot.insert(p.cache_key(), Some(f64::NAN));
+        assert!(!should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            None,
+            &snapshot,
+            now
+        ));
+
+        let empty: HashMap<String, Option<f64>> = HashMap::new();
+        assert!(!should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            None,
+            &empty,
+            now
+        ));
+
+        let mut snap_none: HashMap<String, Option<f64>> = HashMap::new();
+        snap_none.insert(p.cache_key(), None);
+        assert!(!should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            None,
+            &snap_none,
+            now
+        ));
+    }
+
+    #[test]
+    fn onchange_recovery_with_no_history_triggers() {
+        let p = pref(1, 0);
+        let state = OnChangeState::default();
+        let snapshot = snap(&[(&p, Some(220.0))]);
+        assert!(should_trigger_onchange(
+            &state,
+            &[p],
+            Some(500),
+            None,
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_multi_point_any_change_triggers() {
+        let p1 = pref(1, 0);
+        let p2 = pref(1, 1);
+        let p3 = pref(1, 2);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p1.cache_key(), 100.0);
+        state.last_value.insert(p2.cache_key(), 200.0);
+        state.last_value.insert(p3.cache_key(), 300.0);
+
+        let snapshot = snap(&[(&p1, Some(100.0)), (&p2, Some(200.0)), (&p3, Some(305.0))]);
+
+        assert!(should_trigger_onchange(
+            &state,
+            &[p1, p2, p3],
+            None,
+            None,
+            &snapshot,
+            Instant::now()
+        ));
+    }
+
+    #[test]
+    fn onchange_percent_deadband_from_zero() {
+        let p = pref(1, 0);
+        let mut state = OnChangeState::default();
+        state.last_value.insert(p.cache_key(), 0.0);
+        let db = ValueDeadband::Percent { threshold: 5.0 };
+        let snapshot = snap(&[(&p, Some(0.01))]);
+        assert!(should_trigger_onchange(
+            &state,
+            &[p],
+            None,
+            Some(&db),
+            &snapshot,
+            Instant::now()
+        ));
     }
 }

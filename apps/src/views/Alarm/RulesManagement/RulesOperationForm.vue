@@ -117,6 +117,104 @@
           <el-switch v-model="form.enabled" />
         </el-form-item>
 
+        <!-- Trigger Type -->
+        <el-form-item label="Trigger:" class="rules-form__full-row">
+          <el-radio-group v-model="triggerType">
+            <el-radio value="interval">定时触发 (Interval)</el-radio>
+            <el-radio value="on_change">变化触发 (OnChange)</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <!-- Interval config -->
+        <el-form-item v-if="triggerType === 'interval'" label="Interval (ms):" class="rules-form__full-row">
+          <el-input-number
+            v-model="intervalMs"
+            :min="100"
+            :max="86400000"
+            :controls="false"
+            placeholder="1000"
+            class="rules-form__value-input"
+            align="left"
+          />
+        </el-form-item>
+
+        <!-- OnChange config -->
+        <template v-if="triggerType === 'on_change'">
+          <el-form-item label="时间死区 (ms):" class="rules-form__full-row">
+            <el-input-number
+              v-model="timeDead"
+              :min="0"
+              :max="60000"
+              :controls="false"
+              placeholder="200"
+              class="rules-form__value-input"
+              align="left"
+            />
+          </el-form-item>
+
+          <!-- Point refs list -->
+          <el-form-item label="监听点位:" class="rules-form__full-row">
+            <div class="onchange-refs">
+              <div
+                v-for="(ref, idx) in onChangeRefs"
+                :key="`${ref.instance}-${ref.point_type}-${ref.point}`"
+                class="onchange-refs__row"
+              >
+                <span class="onchange-refs__label">{{ pointRefLabel(ref) }}</span>
+                <el-button link type="danger" size="small" @click="removeOnChangeRef(idx)">删除</el-button>
+              </div>
+              <!-- Add row -->
+              <div ref="triggerGroupRef" class="onchange-refs__add-row">
+                <el-select
+                  v-model="addRowInstance"
+                  placeholder="Select Instance"
+                  :loading="loadingInstances"
+                  popper-class="rules-dialog-popper"
+                  :append-to="triggerGroupRef"
+                  @change="handleAddRowInstanceChange"
+                  style="width: 5.5rem"
+                >
+                  <el-option
+                    v-for="inst in instanceList"
+                    :key="inst.value"
+                    :label="inst.label"
+                    :value="inst.value"
+                  />
+                </el-select>
+                <el-select
+                  v-model="addRowPoints"
+                  placeholder="Select Points"
+                  multiple
+                  collapse-tags
+                  collapse-tags-tooltip
+                  :disabled="!addRowInstance"
+                  popper-class="rules-dialog-popper"
+                  :append-to="triggerGroupRef"
+                  style="width: 6rem"
+                >
+                  <el-option
+                    v-for="pt in addRowInstancePoints"
+                    :key="pt.value"
+                    :label="pt.label"
+                    :value="pt.value"
+                  />
+                </el-select>
+                <el-button size="small" @click="addOnChangeRef">添加</el-button>
+              </div>
+            </div>
+          </el-form-item>
+
+          <!-- Advanced (value_deadband) — hidden behind disclosure -->
+          <el-form-item class="rules-form__full-row">
+            <el-link type="info" @click="showAdvanced = !showAdvanced" :underline="false">
+              {{ showAdvanced ? '▲ 收起高级选项' : '▼ 高级选项' }}
+            </el-link>
+            <div v-if="showAdvanced" class="onchange-advanced">
+              <span class="onchange-advanced__hint">value_deadband: null（默认，任意值变化即触发）</span>
+            </div>
+          </el-form-item>
+        </template>
+
         <el-form-item label="Description:" prop="description" class="rules-form__full-row">
           <el-input
             v-model="form.description"
@@ -141,7 +239,8 @@
 import type { FormInstance } from 'element-plus'
 import { getRuleDetail, createRule, updateRule } from '@/api/alarm'
 import { getAllChannels, getPointsTables } from '@/api/channelsManagement'
-import type { RuleFormModel, DialogExpose, Operator } from '@/types/ruleManagement'
+import { getAllInstances, getInstancePoints } from '@/api/devicesManagement'
+import type { RuleFormModel, DialogExpose, Operator, PointRef } from '@/types/ruleManagement'
 import type { PointType } from '@/types/channelConfiguration'
 
 const formRef = ref<FormInstance>()
@@ -149,6 +248,122 @@ const dialogRef = ref<DialogExpose>()
 const monitorDataGroupRef = ref<HTMLElement>()
 const alarmLevelGroupRef = ref<HTMLElement>()
 const conditionGroupRef = ref<HTMLElement>()
+const triggerGroupRef = ref<HTMLElement>()
+
+// ── Trigger type state ────────────────────────────────────────────────────────
+type TriggerType = 'interval' | 'on_change'
+const triggerType = ref<TriggerType>('interval')
+const intervalMs = ref<number>(1000)
+const timeDead = ref<number>(200)
+const showAdvanced = ref(false)
+
+// OnChange point refs — each item is {instance, point_type, point}
+const onChangeRefs = ref<PointRef[]>([])
+
+// instance list for OnChange picker
+const instanceList = ref<Array<{ label: string; value: number }>>([])
+const loadingInstances = ref(false)
+
+// per-instance points cache
+const instancePointsCache = ref<
+  Record<number, Array<{ label: string; value: string; point_type: 'measurement' | 'action' }>>
+>({})
+
+const loadInstances = async () => {
+  if (instanceList.value.length > 0) return
+  try {
+    loadingInstances.value = true
+    const res = await getAllInstances()
+    const list = Array.isArray(res?.data?.list)
+      ? res.data.list
+      : Array.isArray(res?.data)
+        ? res.data
+        : []
+    instanceList.value = (list as any[]).map((it: any) => ({
+      label: String(it.name || it.instance_name || `Instance ${it.instance_id}`),
+      value: Number(it.instance_id),
+    }))
+  } catch {
+    instanceList.value = []
+  } finally {
+    loadingInstances.value = false
+  }
+}
+
+const loadInstancePoints = async (instanceId: number) => {
+  if (instancePointsCache.value[instanceId]) return
+  try {
+    const res = await getInstancePoints(instanceId)
+    if (res.success && res.data) {
+      const pts: Array<{ label: string; value: string; point_type: 'measurement' | 'action' }> = []
+      const m = res.data.measurements || {}
+      const a = res.data.actions || {}
+      for (const [key, pt] of Object.entries(m as Record<string, any>)) {
+        pts.push({ label: `M: ${pt.name || key}`, value: key, point_type: 'measurement' })
+      }
+      for (const [key, pt] of Object.entries(a as Record<string, any>)) {
+        pts.push({ label: `A: ${pt.name || key}`, value: key, point_type: 'action' })
+      }
+      instancePointsCache.value[instanceId] = pts
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// Encode a PointRef as a unique string key for el-select multiple value
+const encodeRef = (ref: PointRef) => `${ref.instance}:${ref.point_type}:${ref.point}`
+
+// Selected instance for the OnChange add-row UI
+const addRowInstance = ref<number | null>(null)
+const addRowPoints = ref<string[]>([])
+
+const addRowInstancePoints = computed(() => {
+  if (!addRowInstance.value) return []
+  return instancePointsCache.value[addRowInstance.value] || []
+})
+
+const handleAddRowInstanceChange = async (instanceId: number) => {
+  addRowPoints.value = []
+  if (instanceId) await loadInstancePoints(instanceId)
+}
+
+const addOnChangeRef = () => {
+  if (!addRowInstance.value || addRowPoints.value.length === 0) return
+  for (const key of addRowPoints.value) {
+    const ptDef = instancePointsCache.value[addRowInstance.value]?.find((p) => p.value === key)
+    const pointIndex = parseInt(key, 10)
+    if (isNaN(pointIndex)) continue
+    const newRef: PointRef = {
+      instance: addRowInstance.value,
+      point_type: ptDef?.point_type ?? 'measurement',
+      point: pointIndex,
+    }
+    // Avoid duplicates
+    const exists = onChangeRefs.value.some(
+      (r) =>
+        r.instance === newRef.instance &&
+        r.point_type === newRef.point_type &&
+        r.point === newRef.point,
+    )
+    if (!exists) onChangeRefs.value.push(newRef)
+  }
+  addRowPoints.value = []
+}
+
+const removeOnChangeRef = (idx: number) => {
+  onChangeRefs.value.splice(idx, 1)
+}
+
+const pointRefLabel = (ref: PointRef) => {
+  const inst = instanceList.value.find((i) => i.value === ref.instance)
+  const instLabel = inst?.label ?? `Instance ${ref.instance}`
+  const pts = instancePointsCache.value[ref.instance]
+  const ptDef = pts?.find((p) => p.value === String(ref.point))
+  const ptLabel = ptDef?.label ?? `${ref.point_type[0].toUpperCase()}:${ref.point}`
+  return `${instLabel} / ${ptLabel}`
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const getDefaultForm = (): RuleFormModel => ({
   rule_name: '',
@@ -306,8 +521,17 @@ async function open(rulesId?: string, openMode: 'create' | 'edit' = 'create') {
     form.value = getDefaultForm()
     rules_id.value = rulesId || ''
 
-    // 加载通道列表
-    await loadChannels()
+    // Reset trigger state
+    triggerType.value = 'interval'
+    intervalMs.value = 1000
+    timeDead.value = 200
+    onChangeRefs.value = []
+    showAdvanced.value = false
+    addRowInstance.value = null
+    addRowPoints.value = []
+
+    // 加载通道列表 + 实例列表
+    await Promise.all([loadChannels(), loadInstances()])
 
     if (rulesId) {
       const res = await getRuleDetail(rules_id.value)
@@ -323,6 +547,28 @@ async function open(rulesId?: string, openMode: 'create' | 'edit' = 'create') {
         form.value.value = rule.value
         form.value.description = rule.description || ''
         form.value.enabled = rule.enabled
+
+        // Parse trigger_config from stored JSON string
+        if (rule.trigger_config) {
+          try {
+            const tc = typeof rule.trigger_config === 'string'
+              ? JSON.parse(rule.trigger_config)
+              : rule.trigger_config
+            if (tc?.type === 'on_change') {
+              triggerType.value = 'on_change'
+              onChangeRefs.value = Array.isArray(tc.point_refs) ? tc.point_refs : []
+              timeDead.value = tc.time_deadband_ms ?? 200
+              // Pre-load points for each referenced instance
+              const instanceIds = [...new Set(onChangeRefs.value.map((r) => r.instance))]
+              await Promise.all(instanceIds.map(loadInstancePoints))
+            } else if (tc?.type === 'interval') {
+              triggerType.value = 'interval'
+              intervalMs.value = tc.interval_ms ?? 1000
+            }
+          } catch {
+            // ignore parse errors — fallback to interval
+          }
+        }
 
         // 如果有通道，加载所有点位
         if (form.value.channel_id) {
@@ -358,8 +604,20 @@ function onCancel() {
 async function onSubmit() {
   formRef.value?.validate(async (valid) => {
     if (!valid) return
+
+    // Build trigger_config
+    const trigger_config =
+      triggerType.value === 'interval'
+        ? { type: 'interval' as const, interval_ms: intervalMs.value }
+        : {
+            type: 'on_change' as const,
+            point_refs: onChangeRefs.value,
+            time_deadband_ms: timeDead.value ?? null,
+            value_deadband: null,
+          }
+
     // 确保 service_type 固定为 comsrv
-    const submitData = { ...form.value, service_type: 'comsrv' }
+    const submitData = { ...form.value, service_type: 'comsrv', trigger_config }
     if (mode.value === 'create') {
       const res = await createRule(submitData)
       if (res.success) {
@@ -416,6 +674,46 @@ defineExpose({ open, close })
 
   :deep(.el-input__inner) {
     width: 2.4rem;
+  }
+}
+
+.onchange-refs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.08rem;
+  width: 100%;
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 0.12rem;
+    padding: 0.04rem 0;
+  }
+
+  &__label {
+    flex: 1;
+    font-size: 0.14rem;
+    color: var(--el-text-color-regular);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__add-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.08rem;
+    margin-top: 0.08rem;
+  }
+}
+
+.onchange-advanced {
+  margin-top: 0.08rem;
+
+  &__hint {
+    font-size: 0.12rem;
+    color: var(--el-text-color-secondary);
   }
 }
 
