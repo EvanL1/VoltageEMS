@@ -52,7 +52,16 @@ use voltage_rtdb_shm::ShmHandle;
 ///
 /// Note: after ~2^31 writes (~6.8 years at 10Hz), seq wraps back to 0 and
 /// this slot would be skipped until the next write (seq=2). Acceptable.
+/// Sentinel for "never written" seq. Used in tests only — production code
+/// relies on the NaN value sentinel to filter unwritten slots, so seq wrap
+/// to 0 is not misclassified as unwritten.
+#[allow(dead_code)]
 const UNWRITTEN_SEQ: u32 = 0;
+
+/// Maximum slots flushed in a single Redis pipeline.
+/// Bounds memory and Redis-side latency on full-scan ticks with high slot
+/// counts. Excess slots are deferred to retry_slots for the next tick.
+const MAX_PIPELINE_SLOTS: usize = 1024;
 
 /// Force a full seq scan periodically as a safety net for external writers.
 const FULL_SCAN_INTERVAL: u64 = 600;
@@ -176,6 +185,14 @@ impl<R: Rtdb> ShmRedisSync<R> {
         candidate_slots.sort_unstable();
         candidate_slots.dedup();
 
+        // Bound pipeline size — large full-scans with thousands of dirty
+        // slots could stall Redis on a single round-trip. Excess slots go
+        // back into retry_slots for the next tick (we already deduped).
+        if candidate_slots.len() > MAX_PIPELINE_SLOTS {
+            let overflow = candidate_slots.split_off(MAX_PIPELINE_SLOTS);
+            self.retry_slots.extend(overflow);
+        }
+
         // Accumulate redis_key → Vec<(field, bytes)>.
         let mut ops: HashMap<String, Vec<(Arc<str>, bytes::Bytes)>> = HashMap::new();
         let mut synced_slots = Vec::new();
@@ -188,7 +205,12 @@ impl<R: Rtdb> ShmRedisSync<R> {
             // Advisory pre-check (Relaxed). Correctness relies on load_consistent below.
             let seq = slot.seq_raw();
 
-            if seq == UNWRITTEN_SEQ || seq == self.last_seq[slot_idx] {
+            // Only skip when seq matches last_seq exactly. Do not treat
+            // seq == 0 as "unwritten" — after 2^32 writes the seq wraps to
+            // 0, which is a legitimate update. The NaN-sentinel filter
+            // below correctly catches truly-unwritten slots regardless of
+            // seq value.
+            if seq == self.last_seq[slot_idx] {
                 continue;
             }
 
