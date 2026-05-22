@@ -220,11 +220,18 @@ impl<R: Rtdb> ShmRedisSync<R> {
             };
 
             // Skip slots whose value is the unwritten NaN sentinel (SHM v3).
-            // Defence-in-depth on top of the seq check: if a writer ever
-            // bumped seq without finishing the data write, or a v2 snapshot
-            // somehow leaked through, we still don't push NaN to Redis.
-            // batch_to_updates already rejects non-finite from the protocol
-            // side, so this is the only remaining ingress point.
+            //
+            // Defence-in-depth on top of the seq check. In production, NaN
+            // cannot reach this point: batch_to_updates filters non-finite
+            // from the protocol side (redis_store.rs), set_action rejects
+            // via validate_action_value, and SHM seeds slots with NaN only
+            // before the first write. If a NaN somehow leaks through (writer
+            // bug, v2 snapshot, partial reconfigure), we drop it here rather
+            // than persist a meaningless value to Redis. "Unavailable" is
+            // represented downstream by an ABSENT hash field — not a NaN
+            // string — which keeps the JSON protocol simple and matches the
+            // CLAUDE.md "NaN means never-written" sentinel semantics for SHM
+            // internals only.
             if !value.is_finite() || !raw.is_finite() {
                 self.last_seq[slot_idx] = seq;
                 continue;
