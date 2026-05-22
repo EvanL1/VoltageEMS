@@ -209,67 +209,62 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
 
             let timestamp_ms = crate::core::channels::channel_manager::unix_timestamp_ms();
 
-            // Optimization: O(1) CommandTxCache lookup for Control/Adjustment
-            // Bypasses ChannelManager RwLock entirely for ~97% latency reduction
-            // P50: 50μs → 1-2μs
-            let direct_triggered =
-                if matches!(point_type, PointType::Control | PointType::Adjustment) {
-                    // O(1) lookup from CommandTxCache - no RwLock, no DashMap Ref lifetime issues
-                    let tx_clone = state.command_tx_cache.get_tx(channel_id);
-
-                    if let Some(tx) = tx_clone {
-                        let cmd = match point_type {
-                            PointType::Control => ChannelCommand::Control {
-                                command_id: format!("direct_{}_{}", channel_id, timestamp_ms),
-                                point_id,
-                                value: *value,
-                                timestamp: timestamp_ms / 1000,
-                            },
-                            PointType::Adjustment => ChannelCommand::Adjustment {
-                                command_id: format!("direct_{}_{}", channel_id, timestamp_ms),
-                                point_id,
-                                value: *value,
-                                timestamp: timestamp_ms / 1000,
-                            },
-                            _ => {
-                                tracing::warn!(
-                                    "Unexpected point_type {:?} in write_channel_point",
-                                    point_type
-                                );
-                                return Err(AppError::bad_request(
-                                    "Only Control and Adjustment point types are supported",
-                                ));
-                            },
-                        };
-
-                        match tx.send(cmd).await {
-                            Ok(_) => {
-                                tracing::debug!(
-                                    "Direct trigger Ch{}:{:?}:{} = {} @{}",
-                                    channel_id,
-                                    point_type,
-                                    id,
-                                    value,
-                                    timestamp_ms
-                                );
-                                true
-                            },
-                            Err(_) => {
-                                tracing::warn!(
-                                    "Direct trigger failed Ch{}, write Hash only",
-                                    channel_id
-                                );
-                                false
-                            },
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false // T/S don't use command trigger
+            // Fail-closed for C/A: if the channel has no sender or send fails,
+            // the device never sees the command. We MUST NOT then update the
+            // Redis mirror — callers (UI, rules, audit) treat success as
+            // "command dispatched to device". T/S have no command path.
+            if matches!(point_type, PointType::Control | PointType::Adjustment) {
+                let Some(tx) = state.command_tx_cache.get_tx(channel_id) else {
+                    tracing::warn!(
+                        "Ch{} offline (no command sender) for {:?}:{}",
+                        channel_id,
+                        point_type,
+                        point_id
+                    );
+                    return Err(AppError::service_unavailable(format!(
+                        "Channel {} offline; command not dispatched",
+                        channel_id
+                    )));
                 };
+                let cmd = match point_type {
+                    PointType::Control => ChannelCommand::Control {
+                        command_id: format!("direct_{}_{}", channel_id, timestamp_ms),
+                        point_id,
+                        value: *value,
+                        timestamp: timestamp_ms / 1000,
+                    },
+                    PointType::Adjustment => ChannelCommand::Adjustment {
+                        command_id: format!("direct_{}_{}", channel_id, timestamp_ms),
+                        point_id,
+                        value: *value,
+                        timestamp: timestamp_ms / 1000,
+                    },
+                    _ => unreachable!(),
+                };
+                if tx.send(cmd).await.is_err() {
+                    tracing::error!(
+                        "Ch{} command channel closed mid-dispatch for {:?}:{}",
+                        channel_id,
+                        point_type,
+                        point_id
+                    );
+                    return Err(AppError::service_unavailable(format!(
+                        "Channel {} command channel closed; command not dispatched",
+                        channel_id
+                    )));
+                }
+                tracing::debug!(
+                    "Direct trigger Ch{}:{:?}:{} = {} @{}",
+                    channel_id,
+                    point_type,
+                    id,
+                    value,
+                    timestamp_ms
+                );
+            }
 
-            // Always write to Redis Hash (for modsrv sync and state persistence)
+            // Write Redis mirror (for modsrv sync and state persistence).
+            // For C/A this runs only AFTER the command was successfully enqueued.
             voltage_rtdb::helpers::write_channel_hash_only(
                 rtdb.as_ref(),
                 config,
@@ -286,13 +281,12 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
             })?;
 
             tracing::debug!(
-                "Write Ch{}:{:?}:{} = {} @{} (direct={})",
+                "Write Ch{}:{:?}:{} = {} @{}",
                 channel_id,
                 point_type,
                 id,
                 value,
-                timestamp_ms,
-                direct_triggered
+                timestamp_ms
             );
 
             let response = crate::dto::WritePointResponse {
@@ -306,88 +300,99 @@ pub async fn write_channel_point<R: Rtdb + 'static>(
             Ok(Json(SuccessResponse::new(WriteResponse::Single(response))))
         },
         WritePointData::Batch { points } => {
-            // Batch write using application layer function
+            // Two-phase batch for C/A: send command first (all-or-nothing),
+            // then mirror to Redis only on dispatch success. For T/S there's
+            // no command path — write Redis per-point as before.
             let mut errors = Vec::new();
             let total = points.len();
-            let mut succeeded = 0;
             let batch_ts = crate::core::channels::channel_manager::unix_timestamp_ms();
-            let mut direct_points: Vec<(u32, f64)> = Vec::new();
 
+            // Parse all IDs up front; invalid IDs go to errors and skip.
+            let mut parsed: Vec<(u32, f64)> = Vec::with_capacity(total);
             for point in points {
-                // Parse point ID
-                let point_id = match point.id.parse::<u32>() {
-                    Ok(id) => id,
+                match point.id.parse::<u32>() {
+                    Ok(id) => parsed.push((id, point.value)),
                     Err(_) => {
                         tracing::warn!("Invalid ID: Ch{}:{}:{}", channel_id, point_type, point.id);
                         errors.push(BatchCommandError {
                             point_id: 0,
                             error: format!("Invalid point ID: {}", point.id),
                         });
-                        continue;
                     },
-                };
+                }
+            }
 
-                // Write point to Redis Hash
+            let is_ca = matches!(point_type, PointType::Control | PointType::Adjustment);
+
+            // Phase 1 (C/A only): dispatch batch command, fail-closed on miss.
+            if is_ca && !parsed.is_empty() {
+                let Some(tx) = state.command_tx_cache.get_tx(channel_id) else {
+                    tracing::warn!(
+                        "Ch{} offline for batch {:?} ({} points)",
+                        channel_id,
+                        point_type,
+                        parsed.len()
+                    );
+                    return Err(AppError::service_unavailable(format!(
+                        "Channel {} offline; batch not dispatched",
+                        channel_id
+                    )));
+                };
+                let cmd = match point_type {
+                    PointType::Control => ChannelCommand::BatchControl {
+                        command_id: format!("batch_{}_{}", channel_id, batch_ts),
+                        points: parsed.clone(),
+                        timestamp: batch_ts / 1000,
+                    },
+                    PointType::Adjustment => ChannelCommand::BatchAdjustment {
+                        command_id: format!("batch_{}_{}", channel_id, batch_ts),
+                        points: parsed.clone(),
+                        timestamp: batch_ts / 1000,
+                    },
+                    _ => unreachable!(),
+                };
+                if tx.send(cmd).await.is_err() {
+                    tracing::error!(
+                        "Ch{} command channel closed mid-batch ({} points)",
+                        channel_id,
+                        parsed.len()
+                    );
+                    return Err(AppError::service_unavailable(format!(
+                        "Channel {} command channel closed; batch not dispatched",
+                        channel_id
+                    )));
+                }
+            }
+
+            // Phase 2: mirror values to Redis. For C/A this runs only after
+            // the batch was successfully enqueued.
+            let mut succeeded = 0;
+            for (point_id, value) in &parsed {
                 match voltage_rtdb::helpers::write_channel_hash_only(
                     rtdb.as_ref(),
                     config,
                     channel_id,
                     point_type,
-                    point_id,
-                    point.value,
+                    *point_id,
+                    *value,
                     batch_ts,
                 )
                 .await
                 {
-                    Ok(_) => {
-                        succeeded += 1;
-                        if matches!(point_type, PointType::Control | PointType::Adjustment) {
-                            direct_points.push((point_id, point.value));
-                        }
-                    },
+                    Ok(_) => succeeded += 1,
                     Err(e) => {
                         tracing::warn!(
-                            "Write Ch{}:{:?}:{}: {}",
+                            "Mirror Ch{}:{:?}:{}: {}",
                             channel_id,
                             point_type,
-                            point.id,
+                            point_id,
                             e
                         );
                         errors.push(BatchCommandError {
-                            point_id,
-                            error: format!("Failed to write: {}", e),
+                            point_id: *point_id,
+                            error: format!("Failed to write mirror: {}", e),
                         });
                     },
-                }
-            }
-
-            // Batch direct trigger for C/A types (only if any points succeeded)
-            if !direct_points.is_empty()
-                && let Some(tx) = state.command_tx_cache.get_tx(channel_id)
-            {
-                let cmd = match point_type {
-                    PointType::Control => ChannelCommand::BatchControl {
-                        command_id: format!("batch_{}_{}", channel_id, batch_ts),
-                        points: direct_points,
-                        timestamp: batch_ts / 1000,
-                    },
-                    PointType::Adjustment => ChannelCommand::BatchAdjustment {
-                        command_id: format!("batch_{}_{}", channel_id, batch_ts),
-                        points: direct_points,
-                        timestamp: batch_ts / 1000,
-                    },
-                    _ => {
-                        tracing::warn!(
-                            "Unexpected point_type {:?} in batch write_channel_point",
-                            point_type
-                        );
-                        return Err(AppError::bad_request(
-                            "Only Control and Adjustment point types are supported",
-                        ));
-                    },
-                };
-                if tx.send(cmd).await.is_err() {
-                    tracing::warn!("Batch direct trigger failed Ch{}, Redis-only", channel_id);
                 }
             }
 
