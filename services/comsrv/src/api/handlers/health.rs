@@ -253,8 +253,10 @@ pub async fn health_check<R: Rtdb>(
         None => {
             // SHM never initialized — the writer thread either hasn't
             // started yet or failed to create the mmap. Report Degraded
-            // so readiness probes can react instead of treating the
-            // node as fully healthy.
+            // AND flip overall_healthy so the response gets 503 instead
+            // of 200; otherwise Docker readiness probes (which only see
+            // the HTTP status code) would treat a node running without
+            // its hot data path as fully healthy.
             checks.insert(
                 "shm".to_string(),
                 ComponentHealth {
@@ -265,6 +267,7 @@ pub async fn health_check<R: Rtdb>(
                     duration_ms: None,
                 },
             );
+            overall_healthy = false;
         },
     }
 
@@ -277,13 +280,18 @@ pub async fn health_check<R: Rtdb>(
         HealthServiceStatus::Unhealthy
     };
 
-    // Build error message before moving checks into health struct
+    // Build error message before moving checks into health struct.
+    // Include both Unhealthy and Degraded components so the 503 body
+    // explains the SHM-missing case rather than being empty.
     let error_msg = if !overall_healthy {
         Some(format!(
             "Service dependencies are unhealthy: {}",
             checks
                 .iter()
-                .filter(|(_, c)| matches!(c.status, HealthServiceStatus::Unhealthy))
+                .filter(|(_, c)| matches!(
+                    c.status,
+                    HealthServiceStatus::Unhealthy | HealthServiceStatus::Degraded
+                ))
                 .map(|(k, c)| format!("{}: {}", k, c.message.as_deref().unwrap_or("unknown")))
                 .collect::<Vec<_>>()
                 .join(", ")
