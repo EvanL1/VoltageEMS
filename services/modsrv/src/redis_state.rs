@@ -447,15 +447,24 @@ where
 {
     let keyspace = KeySpaceConfig::production_cached();
     let key = keyspace.instance_measurement_key(instance_id);
+    let ts_key = keyspace.instance_measurement_ts_key(instance_id);
     let now_ms = SystemTimeProvider.now_millis();
-    // Use into_iter() to consume ownership and avoid cloning keys
-    let mut fields: Vec<(String, Bytes)> = measurement
-        .into_iter()
-        .map(|(k, v)| (k, value_into_bytes(v)))
-        .collect();
-    fields.push(("_updated_at".to_string(), Bytes::from(now_ms.to_string())));
+    let now_bytes = Bytes::from(now_ms.to_string());
+    // Build value fields and the matching per-point ts shadow so consumers
+    // (rules deadband, UI staleness checks) see value + ts updated together.
+    let mut value_fields: Vec<(String, Bytes)> = Vec::with_capacity(measurement.len() + 1);
+    let mut ts_fields: Vec<(String, Bytes)> = Vec::with_capacity(measurement.len());
+    for (k, v) in measurement {
+        ts_fields.push((k.clone(), now_bytes.clone()));
+        value_fields.push((k, value_into_bytes(v)));
+    }
+    value_fields.push(("_updated_at".to_string(), now_bytes.clone()));
 
-    redis.hash_mset(&key, fields).await
+    redis.hash_mset(&key, value_fields).await?;
+    if !ts_fields.is_empty() {
+        redis.hash_mset(&ts_key, ts_fields).await?;
+    }
+    Ok(())
 }
 
 /// Read instance real-time data (replaces `modsrv_get_instance_data`).
