@@ -187,7 +187,7 @@ impl SlotWriter {
     /// already knows how to handle torn reads via `try_load_consistent`).
     pub fn save_snapshot(&self, path: &Path) -> Result<()> {
         let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;
-        crate::unified_shm::save_snapshot_impl(
+        crate::core::snapshot_save::save_snapshot_impl(
             &self.mmap,
             current_slot_count,
             path,

@@ -11,6 +11,8 @@
 pub mod bitmap;
 pub mod config;
 pub mod header;
+pub mod reader;
 pub mod slot;
 pub mod slot_io;
+pub mod snapshot_save;
 pub mod writer;
