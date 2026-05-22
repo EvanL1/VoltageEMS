@@ -69,6 +69,10 @@ pub struct ShmRedisSync<R: Rtdb> {
     last_seq: Vec<u32>,
     /// Raw pointer of the last-loaded ShmLayout Arc, used to detect swaps.
     last_layout_ptr: usize,
+    /// Content hash of the routing cache at last scan. If the routing content
+    /// changes without a SHM layout swap (pure RoutingCache reload), C2M
+    /// targets may have shifted and unchanged-seq slots must republish.
+    last_routing_hash: u64,
     /// Slots that failed to flush to Redis and must be retried.
     retry_slots: Vec<usize>,
     /// Tick counter for periodic full-scan cadence.
@@ -90,6 +94,7 @@ impl<R: Rtdb> ShmRedisSync<R> {
             routing_cache,
             last_seq: vec![0u32; max_slots],
             last_layout_ptr: 0,
+            last_routing_hash: 0,
             retry_slots: Vec::new(),
             tick_count: 0,
             key_space: KeySpaceConfig::production_cached(),
@@ -132,12 +137,24 @@ impl<R: Rtdb> ShmRedisSync<R> {
         // Detect layout swap (routing reload) → reset last_seq for full re-sync.
         let layout_ptr = Arc::as_ptr(layout) as usize;
         let layout_changed = self.last_layout_ptr != 0 && layout_ptr != self.last_layout_ptr;
-        if layout_changed {
-            info!("ShmRedisSync: SHM layout swapped (routing reload), resetting last_seq");
+
+        // Detect routing content change even when SHM layout pointer is stable:
+        // a pure RoutingCache reload (no SHM rebuild) still changes C2M targets,
+        // so unchanged-seq slots must republish under the new mapping or stay
+        // permanently pointed at the old instance.
+        let routing_hash = self.routing_cache.content_hash();
+        let routing_changed = self.last_routing_hash != 0 && routing_hash != self.last_routing_hash;
+
+        if layout_changed || routing_changed {
+            info!(
+                "ShmRedisSync: reset last_seq (layout_changed={}, routing_changed={})",
+                layout_changed, routing_changed
+            );
             self.last_seq.fill(0);
             self.retry_slots.clear();
         }
         self.last_layout_ptr = layout_ptr;
+        self.last_routing_hash = routing_hash;
 
         let full_scan = layout_changed
             || self.tick_count == 0
