@@ -15,7 +15,6 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
 use voltage_model::{PointType, ValidationConfig, validate_value};
 use voltage_routing::{
@@ -25,7 +24,7 @@ use voltage_routing::{
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
 use voltage_rtdb::{KeySpaceConfig, SystemTimeProvider, TimeProvider};
-use voltage_rtdb_shm::{ShmNotifier, UnifiedReader};
+use voltage_rtdb_shm::{ActionDispatch, DispatchOutcome, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
 #[inline]
@@ -269,10 +268,11 @@ pub struct RuleExecutor<R: Rtdb, S: StateStore = MemoryStateStore> {
     state_store: Arc<S>,
     /// Optional UnifiedReader for cross-process zero-copy reads
     shared_reader: Option<Arc<UnifiedReader>>,
-    /// Optional UnifiedWriter for M2C via shared memory
-    shm_action_writer: Option<Arc<voltage_rtdb_shm::UnifiedWriter>>,
-    /// Optional ShmNotifier for UDS event notification (M2C low-latency path)
-    shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
+    /// Optional shared ActionDispatch for M2C SHM+UDS writes. Reusing the
+    /// same dispatch instance as modsrv guarantees the writer_generation
+    /// check trips uniformly — without this, rule-engine actions after a
+    /// comsrv restart silently target wrong slots.
+    action_dispatch: Option<Arc<dyn ActionDispatch>>,
 }
 
 impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
@@ -283,8 +283,7 @@ impl<R: Rtdb> RuleExecutor<R, MemoryStateStore> {
             routing_cache,
             state_store: Arc::new(MemoryStateStore::new()),
             shared_reader: None,
-            shm_action_writer: None,
-            shm_notifier: None,
+            action_dispatch: None,
         }
     }
 }
@@ -301,8 +300,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             routing_cache,
             state_store,
             shared_reader: None,
-            shm_action_writer: None,
-            shm_notifier: None,
+            action_dispatch: None,
         }
     }
 
@@ -318,21 +316,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         self
     }
 
-    /// Enable UnifiedWriter for M2C via shared memory
+    /// Enable shared ActionDispatch for M2C SHM+UDS writes.
     ///
-    /// When enabled, action outputs are written to SHM in addition to Redis.
-    /// SHM serves as the source for comsrv's ShmCommandListener (UDS event-driven dispatch).
-    pub fn with_shm_action_writer(mut self, writer: Arc<voltage_rtdb_shm::UnifiedWriter>) -> Self {
-        self.shm_action_writer = Some(writer);
-        self
-    }
-
-    /// Enable ShmNotifier for UDS event notification
-    ///
-    /// When enabled, after writing to SHM, sends UDS notification to comsrv
-    /// for immediate command dispatch (~1-2ms latency vs polling).
-    pub fn with_shm_notifier(mut self, notifier: Arc<tokio::sync::Mutex<ShmNotifier>>) -> Self {
-        self.shm_notifier = Some(notifier);
+    /// The caller must pass the same `Arc<ShmDispatch>` that modsrv uses
+    /// for its HTTP control path so generation checks and rebuild signals
+    /// stay coherent across both code paths.
+    pub fn with_action_dispatch(mut self, dispatch: Arc<dyn ActionDispatch>) -> Self {
+        self.action_dispatch = Some(dispatch);
         self
     }
 
@@ -1239,9 +1229,14 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         value: f64,
         context: &str,
     ) -> bool {
-        let Some(writer) = self.shm_action_writer.as_ref() else {
+        // Reuse the shared ActionDispatch so generation checks, post-write
+        // re-checks, and UDS reconnect signaling stay coherent with modsrv's
+        // HTTP control path. Any rule firing after a comsrv restart will
+        // trip the generation mismatch and trigger rebuild via the same
+        // Notify that modsrv listens to.
+        let Some(dispatch) = self.action_dispatch.as_ref() else {
             tracing::error!(
-                "{} dispatch failed: SHM writer unavailable for ch={} pt={} point={}",
+                "{} dispatch failed: ActionDispatch not configured for ch={} pt={} point={}",
                 context,
                 ctx.target_channel_id,
                 ctx.target_point_type,
@@ -1250,81 +1245,43 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             return false;
         };
 
-        if !writer.set_action(
-            ctx.target_channel_id,
-            ctx.target_point_type,
-            ctx.target_point_id,
-            value,
-            ctx.timestamp_ms as u64,
-        ) {
-            tracing::error!(
-                "{} dispatch failed: SHM action slot missing for ch={} pt={} point={}",
-                context,
-                ctx.target_channel_id,
-                ctx.target_point_type,
-                ctx.target_point_id
-            );
-            return false;
-        }
-
-        let Some(notifier) = self.shm_notifier.as_ref() else {
-            tracing::error!(
-                "{} dispatch failed: UDS notifier unavailable for ch={} pt={} point={}",
-                context,
-                ctx.target_channel_id,
-                ctx.target_point_type,
-                ctx.target_point_id
-            );
-            return false;
-        };
-
-        let mut guard =
-            match tokio::time::timeout(Duration::from_millis(100), notifier.lock()).await {
-                Ok(guard) => guard,
-                Err(_) => {
-                    tracing::error!(
-                        "{} dispatch failed: UDS notifier lock timeout for ch={} pt={} point={}",
-                        context,
-                        ctx.target_channel_id,
-                        ctx.target_point_type,
-                        ctx.target_point_id
-                    );
-                    return false;
-                },
-            };
-
-        let Some(point_type) = PointType::from_u8(ctx.target_point_type) else {
-            tracing::error!(
-                "{} dispatch failed: invalid point type {} for ch={} point={}",
-                context,
-                ctx.target_point_type,
-                ctx.target_channel_id,
-                ctx.target_point_id
-            );
-            return false;
-        };
-
-        let result = guard
-            .notify(
-                ctx.target_channel_id,
-                point_type,
-                ctx.target_point_id,
-                value,
-                ctx.timestamp_ms as u64,
-            )
-            .await;
-
-        if result.uds_sent {
-            true
-        } else {
-            tracing::error!(
-                "{} dispatch failed: UDS notification not delivered for ch={} pt={:?} point={}",
-                context,
-                ctx.target_channel_id,
-                point_type,
-                ctx.target_point_id
-            );
-            false
+        match dispatch.dispatch(ctx, value).await {
+            DispatchOutcome::Delivered | DispatchOutcome::Noop => true,
+            DispatchOutcome::NoWriter => {
+                tracing::error!(
+                    "{} dispatch dropped: SHM writer unavailable (likely comsrv restart) for ch={} pt={} point={}",
+                    context,
+                    ctx.target_channel_id,
+                    ctx.target_point_type,
+                    ctx.target_point_id
+                );
+                false
+            },
+            DispatchOutcome::MirrorMiss { reason } => {
+                tracing::error!(
+                    "{} dispatch dropped ({}) for ch={} pt={} point={}",
+                    context,
+                    reason,
+                    ctx.target_channel_id,
+                    ctx.target_point_type,
+                    ctx.target_point_id
+                );
+                false
+            },
+            DispatchOutcome::ShmOnly { reason } => {
+                // SHM was written but comsrv likely did not see it (UDS
+                // degraded). Surface as failure so the rule's success flag
+                // reflects reality — the cooldown counter is gated on this.
+                tracing::warn!(
+                    "{} dispatch degraded ({}); UDS not delivered for ch={} pt={} point={}",
+                    context,
+                    reason,
+                    ctx.target_channel_id,
+                    ctx.target_point_type,
+                    ctx.target_point_id
+                );
+                false
+            },
         }
     }
 

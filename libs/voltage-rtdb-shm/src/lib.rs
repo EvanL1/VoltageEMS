@@ -42,6 +42,9 @@ pub mod shm_handle;
 
 pub mod batch_direct;
 
+#[cfg(unix)]
+pub mod dispatch;
+
 // Re-exports for convenience
 pub use instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 pub use notification::ShmNotification;
@@ -79,3 +82,7 @@ pub use shm_handle::{ShmHandle, ShmLayout};
 
 // Direct SHM batch write (bridges SHM + routing + RTDB)
 pub use batch_direct::write_channel_batch_direct;
+
+// SHM/UDS action dispatch — shared by modsrv HTTP path and rules executor
+#[cfg(unix)]
+pub use dispatch::{ActionDispatch, DispatchOutcome, NoopDispatch, ShmDispatch};

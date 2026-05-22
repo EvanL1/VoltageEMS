@@ -186,7 +186,9 @@ async fn main() -> Result<()> {
     // Configure ShmDispatch with SHM components for M2C via shared memory
     // ShmDispatch uses ArcSwapOption/OnceLock for delayed initialization
     // ShmNotifier is shared between ShmDispatch and RuleScheduler for unified M2C dispatch
-    let shm_notifier: Option<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>> =
+    // Held only to keep the Arc alive while ShmDispatch borrows it; rule
+    // engine now consumes ShmDispatch directly, not the raw notifier.
+    let _shm_notifier: Option<Arc<tokio::sync::Mutex<voltage_rtdb_shm::ShmNotifier>>> =
         if let Some(ref writer) = shm_action_writer {
             // Set SHM action writer for direct M2C writes (+ store config for rebuild)
             state
@@ -334,8 +336,10 @@ async fn main() -> Result<()> {
         rule_log_root,
         state_store,
         shared_reader,
-        shm_action_writer,
-        shm_notifier,
+        // Share the SAME ShmDispatch instance as modsrv's HTTP control path.
+        // generation checks + rebuild signals now apply uniformly to both
+        // rule-engine actions and HTTP control writes.
+        Some(Arc::clone(&state.shm_dispatch) as Arc<dyn voltage_rtdb_shm::ActionDispatch>),
     );
     scheduler.set_max_concurrency(max_concurrency);
     let scheduler = Arc::new(scheduler);

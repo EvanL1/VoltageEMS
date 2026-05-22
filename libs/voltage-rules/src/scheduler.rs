@@ -27,7 +27,7 @@ use tracing::{debug, error, info, warn};
 use voltage_calc::StateStore;
 use voltage_routing::RoutingCache;
 use voltage_rtdb::traits::Rtdb;
-use voltage_rtdb_shm::{ShmNotifier, UnifiedReader, UnifiedWriter};
+use voltage_rtdb_shm::{ActionDispatch, UnifiedReader};
 
 /// Default scheduler tick interval (100ms)
 pub const DEFAULT_TICK_MS: u64 = 100;
@@ -285,19 +285,15 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         log_root: PathBuf,
         state_store: Arc<S>,
         shared_reader: Option<Arc<UnifiedReader>>,
-        shm_action_writer: Option<Arc<UnifiedWriter>>,
-        shm_notifier: Option<Arc<tokio::sync::Mutex<ShmNotifier>>>,
+        action_dispatch: Option<Arc<dyn ActionDispatch>>,
     ) -> Self {
         let mut executor =
             RuleExecutor::with_state_store(Arc::clone(&rtdb), routing_cache, state_store);
         if let Some(reader) = shared_reader {
             executor = executor.with_shared_reader(reader);
         }
-        if let Some(writer) = shm_action_writer {
-            executor = executor.with_shm_action_writer(writer);
-        }
-        if let Some(notifier) = shm_notifier {
-            executor = executor.with_shm_notifier(notifier);
+        if let Some(dispatch) = action_dispatch {
+            executor = executor.with_action_dispatch(dispatch);
         }
         Self {
             rtdb,

@@ -5090,6 +5090,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "async-trait",
  "bytemuck",
  "memmap2",
  "rustc-hash",
