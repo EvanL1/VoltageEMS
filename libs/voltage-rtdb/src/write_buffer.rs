@@ -270,6 +270,19 @@ impl WriteBuffer {
         }
     }
 
+    /// Re-queue drained operations after a flush failure.
+    ///
+    /// Fields that have a fresher value in `pending` (a write that arrived
+    /// during the in-flight pipeline) are NOT overwritten — newer wins.
+    fn requeue_failed(&self, operations: crate::traits::HashMsetOps) {
+        for (key, fields) in operations {
+            let entry = self.pending.entry(key).or_default();
+            for (field, bytes) in fields {
+                entry.entry(field).or_insert(bytes);
+            }
+        }
+    }
+
     /// Collect and clear all pending data
     ///
     /// Optimized to avoid double iteration and unnecessary clones.
@@ -386,6 +399,11 @@ impl WriteBuffer {
     /// Returns the number of fields flushed.
     /// When `key_ttl_seconds` is configured, periodically refreshes TTL on written keys
     /// (throttled to every 5 minutes to minimize extra Redis calls).
+    ///
+    /// On Redis failure the drained operations are re-queued back into
+    /// `pending` so the next flush attempt retries them. Newer writes that
+    /// landed during the in-flight pipeline win — re-queued fields are
+    /// inserted only if no fresher value is present for the same field.
     pub async fn flush<R>(&self, rtdb: &R) -> anyhow::Result<usize>
     where
         R: Rtdb,
@@ -405,7 +423,25 @@ impl WriteBuffer {
 
         let field_count: usize = operations.iter().map(|(_, fields)| fields.len()).sum();
 
-        rtdb.pipeline_hash_mset(operations).await?;
+        // Clone is cheap: Arc<str> (refcount) + Bytes (refcount). Only the
+        // outer key String is a real allocation, but those are short.
+        let retry_copy: crate::traits::HashMsetOps = operations
+            .iter()
+            .map(|(k, fields)| {
+                (
+                    k.clone(),
+                    fields
+                        .iter()
+                        .map(|(f, v)| (Arc::clone(f), v.clone()))
+                        .collect(),
+                )
+            })
+            .collect();
+
+        if let Err(e) = rtdb.pipeline_hash_mset(operations).await {
+            self.requeue_failed(retry_copy);
+            return Err(e);
+        }
 
         // Refresh TTL on written keys (throttled to every 5 minutes)
         if let Some(ttl) = self.config.key_ttl_seconds {
