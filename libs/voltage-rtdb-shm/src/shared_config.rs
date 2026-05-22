@@ -1,65 +1,25 @@
-//! Shared Memory Configuration and Channel-to-Slot Index
+//! Business-side SHM configuration and channel-to-slot index.
 //!
-//! Provides configuration for shared memory and pre-computed O(1)
-//! channel-to-slot mapping for the hottest write path.
+//! Pure-infra constants and path/time helpers live in `crate::core::config`.
+//! This module owns the business-aware pieces: `SharedConfig` (capacity in
+//! "instances" / "channels"), `ChannelToSlotIndex` (uses `PointType`), and
+//! the legacy `is_shm_available` shim that takes a `SharedConfig`.
 //!
-//! # Key Components
-//!
-//! - **SharedConfig**: Configuration for shared memory file path, capacity, and snapshots
-//! - **ChannelToSlotIndex**: Pre-computed direct mapping from channel points to SHM slots
-//! - **Utility functions**: `default_shm_path()`, `is_shm_available()`, `timestamp_ms()`
+//! Pre-existing re-exports (`SHARED_MAGIC`, `DEFAULT_SHM_PATH`,
+//! `default_shm_path`, `timestamp_ms`, `DEFAULT_SNAPSHOT_INTERVAL_SECS`)
+//! remain available at this module's path for backward compatibility — they
+//! now forward to `crate::core::config`.
 
 use rustc_hash::FxHashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::info;
 use voltage_model::PointType;
 
-// ========== Constants ==========
+// ========== Re-exports from core::config (compat shim) ==========
 
-/// Magic number for validation: "VOLTAGE_" in ASCII
-pub const SHARED_MAGIC: u64 = 0x564F4C544147455F;
-
-/// Default snapshot interval in seconds (5 minutes)
-pub const DEFAULT_SNAPSHOT_INTERVAL_SECS: u64 = 300;
-
-/// Default shared memory file path (Docker tmpfs mount point)
-/// This constant is kept for backward compatibility.
-/// Use `default_shm_path()` for intelligent path selection.
-pub const DEFAULT_SHM_PATH: &str = "/shm/rtdb/voltage-rtdb.shm";
-
-/// Get the default shared memory path with intelligent fallback
-///
-/// Priority:
-/// 1. `VOLTAGE_SHM_PATH` environment variable (if set)
-/// 2. Docker tmpfs mount point `/shm/rtdb/voltage-rtdb.shm` (if exists)
-/// 3. Linux RAM-backed tmpfs `/dev/shm/voltage-rtdb.shm`
-/// 4. Fallback to `/tmp/voltage-rtdb.shm` (macOS or other platforms)
-///
-/// The path is automatically created if the parent directory exists.
-pub fn default_shm_path() -> PathBuf {
-    // Priority 1: Environment variable override
-    if let Ok(path) = std::env::var("VOLTAGE_SHM_PATH") {
-        return PathBuf::from(path);
-    }
-
-    // Priority 2: Docker tmpfs mount point
-    let docker_path = Path::new("/shm/rtdb");
-    if docker_path.exists() {
-        return PathBuf::from(DEFAULT_SHM_PATH);
-    }
-
-    // Priority 3: Linux /dev/shm (RAM-backed tmpfs)
-    #[cfg(target_os = "linux")]
-    {
-        let dev_shm = Path::new("/dev/shm");
-        if dev_shm.exists() {
-            return dev_shm.join("voltage-rtdb.shm");
-        }
-    }
-
-    // Priority 4: Fallback to /tmp (macOS or other platforms)
-    PathBuf::from("/tmp/voltage-rtdb.shm")
-}
+pub use crate::core::config::{
+    DEFAULT_SHM_PATH, DEFAULT_SNAPSHOT_INTERVAL_SECS, SHARED_MAGIC, default_shm_path, timestamp_ms,
+};
 
 // ========== SharedConfig ==========
 
@@ -242,17 +202,6 @@ impl SharedConfig {
     }
 }
 
-// ========== Helper Functions ==========
-
-/// Get current timestamp in milliseconds
-#[inline]
-pub fn timestamp_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 // ========== ChannelToSlotIndex ==========
 
 /// Direct mapping from channel points to shared memory slots
@@ -381,7 +330,7 @@ impl ChannelToSlotIndex {
 
 // ========== Utility Functions ==========
 
-/// Check if shared memory path is available
+/// Check if shared memory path is available (parent directory exists).
 pub fn is_shm_available(config: &SharedConfig) -> bool {
-    config.path.parent().map(|p| p.exists()).unwrap_or(false)
+    crate::core::config::parent_dir_exists(&config.path)
 }

@@ -9,4 +9,5 @@
 //! reverse_index, dispatch, notifier, etc.) and consumes `core` as an adapter.
 
 pub mod bitmap;
+pub mod config;
 pub mod slot;
