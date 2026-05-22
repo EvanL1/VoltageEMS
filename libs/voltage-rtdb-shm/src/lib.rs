@@ -25,6 +25,8 @@
 
 pub mod core;
 
+pub mod layout;
+
 pub mod channel_points;
 
 pub mod notification;
@@ -62,10 +64,13 @@ pub use notifier::{DEFAULT_UDS_PATH, NotifyResult, ShmNotifier};
 // Channel point counts (routing-independent SHM layout data source)
 pub use channel_points::ChannelPointCounts;
 
+// Channel slot layout (business adapter, not part of core)
+pub use layout::{ChannelLayout, allocate_layouts};
+
 // Unified shared memory
 pub use unified_shm::{
-    ChannelLayout, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, UnifiedReader, UnifiedWriter,
-    allocate_layouts, calculate_file_size,
+    UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, UnifiedReader, UnifiedWriter,
+    calculate_file_size,
 };
 
 // Channel index for dynamic channel management
