@@ -218,8 +218,8 @@ async fn load_c2c_routes(
         target_channel_id,
         target_type,
         target_point_id,
-        _scale,
-        _offset,
+        scale,
+        offset,
     ) in rows
     {
         let source_point_type = match voltage_model::PointType::from_str(&source_type) {
@@ -242,7 +242,14 @@ async fn load_c2c_routes(
             ibuf.format(target_point_id),
         );
 
-        c2c_map.insert(from_key, to_key);
+        // Encode optional linear transform alongside the target key.
+        // Identity transform stays in compact form for cache compatibility.
+        let value = if scale == 1.0 && offset == 0.0 {
+            to_key
+        } else {
+            format!("{}|{}|{}", to_key, scale, offset)
+        };
+        c2c_map.insert(from_key, value);
     }
 }
 

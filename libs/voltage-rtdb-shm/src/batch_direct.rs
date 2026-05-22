@@ -132,12 +132,15 @@ fn write_channel_batch_direct_impl(
                     );
                     result.cycles_detected += 1;
                 } else {
+                    // Apply optional linear transform configured on the C2C route.
+                    let fwd_value = target.transform(update.value);
+                    let fwd_raw = update.raw_value.map(|r| target.transform(r));
                     c2c_forwards.push(ChannelPointUpdate {
                         channel_id: target.channel_id,
                         point_type: target.point_type,
                         point_id: target.point_id,
-                        value: update.value,
-                        raw_value: update.raw_value,
+                        value: fwd_value,
+                        raw_value: fwd_raw,
                         cascade_depth: update.cascade_depth + 1,
                     });
                 }

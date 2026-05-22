@@ -46,9 +46,10 @@ impl fmt::Display for C2MTarget {
 
 /// C2C (Channel to Channel) route target
 ///
-/// Routes channel point data to another channel point (data forwarding).
-/// This is a Copy type - clone is zero-cost (12 bytes stack copy).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Routes channel point data to another channel point (data forwarding),
+/// optionally with a linear transform: `target_value = scale * source + offset`.
+/// `scale=1.0, offset=0.0` is the identity (no transform).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct C2CTarget {
     /// Target channel ID
     pub channel_id: u32,
@@ -56,6 +57,24 @@ pub struct C2CTarget {
     pub point_type: PointType,
     /// Target point ID
     pub point_id: u32,
+    /// Linear scale factor (default 1.0)
+    pub scale: f64,
+    /// Linear offset (default 0.0)
+    pub offset: f64,
+}
+
+impl C2CTarget {
+    /// Apply the linear transform to a source value.
+    #[inline]
+    pub fn transform(&self, value: f64) -> f64 {
+        self.scale * value + self.offset
+    }
+
+    /// Returns true if the transform is the identity (no value change).
+    #[inline]
+    pub fn is_identity_transform(&self) -> bool {
+        self.scale == 1.0 && self.offset == 0.0
+    }
 }
 
 impl fmt::Display for C2CTarget {
@@ -130,13 +149,21 @@ fn parse_channel_point(s: &str) -> Option<(u32, PointType, u32)> {
     Some((id, point_type, point_id))
 }
 
-#[inline]
-fn c2c_from_parts((channel_id, point_type, point_id): (u32, PointType, u32)) -> C2CTarget {
-    C2CTarget {
+/// Parse a C2C value string. Accepts `"ch:type:point"` (identity transform)
+/// or `"ch:type:point|scale|offset"` for a linear transform.
+fn parse_c2c_value(s: &str) -> Option<C2CTarget> {
+    let mut parts = s.splitn(3, '|');
+    let target_str = parts.next()?;
+    let (channel_id, point_type, point_id) = parse_channel_point(target_str)?;
+    let scale = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1.0);
+    let offset = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    Some(C2CTarget {
         channel_id,
         point_type,
         point_id,
-    }
+        scale,
+        offset,
+    })
 }
 
 #[inline]
@@ -214,8 +241,10 @@ fn build_tables(
         }
     }
     for (k, v) in c2c_data {
-        if let (Some(key), Some(parts)) = (parse_route_key(&k), parse_channel_point(&v)) {
-            c2c.insert(key, c2c_from_parts(parts));
+        // parse_c2c_value accepts both "ch:type:point" (identity transform)
+        // and "ch:type:point|scale|offset" formats — single parse path.
+        if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2c_value(&v)) {
+            c2c.insert(key, target);
         }
     }
 
