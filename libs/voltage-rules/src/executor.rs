@@ -191,6 +191,11 @@ pub(crate) struct RuleReadOutcome {
     /// field, or RPC failure). Caller MUST short-circuit rule evaluation when
     /// non-empty.
     pub missing: Vec<String>,
+    /// Per-point values read this pass, keyed by stable cache_key format
+    /// ("M:{instance}:{point}" / "A:{instance}:{point}"). Scheduler uses
+    /// this to advance OnChange last_value against the values executor
+    /// actually saw — not the Redis snapshot from phase 0 which may lag SHM.
+    pub point_values: HashMap<String, f64>,
 }
 
 /// Result of executing a rule
@@ -206,6 +211,12 @@ pub struct RuleExecutionResult {
     /// Variable values at execution time (for logging)
     /// Arc-shared to avoid cloning the full HashMap on each node
     pub variable_values: Arc<HashMap<String, f64>>,
+    /// Per-point values actually read during execution, keyed by stable
+    /// point identifier ("M:{instance}:{point}" / "A:{instance}:{point}").
+    /// Scheduler uses this to advance OnChange `last_value` against the
+    /// values the executor really saw (SHM-first), not the Redis snapshot
+    /// taken in phase 0 which may lag SHM and produce wrong deadband state.
+    pub point_values: Arc<HashMap<String, f64>>,
     /// Node execution details for debugging/visualization
     pub node_details: HashMap<String, NodeExecutionDetail>,
 }
@@ -336,11 +347,16 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             execution_path: vec![],
             matched_condition: None,
             variable_values: Arc::new(HashMap::new()),
+            point_values: Arc::new(HashMap::new()),
             node_details: HashMap::new(),
         };
 
         // Execute from start node, accumulating variable values along the path
         let mut values: HashMap<String, f64> = HashMap::new();
+        // Mirror of `values` keyed by point identifier (M:{inst}:{point} or
+        // A:{inst}:{point}) so scheduler can advance OnChange last_value
+        // against what the executor actually saw, not the Redis snapshot.
+        let mut point_values: HashMap<String, f64> = HashMap::new();
         let mut current_id = rule.flow.start_node.as_str();
         let max_iterations = 100; // Prevent infinite loops
         let mut iterations = 0;
@@ -366,8 +382,12 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
 
             match node {
                 RuleNode::End => {
-                    // Save final variable values and mark success (wrap in Arc)
+                    // Save final variable values and mark success (wrap in Arc).
+                    // point_values is the executor's authoritative "what we
+                    // actually read" view, surfaced to scheduler for OnChange
+                    // last_value advancement so deadband matches reality.
                     result.variable_values = Arc::new(std::mem::take(&mut values));
+                    result.point_values = Arc::new(std::mem::take(&mut point_values));
                     result.success = true;
                     break;
                 },
@@ -393,15 +413,18 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         Err(e) => {
                             result.error = Some(format!("Failed to read variables: {}", e));
                             result.variable_values = Arc::new(std::mem::take(&mut values));
+                            result.point_values = Arc::new(std::mem::take(&mut point_values));
                             return Ok(result);
                         },
                     };
+                    point_values.extend(outcome.point_values);
                     if !outcome.missing.is_empty() {
                         result.error = Some(format!(
                             "Rule cycle skipped: variables unavailable: {}",
                             outcome.missing.join(", ")
                         ));
                         result.variable_values = Arc::new(std::mem::take(&mut values));
+                        result.point_values = Arc::new(std::mem::take(&mut point_values));
                         return Ok(result);
                     }
                     let values_changed = outcome.values_changed;
@@ -452,6 +475,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                             return Ok(result);
                         },
                     };
+                    point_values.extend(outcome.point_values);
                     if !outcome.missing.is_empty() {
                         result.error = Some(format!(
                             "Rule cycle skipped: variables unavailable: {}",
@@ -508,6 +532,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         calculations,
                         wires,
                         &mut values,
+                        &mut point_values,
                         &mut values_snapshot,
                         &mut result,
                         rule.id,
@@ -530,6 +555,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                         period,
                         wires,
                         &mut values,
+                        &mut point_values,
                         &mut values_snapshot,
                         &mut result,
                         rule.id,
@@ -554,6 +580,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         calculations: &[CalculationRule],
         wires: &'a RuleWires,
         values: &mut HashMap<String, f64>,
+        point_values: &mut HashMap<String, f64>,
         snapshot_cache: &mut Option<Arc<HashMap<String, f64>>>,
         result: &mut RuleExecutionResult,
         rule_id: i64,
@@ -565,6 +592,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 return None;
             },
         };
+        point_values.extend(outcome.point_values);
         if !outcome.missing.is_empty() {
             result.error = Some(format!(
                 "Calculation skipped: variables unavailable: {}",
@@ -630,6 +658,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         period: &str,
         wires: &'a RuleWires,
         values: &mut HashMap<String, f64>,
+        point_values: &mut HashMap<String, f64>,
         snapshot_cache: &mut Option<Arc<HashMap<String, f64>>>,
         result: &mut RuleExecutionResult,
         rule_id: i64,
@@ -642,6 +671,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 return None;
             },
         };
+        point_values.extend(outcome.point_values);
         if !outcome.missing.is_empty() {
             result.error = Some(format!(
                 "PeriodDelta skipped: input variable unavailable: {}",
@@ -734,9 +764,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         let keyspace = KeySpaceConfig::production_cached();
 
         // ★ Phase 1a: Try SHM first, collect Redis fallback requests
-        // Group by Redis key for batched HMGET (reduces N calls to ~2 calls)
-        // Key: (redis_key, is_action), Value: Vec<(var_name, field)>
-        let mut redis_requests: HashMap<(String, bool), Vec<(String, String)>> = HashMap::new();
+        // Group by Redis key for batched HMGET (reduces N calls to ~2 calls).
+        // Each pending entry carries (var_name, field, instance_id, point_id)
+        // so Phase 1b can also populate outcome.point_values when the value
+        // came from Redis (not just SHM), keeping the scheduler's OnChange
+        // last_value source consistent regardless of read path.
+        type PendingVar = (String, String, u32, u32);
+        let mut redis_requests: HashMap<(String, bool), Vec<PendingVar>> = HashMap::new();
 
         for var in variables {
             // Skip formula variables in Phase 1 - calculated in Phase 2 after base variables
@@ -793,6 +827,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
 
                     // SharedMemory hit - fastest path.
                     // total_cmp avoids NaN != NaN busting the Arc snapshot every cycle.
+                    let point_key = format!(
+                        "{}:{}:{}",
+                        if is_action { 'A' } else { 'M' },
+                        instance_id,
+                        point
+                    );
+                    outcome.point_values.insert(point_key, val);
                     outcome.values_changed |= values
                         .insert(var_name, val)
                         .is_none_or(|prev| prev.total_cmp(&val).is_ne());
@@ -807,18 +848,22 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 keyspace.instance_measurement_key(instance_id)
             };
             let field = precomputed::get_point_id_str_or_alloc(point).to_string();
-            redis_requests
-                .entry((key, is_action))
-                .or_default()
-                .push((var_name, field));
+            redis_requests.entry((key, is_action)).or_default().push((
+                var_name,
+                field,
+                instance_id,
+                point,
+            ));
         }
 
         // ★ Phase 1b: Batched Redis fetch using HMGET (single RTT per key)
         for ((key, is_action), var_fields) in redis_requests {
-            let fields: Vec<&str> = var_fields.iter().map(|(_, f)| f.as_str()).collect();
+            let fields: Vec<&str> = var_fields.iter().map(|(_, f, _, _)| f.as_str()).collect();
             match self.rtdb.hash_mget(&key, &fields).await {
                 Ok(results) => {
-                    for (i, (var_name, field)) in var_fields.into_iter().enumerate() {
+                    for (i, (var_name, field, instance_id, point)) in
+                        var_fields.into_iter().enumerate()
+                    {
                         let parsed =
                             results
                                 .get(i)
@@ -829,6 +874,13 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                                 });
                         match parsed {
                             Some(val) if val.is_finite() => {
+                                let point_key = format!(
+                                    "{}:{}:{}",
+                                    if is_action { 'A' } else { 'M' },
+                                    instance_id,
+                                    point
+                                );
+                                outcome.point_values.insert(point_key, val);
                                 outcome.values_changed |= values
                                     .insert(var_name, val)
                                     .is_none_or(|prev| prev.total_cmp(&val).is_ne());
@@ -884,7 +936,7 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                     // RPC failure on action keys is also "treat as unset" — we
                     // can't tell whether the field would have existed.
                     if !is_action {
-                        for (var_name, _) in var_fields {
+                        for (var_name, _, _, _) in var_fields {
                             outcome.missing.push(var_name);
                         }
                     }

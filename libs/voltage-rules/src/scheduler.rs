@@ -538,6 +538,10 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             rule_id: i64,
             start_cooldown: bool,
             is_onchange: bool,
+            /// Per-point values surfaced by the executor (SHM-first read).
+            /// Used to advance OnChange last_value against what executor
+            /// actually saw, not the Redis snapshot from phase 0.
+            executor_point_values: Arc<HashMap<String, f64>>,
         }
         let mut updates: Vec<TimestampUpdate> = Vec::with_capacity(execution_results.len());
 
@@ -566,11 +570,13 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                         warn!("Rule {} fail: {:?}", result.rule_id, result.error);
                     }
 
+                    let executor_point_values = Arc::clone(&result.point_values);
                     updates.push(TimestampUpdate {
                         idx: outcome.idx,
                         rule_id: outcome.rule_id,
                         start_cooldown,
                         is_onchange: outcome.is_onchange,
+                        executor_point_values,
                     });
                 },
                 Err(e) => {
@@ -581,6 +587,7 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                         rule_id: outcome.rule_id,
                         start_cooldown: false,
                         is_onchange: outcome.is_onchange,
+                        executor_point_values: Arc::new(HashMap::new()),
                     });
                 },
             }
@@ -609,10 +616,23 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
                     {
                         for pref in point_refs {
                             let key = pref.cache_key();
-                            if let Some(Some(v)) = snapshot.get(&key)
+                            // Prefer the executor's actual read (SHM-first).
+                            // Falling back to phase-0 Redis snapshot only when
+                            // executor didn't read this point (e.g. variable
+                            // was unused this cycle). This keeps the deadband
+                            // gate consistent with the value source the rule
+                            // logic actually evaluated against — fixing the
+                            // case where SHM=10 fresh but Redis=9 stale would
+                            // make last_value lag and re-fire on the next tick.
+                            let v_opt = update
+                                .executor_point_values
+                                .get(&key)
+                                .copied()
+                                .or_else(|| snapshot.get(&key).and_then(|opt| *opt));
+                            if let Some(v) = v_opt
                                 && v.is_finite()
                             {
-                                scheduled.onchange_state.last_value.insert(key, *v);
+                                scheduled.onchange_state.last_value.insert(key, v);
                             }
                         }
                         scheduled.onchange_state.last_trigger = Some(now);
