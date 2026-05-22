@@ -497,10 +497,25 @@ pub async fn delete_instance_routing(
         Ok((measurement_count, action_count)) => {
             let total_count = measurement_count + action_count;
 
-            // Drop the whole instance hashes — all routings are gone, so any
-            // surviving field is by definition stale. DEL is cheaper than
-            // enumerating fields and aligns with the per-point unbind path
-            // that HDELs individual fields.
+            // Order matters to avoid a sync-vs-DEL race:
+            //   1. SQL rows already gone (above)
+            //   2. refresh_routing() — propagates the new (empty) C2M
+            //      mapping so concurrent ShmRedisSync ticks and any future
+            //      sync_measurement call no longer target this instance.
+            //   3. DEL the four Redis hashes to sweep residue.
+            // If we DEL'd first, a sync_measurement holding the old routing
+            // could repopulate inst:{id}:M between DEL and refresh.
+            state
+                .instance_manager
+                .refresh_routing()
+                .await
+                .map_err(|e| {
+                    ModSrvError::InternalError(format!(
+                        "Failed to refresh routing after delete: {}",
+                        e
+                    ))
+                })?;
+
             let keyspace = voltage_model::KeySpaceConfig::production_cached();
             let rtdb = &state.instance_manager.rtdb;
             for key in [
@@ -513,17 +528,6 @@ pub async fn delete_instance_routing(
                     tracing::warn!("Redis DEL on bulk routing delete {}: {}", key, e);
                 }
             }
-
-            state
-                .instance_manager
-                .refresh_routing()
-                .await
-                .map_err(|e| {
-                    ModSrvError::InternalError(format!(
-                        "Failed to refresh routing after delete: {}",
-                        e
-                    ))
-                })?;
 
             Ok(Json(SuccessResponse::new(json!({
                 "message": format!(
