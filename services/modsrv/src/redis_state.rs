@@ -445,6 +445,13 @@ pub async fn sync_measurement<R>(
 where
     R: Rtdb,
 {
+    // Nothing to write: skip the round-trip. Without this guard the
+    // pipeline below would emit `HMSET inst:{id}:M:ts` with zero
+    // field/value pairs, which is a Redis protocol error.
+    if measurement.is_empty() {
+        return Ok(());
+    }
+
     let keyspace = KeySpaceConfig::production_cached();
     let key = keyspace.instance_measurement_key(instance_id);
     let ts_key = keyspace.instance_measurement_ts_key(instance_id);
