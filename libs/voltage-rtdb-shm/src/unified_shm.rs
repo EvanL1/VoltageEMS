@@ -461,16 +461,22 @@ impl UnifiedWriter {
         header.writer_heartbeat = AtomicU64::new(0);
         // Store channel layout hash for cross-process synchronization
         header.routing_hash = AtomicU64::new(channel_points.layout_hash());
-        // Seed generation with wall-clock nanos so a comsrv restart that
-        // recreates the SHM file produces a different generation than the
-        // previous incarnation. Without this seed every create() yielded 1,
-        // and modsrv's cached expected_generation would not trip after a
-        // restart — silently writing into a possibly-shifted layout.
-        let generation_seed = std::time::SystemTime::now()
+        // Seed generation so a comsrv restart that recreates the SHM file
+        // produces a different generation than the previous incarnation.
+        // Wall-clock alone is not enough — an NTP step-back within the same
+        // second could yield ≤ the previous seed and silently bypass the
+        // mismatch detection in ShmDispatch. XOR with a per-process nonce
+        // (PID + a static-address ASLR bit) so monotonicity does not
+        // depend on the system clock.
+        static NONCE_ANCHOR: AtomicU64 = AtomicU64::new(0);
+        let process_nonce = (std::process::id() as u64)
+            .wrapping_mul(0x9E3779B97F4A7C15)
+            .wrapping_add(&NONCE_ANCHOR as *const _ as usize as u64);
+        let wall_nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
-            .unwrap_or(1)
-            .max(1);
+            .unwrap_or(1);
+        let generation_seed = wall_nanos.wrapping_add(process_nonce).max(1);
         header.writer_generation = AtomicU64::new(generation_seed);
         header._reserved = [0; 8];
 
