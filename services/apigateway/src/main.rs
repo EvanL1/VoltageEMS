@@ -197,22 +197,41 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/upgrade/abort", post(routes_config::abort_upgrade))
         .route("/upgrade/status", get(routes_config::upgrade_status));
 
-    // Broadcast routes require auth — they publish to every WS client and
-    // could be abused to inject UI notifications or scrape backend status.
-    let broadcast_routes = Router::new()
+    // Routes that require auth. Layered ONCE on the merged router so
+    // adding a new sub-router (e.g. /reports) cannot accidentally skip
+    // the JWT check the way per-route layering did before this fix.
+    // Includes anything that mutates state, exposes admin operations,
+    // or pushes data to other clients (broadcast). /auth is the only
+    // public surface (register/login/refresh) and is mounted below
+    // without the layer.
+    let protected_v1 = Router::new()
         .route("/broadcast", post(routes_broadcast::broadcast_message))
         .route("/broadcast/status", get(routes_broadcast::broadcast_status))
+        .nest("/homepage", homepage_routes)
+        .nest("/network", network_routes)
+        .nest("/config", config_routes)
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state),
             middleware_auth::require_jwt,
         ));
 
-    let api_v1 = Router::new()
-        .merge(broadcast_routes)
-        .nest("/auth", auth_routes)
-        .nest("/homepage", homepage_routes)
-        .nest("/network", network_routes)
-        .nest("/config", config_routes);
+    let api_v1 = Router::new().merge(protected_v1).nest("/auth", auth_routes);
+
+    // /api/admin/* — runtime log control. Must require auth: leaving these
+    // open lets an attacker quietly escalate log verbosity or read log
+    // files. Grouped into its own Router so the require_jwt layer covers
+    // any future admin route added inside.
+    let admin_routes = Router::new()
+        .route(
+            "/logs/level",
+            get(common::admin_api::get_log_level).post(common::admin_api::set_log_level),
+        )
+        .route("/logs/files", get(common::admin_api::list_log_files))
+        .route("/logs/view", get(common::admin_api::view_log_file))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            middleware_auth::require_jwt,
+        ));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -230,18 +249,7 @@ fn build_router(state: Arc<AppState>) -> Router {
             )),
         )
         .nest("/api/v1", api_v1)
-        .route(
-            "/api/admin/logs/level",
-            get(common::admin_api::get_log_level).post(common::admin_api::set_log_level),
-        )
-        .route(
-            "/api/admin/logs/files",
-            get(common::admin_api::list_log_files),
-        )
-        .route(
-            "/api/admin/logs/view",
-            get(common::admin_api::view_log_file),
-        )
+        .nest("/api/admin", admin_routes)
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::from_fn(
