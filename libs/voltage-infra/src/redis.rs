@@ -583,6 +583,42 @@ impl RedisClient {
         Ok(())
     }
 
+    /// Atomic variant of pipeline_hmset (MULTI/EXEC).
+    ///
+    /// Wraps the batch in a Redis transaction so all HMSETs commit
+    /// together or not at all. Use where downstream readers expect
+    /// cross-key consistency (value + ts pair); rare partial-flush
+    /// races on plain pipelines cannot leave Redis in a torn state.
+    pub async fn pipeline_hmset_atomic(
+        &self,
+        operations: &[(String, Vec<(String, String)>)],
+    ) -> Result<()> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = self.get_connection().await?;
+        let mut pipe = redis::pipe();
+        pipe.atomic();
+
+        for (key, fields) in operations {
+            if !fields.is_empty() {
+                let mut cmd = redis::cmd("HSET");
+                cmd.arg(key.as_str());
+                for (field, value) in fields {
+                    cmd.arg(field.as_str()).arg(value.as_str());
+                }
+                pipe.add_command(cmd);
+            }
+        }
+
+        pipe.query_async::<()>(&mut *conn)
+            .await
+            .with_context(|| "Failed to execute atomic pipeline HMSET")?;
+
+        Ok(())
+    }
+
     /// Get pool statistics
     pub fn pool_state(&self) -> bb8::State {
         self.pool.state()

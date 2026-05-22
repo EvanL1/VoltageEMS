@@ -317,4 +317,23 @@ pub trait Rtdb: Send + Sync + 'static {
         &self,
         operations: HashMsetOps,
     ) -> impl Future<Output = Result<()>> + Send + '_;
+
+    /// Execute multiple HMSET operations atomically (MULTI/EXEC).
+    ///
+    /// Unlike `pipeline_hash_mset` which just queues commands on the
+    /// connection (any partial-flush would leave Redis in a torn state),
+    /// this variant wraps the batch in MULTI/EXEC so all writes commit
+    /// together or not at all. Use for cases where readers depend on
+    /// cross-key consistency, e.g. `inst:{id}:M` + `inst:{id}:M:ts`
+    /// where a torn write produces new values paired with old timestamps.
+    ///
+    /// Default implementation delegates to `pipeline_hash_mset` for
+    /// backends where the operation is already atomic (e.g. in-memory
+    /// Mutex-guarded backends).
+    fn pipeline_hash_mset_atomic(
+        &self,
+        operations: HashMsetOps,
+    ) -> impl Future<Output = Result<()>> + Send + '_ {
+        self.pipeline_hash_mset(operations)
+    }
 }

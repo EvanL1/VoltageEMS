@@ -470,8 +470,12 @@ where
     }
     value_fields.push((Arc::from("_updated_at"), now_bytes.clone()));
 
+    // Atomic pipeline (MULTI/EXEC): readers across the M and M:ts hashes
+    // must never observe a new value paired with a stale timestamp, even
+    // under a connection partial-flush. Plain pipeline cannot guarantee
+    // this; atomic variant wraps both HMSETs in a single transaction.
     let ops = vec![(key, value_fields), (ts_key, ts_fields)];
-    redis.pipeline_hash_mset(ops).await
+    redis.pipeline_hash_mset_atomic(ops).await
 }
 
 /// Read instance real-time data (replaces `modsrv_get_instance_data`).
