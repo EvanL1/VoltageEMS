@@ -15,13 +15,16 @@ use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use voltage_calc::{CalcEngine, MemoryStateStore, StateStore};
-use voltage_model::{ValidationConfig, validate_value};
-use voltage_routing::RoutingCache;
-use voltage_routing::set_action_point;
-use voltage_rtdb::KeySpaceConfig;
+use voltage_model::{PointType, ValidationConfig, validate_value};
+use voltage_routing::{
+    RoutingCache, route_context_from_target, set_action_point_with_target,
+    set_action_point_with_target_at, validate_action_value,
+};
 use voltage_rtdb::numfmt::precomputed;
 use voltage_rtdb::traits::Rtdb;
+use voltage_rtdb::{KeySpaceConfig, SystemTimeProvider, TimeProvider};
 use voltage_rtdb_shm::{ShmNotifier, UnifiedReader};
 
 /// Convert dynamic point type string to static str for zero-allocation ActionResult
@@ -1131,27 +1134,8 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
                 .is_ok(),
             "A" => {
                 let point_str = precomputed::get_point_id_str_or_alloc(point);
-                match set_action_point(
-                    self.rtdb.as_ref(),
-                    &self.routing_cache,
-                    instance_id,
-                    &point_str,
-                    value,
-                )
-                .await
-                {
-                    Ok(outcome) => outcome.routed,
-                    Err(e) => {
-                        tracing::error!(
-                            "{} write failed (instance_id={}, point_id={}): {}",
-                            context,
-                            instance_id,
-                            point,
-                            e
-                        );
-                        false
-                    },
-                }
+                self.write_action_point(instance_id, point, &point_str, value, context)
+                    .await
             },
             _ => {
                 tracing::warn!("Unknown point type '{}' for {}", pt, context);
@@ -1166,6 +1150,181 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
             point_id: point,
             value,
             success,
+        }
+    }
+
+    async fn write_action_point(
+        &self,
+        instance_id: u32,
+        point: u32,
+        point_str: &str,
+        value: f64,
+        context: &str,
+    ) -> bool {
+        let target =
+            self.routing_cache
+                .lookup_m2c_by_parts(instance_id, PointType::Adjustment, point);
+
+        let Some(target) = target else {
+            return match set_action_point_with_target(
+                self.rtdb.as_ref(),
+                instance_id,
+                point_str,
+                value,
+                None,
+            )
+            .await
+            {
+                Ok(outcome) => outcome.routed,
+                Err(e) => {
+                    tracing::error!(
+                        "{} write failed (instance_id={}, point_id={}): {}",
+                        context,
+                        instance_id,
+                        point,
+                        e
+                    );
+                    false
+                },
+            };
+        };
+
+        let value = match validate_action_value(instance_id, point_str, value) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::error!(
+                    "{} write rejected (instance_id={}, point_id={}): {}",
+                    context,
+                    instance_id,
+                    point,
+                    e
+                );
+                return false;
+            },
+        };
+        let timestamp_ms = SystemTimeProvider.now_millis();
+        let ctx = route_context_from_target(target, timestamp_ms);
+
+        if !self.dispatch_action_to_comsrv(&ctx, value, context).await {
+            return false;
+        }
+
+        match set_action_point_with_target_at(
+            self.rtdb.as_ref(),
+            instance_id,
+            point_str,
+            value,
+            Some(target),
+            timestamp_ms,
+        )
+        .await
+        {
+            Ok(outcome) => outcome.routed,
+            Err(e) => {
+                tracing::error!(
+                    "{} commit failed after dispatch (instance_id={}, point_id={}): {}",
+                    context,
+                    instance_id,
+                    point,
+                    e
+                );
+                false
+            },
+        }
+    }
+
+    async fn dispatch_action_to_comsrv(
+        &self,
+        ctx: &voltage_routing::RouteContext,
+        value: f64,
+        context: &str,
+    ) -> bool {
+        let Some(writer) = self.shm_action_writer.as_ref() else {
+            tracing::error!(
+                "{} dispatch failed: SHM writer unavailable for ch={} pt={} point={}",
+                context,
+                ctx.target_channel_id,
+                ctx.target_point_type,
+                ctx.target_point_id
+            );
+            return false;
+        };
+
+        if !writer.set_action(
+            ctx.target_channel_id,
+            ctx.target_point_type,
+            ctx.target_point_id,
+            value,
+            ctx.timestamp_ms as u64,
+        ) {
+            tracing::error!(
+                "{} dispatch failed: SHM action slot missing for ch={} pt={} point={}",
+                context,
+                ctx.target_channel_id,
+                ctx.target_point_type,
+                ctx.target_point_id
+            );
+            return false;
+        }
+
+        let Some(notifier) = self.shm_notifier.as_ref() else {
+            tracing::error!(
+                "{} dispatch failed: UDS notifier unavailable for ch={} pt={} point={}",
+                context,
+                ctx.target_channel_id,
+                ctx.target_point_type,
+                ctx.target_point_id
+            );
+            return false;
+        };
+
+        let mut guard =
+            match tokio::time::timeout(Duration::from_millis(100), notifier.lock()).await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    tracing::error!(
+                        "{} dispatch failed: UDS notifier lock timeout for ch={} pt={} point={}",
+                        context,
+                        ctx.target_channel_id,
+                        ctx.target_point_type,
+                        ctx.target_point_id
+                    );
+                    return false;
+                },
+            };
+
+        let Some(point_type) = PointType::from_u8(ctx.target_point_type) else {
+            tracing::error!(
+                "{} dispatch failed: invalid point type {} for ch={} point={}",
+                context,
+                ctx.target_point_type,
+                ctx.target_channel_id,
+                ctx.target_point_id
+            );
+            return false;
+        };
+
+        let result = guard
+            .notify(
+                ctx.target_channel_id,
+                point_type,
+                ctx.target_point_id,
+                value,
+                ctx.timestamp_ms as u64,
+            )
+            .await;
+
+        if result.uds_sent {
+            true
+        } else {
+            tracing::error!(
+                "{} dispatch failed: UDS notification not delivered for ch={} pt={:?} point={}",
+                context,
+                ctx.target_channel_id,
+                point_type,
+                ctx.target_point_id
+            );
+            false
         }
     }
 

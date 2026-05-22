@@ -6,7 +6,7 @@
 //! ## Architecture
 //!
 //! ```text
-//! modsrv: write Redis/SHM mirror → send UDS command event ──►
+//! modsrv/rules: write SHM → send UDS command event ──►
 //!                                                       │
 //! comsrv: listen UDS ← recv full command event → dispatch command
 //! ```

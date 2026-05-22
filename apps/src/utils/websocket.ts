@@ -15,9 +15,7 @@ import type {
   ListenerConfig,
   SubscribeMessage,
   UnsubscribeMessage,
-  ControlMessage,
   PingMessage,
-  CommandType,
   UnsubscribeAckMessage,
 } from '@/types/websocket'
 
@@ -484,9 +482,6 @@ class WebSocketManager {
       case 'unsubscribe_ack':
         this.handleUnsubscribeAck((message as any).data)
         break
-      case 'control_ack':
-        this.handleControlAck((message as any).data)
-        break
       case 'error':
         this.handleServerError((message as any).data)
         break
@@ -576,14 +571,6 @@ class WebSocketManager {
     }
   }
 
-  /** 处理控制指令确认 */
-  private handleControlAck(data: any): void {
-    console.log('[WebSocket] 控制指令确认:', data)
-    if (!data.result.success) {
-      ElMessage.error(`控制命令执行失败: ${data.result.message}`)
-    }
-  }
-
   /** 处理 homepage_batch：首页点位批量推送 */
   private handleHomepageBatch(data: any, timestamp?: number | string): void {
     this.subscriptions.forEach((record) => {
@@ -623,32 +610,6 @@ class WebSocketManager {
       clearTimeout(this.heartbeatTimeoutTimer)
       this.heartbeatTimeoutTimer = null
     }
-  }
-
-  /** 发送控制指令 */
-  public sendControlCommand(
-    channelId: number,
-    pointId: number,
-    commandType: CommandType,
-    value?: number,
-    operator: string = 'system',
-    reason?: string,
-  ): void {
-    const controlMessage: ControlMessage = {
-      id: this.generateMessageId(),
-      type: 'control',
-      timestamp: '',
-      data: {
-        channel_id: channelId,
-        point_id: pointId,
-        command_type: commandType as any,
-        value,
-        operator,
-        reason,
-      },
-    }
-
-    this.sendMessage(controlMessage)
   }
 
   /** 发送 ping */

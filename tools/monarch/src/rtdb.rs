@@ -350,11 +350,6 @@ fn show_patterns() {
     println!("  route:c2c                - Channel-to-Channel routing hash");
     println!();
 
-    println!("TODO Queues:");
-    println!("  comsrv:<channel_id>:C:TODO  - Control commands queue");
-    println!("  comsrv:<channel_id>:A:TODO  - Adjustment commands queue");
-    println!();
-
     println!("Usage Examples:");
     println!("  monarch rtdb scan \"inst:*:M\"              - Scan all instance measurements");
     println!("  monarch rtdb get route:c2m                - Get C2M routing table");

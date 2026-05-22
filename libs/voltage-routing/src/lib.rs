@@ -75,6 +75,32 @@ pub struct RouteContext {
     pub timestamp_ms: i64,
 }
 
+/// Validate an action value before it can enter either SHM/UDS dispatch or Redis.
+pub fn validate_action_value(instance_id: u32, point_id: &str, value: f64) -> Result<f64> {
+    let validation_config = ValidationConfig::default();
+    validate_value(value, &validation_config).map_err(|e| {
+        anyhow::anyhow!(
+            "M2C data validation failed for inst:{}:A:{}: {}",
+            instance_id,
+            point_id,
+            e
+        )
+    })
+}
+
+/// Build dispatch metadata from a resolved M2C target.
+pub fn route_context_from_target(target: M2CTarget, timestamp_ms: i64) -> RouteContext {
+    RouteContext {
+        channel_id: target.channel_id.to_string(),
+        point_type: target.point_type.as_str().to_string(),
+        comsrv_point_id: target.point_id.to_string(),
+        target_channel_id: target.channel_id,
+        target_point_type: target.point_type.to_u8(),
+        target_point_id: target.point_id,
+        timestamp_ms,
+    }
+}
+
 /// Execute action routing with application-layer cache
 ///
 /// This function implements the unified M2C routing logic:
@@ -150,25 +176,31 @@ pub async fn set_action_point_with_target<R>(
 where
     R: Rtdb,
 {
-    // Validate value before M2C routing (prevents NaN/Infinity from reaching devices)
-    let validation_config = ValidationConfig::default();
-    let value = validate_value(value, &validation_config).map_err(|e| {
-        anyhow::anyhow!(
-            "M2C data validation failed for inst:{}:A:{}: {}",
-            instance_id,
-            point_id,
-            e
-        )
-    })?;
-
-    let config = voltage_rtdb::KeySpaceConfig::production_cached();
-
-    // Timestamp (epoch-ms) is computed up-front so the same value is written
-    // to both the instance sidecar (inst:{id}:A:ts) and the downstream channel
-    // hash (comsrv:{ch}:{A|...}:ts). Needed by the apigateway WebSocket which
-    // pulls `ts` from the sidecar for `source='inst'` subscriptions.
     use voltage_rtdb::{SystemTimeProvider, TimeProvider};
     let timestamp_ms = SystemTimeProvider.now_millis();
+    set_action_point_with_target_at(redis, instance_id, point_id, value, target, timestamp_ms).await
+}
+
+/// Commit an action to Redis using a caller-supplied timestamp.
+///
+/// Callers that dispatch over SHM/UDS first should compute one timestamp,
+/// use it in [`route_context_from_target`], and pass the same value here after
+/// dispatch succeeds. That keeps SHM/UDS and Redis mirrors aligned while
+/// avoiding a Redis commit before a failed dispatch.
+pub async fn set_action_point_with_target_at<R>(
+    redis: &R,
+    instance_id: u32,
+    point_id: &str,
+    value: f64,
+    target: Option<M2CTarget>,
+    timestamp_ms: i64,
+) -> Result<ActionRouteOutcome>
+where
+    R: Rtdb,
+{
+    let value = validate_action_value(instance_id, point_id, value)?;
+
+    let config = voltage_rtdb::KeySpaceConfig::production_cached();
 
     if let Some(target) = target {
         // M2CTarget is now a structured type - no parsing needed
@@ -207,15 +239,7 @@ where
         .context("Failed to write channel hash")?;
 
         // Build route context with numeric fields for SHM callers
-        let route_context = RouteContext {
-            channel_id: channel_id.to_string(),
-            point_type: point_type_enum.as_str().to_string(),
-            comsrv_point_id: comsrv_point_id.to_string(),
-            target_channel_id: channel_id,
-            target_point_type: point_type_enum.to_u8(),
-            target_point_id: comsrv_point_id,
-            timestamp_ms,
-        };
+        let route_context = route_context_from_target(target, timestamp_ms);
 
         Ok(ActionRouteOutcome {
             status: STATUS_SUCCESS.to_string(),

@@ -79,7 +79,7 @@ impl CleanupProvider for ComsrvCleanupProvider {
         } else if key.contains(":A:") || key.ends_with(":A") {
             "adjustment_points"
         } else {
-            // Not a point data key (e.g., :TODO keys, metadata keys)
+            // Not a point data key (e.g., metadata keys)
             return Ok(None);
         };
 

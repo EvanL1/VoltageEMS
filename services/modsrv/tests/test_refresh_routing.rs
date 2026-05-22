@@ -49,8 +49,8 @@ async fn insert_action_routing(pool: &SqlitePool) {
 
     sqlx::query(
         "INSERT OR IGNORE INTO instances \
-         (instance_id, instance_name, product_name, properties) \
-         VALUES (1, 'inst1', 'Battery', '{}')",
+         (instance_id, instance_name, product_name) \
+         VALUES (1, 'inst1', 'Battery')",
     )
     .execute(pool)
     .await

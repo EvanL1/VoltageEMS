@@ -9,6 +9,23 @@ fn noop_dispatch() -> Arc<dyn crate::infra::shm_dispatch::ActionDispatch> {
     Arc::new(crate::infra::shm_dispatch::NoopDispatch)
 }
 
+struct NoWriterDispatch;
+
+#[async_trait::async_trait]
+impl crate::infra::shm_dispatch::ActionDispatch for NoWriterDispatch {
+    async fn dispatch(
+        &self,
+        _ctx: &voltage_routing::RouteContext,
+        _value: f64,
+    ) -> crate::infra::shm_dispatch::DispatchOutcome {
+        crate::infra::shm_dispatch::DispatchOutcome::NoWriter
+    }
+}
+
+fn no_writer_dispatch() -> Arc<dyn crate::infra::shm_dispatch::ActionDispatch> {
+    Arc::new(NoWriterDispatch)
+}
+
 // Helper: Create test database with all required tables
 async fn create_test_database() -> (TempDir, SqlitePool) {
     let temp_dir = TempDir::new().unwrap();
@@ -918,6 +935,50 @@ async fn execute_action_rejects_when_target_channel_offline() {
     assert!(
         channel_value.is_none(),
         "channel hash must not be written when gate fires"
+    );
+}
+
+#[tokio::test]
+async fn execute_action_dispatch_failure_does_not_commit_redis() {
+    let (_temp_dir, pool) = create_test_database().await;
+    let rtdb = create_test_rtdb();
+    let product_loader = create_test_product_loader(pool.clone());
+
+    let mut m2c_data = HashMap::new();
+    m2c_data.insert("1001:A:1".to_string(), "2:A:5".to_string());
+    let routing_cache = Arc::new(voltage_routing::RoutingCache::from_maps(
+        HashMap::new(),
+        m2c_data,
+        HashMap::new(),
+    ));
+    let manager = InstanceManager::new(
+        pool,
+        rtdb.clone(),
+        routing_cache,
+        product_loader,
+        no_writer_dispatch(),
+    );
+    manager.channel_health().set_for_test(2, true);
+
+    let result = manager.execute_action(1001, "1", 75.0).await;
+    assert!(
+        matches!(result, Err(crate::error::ModSrvError::DispatchDegraded(_))),
+        "expected DispatchDegraded, got {:?}",
+        result
+    );
+
+    use voltage_rtdb::Rtdb;
+    let config = voltage_rtdb::KeySpaceConfig::production();
+    let action_key = config.instance_action_key(1001);
+    assert!(
+        rtdb.hash_get(&action_key, "1").await.unwrap().is_none(),
+        "dispatch failure must not commit the instance action hash"
+    );
+
+    let channel_key = config.channel_key(2, voltage_model::PointType::Adjustment);
+    assert!(
+        rtdb.hash_get(&channel_key, "5").await.unwrap().is_none(),
+        "dispatch failure must not commit the downstream channel hash"
     );
 }
 

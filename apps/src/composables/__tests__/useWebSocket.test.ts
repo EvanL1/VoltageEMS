@@ -11,7 +11,6 @@ const {
   subscribeMock,
   unsubscribeMock,
   connectMock,
-  sendControlCommandMock,
   getStatsMock,
 } = vi.hoisted(() => ({
   mockStatus: { value: 'disconnected' as 'connecting' | 'connected' | 'disconnected' | 'error' },
@@ -30,7 +29,6 @@ const {
   subscribeMock: vi.fn(),
   unsubscribeMock: vi.fn(),
   connectMock: vi.fn(),
-  sendControlCommandMock: vi.fn(),
   getStatsMock: vi.fn(),
 }))
 mockIsConnected.__status = mockStatus
@@ -44,7 +42,6 @@ vi.mock('@/utils/websocket', () => ({
     subscribe: subscribeMock,
     unsubscribe: unsubscribeMock,
     connect: connectMock,
-    sendControlCommand: sendControlCommandMock,
     getStats: getStatsMock,
   },
 }))
@@ -68,7 +65,6 @@ describe('composables/useWebSocket.ts', () => {
     subscribeMock.mockReset()
     unsubscribeMock.mockReset()
     connectMock.mockReset()
-    sendControlCommandMock.mockReset()
     getStatsMock.mockReset()
 
     subscribeMock.mockReturnValue('sub-1')
@@ -189,27 +185,4 @@ describe('composables/useWebSocket.ts', () => {
     wrapper.unmount()
   })
 
-  it('forwards control commands to the websocket manager', () => {
-    const config: SubscriptionConfig = { source: 'homepage', interval: 1000 }
-    let api: ReturnType<typeof useWebSocket> | undefined
-
-    const wrapper = mount(
-      createHost(config, {}, (exposed) => {
-        api = exposed
-      }),
-    )
-
-    api!.sendControlCommand(12, 34, 'execute', 56, 'tester', 'manual dispatch')
-
-    expect(sendControlCommandMock).toHaveBeenCalledWith(
-      12,
-      34,
-      'execute',
-      56,
-      'tester',
-      'manual dispatch',
-    )
-
-    wrapper.unmount()
-  })
 })

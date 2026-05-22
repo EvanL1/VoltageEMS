@@ -7,8 +7,9 @@
 //! 1. Happy path: SHM write + UDS notification → `Delivered`
 //! 2. No writer configured → `NoWriter`
 //! 3. Writer configured, no notifier → `ShmOnly { reason: "notifier not configured" }`
-//! 4. rebuild_writer with valid routing → new writer installed
-//! 5. rebuild_writer with invalid SHM path → writer cleared (next dispatch returns `NoWriter`)
+//! 4. Writer configured, slot missing → `MirrorMiss`
+//! 5. rebuild_writer with valid routing → new writer installed
+//! 6. rebuild_writer with invalid SHM path → writer cleared (next dispatch returns `NoWriter`)
 
 #![allow(clippy::disallowed_methods)] // Integration tests — unwrap is acceptable
 
@@ -49,6 +50,18 @@ fn make_route_ctx() -> RouteContext {
         target_channel_id: 1001,
         target_point_type: PointType::Control.to_u8(), // 2
         target_point_id: 0,
+        timestamp_ms: 1_700_000_000,
+    }
+}
+
+fn make_missing_slot_route_ctx() -> RouteContext {
+    RouteContext {
+        channel_id: "1001".to_string(),
+        point_type: "C".to_string(),
+        comsrv_point_id: "99".to_string(),
+        target_channel_id: 1001,
+        target_point_type: PointType::Control.to_u8(),
+        target_point_id: 99,
         timestamp_ms: 1_700_000_000,
     }
 }
@@ -205,5 +218,26 @@ async fn test_dispatch_shm_only_no_notifier() {
         (val - 7.0).abs() < f64::EPSILON,
         "SHM value should be 7.0, got {}",
         val
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_mirror_miss_fails_before_notify() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let channel_points = make_channel_point_counts();
+    let config = make_shm_config(&temp_dir);
+
+    let writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
+
+    let dispatch = ShmDispatch::new();
+    dispatch.set_writer(writer, config.clone());
+
+    let ctx = make_missing_slot_route_ctx();
+    let outcome = dispatch.dispatch(&ctx, 7.0).await;
+
+    assert!(
+        matches!(outcome, DispatchOutcome::MirrorMiss { .. }),
+        "Expected MirrorMiss, got {:?}",
+        outcome
     );
 }

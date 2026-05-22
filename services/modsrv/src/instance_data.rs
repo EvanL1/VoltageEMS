@@ -14,7 +14,7 @@ use tracing::{debug, error, warn};
 use crate::redis_state;
 
 use super::instance_manager::InstanceManager;
-use voltage_rtdb::Rtdb;
+use voltage_rtdb::{Rtdb, SystemTimeProvider, TimeProvider};
 
 impl<R: Rtdb + 'static> InstanceManager<R> {
     /// Get instance real-time data from Redis
@@ -392,20 +392,17 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
             });
         }
 
-        let outcome = voltage_routing::set_action_point_with_target(
-            self.rtdb.as_ref(),
-            instance_id,
-            action_id,
-            value,
-            m2c_target,
-        )
-        .await
-        .map_err(|e| ModSrvError::InternalError(e.to_string()))?;
+        let outcome = if let Some(target) = m2c_target {
+            let value = voltage_routing::validate_action_value(instance_id, action_id, value)
+                .map_err(|e| ModSrvError::InternalError(e.to_string()))?;
+            let timestamp_ms = SystemTimeProvider.now_millis();
+            let ctx = voltage_routing::route_context_from_target(target, timestamp_ms);
 
-        // Dispatch action to comsrv via SHM+UDS (production) or noop (tests)
-        // SCADA safety: dispatch failure must propagate to the operator via API error
-        if let Some(ctx) = &outcome.route_context {
-            match self.dispatch.dispatch(ctx, value).await {
+            // Dispatch action to comsrv via SHM+UDS (production) or noop (tests)
+            // before committing Redis state. SCADA safety: dispatch failure must
+            // propagate to the operator and must not publish a false accepted
+            // command into inst/comsrv mirrors.
+            match self.dispatch.dispatch(&ctx, value).await {
                 DispatchOutcome::Delivered | DispatchOutcome::Noop => {},
                 DispatchOutcome::ShmOnly { reason } => {
                     warn!(
@@ -426,8 +423,39 @@ impl<R: Rtdb + 'static> InstanceManager<R> {
                         "SHM writer unavailable: comsrv may have restarted".to_string(),
                     ));
                 },
+                DispatchOutcome::MirrorMiss { reason } => {
+                    error!(
+                        "Action dispatch failed: {} for instance {} action {}",
+                        reason, instance_id, action_id
+                    );
+                    return Err(ModSrvError::DispatchDegraded(format!(
+                        "{}: routing/SHM layout may be stale",
+                        reason
+                    )));
+                },
             }
-        }
+
+            voltage_routing::set_action_point_with_target_at(
+                self.rtdb.as_ref(),
+                instance_id,
+                action_id,
+                value,
+                Some(target),
+                timestamp_ms,
+            )
+            .await
+            .map_err(|e| ModSrvError::InternalError(e.to_string()))?
+        } else {
+            voltage_routing::set_action_point_with_target(
+                self.rtdb.as_ref(),
+                instance_id,
+                action_id,
+                value,
+                None,
+            )
+            .await
+            .map_err(|e| ModSrvError::InternalError(e.to_string()))?
+        };
 
         if outcome.routed {
             debug!(

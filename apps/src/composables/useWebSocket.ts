@@ -5,7 +5,7 @@
 
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import wsManager from '@/utils/websocket'
-import type { ListenerConfig, SubscriptionConfig, CommandType } from '@/types/websocket'
+import type { ListenerConfig, SubscriptionConfig } from '@/types/websocket'
 
 /**
  * 创建 WebSocket 订阅上下文
@@ -23,18 +23,6 @@ export default function useWebSocket(
   const stats = computed(() => wsManager.getStats())
 
   const subscriptionId = ref<string>('')
-
-  /** 发送控制命令 */
-  const sendControlCommand = (
-    channelId: number,
-    pointId: number,
-    commandType: CommandType,
-    value?: number,
-    operator?: string,
-    reason?: string,
-  ) => {
-    wsManager.sendControlCommand(channelId, pointId, commandType, value, operator, reason)
-  }
 
   /** 订阅 */
   const subscribe = (
@@ -81,7 +69,6 @@ export default function useWebSocket(
     isConnecting,
     stats,
     subscriptionId,
-    sendControlCommand,
     subscribe,
     unsubscribe,
   }

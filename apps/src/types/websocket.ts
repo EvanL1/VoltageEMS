@@ -12,7 +12,7 @@ export interface WebSocketMessage {
 }
 
 // 客户端发送报文类型
-export type ClientMessageType = 'subscribe' | 'unsubscribe' | 'control' | 'ping'
+export type ClientMessageType = 'subscribe' | 'unsubscribe' | 'ping'
 
 // 服务端推送报文类型
 export type ServerMessageType =
@@ -21,7 +21,6 @@ export type ServerMessageType =
   | 'alarm'
   | 'subscribe_ack'
   | 'unsubscribe_ack'
-  | 'control_ack'
   | 'error'
   | 'pong'
   | 'connection_established'
@@ -35,9 +34,6 @@ export type AlarmLevel = 0 | 1 | 2 | 3 // 0=低, 1=中, 2=高, 3=紧急
 
 // 告警状态枚举
 export type AlarmStatus = 0 | 1 // 0=恢复, 1=触发
-
-// 控制命令类型
-export type CommandType = 'set_value' | 'get_value' | 'execute'
 
 // 客户端发送报文接口
 
@@ -77,19 +73,6 @@ export interface UnsubscribeMessage extends WebSocketMessage {
     | {
         source: 'homepage'
       }
-}
-
-// 控制命令
-export interface ControlMessage extends WebSocketMessage {
-  type: 'control'
-  data: {
-    channel_id: number
-    point_id: number
-    command_type: CommandType
-    value?: number
-    operator: string
-    reason?: string
-  }
 }
 
 // 心跳
@@ -170,21 +153,6 @@ export interface UnsubscribeAckMessage extends WebSocketMessage {
   }
 }
 
-// 控制命令确认
-export interface ControlAckMessage extends WebSocketMessage {
-  type: 'control_ack'
-  data: {
-    request_id: string
-    command_id: string
-    status: 'executed' | 'failed' | 'pending'
-    result: {
-      success: boolean
-      actual_value?: number
-      error_message?: string
-    }
-  }
-}
-
 // 错误消息
 export interface ErrorMessage extends WebSocketMessage {
   type: 'error'
@@ -231,7 +199,7 @@ export interface HomepageBatchMessage extends WebSocketMessage {
 }
 
 // 联合类型
-export type ClientMessage = SubscribeMessage | UnsubscribeMessage | ControlMessage | PingMessage
+export type ClientMessage = SubscribeMessage | UnsubscribeMessage | PingMessage
 export type ServerMessage =
   | ConnectionEstablishedMessage
   | DataUpdateMessage
@@ -239,7 +207,6 @@ export type ServerMessage =
   | AlarmMessage
   | SubscribeAckMessage
   | UnsubscribeAckMessage
-  | ControlAckMessage
   | ErrorMessage
   | PongMessage
   | AlarmNumMessage

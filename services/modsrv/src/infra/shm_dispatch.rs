@@ -25,6 +25,8 @@ pub enum DispatchOutcome {
     ShmOnly { reason: &'static str },
     /// Dispatch failed — no SHM writer configured
     NoWriter,
+    /// Dispatch failed — route resolved, but the target slot was absent from SHM.
+    MirrorMiss { reason: &'static str },
     /// No-op dispatch (test environment, intentionally skips all transport)
     Noop,
 }
@@ -165,6 +167,9 @@ impl ActionDispatch for ShmDispatch {
                 "SHM action mirror miss for ch={} pt={} point={}",
                 ctx.target_channel_id, ctx.target_point_type, ctx.target_point_id
             );
+            return DispatchOutcome::MirrorMiss {
+                reason: "SHM action slot missing",
+            };
         }
 
         // Step 2: UDS notification for event-driven dispatch (~1-2ms latency)

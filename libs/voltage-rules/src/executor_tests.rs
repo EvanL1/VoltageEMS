@@ -12,6 +12,15 @@ fn new_executor() -> (Arc<MemoryRtdb>, RuleExecutor<MemoryRtdb>) {
     (rtdb, executor)
 }
 
+fn new_executor_with_m2c_route() -> (Arc<MemoryRtdb>, RuleExecutor<MemoryRtdb>) {
+    let rtdb = Arc::new(MemoryRtdb::new());
+    let mut m2c = HashMap::new();
+    m2c.insert("42:A:7".to_string(), "1001:C:0".to_string());
+    let routing_cache = Arc::new(RoutingCache::from_maps(HashMap::new(), m2c, HashMap::new()));
+    let executor = RuleExecutor::new(Arc::clone(&rtdb), routing_cache);
+    (rtdb, executor)
+}
+
 /// Helper: setup SOC strategy test with given battery value
 async fn setup_soc_test(
     soc_value: &'static str,
@@ -504,6 +513,40 @@ async fn test_assignment_numeric_string_literal_resolves() {
     assert_eq!(
         result.value, 3.125,
         "numeric-literal string must parse, not be looked up as variable"
+    );
+}
+
+#[tokio::test]
+async fn test_routed_action_without_shm_writer_does_not_commit_redis() {
+    let (rtdb, executor) = new_executor_with_m2c_route();
+    let target = RuleVariable {
+        name: "Y".to_string(),
+        instance: Some(42),
+        point_type: Some("action".to_string()),
+        point: Some(7),
+        formula: vec![],
+    };
+    let assignment = RuleValueAssignment {
+        variables: "Y".to_string(),
+        value: json!(12.5),
+    };
+    let values = HashMap::new();
+
+    let result = executor
+        .execute_rule_change(&target, &assignment, &values)
+        .await;
+
+    assert!(
+        !result.success,
+        "routed rule action must fail when SHM/UDS dispatch is unavailable"
+    );
+    assert!(
+        rtdb.hash_get("inst:42:A", "7").await.unwrap().is_none(),
+        "failed routed action must not be committed to the instance action hash"
+    );
+    assert!(
+        rtdb.hash_get("comsrv:1001:C", "0").await.unwrap().is_none(),
+        "failed routed action must not be committed to the channel action hash"
     );
 }
 

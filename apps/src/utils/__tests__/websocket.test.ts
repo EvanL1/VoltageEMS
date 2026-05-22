@@ -249,7 +249,7 @@ describe('utils/websocket.ts', () => {
     wsManager.disconnect()
   })
 
-  it('sends control commands and clears runtime state on disconnect', async () => {
+  it('clears runtime state on disconnect', async () => {
     const { wsManager } = await loadManager()
 
     wsManager.subscribe({
@@ -262,21 +262,6 @@ describe('utils/websocket.ts', () => {
     socket.readyState = MockWebSocket.OPEN
     socket.onopen?.({} as Event)
     await connectPromise
-
-    socket.send.mockClear()
-    wsManager.sendControlCommand(1, 2, 'execute', 3, 'tester', 'sync')
-
-    expect(socket.send).toHaveBeenCalledTimes(1)
-    const controlPayload = JSON.parse(socket.send.mock.calls[0][0])
-    expect(controlPayload.type).toBe('control')
-    expect(controlPayload.data).toEqual({
-      channel_id: 1,
-      point_id: 2,
-      command_type: 'execute',
-      value: 3,
-      operator: 'tester',
-      reason: 'sync',
-    })
 
     wsManager.disconnect()
 

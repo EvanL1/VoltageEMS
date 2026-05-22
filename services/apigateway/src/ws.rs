@@ -683,7 +683,6 @@ async fn handle_client_message(hub: &WsHub, client_id: &str, text: &str) {
 
 async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
     let control = &data["data"];
-    let source = control["source"].as_str().unwrap_or("inst");
     let channel_id = control["channel_id"].as_i64();
     let point_id = control["point_id"].as_i64();
     let command_type = control["command_type"].as_str();
@@ -711,62 +710,25 @@ async fn handle_control(hub: &WsHub, client_id: &str, data: &Value) {
         return;
     }
 
-    // Publish control command to Redis via control key
-    // Key: {source}:trigger:{channel_id}:C
-    let cmd_id = data["id"]
-        .as_str()
-        .map(String::from)
-        .unwrap_or_else(|| format!("cmd_{}", Utc::now().timestamp()));
+    warn!(
+        "Rejected legacy WS control request from {} for ch{} pt{} command_type={}",
+        client_id,
+        channel_id,
+        point_id,
+        command_type.unwrap_or("<missing>")
+    );
+    hub.send_to(client_id, control_unsupported_msg(data["id"].as_str()));
+}
 
-    let cmd_data = json!({
-        "point_id": point_id,
-        "value": value,
-        "source": client_id,
-        "command_id": cmd_id,
-        "timestamp": Utc::now().timestamp(),
-    });
+const CONTROL_UNSUPPORTED_MESSAGE: &str =
+    "WebSocket control is disabled; use modsrv execute_action or comsrv channel control API";
 
-    let trigger_key = format!("{}:trigger:{}:C", source, channel_id);
-    let cmd_bytes = match serde_json::to_vec(&cmd_data) {
-        Ok(bytes) => Bytes::from(bytes),
-        Err(e) => {
-            error!("Failed to encode WS control command: {}", e);
-            let err = error_msg(
-                "CONTROL_ERROR",
-                "Failed to encode control command",
-                data["id"].as_str(),
-            );
-            hub.send_to(client_id, err);
-            return;
-        },
-    };
-
-    match hub.rtdb.list_rpush(&trigger_key, cmd_bytes).await {
-        Ok(_) => {
-            let ack = json!({
-                "type": "control_ack",
-                "id": format!("{}_ack", cmd_id),
-                "timestamp": Utc::now().timestamp(),
-                "data": {
-                    "command_id": cmd_id,
-                    "status": "executed",
-                    "success": true,
-                    "value": value,
-                }
-            })
-            .to_string();
-            hub.send_to(client_id, ack);
-        },
-        Err(e) => {
-            error!("Control command publish failed: {}", e);
-            let err = error_msg(
-                "CONTROL_ERROR",
-                "Failed to publish control command",
-                data["id"].as_str(),
-            );
-            hub.send_to(client_id, err);
-        },
-    }
+fn control_unsupported_msg(request_id: Option<&str>) -> String {
+    error_msg(
+        "CONTROL_UNSUPPORTED",
+        CONTROL_UNSUPPORTED_MESSAGE,
+        request_id,
+    )
 }
 
 fn error_msg(code: &str, message: &str, request_id: Option<&str>) -> String {
@@ -780,4 +742,20 @@ fn error_msg(code: &str, message: &str, request_id: Option<&str>) -> String {
         }
     })
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn control_unsupported_msg_returns_error_frame() {
+        let msg = control_unsupported_msg(Some("cmd-1"));
+        let parsed: Value = serde_json::from_str(&msg).expect("valid json");
+
+        assert_eq!(parsed["type"], "error");
+        assert_eq!(parsed["data"]["code"], "CONTROL_UNSUPPORTED");
+        assert_eq!(parsed["data"]["message"], CONTROL_UNSUPPORTED_MESSAGE);
+        assert_eq!(parsed["data"]["request_id"], "cmd-1");
+    }
 }
