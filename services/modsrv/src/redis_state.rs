@@ -450,21 +450,21 @@ where
     let ts_key = keyspace.instance_measurement_ts_key(instance_id);
     let now_ms = SystemTimeProvider.now_millis();
     let now_bytes = Bytes::from(now_ms.to_string());
-    // Build value fields and the matching per-point ts shadow so consumers
-    // (rules deadband, UI staleness checks) see value + ts updated together.
-    let mut value_fields: Vec<(String, Bytes)> = Vec::with_capacity(measurement.len() + 1);
-    let mut ts_fields: Vec<(String, Bytes)> = Vec::with_capacity(measurement.len());
+    // Build value + ts pairs and pipeline them in one round-trip so readers
+    // (rules deadband, UI staleness) never observe a new value paired with
+    // an old ts. pipeline_hash_mset takes Vec<(Arc<str>, Bytes)>, so convert.
+    use std::sync::Arc;
+    let mut value_fields: Vec<(Arc<str>, Bytes)> = Vec::with_capacity(measurement.len() + 1);
+    let mut ts_fields: Vec<(Arc<str>, Bytes)> = Vec::with_capacity(measurement.len());
     for (k, v) in measurement {
-        ts_fields.push((k.clone(), now_bytes.clone()));
-        value_fields.push((k, value_into_bytes(v)));
+        let field: Arc<str> = Arc::from(k);
+        ts_fields.push((Arc::clone(&field), now_bytes.clone()));
+        value_fields.push((field, value_into_bytes(v)));
     }
-    value_fields.push(("_updated_at".to_string(), now_bytes.clone()));
+    value_fields.push((Arc::from("_updated_at"), now_bytes.clone()));
 
-    redis.hash_mset(&key, value_fields).await?;
-    if !ts_fields.is_empty() {
-        redis.hash_mset(&ts_key, ts_fields).await?;
-    }
-    Ok(())
+    let ops = vec![(key, value_fields), (ts_key, ts_fields)];
+    redis.pipeline_hash_mset(ops).await
 }
 
 /// Read instance real-time data (replaces `modsrv_get_instance_data`).
