@@ -64,9 +64,12 @@ const UNWRITTEN_SEQ: u32 = 0;
 const MAX_PIPELINE_SLOTS: usize = 1024;
 
 /// Upper bound on retry_slots so sustained overload does not grow it
-/// without limit. Once exceeded we drop the oldest pending retries; the
-/// periodic full-scan (FULL_SCAN_INTERVAL) will re-discover any slot we
-/// drop here, so dropped retries do not lose data permanently.
+/// without limit. retry_slots is sorted ascending before this cap is
+/// applied (see flush_once), so eviction by `drain(..n)` removes the
+/// LOWEST-INDEXED slots — not the insertion-order oldest. Mid-range
+/// slot indices are the ones that wait longest under sustained
+/// overload; they are re-discovered by the periodic full-scan
+/// (FULL_SCAN_INTERVAL ≈ 60s), so no data is lost permanently.
 const MAX_RETRY_SLOTS: usize = MAX_PIPELINE_SLOTS * 4;
 
 /// Force a full seq scan periodically as a safety net for external writers.
@@ -204,8 +207,11 @@ impl<R: Rtdb> ShmRedisSync<R> {
         // entries are re-discovered by the periodic full-scan.
         if self.retry_slots.len() > MAX_RETRY_SLOTS {
             let drop_count = self.retry_slots.len() - MAX_RETRY_SLOTS;
+            // retry_slots is sorted ascending at this point, so drain(..n)
+            // removes the lowest-indexed slots in the overflow set. Those
+            // slots are re-discovered by the periodic FULL_SCAN.
             tracing::warn!(
-                "ShmRedisSync: dropping {} oldest retry slots (cap {})",
+                "ShmRedisSync: dropping {} lowest-indexed retry slots (cap {})",
                 drop_count,
                 MAX_RETRY_SLOTS
             );
