@@ -201,6 +201,18 @@ async fn main() -> VoltageResult<()> {
                 voltage_rtdb_shm::ChannelPointCounts::new()
             });
 
+        // Best-effort cleanup of orphan per-generation staging files left
+        // behind by a crashed `ShmHandle::rebuild_via_swap` in a previous
+        // run. Safe to run unconditionally: matches only
+        // `{stem}-{digits}{.ext}` files in canonical's parent dir, never
+        // the canonical file itself. Steady-state operation leaves no
+        // such files (the rename consumes the staging name atomically).
+        match voltage_rtdb_shm::core::config::cleanup_orphan_generation_files(config.path()) {
+            Ok(0) => {},
+            Ok(n) => info!("removed {n} orphan SHM generation file(s) from previous run"),
+            Err(e) => warn!("orphan SHM file cleanup failed (non-fatal): {e}"),
+        }
+
         // Create UnifiedWriter from channel points (automatic slot allocation)
         // is_shm_available checks if parent directory exists (Docker mount point)
         if is_shm_available(&config) {
