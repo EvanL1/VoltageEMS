@@ -544,14 +544,19 @@ impl RoutingCache {
     pub fn content_hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
 
+        // Load BOTH guards before iterating: update() swaps them sequentially,
+        // so two independent loads can mix one old and one new snapshot,
+        // producing a hash that corresponds to no real state. A concurrent
+        // update racing with this read still produces either old-pair or
+        // new-pair (the worst case is one extra reset), but never a
+        // chimera that could coincidentally equal a prior hash.
+        let c2m = self.c2m.load();
+        let m2c = self.m2c.load();
+
         let mut hasher = rustc_hash::FxHasher::default();
 
-        // Hash C2M entries in sorted order
-        // Convert PointType to u8 for sorting since PointType doesn't impl Ord
-        let c2m = self.c2m.load();
         let mut c2m_entries: Vec<_> = c2m.iter().map(|(k, v)| (*k, *v)).collect();
         c2m_entries.sort_by_key(|((ch_id, pt, pt_id), _)| (*ch_id, pt.to_u8(), *pt_id));
-
         for ((ch_id, pt, pt_id), target) in c2m_entries {
             ch_id.hash(&mut hasher);
             pt.to_u8().hash(&mut hasher);
@@ -560,11 +565,8 @@ impl RoutingCache {
             target.point_id.hash(&mut hasher);
         }
 
-        // Hash M2C entries in sorted order
-        let m2c = self.m2c.load();
         let mut m2c_entries: Vec<_> = m2c.iter().map(|(k, v)| (*k, *v)).collect();
         m2c_entries.sort_by_key(|((inst_id, pt, pt_id), _)| (*inst_id, pt.to_u8(), *pt_id));
-
         for ((inst_id, pt, pt_id), target) in m2c_entries {
             inst_id.hash(&mut hasher);
             pt.to_u8().hash(&mut hasher);
@@ -574,8 +576,7 @@ impl RoutingCache {
             target.point_id.hash(&mut hasher);
         }
 
-        // Note: C2C is not included in hash because it doesn't affect slot allocation.
-        // C2C routes are channel-to-channel forwarding rules that don't create new slots.
+        // C2C omitted: it does not affect slot allocation or shm_redis_sync.
 
         hasher.finish()
     }
