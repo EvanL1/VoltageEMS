@@ -29,6 +29,7 @@ use utoipa_swagger_ui::{Config, SwaggerUi};
 mod auth;
 mod config;
 mod db;
+mod middleware_auth;
 mod models;
 mod routes_auth;
 mod routes_broadcast;
@@ -167,7 +168,8 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/users/{id}", put(routes_auth::admin_update_user))
         .route("/users/{id}", delete(routes_auth::admin_delete_user))
         .route("/stats", get(routes_auth::get_auth_stats))
-        .route("/cleanup-tokens", post(routes_auth::cleanup_tokens));
+        .route("/cleanup-tokens", post(routes_auth::cleanup_tokens))
+        .route("/validate", get(routes_auth::validate_token));
 
     let homepage_routes = Router::new()
         .route("/", get(routes_homepage::list_points))
@@ -195,9 +197,18 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/upgrade/abort", post(routes_config::abort_upgrade))
         .route("/upgrade/status", get(routes_config::upgrade_status));
 
-    let api_v1 = Router::new()
+    // Broadcast routes require auth — they publish to every WS client and
+    // could be abused to inject UI notifications or scrape backend status.
+    let broadcast_routes = Router::new()
         .route("/broadcast", post(routes_broadcast::broadcast_message))
         .route("/broadcast/status", get(routes_broadcast::broadcast_status))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            middleware_auth::require_jwt,
+        ));
+
+    let api_v1 = Router::new()
+        .merge(broadcast_routes)
         .nest("/auth", auth_routes)
         .nest("/homepage", homepage_routes)
         .nest("/network", network_routes)
@@ -211,7 +222,13 @@ fn build_router(state: Arc<AppState>) -> Router {
     let app = Router::new()
         .route("/", get(|| async { "VoltageEMS API Gateway" }))
         .route("/health", get(|| async { "ok" }))
-        .route("/ws", get(ws_handler))
+        .route(
+            "/ws",
+            get(ws_handler).route_layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                middleware_auth::require_jwt,
+            )),
+        )
         .nest("/api/v1", api_v1)
         .route(
             "/api/admin/logs/level",

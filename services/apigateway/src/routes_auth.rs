@@ -865,3 +865,22 @@ async fn apply_password_change(
         },
     }
 }
+
+// ── GET /api/v1/auth/validate ────────────────────────────────────────────────
+
+/// Lightweight token validation for nginx `auth_request`.
+///
+/// Returns 200 with empty body if the Authorization header carries a valid
+/// JWT; 401 otherwise. Designed to be cheap — nginx issues an internal
+/// subrequest here to gate backend service locations (/comApi/, /modApi/,
+/// etc.) so the FE bearer token is enforced uniformly without each backend
+/// service needing its own auth layer.
+pub async fn validate_token(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    match require_auth(&state, &headers) {
+        Ok(_) => StatusCode::OK.into_response(),
+        Err((status, _)) => status.into_response(),
+    }
+}
