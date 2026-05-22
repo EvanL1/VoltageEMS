@@ -25,6 +25,16 @@
 
 pub mod core;
 
+// Backward-compat shims for the old top-level module paths. External
+// consumers that imported `voltage_rtdb_shm::vec_impl::PointSlot` or
+// `voltage_rtdb_shm::slot_bitmap::SlotBitmap` keep working.
+pub mod vec_impl {
+    pub use crate::core::slot::*;
+}
+pub mod slot_bitmap {
+    pub use crate::core::bitmap::*;
+}
+
 pub mod layout;
 
 pub mod channel_points;
@@ -56,7 +66,7 @@ pub mod dispatch;
 // Re-exports for convenience
 pub use core::bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
 pub use core::slot::PointSlot;
-pub use core::slot_io::SlotIo;
+pub use core::slot_io::{SlotIo, SlotRead};
 pub use instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 pub use notification::ShmNotification;
 #[cfg(unix)]

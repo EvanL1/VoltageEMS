@@ -18,15 +18,36 @@
 //! callers want dynamic dispatch.
 
 use crate::core::header::UnifiedHeader;
-use crate::core::slot::PointSlot;
+
+/// A consistent read of a slot's measurement state.
+#[derive(Debug, Clone, Copy)]
+pub struct SlotRead {
+    /// Engineering-unit value (may be `NaN` for unwritten slots).
+    pub value: f64,
+    /// Raw protocol-level value (may be `NaN`).
+    pub raw: f64,
+    /// Wall-clock timestamp in ms since UNIX epoch.
+    pub timestamp_ms: u64,
+}
 
 /// The pure-infra view of a SHM writer/reader: slot-level I/O only.
+///
+/// All mutating access is gated through [`write_slot`](Self::write_slot), so
+/// implementations can guarantee dirty tracking and heartbeat invariants.
+/// Read access returns a value snapshot (`SlotRead`), never a reference to
+/// the underlying atomic cell — exposing `&PointSlot` would let a caller
+/// call `PointSlot::set` directly and bypass `write_slot`.
 pub trait SlotIo: Send + Sync {
     /// Number of slots currently live in this SHM.
     fn slot_count(&self) -> usize;
 
-    /// Read-only access to a slot by index. Returns `None` if out of bounds.
-    fn slot(&self, index: usize) -> Option<&PointSlot>;
+    /// Read a slot's current measurement using a seqlock-consistent load.
+    ///
+    /// Returns `None` if the index is out of bounds **or** if the seqlock
+    /// retry budget was exhausted (a writer was concurrently mid-update).
+    /// In the latter case, callers should retry on a subsequent tick — the
+    /// torn-read window is microseconds.
+    fn read_slot(&self, index: usize) -> Option<SlotRead>;
 
     /// Write a measurement to a slot. Returns `false` if the index is out of
     /// bounds. Implementations must mark the slot as dirty so a subsequent

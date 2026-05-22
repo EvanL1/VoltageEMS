@@ -478,7 +478,12 @@ impl UnifiedWriter {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(1);
-        let generation_seed = wall_nanos.wrapping_add(process_nonce).max(1);
+        // Force the initial generation to be even and nonzero. The reconfigure
+        // path relies on the invariant "generation is even at rest, odd while
+        // a reconfigure is in flight" — readers gate themselves out on odd.
+        // A random odd seed would defeat that gating (and only fire the
+        // debug_assert in debug builds, silently corrupting release).
+        let generation_seed = (wall_nanos.wrapping_add(process_nonce) & !1u64).max(2);
         header.writer_generation = AtomicU64::new(generation_seed);
         header._reserved = [0; 8];
 
@@ -1414,13 +1419,16 @@ impl crate::core::slot_io::SlotIo for UnifiedWriter {
         self.slot_count
     }
 
-    #[inline]
-    fn slot(&self, index: usize) -> Option<&PointSlot> {
-        if index < self.slot_count {
-            Some(self.slot_at(index))
-        } else {
-            None
+    fn read_slot(&self, index: usize) -> Option<crate::core::slot_io::SlotRead> {
+        if index >= self.slot_count {
+            return None;
         }
+        let (value, raw, timestamp_ms) = self.slot_at(index).try_load_consistent()?;
+        Some(crate::core::slot_io::SlotRead {
+            value,
+            raw,
+            timestamp_ms,
+        })
     }
 
     fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
