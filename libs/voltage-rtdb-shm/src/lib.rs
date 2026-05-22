@@ -56,6 +56,7 @@ pub mod dispatch;
 // Re-exports for convenience
 pub use core::bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
 pub use core::slot::PointSlot;
+pub use core::slot_io::SlotIo;
 pub use instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 pub use notification::ShmNotification;
 #[cfg(unix)]

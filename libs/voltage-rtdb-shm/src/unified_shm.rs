@@ -1401,6 +1401,57 @@ impl UnifiedReader {
     }
 }
 
+// ========== Pure-infra contract: SlotIo ==========
+//
+// UnifiedWriter implements the business-unaware slot I/O contract declared
+// in `core::slot_io`. The trait deliberately omits every channel/point-type
+// adapter on UnifiedWriter — anything reachable via `&dyn SlotIo` is, by
+// type system enforcement, infrastructure only.
+
+impl crate::core::slot_io::SlotIo for UnifiedWriter {
+    #[inline]
+    fn slot_count(&self) -> usize {
+        self.slot_count
+    }
+
+    #[inline]
+    fn slot(&self, index: usize) -> Option<&PointSlot> {
+        if index < self.slot_count {
+            Some(self.slot_at(index))
+        } else {
+            None
+        }
+    }
+
+    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
+        if index >= self.slot_count {
+            return false;
+        }
+        self.slot_at(index).set(value, raw, timestamp_ms);
+        self.mark_dirty_slot(index);
+        self.header()
+            .writer_heartbeat
+            .store(timestamp_ms, Ordering::Relaxed);
+        true
+    }
+
+    fn take_dirty_slots(&self) -> Vec<usize> {
+        UnifiedWriter::take_dirty_slots(self)
+    }
+
+    fn generation(&self) -> u64 {
+        UnifiedWriter::generation(self)
+    }
+
+    fn writer_heartbeat(&self) -> u64 {
+        UnifiedWriter::writer_heartbeat(self)
+    }
+
+    fn header(&self) -> &UnifiedHeader {
+        UnifiedWriter::header(self)
+    }
+}
+
 // ========== Tests ==========
 
 #[cfg(test)]
