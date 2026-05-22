@@ -28,42 +28,24 @@
 //! - **Routing is permission**: Runtime DashMap, not data synchronization
 
 use crate::channel_points::ChannelPointCounts;
+use crate::core::slot::PointSlot;
+use crate::layout::{ChannelLayout, allocate_layouts};
 use crate::shared_config::SharedConfig;
-use crate::vec_impl::PointSlot;
 use anyhow::{Context, Result, bail};
-use memmap2::{Mmap, MmapMut, MmapOptions};
+use memmap2::MmapOptions;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use voltage_model::PointType;
 use voltage_routing::RoutingCache;
 
-// ========== Constants ==========
+pub use crate::core::header::{
+    DEFAULT_MAX_SLOTS, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, calculate_file_size,
+    slot_offset,
+};
 
-/// Magic number for unified shared memory: "VOLTAGE_" in ASCII
-pub const UNIFIED_MAGIC: u64 = 0x564F4C544147455F;
-
-/// Current version
-/// SHM layout version. v3 changed the slot default from `(value=0.0, raw=0.0)`
-/// to `(value=NaN, raw=NaN)` so unwritten slots are self-describing instead
-/// of relying on the `seq==0` side channel. Snapshots from v2 are intentionally
-/// rejected at restore time — the writer starts fresh and the next protocol
-/// poll repopulates each slot with a finite value.
-pub const UNIFIED_VERSION: u32 = 3;
-
-/// Default max slots (100,000 points)
-pub const DEFAULT_MAX_SLOTS: u32 = 100_000;
-
-#[inline]
-fn dirty_word_count(slot_count: usize) -> usize {
-    slot_count.div_ceil(u64::BITS as usize)
-}
-
-fn new_dirty_words(slot_count: usize) -> Vec<AtomicU64> {
-    (0..dirty_word_count(slot_count))
-        .map(|_| AtomicU64::new(0))
-        .collect()
-}
+use crate::core::reader::SlotReader;
+use crate::core::writer::SlotWriter;
 
 fn read_ne_bytes<const N: usize>(buf: &[u8], start: usize, label: &str) -> Result<[u8; N]> {
     let end = start
@@ -85,170 +67,8 @@ fn read_u32_ne(buf: &[u8], start: usize, label: &str) -> Result<u32> {
     Ok(u32::from_ne_bytes(read_ne_bytes(buf, start, label)?))
 }
 
-// ========== Header (64 bytes) ==========
-
-/// Unified shared memory header (simplified)
-///
-/// Layout: 64 bytes, cache-line aligned
-#[repr(C, align(64))]
-pub struct UnifiedHeader {
-    /// Magic number for validation ("VOLTAGE_")
-    pub magic: u64,
-    /// Version number
-    pub version: u32,
-    /// Maximum number of slots
-    pub max_slots: u32,
-    /// Current slot count (atomically updated)
-    pub slot_count: AtomicU32,
-    /// Padding for alignment
-    pub _pad: [u8; 4],
-    /// Last update timestamp (for monitoring)
-    pub last_update_ts: AtomicU64,
-    /// Writer heartbeat (for monitoring)
-    pub writer_heartbeat: AtomicU64,
-    /// Channel layout hash for cross-process synchronization
-    ///
-    /// When comsrv creates the SHM, it stores the hash of ChannelPointCounts layout.
-    /// When modsrv opens the SHM, it verifies its ChannelPointCounts has the same hash.
-    /// Mismatch indicates channel point definitions changed between process starts.
-    pub routing_hash: AtomicU64,
-    /// Writer generation counter — bumped on every create/reconfigure.
-    /// modsrv reads this to detect comsrv restarts with routing changes.
-    pub writer_generation: AtomicU64,
-    /// Reserved for future use
-    pub _reserved: [u8; 8],
-}
-
-const _: () = assert!(std::mem::size_of::<UnifiedHeader>() == 64);
-
-// ========== Shared Helpers ==========
-
-/// Save shared memory data to a snapshot file (atomic write via temp + rename).
-///
-/// Shared implementation used by both `UnifiedWriter::save_snapshot` and
-/// `UnifiedReader::save_snapshot`.
-///
-/// # Tear-resistant slot serialization
-///
-/// Earlier versions did a raw `memcpy` of the mmap region. If the writer
-/// was mid-update through a seqlock at snapshot time, the snapshot
-/// captured torn bytes (new value + old raw, or seq=odd mid-write) and
-/// preserved them across restart — a stale or impossible reading would
-/// then be restored to SHM and propagate through Redis until overwritten
-/// by the next live write.
-///
-/// Now we iterate slots and call `try_load_consistent()` per slot. Torn
-/// reads (writer concurrently mid-update) produce `None` and we write
-/// the unwritten-NaN sentinel for that slot — restore treats it as
-/// never-written and skips it, matching the safe behavior of fresh
-/// slots. The header bytes are still copied verbatim (header atomics
-/// are byte-stable so a `memcpy` of a 64-byte aligned region is safe).
-fn save_snapshot_impl(
-    mmap_data: &[u8],
-    slot_count: usize,
-    path: &std::path::Path,
-    label: &str,
-) -> Result<()> {
-    use std::io::Write;
-
-    if mmap_data.len() < slot_offset() + slot_count * std::mem::size_of::<PointSlot>() {
-        bail!(
-            "snapshot source mmap too small: len={} slot_count={}",
-            mmap_data.len(),
-            slot_count
-        );
-    }
-
-    let temp_path = path.with_extension("tmp");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create snapshot directory: {:?}", parent))?;
-    }
-
-    let mut file = std::fs::File::create(&temp_path)
-        .with_context(|| format!("Failed to create temp snapshot file: {:?}", temp_path))?;
-
-    // Header: copied verbatim. AtomicU64 fields are byte-stable; this is
-    // a 64-byte region and individual atomic stores are torn-safe at the
-    // u64 level, so a single memcpy captures a consistent header.
-    file.write_all(&mmap_data[..slot_offset()])
-        .with_context(|| "Failed to write snapshot header")?;
-
-    // Slots: iterate one at a time via the seqlock-aware load. Torn slots
-    // become unwritten-NaN sentinels in the snapshot.
-    // SAFETY: bounds checked above; PointSlot is repr(C, align(32)).
-    let slots_ptr =
-        unsafe { mmap_data.as_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
-    let mut torn = 0usize;
-    for i in 0..slot_count {
-        // SAFETY: i < slot_count, and the mmap covers slot_count slots.
-        let slot = unsafe { &*slots_ptr.add(i) };
-        let bytes = match slot.try_load_consistent() {
-            Some((value, raw, ts)) => slot_snapshot_bytes(value, raw, ts),
-            None => {
-                torn += 1;
-                slot_unwritten_bytes()
-            },
-        };
-        file.write_all(&bytes)
-            .with_context(|| "Failed to write snapshot slot")?;
-    }
-
-    file.flush().context("Failed to flush snapshot file")?;
-    file.sync_all().context("Failed to sync snapshot file")?;
-
-    std::fs::rename(&temp_path, path)
-        .with_context(|| format!("Failed to rename temp to snapshot: {:?}", path))?;
-
-    let data_size = slot_offset() + slot_count * std::mem::size_of::<PointSlot>();
-    if torn > 0 {
-        tracing::warn!(
-            "{} snapshot saved with {} torn slot(s) elided as unwritten: {:?}, size={} bytes, slots={}",
-            label,
-            torn,
-            path,
-            data_size,
-            slot_count
-        );
-    } else {
-        tracing::info!(
-            "{} snapshot saved: {:?}, size={} bytes, slots={}",
-            label,
-            path,
-            data_size,
-            slot_count
-        );
-    }
-    Ok(())
-}
-
-/// Encode a known-consistent slot as 32 bytes matching PointSlot's
-/// `#[repr(C)]` layout: value_bits(u64) | timestamp(u64) | raw_bits(u64) |
-/// seq(u32) | dirty(u32). seq is written as 2 (even, signaling "value
-/// committed") and dirty as 0. Native-endian bytes match the in-memory
-/// representation that restore will load directly.
-fn slot_snapshot_bytes(value: f64, raw: f64, ts: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[0..8].copy_from_slice(&value.to_bits().to_ne_bytes());
-    out[8..16].copy_from_slice(&ts.to_ne_bytes());
-    out[16..24].copy_from_slice(&raw.to_bits().to_ne_bytes());
-    out[24..28].copy_from_slice(&2u32.to_ne_bytes());
-    out[28..32].copy_from_slice(&0u32.to_ne_bytes());
-    out
-}
-
-/// Encode an unwritten-sentinel slot for the snapshot file: NaN
-/// value_bits + NaN raw_bits + seq=0, dirty=0. Matches the layout
-/// produced by `PointSlot::new()` and is recognized by restore via
-/// the NaN sentinel filter.
-fn slot_unwritten_bytes() -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[0..8].copy_from_slice(&crate::vec_impl::SLOT_UNWRITTEN_BITS.to_ne_bytes());
-    // timestamp = 0 (already)
-    out[16..24].copy_from_slice(&crate::vec_impl::SLOT_UNWRITTEN_BITS.to_ne_bytes());
-    // seq = 0, dirty = 0 (already)
-    out
-}
+// Snapshot serialization is now in `core::snapshot_save`; SlotWriter /
+// SlotReader call into it directly.
 
 /// Validate a shared memory header: checks magic, version, and routing hash
 ///
@@ -330,74 +150,17 @@ fn validate_reconfigurable_header(header: &UnifiedHeader) -> Result<u32> {
     Ok(header.max_slots)
 }
 
-/// Shared accessor methods for both UnifiedWriter and UnifiedReader.
-///
-/// Both types store an mmap region with identical layout: Header + PointSlot[].
-/// This macro generates `header()`, `slot_at()`, and `lookup()` to avoid duplication.
-macro_rules! impl_shm_accessors {
-    ($mmap_field:ident) => {
-        /// Get header reference
-        #[inline]
-        fn header(&self) -> &UnifiedHeader {
-            // SAFETY: mmap region starts with a valid UnifiedHeader.
-            // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
-            unsafe { &*(self.$mmap_field.as_ptr() as *const UnifiedHeader) }
-        }
-
-        /// Get PointSlot at index
-        #[inline]
-        fn slot_at(&self, index: usize) -> &PointSlot {
-            assert!(
-                index < self.slot_count,
-                "slot_at: index {} out of bounds (slot_count={})",
-                index,
-                self.slot_count
-            );
-            // SAFETY: index is bounds-checked above. PointSlot is #[repr(C, align(32))].
-            unsafe {
-                let ptr = self.$mmap_field.as_ptr().add(slot_offset()) as *const PointSlot;
-                &*ptr.add(index)
-            }
-        }
-
-        /// Lookup slot by channel key
-        #[inline]
-        pub fn lookup(&self, channel_id: u32, point_type: u8, point_id: u32) -> Option<usize> {
-            self.channel_layouts
-                .get(channel_id as usize)?
-                .slot(point_type, point_id)
-        }
-
-        /// Get current slot count
-        #[inline]
-        pub fn slot_count(&self) -> usize {
-            self.slot_count
-        }
-
-        /// Get max slots
-        #[inline]
-        pub fn max_slots(&self) -> u32 {
-            self.max_slots
-        }
-
-        /// Get channel layouts
-        #[inline]
-        pub fn channel_layouts(&self) -> &[ChannelLayout] {
-            &self.channel_layouts
-        }
-    };
-}
+// The previous `impl_shm_accessors!` macro is gone. Slot-level accessors
+// (header, slot_at, slot_count, max_slots) now live on `SlotWriter` /
+// `SlotReader` in `core::writer` / `core::reader`. Channel-aware methods
+// (lookup, channel_layouts) live as explicit inherent methods on
+// `UnifiedWriter` / `UnifiedReader` and read `self.channel_layouts`
+// directly.
 
 // ========== Memory Layout ==========
 
 /// Calculate file size for given max_slots
 ///
-/// Layout: Header (64B) + PointSlot\[max_slots\] (32B each)
-#[inline]
-pub const fn calculate_file_size(max_slots: u32) -> usize {
-    std::mem::size_of::<UnifiedHeader>() + (max_slots as usize) * std::mem::size_of::<PointSlot>()
-}
-
 /// Verify a file is at least header-sized before any unsafe header cast.
 ///
 /// Returns Err if the file is shorter than `size_of::<UnifiedHeader>()`,
@@ -439,98 +202,20 @@ fn verify_mmap_covers_slots(mmap_len: usize, max_slots: u32, path: &std::path::P
     Ok(())
 }
 
-/// Get offset of PointSlot array
-#[inline]
-pub const fn slot_offset() -> usize {
-    std::mem::size_of::<UnifiedHeader>()
-}
-
-// ========== Channel Layout (Process Memory Index) ==========
-
-/// Channel layout - allocation info for one channel
-///
-/// Stored in process memory as `Vec<ChannelLayout>`.
-/// Access: layouts\[channel_id\]
-#[derive(Clone, Default, Debug)]
-pub struct ChannelLayout {
-    /// Base slot index for this channel
-    pub base_slot: usize,
-    /// Offset for each point type [T, S, C, A]
-    pub type_offsets: [usize; 4],
-    /// Point count for each type [T, S, C, A]
-    pub type_counts: [u32; 4],
-    /// Total points for this channel
-    pub total_points: u32,
-}
-
-impl ChannelLayout {
-    /// Calculate slot index for given type and point_id
-    #[inline]
-    pub fn slot(&self, point_type: u8, point_id: u32) -> Option<usize> {
-        let type_idx = point_type as usize;
-        if type_idx >= 4 || point_id >= self.type_counts[type_idx] {
-            return None;
-        }
-        Some(self.base_slot + self.type_offsets[type_idx] + point_id as usize)
-    }
-
-    /// Check if this layout is valid (has any points)
-    #[inline]
-    pub fn is_valid(&self) -> bool {
-        self.total_points > 0
-    }
-}
-
-// ========== Slot Allocation ==========
-
-/// Allocate layouts from channel point counts
-///
-/// Both Writer and Reader call this with same ChannelPointCounts → same slot allocation.
-/// Routing-independent: layout only depends on which channels have which points.
-pub fn allocate_layouts(channel_points: &ChannelPointCounts) -> (Vec<ChannelLayout>, usize) {
-    // Find max channel_id to size the Vec
-    let max_channel_id = channel_points.0.keys().copied().max().unwrap_or(0);
-    let vec_size = (max_channel_id + 1) as usize;
-
-    let mut layouts = vec![ChannelLayout::default(); vec_size];
-    let mut next_slot = 0usize;
-
-    // Allocate in channel_id order (BTreeMap is sorted)
-    for (&channel_id, counts) in &channel_points.0 {
-        let layout = &mut layouts[channel_id as usize];
-        layout.base_slot = next_slot;
-
-        // Allocate each type in T/S/C/A order
-        for (type_idx, &count) in counts.iter().enumerate() {
-            layout.type_offsets[type_idx] = next_slot - layout.base_slot;
-            layout.type_counts[type_idx] = count;
-            next_slot += count as usize;
-        }
-
-        layout.total_points = counts.iter().sum();
-    }
-
-    (layouts, next_slot)
-}
-
 // ========== UnifiedWriter ==========
 
-/// Unified shared memory writer
+/// Unified shared memory writer.
 ///
-/// Single writer per shared memory file (comsrv).
+/// Single writer per shared memory file (comsrv). Composes a pure-infra
+/// `SlotWriter` (in `core::writer`) which owns the mmap and dirty bitmap;
+/// `UnifiedWriter` itself only adds the channel/point-type adapters needed
+/// by comsrv/modsrv. The split lets pure-infra consumers (snapshot tools,
+/// future generic clients) program against `&SlotWriter` / `&dyn SlotIo`
+/// and have the type system reject business coupling.
 pub struct UnifiedWriter {
-    mmap: MmapMut,
-    path: PathBuf,
-    max_slots: u32,
-    slot_count: usize,
-    /// Channel layouts (Vec index by channel_id)
+    pub(crate) inner: SlotWriter,
+    /// Channel layouts (Vec indexed by channel_id) — business adapter state.
     channel_layouts: Vec<ChannelLayout>,
-    /// Process-local dirty slot bitmap for fast SHM→Redis sync.
-    ///
-    /// PointSlot.dirty is shared across processes, but scanning it still costs O(slots).
-    /// This bitmap is set by this writer's `set*` calls so comsrv can drain changed
-    /// slots in O(dirty_words + dirty_slots), with periodic full scans as fallback.
-    dirty_words: Vec<AtomicU64>,
 }
 
 impl UnifiedWriter {
@@ -604,7 +289,12 @@ impl UnifiedWriter {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(1);
-        let generation_seed = wall_nanos.wrapping_add(process_nonce).max(1);
+        // Force the initial generation to be even and nonzero. The reconfigure
+        // path relies on the invariant "generation is even at rest, odd while
+        // a reconfigure is in flight" — readers gate themselves out on odd.
+        // A random odd seed would defeat that gating (and only fire the
+        // debug_assert in debug builds, silently corrupting release).
+        let generation_seed = (wall_nanos.wrapping_add(process_nonce) & !1u64).max(2);
         header.writer_generation = AtomicU64::new(generation_seed);
         header._reserved = [0; 8];
 
@@ -618,7 +308,7 @@ impl UnifiedWriter {
         // sized. PointSlot is `#[repr(C, align(32))]` so pointer arithmetic
         // is well-defined and reads back as a valid PointSlot reference.
         let slots_ptr =
-            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
+            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::core::slot::PointSlot };
         for i in 0..slot_count {
             let slot = unsafe { &*slots_ptr.add(i) };
             slot.init_unwritten();
@@ -640,16 +330,36 @@ impl UnifiedWriter {
         );
 
         Ok(Self {
-            mmap,
-            path: path.to_path_buf(),
-            max_slots,
-            slot_count,
+            inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count),
             channel_layouts,
-            dirty_words: new_dirty_words(slot_count),
         })
     }
 
-    impl_shm_accessors!(mmap);
+    // Pure-infra accessors delegate to inner SlotWriter.
+    #[inline]
+    pub fn slot_count(&self) -> usize {
+        self.inner.slot_count()
+    }
+    #[inline]
+    pub fn max_slots(&self) -> u32 {
+        self.inner.max_slots()
+    }
+    #[inline]
+    fn header(&self) -> &UnifiedHeader {
+        self.inner.header()
+    }
+    /// Channel-aware adapter: look up the slot index for a (channel, type, point).
+    #[inline]
+    pub fn lookup(&self, channel_id: u32, point_type: u8, point_id: u32) -> Option<usize> {
+        self.channel_layouts
+            .get(channel_id as usize)?
+            .slot(point_type, point_id)
+    }
+    /// Read-only access to the channel layout table — business adapter state.
+    #[inline]
+    pub fn channel_layouts(&self) -> &[ChannelLayout] {
+        &self.channel_layouts
+    }
 
     /// Write value to slot by channel key
     ///
@@ -673,100 +383,59 @@ impl UnifiedWriter {
         if let Some(layout) = self.channel_layouts.get(channel_id as usize)
             && let Some(slot) = layout.slot(point_type, point_id)
         {
-            self.slot_at(slot).set(value, raw, timestamp_ms);
-            self.mark_dirty_slot(slot);
-            // Update heartbeat
-            self.header()
-                .writer_heartbeat
-                .store(timestamp_ms, Ordering::Relaxed);
+            self.inner.set_direct(slot, value, raw, timestamp_ms);
             return true;
         }
         false
     }
 
-    /// Direct write to slot index (for hot path)
+    /// Direct write to slot index (for hot path). Delegates to `SlotWriter`.
     #[inline]
     pub fn set_direct(&self, slot: usize, value: f64, raw: f64, timestamp_ms: u64) {
-        // SAFETY: Bounds check required before unsafe pointer arithmetic below
-        assert!(
-            slot < self.slot_count,
-            "set_direct: slot {} out of bounds (slot_count={})",
-            slot,
-            self.slot_count
-        );
-        self.slot_at(slot).set(value, raw, timestamp_ms);
-        self.mark_dirty_slot(slot);
-        self.header()
-            .writer_heartbeat
-            .store(timestamp_ms, Ordering::Relaxed);
-    }
-
-    #[inline]
-    fn mark_dirty_slot(&self, slot: usize) {
-        let word_idx = slot / u64::BITS as usize;
-        let bit_idx = slot % u64::BITS as usize;
-        if let Some(word) = self.dirty_words.get(word_idx) {
-            word.fetch_or(1u64 << bit_idx, Ordering::Release);
-        }
+        self.inner.set_direct(slot, value, raw, timestamp_ms);
     }
 
     /// Drain process-local dirty slots set by this writer.
-    ///
-    /// Concurrent writes are safe: if a writer sets a bit before `swap(0)`, this
-    /// call returns it; if it sets after the swap, the bit remains for the next pass.
+    #[inline]
     pub fn take_dirty_slots(&self) -> Vec<usize> {
-        let mut slots = Vec::new();
-
-        for (word_idx, word) in self.dirty_words.iter().enumerate() {
-            let mut bits = word.swap(0, Ordering::AcqRel);
-            while bits != 0 {
-                let bit_idx = bits.trailing_zeros() as usize;
-                let slot = word_idx * u64::BITS as usize + bit_idx;
-                if slot < self.slot_count {
-                    slots.push(slot);
-                }
-                bits &= bits - 1;
-            }
-        }
-
-        slots
+        self.inner.take_dirty_slots()
     }
 
-    /// Returns the current writer generation from the SHM header.
-    /// Used by modsrv to detect comsrv restarts.
+    /// Current writer generation from the SHM header.
+    #[inline]
     pub fn generation(&self) -> u64 {
-        self.header().writer_generation.load(Ordering::Acquire)
+        self.inner.generation()
     }
 
-    /// Get file path
+    /// SHM file path.
     #[inline]
     pub fn path(&self) -> &PathBuf {
-        &self.path
+        self.inner.path()
     }
 
-    /// Flush changes to disk
+    /// Flush changes to disk.
+    #[inline]
     pub fn flush(&self) -> Result<()> {
-        self.mmap.flush().context("Failed to flush mmap")
+        self.inner.flush()
     }
 
-    /// Read current heartbeat timestamp (ms since epoch)
+    /// Current heartbeat timestamp (ms since epoch).
     #[inline]
     pub fn writer_heartbeat(&self) -> u64 {
-        self.header().writer_heartbeat.load(Ordering::Relaxed)
+        self.inner.writer_heartbeat()
     }
 
-    /// Read-only access to a slot by index.
+    /// Read-only access to a slot by index. (Kept for backward compatibility;
+    /// new code should use the `SlotIo::read_slot` snapshot variant.)
     #[inline]
-    pub fn slot(&self, index: usize) -> &crate::vec_impl::PointSlot {
-        self.slot_at(index)
+    pub fn slot(&self, index: usize) -> &crate::core::slot::PointSlot {
+        self.inner.slot_at(index)
     }
 
-    /// Update heartbeat timestamp
+    /// Update the writer heartbeat without writing a slot.
     #[inline]
     pub fn update_heartbeat(&self, timestamp_ms: u64) {
-        self.header()
-            .writer_heartbeat
-            .store(timestamp_ms, Ordering::Relaxed);
+        self.inner.update_heartbeat(timestamp_ms);
     }
 
     /// Open existing shared memory for writing Action points (C/A types only)
@@ -825,12 +494,8 @@ impl UnifiedWriter {
         );
 
         Ok(Self {
-            mmap,
-            path: path.to_path_buf(),
-            max_slots,
-            slot_count,
+            inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count),
             channel_layouts,
-            dirty_words: new_dirty_words(slot_count),
         })
     }
 
@@ -864,11 +529,10 @@ impl UnifiedWriter {
     ///
     /// Uses atomic write: writes to temp file first, then renames to final path.
     pub fn save_snapshot(&self, path: &std::path::Path) -> Result<()> {
-        self.mmap
+        self.inner
             .flush()
             .context("Failed to flush mmap before snapshot")?;
-        let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;
-        save_snapshot_impl(&self.mmap, current_slot_count, path, "Writer")
+        self.inner.save_snapshot(path)
     }
 
     /// Reconfigure the existing SHM file in place for updated channel point counts.
@@ -963,7 +627,7 @@ impl UnifiedWriter {
         // both bounded by max_slots. The mmap covers max_slots PointSlot values,
         // and PointSlot is #[repr(C, align(32))].
         let slots_ptr =
-            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
+            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::core::slot::PointSlot };
         for i in 0..clear_slots {
             // SAFETY: i < clear_slots and clear_slots is within the mmap slot region.
             let slot = unsafe { &*slots_ptr.add(i) };
@@ -1015,12 +679,8 @@ impl UnifiedWriter {
         );
 
         Ok(Self {
-            mmap,
-            path: path.to_path_buf(),
-            max_slots,
-            slot_count,
+            inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count),
             channel_layouts,
-            dirty_words: new_dirty_words(slot_count),
         })
     }
 
@@ -1129,7 +789,7 @@ impl UnifiedWriter {
         let snapshot_slot_count = snap_slot_count_val as usize;
 
         // Determine how many slots to restore (min of snapshot and current allocation)
-        let slots_to_restore = snapshot_slot_count.min(writer.slot_count);
+        let slots_to_restore = snapshot_slot_count.min(writer.slot_count());
 
         if slots_to_restore == 0 {
             tracing::warn!("Snapshot has no slots to restore");
@@ -1199,7 +859,7 @@ impl UnifiedWriter {
 
         // New slots (if current config has more than snapshot) are already initialized
         // to default values (0.0, 0.0, 0) by create()
-        let new_slots = writer.slot_count.saturating_sub(snapshot_slot_count);
+        let new_slots = writer.slot_count().saturating_sub(snapshot_slot_count);
 
         // Update timestamps
         let now_ms = std::time::SystemTime::now()
@@ -1249,12 +909,10 @@ impl UnifiedWriter {
 /// Multiple readers allowed (modsrv, monarch, etc.).
 /// Builds indexes from ChannelPointCounts using same allocation algorithm.
 pub struct UnifiedReader {
-    mmap: Mmap,
-    max_slots: u32,
-    slot_count: usize,
-    /// Channel layouts (Vec index by channel_id)
+    pub(crate) inner: SlotReader,
+    /// Channel layouts (Vec index by channel_id) — business adapter state.
     channel_layouts: Vec<ChannelLayout>,
-    /// For monarch API: list of valid channel IDs
+    /// For monarch API: list of valid channel IDs — business adapter state.
     channel_ids: Vec<u32>,
 }
 
@@ -1301,9 +959,7 @@ impl UnifiedReader {
         );
 
         Ok(Self {
-            mmap,
-            max_slots,
-            slot_count,
+            inner: SlotReader::from_mmap(mmap, max_slots, slot_count),
             channel_layouts,
             channel_ids,
         })
@@ -1350,15 +1006,37 @@ impl UnifiedReader {
         );
 
         Ok(Self {
-            mmap,
-            max_slots,
-            slot_count,
+            inner: SlotReader::from_mmap(mmap, max_slots, slot_count),
             channel_layouts: Vec::new(),
             channel_ids: Vec::new(),
         })
     }
 
-    impl_shm_accessors!(mmap);
+    // Pure-infra accessors delegate to inner SlotReader.
+    #[inline]
+    pub fn slot_count(&self) -> usize {
+        self.inner.slot_count()
+    }
+    #[inline]
+    pub fn max_slots(&self) -> u32 {
+        self.inner.max_slots()
+    }
+    #[inline]
+    fn slot_at(&self, index: usize) -> &PointSlot {
+        self.inner.slot_at(index)
+    }
+    /// Channel-aware adapter: look up the slot index for a (channel, type, point).
+    #[inline]
+    pub fn lookup(&self, channel_id: u32, point_type: u8, point_id: u32) -> Option<usize> {
+        self.channel_layouts
+            .get(channel_id as usize)?
+            .slot(point_type, point_id)
+    }
+    /// Read-only access to the channel layout table — business adapter state.
+    #[inline]
+    pub fn channel_layouts(&self) -> &[ChannelLayout] {
+        &self.channel_layouts
+    }
 
     // ========== Point Query API ==========
 
@@ -1496,34 +1174,67 @@ impl UnifiedReader {
 
     // ========== Stats ==========
 
-    /// Get writer heartbeat
+    /// Writer heartbeat — delegates to inner SlotReader.
     #[inline]
     pub fn writer_heartbeat(&self) -> u64 {
-        self.header().writer_heartbeat.load(Ordering::Relaxed)
+        self.inner.writer_heartbeat()
     }
 
-    /// Check if writer is alive based on heartbeat timestamp
+    /// Check if writer is alive based on heartbeat timestamp — delegates.
     #[inline]
     pub fn is_writer_alive(&self, timeout_ms: u64) -> bool {
-        let heartbeat = self.writer_heartbeat();
-        if heartbeat == 0 {
-            return false;
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_millis() as u64;
-        now.saturating_sub(heartbeat) < timeout_ms
+        self.inner.is_writer_alive(timeout_ms)
     }
 
-    // ========== Snapshot API ==========
-
-    /// Save current shared memory state to a snapshot file (read-only snapshot)
-    ///
-    /// This is useful for readers like modsrv to save state before shutdown.
-    /// Uses atomic write: writes to temp file first, then renames to final path.
+    /// Save current SHM state to a snapshot file — delegates to inner.
     pub fn save_snapshot(&self, path: &std::path::Path) -> Result<()> {
-        save_snapshot_impl(&self.mmap, self.slot_count, path, "Reader")
+        self.inner.save_snapshot(path)
+    }
+}
+
+// ========== Pure-infra contract: SlotIo ==========
+//
+// UnifiedWriter implements the business-unaware slot I/O contract declared
+// in `core::slot_io`. The trait deliberately omits every channel/point-type
+// adapter on UnifiedWriter — anything reachable via `&dyn SlotIo` is, by
+// type system enforcement, infrastructure only.
+
+impl crate::core::slot_io::SlotIo for UnifiedWriter {
+    #[inline]
+    fn slot_count(&self) -> usize {
+        crate::core::slot_io::SlotIo::slot_count(&self.inner)
+    }
+
+    #[inline]
+    fn read_slot(&self, index: usize) -> Option<crate::core::slot_io::SlotRead> {
+        crate::core::slot_io::SlotIo::read_slot(&self.inner, index)
+    }
+
+    #[inline]
+    fn generation(&self) -> u64 {
+        crate::core::slot_io::SlotIo::generation(&self.inner)
+    }
+
+    #[inline]
+    fn writer_heartbeat(&self) -> u64 {
+        crate::core::slot_io::SlotIo::writer_heartbeat(&self.inner)
+    }
+
+    #[inline]
+    fn header(&self) -> &UnifiedHeader {
+        crate::core::slot_io::SlotIo::header(&self.inner)
+    }
+}
+
+impl crate::core::slot_io::SlotIoWrite for UnifiedWriter {
+    #[inline]
+    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
+        crate::core::slot_io::SlotIoWrite::write_slot(&self.inner, index, value, raw, timestamp_ms)
+    }
+
+    #[inline]
+    fn take_dirty_slots(&self) -> Vec<usize> {
+        crate::core::slot_io::SlotIoWrite::take_dirty_slots(&self.inner)
     }
 }
 

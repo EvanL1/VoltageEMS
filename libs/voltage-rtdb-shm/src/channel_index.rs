@@ -24,7 +24,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use voltage_model::PointType;
 
-use crate::slot_bitmap::{SlotAllocation, SlotBitmap};
+use crate::core::bitmap::{SlotAllocation, SlotBitmap};
 use voltage_routing::routing_cache::RoutingCache;
 
 /// Channel layout - allocation info for one channel
