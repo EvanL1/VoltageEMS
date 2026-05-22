@@ -67,21 +67,10 @@ async fn create_test_api_with_pool(
     create_api_routes_generic(channel_manager, rtdb, sqlite_pool, command_tx_cache, None)
 }
 
-async fn create_test_api_with_pool_rtdb_and_instance(
-    channel_manager: Arc<ChannelManager<MemoryRtdb>>,
-    sqlite_pool: SqlitePool,
-    rtdb: Arc<MemoryRtdb>,
-) -> (Router, Arc<MemoryRtdb>) {
-    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
-    let router = create_api_routes_generic(
-        channel_manager,
-        rtdb.clone(),
-        sqlite_pool,
-        command_tx_cache,
-        None,
-    );
-    (router, rtdb)
-}
+// `create_test_api_with_pool_rtdb_and_instance` was inlined into
+// `setup_write_test_env` so the latter can register a stub command
+// sender on `command_tx_cache` before constructing the router. There
+// are no other callers, so the helper was removed.
 
 // ========================================================================
 // Closed-loop Testing Utilities
@@ -137,7 +126,18 @@ async fn test_get_service_status_returns_200() {
 }
 
 #[tokio::test]
-async fn test_health_check_returns_200() {
+async fn test_health_check_returns_503_when_shm_not_initialized() {
+    // After commit ddea2937 ("fix(comsrv): SHM Degraded must flip
+    // overall_healthy so /health returns 503"), a comsrv instance
+    // running without an initialized ShmHandle reports the SHM
+    // component as Degraded and flips overall_healthy false, returning
+    // 503 from /health. That is the correct behavior — Docker
+    // readiness probes must not see a node that has no hot data path
+    // as fully healthy. This test setup deliberately does not create
+    // a ShmHandle, so 503 is the expected status here. A separate
+    // test would be needed to cover the 200 path with a fully
+    // initialized SHM mmap; that requires real-file plumbing that
+    // belongs in an integration test rather than the unit suite.
     let channel_manager = Arc::new(ChannelManager::new(
         crate::test_utils::create_test_rtdb(),
         crate::test_utils::create_test_routing_cache(),
@@ -151,7 +151,7 @@ async fn test_health_check_returns_200() {
 
     let response = app.oneshot(request).await.unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // ========================================================================
@@ -2400,17 +2400,45 @@ async fn test_protocol_data_type_normalization_closed_loop() {
 // Write API Tests (Unified Endpoint) - P0/P1/P2 Priority
 // ========================================================================
 
-/// Helper: Setup test environment with pool and MemoryRtdb
-async fn setup_write_test_env() -> (Router, Arc<MemoryRtdb>) {
+/// Helper: Setup test environment with pool, MemoryRtdb, and a stub
+/// command sender registered for channel 1005.
+///
+/// The fail-closed C/A write path in `write_channel_point` requires a
+/// registered mpsc sender via `CommandTxCache::register` before any
+/// Control/Adjustment write is accepted (otherwise it returns 503
+/// "Channel offline; command not dispatched"). Every test that writes
+/// to channel 1005 needs this stub.
+///
+/// The returned tuple's third element is a background drainer task that
+/// silently consumes commands sent to channel 1005. Tests should bind
+/// it as `_drainer` so it stays alive for the test's duration; dropping
+/// the JoinHandle does not abort the task, but holding it keeps the
+/// intent visible.
+async fn setup_write_test_env() -> (Router, Arc<MemoryRtdb>, tokio::task::JoinHandle<()>) {
+    use crate::core::channels::types::ChannelCommand;
+
     let rtdb = Arc::new(MemoryRtdb::new());
     let channel_manager = Arc::new(ChannelManager::new(
         rtdb.clone(),
         crate::test_utils::create_test_routing_cache(),
     ));
     let pool = create_test_sqlite_pool().await;
-    let (app, _) =
-        create_test_api_with_pool_rtdb_and_instance(channel_manager, pool, rtdb.clone()).await;
-    (app, rtdb)
+
+    // Build the command tx cache up front so we can register a stub
+    // sender BEFORE the router is constructed (and therefore before any
+    // test fires a write request).
+    let command_tx_cache = Arc::new(crate::api::command_cache::CommandTxCache::new());
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<ChannelCommand>(64);
+    command_tx_cache.register(1005, tx);
+    let drainer = tokio::spawn(async move {
+        while rx.recv().await.is_some() {
+            // discard
+        }
+    });
+
+    let router =
+        create_api_routes_generic(channel_manager, rtdb.clone(), pool, command_tx_cache, None);
+    (router, rtdb, drainer)
 }
 
 /// Helper: Extract JSON from response body
@@ -2439,7 +2467,7 @@ async fn send_write_request(
 
 #[tokio::test]
 async fn test_write_single_control_point() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     // Prepare request for single control point
     let request_body = serde_json::json!({
@@ -2480,7 +2508,7 @@ async fn test_write_single_control_point() {
 
 #[tokio::test]
 async fn test_write_single_adjustment_point() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "A",
@@ -2505,7 +2533,7 @@ async fn test_write_single_adjustment_point() {
 
 #[tokio::test]
 async fn test_write_batch_control_points() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "C",
@@ -2538,7 +2566,7 @@ async fn test_write_batch_control_points() {
 
 #[tokio::test]
 async fn test_write_batch_adjustment_points() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "A",
@@ -2567,7 +2595,7 @@ async fn test_write_batch_adjustment_points() {
 
 #[tokio::test]
 async fn test_write_control_persists_to_rtdb() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "C",
@@ -2598,7 +2626,7 @@ async fn test_write_control_persists_to_rtdb() {
 
 #[tokio::test]
 async fn test_write_adjustment_persists_to_rtdb() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "A",
@@ -2631,7 +2659,7 @@ async fn test_write_adjustment_persists_to_rtdb() {
 
 #[tokio::test]
 async fn test_write_single_telemetry_point() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "T",
@@ -2654,7 +2682,7 @@ async fn test_write_single_telemetry_point() {
 
 #[tokio::test]
 async fn test_write_single_signal_point() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "S",
@@ -2676,7 +2704,7 @@ async fn test_write_single_signal_point() {
 
 #[tokio::test]
 async fn test_write_batch_telemetry_points() {
-    let (app, rtdb) = setup_write_test_env().await;
+    let (app, rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "T",
@@ -2705,7 +2733,7 @@ async fn test_write_batch_telemetry_points() {
 
 #[tokio::test]
 async fn test_point_type_normalization_short_names() {
-    let (app, _rtdb) = setup_write_test_env().await;
+    let (app, _rtdb, _drainer) = setup_write_test_env().await;
 
     // Test all short names
     for point_type in &["C", "A", "T", "S"] {
@@ -2730,7 +2758,7 @@ async fn test_point_type_normalization_short_names() {
 
 #[tokio::test]
 async fn test_point_type_normalization_full_names() {
-    let (app, _rtdb) = setup_write_test_env().await;
+    let (app, _rtdb, _drainer) = setup_write_test_env().await;
 
     // Test full names and case variations
     let test_types = vec![
@@ -2776,7 +2804,7 @@ async fn test_point_type_normalization_full_names() {
 
 #[tokio::test]
 async fn test_write_invalid_point_type() {
-    let (app, _rtdb) = setup_write_test_env().await;
+    let (app, _rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "X",
@@ -2798,7 +2826,7 @@ async fn test_write_invalid_point_type() {
 
 #[tokio::test]
 async fn test_write_empty_batch_commands() {
-    let (app, _rtdb) = setup_write_test_env().await;
+    let (app, _rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "C",
@@ -2816,7 +2844,7 @@ async fn test_write_empty_batch_commands() {
 
 #[tokio::test]
 async fn test_write_response_format_single() {
-    let (app, _rtdb) = setup_write_test_env().await;
+    let (app, _rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "C",
@@ -2839,7 +2867,7 @@ async fn test_write_response_format_single() {
 
 #[tokio::test]
 async fn test_write_response_format_batch() {
-    let (app, _rtdb) = setup_write_test_env().await;
+    let (app, _rtdb, _drainer) = setup_write_test_env().await;
 
     let request_body = serde_json::json!({
         "type": "C",
