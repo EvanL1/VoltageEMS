@@ -275,8 +275,12 @@ impl PointSlot {
         // the reader's trailing Acquire fence. x86: lock add. ARM64: ldaddal.
         self.seq.fetch_add(1, Ordering::Release);
 
-        // Dirty flag — outside seqlock envelope (advisory, not consistency-critical).
-        self.dirty.store(1, Ordering::Relaxed);
+        // Dirty flag — Release so a reader observing dirty=1 is guaranteed
+        // to also see the completed seq=even and committed data. With
+        // Relaxed the dirty store could be reordered past the seq→even
+        // RMW on AArch64, making ShmRedisSync take_dirty_slots() find a
+        // slot whose seq is still odd → wasted retry. Harmless but real.
+        self.dirty.store(1, Ordering::Release);
     }
 
     /// Check if dirty flag is set
