@@ -297,15 +297,29 @@ async fn test_c2c_infinite_loop_prevention() {
 }
 
 #[tokio::test]
-async fn test_c2c_preserve_raw_values() {
-    // Scenario: Raw values correctly passed through cascade
-    // Config: 1001:T:1 -> 1002:T:2
-    // Write: value = 100.0, raw_value = 1000
-    // Verify: Target channel has correct engineering value and raw value
+async fn test_c2c_raw_value_handling() {
+    // Scenario: Raw value handling through C2C cascade.
+    //
+    // Config: 1001:T:1 -> 1002:T:2 (passthrough, no transform)
+    // Write: source value = 100.0, source raw_value = 1000.0
+    //
+    // Design contract (see voltage-routing/src/batch.rs around the
+    // C2C forward block): a C2C forward intentionally drops the
+    // source's raw_value to None so the target's `:raw` hash is
+    // recomputed from the (possibly transformed) engineering value,
+    // not the source device's pre-scale reading. Carrying a raw value
+    // that was already engineering-scaled once at the source through
+    // an additional C2C transform would yield a number with no
+    // physical meaning at the target channel.
+    //
+    // What the test verifies:
+    //   - Source's :raw hash preserves its own raw_value (1000.0)
+    //   - Target's :raw hash equals the engineering value the C2C
+    //     forward delivered (100.0 here, since this route has no
+    //     transform configured), NOT the source's raw 1000.0
 
     let (rtdb, routing_cache) = setup_c2c_routing(vec![("1001:T:1", "1002:T:2")]).await;
 
-    // Write to source channel (with raw value)
     let updates = vec![ChannelPointUpdate {
         channel_id: 1001,
         point_type: PointType::Telemetry,
@@ -319,13 +333,14 @@ async fn test_c2c_preserve_raw_values() {
         .await
         .expect("write_batch should succeed");
 
-    // Verify source channel engineering value and raw value
+    // Source: engineering value + its own raw_value.
     assert_channel_value(rtdb.as_ref(), 1001, "T", 1, 100.0).await;
     assert_raw_value(rtdb.as_ref(), 1001, "T", 1, 1000.0).await;
 
-    // Verify target channel engineering value and raw value
+    // Target: engineering value forwarded; :raw recomputed from value
+    // (raw_value=None at the forward).
     assert_channel_value(rtdb.as_ref(), 1002, "T", 2, 100.0).await;
-    assert_raw_value(rtdb.as_ref(), 1002, "T", 2, 1000.0).await;
+    assert_raw_value(rtdb.as_ref(), 1002, "T", 2, 100.0).await;
 }
 
 #[tokio::test]

@@ -543,7 +543,14 @@ async fn test_three_layer_with_cascade() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(String::from_utf8(tgt_raw.to_vec()).unwrap(), "2205.0");
+    // C2C forwards intentionally drop the source's raw_value (see
+    // voltage-routing/src/batch.rs around the c2c_forwards push):
+    // carrying a raw that was already engineering-scaled at the source
+    // through another C2C transform yields a number with no physical
+    // meaning at the target. The target's :raw is therefore recomputed
+    // from the forwarded engineering value (220.5 here — no transform
+    // configured on this route).
+    assert_eq!(String::from_utf8(tgt_raw.to_vec()).unwrap(), "220.5");
 
     // Verify instance gets engineering value (not raw)
     assert_instance_measurement(rtdb.as_ref(), 10, 1, 220.5).await;
