@@ -92,6 +92,23 @@ pub trait Rtdb: Send + Sync + 'static {
         value: Bytes,
     ) -> impl Future<Output = Result<()>> + Send + 'a;
 
+    /// Set hash field only if it does not already exist (Redis HSETNX).
+    ///
+    /// Returns Ok(true) when the field was inserted, Ok(false) when it
+    /// already existed (and was left untouched).
+    ///
+    /// Use this for structural initialization that must not clobber a
+    /// concurrently-written real-time value. Example: modsrv bootstrap
+    /// inserts `inst:{id}:M:{point} = "0"` for every defined point on
+    /// startup, but comsrv may already have flushed a fresh reading via
+    /// ShmRedisSync. Plain HSET would overwrite that reading with 0.
+    fn hash_setnx<'a>(
+        &'a self,
+        key: &'a str,
+        field: &'a str,
+        value: Bytes,
+    ) -> impl Future<Output = Result<bool>> + Send + 'a;
+
     /// Get hash field
     fn hash_get<'a>(
         &'a self,

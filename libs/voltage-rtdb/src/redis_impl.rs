@@ -94,6 +94,21 @@ impl Rtdb for RedisRtdb {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
+    async fn hash_setnx<'a>(&'a self, key: &'a str, field: &'a str, value: Bytes) -> Result<bool> {
+        let s = std::str::from_utf8(value.as_ref())
+            .with_context(|| {
+                format!(
+                    "non-UTF-8 value rejected for HSETNX {}:{} (see Rtdb trait docs)",
+                    key, field
+                )
+            })?
+            .to_owned();
+        self.client
+            .hsetnx(key, field, s)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
     async fn hash_get<'a>(&'a self, key: &'a str, field: &'a str) -> Result<Option<Bytes>> {
         let value: Option<String> = self
             .client

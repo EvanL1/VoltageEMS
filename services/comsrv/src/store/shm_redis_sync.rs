@@ -457,6 +457,15 @@ mod tests {
             async move { self.inner.hash_set(key, field, value).await }
         }
 
+        fn hash_setnx<'a>(
+            &'a self,
+            key: &'a str,
+            field: &'a str,
+            value: Bytes,
+        ) -> impl Future<Output = Result<bool>> + Send + 'a {
+            async move { self.inner.hash_setnx(key, field, value).await }
+        }
+
         fn hash_get<'a>(
             &'a self,
             key: &'a str,

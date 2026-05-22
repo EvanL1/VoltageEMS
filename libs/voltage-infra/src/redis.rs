@@ -273,6 +273,23 @@ impl RedisClient {
             .with_context(|| format!("Failed to HSET field {} in key: {}", field, key))
     }
 
+    /// Hash set if field does not exist (Redis HSETNX).
+    ///
+    /// Returns Ok(true) if the field was created, Ok(false) if the field
+    /// already existed (left untouched). Use for structural initialization
+    /// that must not overwrite a concurrently-written value.
+    pub async fn hsetnx(&self, key: &str, field: &str, value: String) -> Result<bool> {
+        let mut conn = self.get_connection().await?;
+        let inserted: i64 = redis::cmd("HSETNX")
+            .arg(key)
+            .arg(field)
+            .arg(value)
+            .query_async(&mut *conn)
+            .await
+            .with_context(|| format!("Failed to HSETNX field {} in key: {}", field, key))?;
+        Ok(inserted == 1)
+    }
+
     /// Hash operation - increment field by integer value
     pub async fn hincrby(&self, key: &str, field: &str, increment: i64) -> Result<i64> {
         let mut conn = self.get_connection().await?;

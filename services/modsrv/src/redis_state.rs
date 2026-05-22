@@ -293,23 +293,34 @@ where
     //    Sidecar inst:{id}:M:ts is pre-seeded with 0 so apigateway WebSocket
     //    never returns an empty `ts` map for an active instance (parity with
     //    the comsrv:{ch}:{T|S}:ts convention).
+    //
+    //    HSETNX (not HSET) so that on a hot reload we only fill MISSING
+    //    fields — concurrent comsrv ShmRedisSync writes that already
+    //    landed a real reading are preserved. Plain HSET would clobber the
+    //    live value with 0 every reload cycle.
     let m_key = keyspace.instance_measurement_key(instance_id);
     let m_ts_key = keyspace.instance_measurement_ts_key(instance_id);
     for point in measurements {
         let field = point.measurement_id.to_string();
-        redis.hash_set(&m_key, &field, Bytes::from("0")).await?;
-        redis.hash_set(&m_ts_key, &field, Bytes::from("0")).await?;
+        redis.hash_setnx(&m_key, &field, Bytes::from("0")).await?;
+        redis
+            .hash_setnx(&m_ts_key, &field, Bytes::from("0"))
+            .await?;
     }
 
     // 2. Initialize inst:{id}:A Hash with all action points set to 0
     //    Consistent with M points: pre-initialize at startup for queries and
     //    M2C routing validation. Sidecar :A:ts follows the same convention.
+    //    HSETNX rationale matches the M block above — never overwrite a
+    //    real action value with 0 during a routing reload.
     let a_key = keyspace.instance_action_key(instance_id);
     let a_ts_key = keyspace.instance_action_ts_key(instance_id);
     for action in actions {
         let field = action.action_id.to_string();
-        redis.hash_set(&a_key, &field, Bytes::from("0")).await?;
-        redis.hash_set(&a_ts_key, &field, Bytes::from("0")).await?;
+        redis.hash_setnx(&a_key, &field, Bytes::from("0")).await?;
+        redis
+            .hash_setnx(&a_ts_key, &field, Bytes::from("0"))
+            .await?;
     }
 
     // 3. Set inst:{id}:name for bidirectional lookup and aggregation queries

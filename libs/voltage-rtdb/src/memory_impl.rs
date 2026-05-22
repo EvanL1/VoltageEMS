@@ -167,6 +167,26 @@ impl Rtdb for MemoryRtdb {
         async move { Ok(()) }
     }
 
+    fn hash_setnx(
+        &self,
+        key: &str,
+        field: &str,
+        value: Bytes,
+    ) -> impl Future<Output = Result<bool>> + Send + '_ {
+        // Mirror Redis HSETNX semantics: insert only when the field is
+        // absent. DashMap entry().or_default() then field-level test under
+        // the entry's lock — equivalent to HSETNX's atomic check-and-set.
+        let mut entry = self.hash_store.entry(key.to_string()).or_default();
+        let _: &mut _ = &mut *entry; // ensure mut is observably used
+        let inserted = if entry.contains_key(field) {
+            false
+        } else {
+            entry.insert(field.to_string(), value);
+            true
+        };
+        async move { Ok(inserted) }
+    }
+
     fn hash_get(
         &self,
         key: &str,
