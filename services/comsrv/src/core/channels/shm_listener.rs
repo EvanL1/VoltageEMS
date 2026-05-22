@@ -201,10 +201,25 @@ impl ShmCommandListener {
         match last_sequences.entry(seq_key) {
             Entry::Occupied(mut entry) => {
                 let (last_producer, last_seq) = *entry.get();
-                if last_producer == notif.producer_id && notif.seq <= last_seq {
+                // A different producer_id (modsrv restart) always resets state —
+                // accept and overwrite. Otherwise treat seq as a wrapping
+                // counter: a newer seq is one whose distance to last_seq is
+                // less than half the range. After 2^64 increments seq wraps,
+                // and `notif.seq <= last_seq` would misclassify the first
+                // wrapped value as stale.
+                let same_producer = last_producer == notif.producer_id;
+                let is_stale = same_producer && notif.seq.wrapping_sub(last_seq) > u64::MAX / 2;
+                if is_stale {
                     trace!(
-                        "ShmListener: stale event dropped ch={} {:?}:{} producer={} seq={}<= {}",
+                        "ShmListener: stale event dropped ch={} {:?}:{} producer={} seq={} (last {})",
                         channel_id, point_type, point_id, notif.producer_id, notif.seq, last_seq
+                    );
+                    return;
+                }
+                if same_producer && notif.seq == last_seq {
+                    trace!(
+                        "ShmListener: duplicate event dropped ch={} {:?}:{} producer={} seq={}",
+                        channel_id, point_type, point_id, notif.producer_id, notif.seq
                     );
                     return;
                 }
