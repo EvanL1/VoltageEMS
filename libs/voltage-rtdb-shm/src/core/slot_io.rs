@@ -30,13 +30,15 @@ pub struct SlotRead {
     pub timestamp_ms: u64,
 }
 
-/// The pure-infra view of a SHM writer/reader: slot-level I/O only.
+/// Pure-infra **read view** of a SHM segment: slot-level reads and header
+/// introspection.
 ///
-/// All mutating access is gated through [`write_slot`](Self::write_slot), so
-/// implementations can guarantee dirty tracking and heartbeat invariants.
 /// Read access returns a value snapshot (`SlotRead`), never a reference to
 /// the underlying atomic cell — exposing `&PointSlot` would let a caller
-/// call `PointSlot::set` directly and bypass `write_slot`.
+/// call `PointSlot::set` directly and bypass the writer's dirty-tracking
+/// invariants. Mutating access lives on the sub-trait
+/// [`SlotIoWrite`], so the type system rejects code that accepts
+/// `&dyn SlotIo` from attempting to write.
 pub trait SlotIo: Send + Sync {
     /// Number of slots currently live in this SHM.
     fn slot_count(&self) -> usize;
@@ -49,14 +51,6 @@ pub trait SlotIo: Send + Sync {
     /// torn-read window is microseconds.
     fn read_slot(&self, index: usize) -> Option<SlotRead>;
 
-    /// Write a measurement to a slot. Returns `false` if the index is out of
-    /// bounds. Implementations must mark the slot as dirty so a subsequent
-    /// `take_dirty_slots` will surface it.
-    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool;
-
-    /// Drain and return the set of slot indices written since the last drain.
-    fn take_dirty_slots(&self) -> Vec<usize>;
-
     /// Current writer generation. Bumped by the writer on each
     /// create/reconfigure; consumed by readers to detect writer restarts.
     fn generation(&self) -> u64;
@@ -68,4 +62,20 @@ pub trait SlotIo: Send + Sync {
     /// here so callers can read magic/version/manifest_hash without going
     /// through any adapter-specific accessor.
     fn header(&self) -> &UnifiedHeader;
+}
+
+/// Pure-infra **write view** of a SHM segment. Sub-trait of `SlotIo` —
+/// any writer is also a reader, but not vice versa.
+///
+/// Implementations must mark each written slot as dirty so a subsequent
+/// [`take_dirty_slots`](Self::take_dirty_slots) call surfaces it; this is
+/// the contract that makes downstream Redis-sync sweeps O(dirty) instead
+/// of O(slot_count).
+pub trait SlotIoWrite: SlotIo {
+    /// Write a measurement to a slot. Returns `false` if the index is
+    /// out of bounds.
+    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool;
+
+    /// Drain and return the set of slot indices written since the last drain.
+    fn take_dirty_slots(&self) -> Vec<usize>;
 }

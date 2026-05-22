@@ -18,7 +18,7 @@ use memmap2::MmapMut;
 
 use crate::core::header::{UnifiedHeader, slot_offset};
 use crate::core::slot::PointSlot;
-use crate::core::slot_io::{SlotIo, SlotRead};
+use crate::core::slot_io::{SlotIo, SlotIoWrite, SlotRead};
 
 // ========== Dirty bitmap helpers ==========
 
@@ -95,7 +95,13 @@ impl SlotWriter {
             index,
             self.slot_count
         );
-        // SAFETY: index is bounds-checked above. PointSlot is #[repr(C, align(32))].
+        // SAFETY: alignment chain — mmap base is page-aligned (≥4096),
+        // slot_offset() == size_of::<UnifiedHeader>() == 64 (asserted at
+        // const time in core::header), and 64 is divisible by 32. So the
+        // base pointer for the slot array is 32-byte aligned, matching
+        // PointSlot's `#[repr(C, align(32))]` requirement. `index` is
+        // bounds-checked above against `slot_count`, and the constructor
+        // verified the mmap covers at least `max_slots` slots.
         unsafe {
             let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
             &*ptr.add(index)
@@ -183,9 +189,13 @@ impl SlotWriter {
 
     /// Save a snapshot using tear-resistant per-slot serialization.
     ///
-    /// Delegates to the writer-side snapshot impl in `unified_shm` (which
-    /// already knows how to handle torn reads via `try_load_consistent`).
+    /// Flushes the mmap first so OS-buffered dirty pages are stable in the
+    /// backing file before the snapshot's tear-resistant per-slot read,
+    /// then delegates to `core::snapshot_save`. This makes the public
+    /// `SlotWriter::save_snapshot` self-contained — callers outside
+    /// `UnifiedWriter` do not need to remember to flush.
     pub fn save_snapshot(&self, path: &Path) -> Result<()> {
+        self.flush().context("flush before snapshot")?;
         let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;
         crate::core::snapshot_save::save_snapshot_impl(
             &self.mmap,
@@ -196,7 +206,7 @@ impl SlotWriter {
     }
 }
 
-// ========== SlotIo impl ==========
+// ========== SlotIo (read view) impl ==========
 
 impl SlotIo for SlotWriter {
     #[inline]
@@ -216,6 +226,22 @@ impl SlotIo for SlotWriter {
         })
     }
 
+    fn generation(&self) -> u64 {
+        SlotWriter::generation(self)
+    }
+
+    fn writer_heartbeat(&self) -> u64 {
+        SlotWriter::writer_heartbeat(self)
+    }
+
+    fn header(&self) -> &UnifiedHeader {
+        SlotWriter::header(self)
+    }
+}
+
+// ========== SlotIoWrite (mutating view) impl ==========
+
+impl SlotIoWrite for SlotWriter {
     fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
         if index >= self.slot_count {
             return false;
@@ -230,17 +256,5 @@ impl SlotIo for SlotWriter {
 
     fn take_dirty_slots(&self) -> Vec<usize> {
         SlotWriter::take_dirty_slots(self)
-    }
-
-    fn generation(&self) -> u64 {
-        SlotWriter::generation(self)
-    }
-
-    fn writer_heartbeat(&self) -> u64 {
-        SlotWriter::writer_heartbeat(self)
-    }
-
-    fn header(&self) -> &UnifiedHeader {
-        SlotWriter::header(self)
     }
 }

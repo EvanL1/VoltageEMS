@@ -57,7 +57,13 @@ impl SlotReader {
             index,
             self.slot_count
         );
-        // SAFETY: bounds checked above; PointSlot is repr(C, align(32)).
+        // SAFETY: alignment chain — mmap base is page-aligned (≥4096),
+        // slot_offset() == size_of::<UnifiedHeader>() == 64 (asserted at
+        // const time in core::header), and 64 is divisible by 32. So the
+        // base pointer for the slot array is 32-byte aligned, matching
+        // PointSlot's `#[repr(C, align(32))]` requirement. `index` is
+        // bounds-checked above against `slot_count`, and the constructor
+        // verified the mmap covers at least `max_slots` slots.
         unsafe {
             let ptr = self.mmap.as_ptr().add(slot_offset()) as *const PointSlot;
             &*ptr.add(index)
@@ -93,11 +99,19 @@ impl SlotReader {
     }
 
     /// Save a tear-resistant snapshot of the current SHM state.
+    ///
+    /// Uses `self.slot_count` (captured at `open()`) rather than the live
+    /// `header().slot_count` field. Reading the live header here would race
+    /// with comsrv's `reconfigure_existing`: during the reconfigure window
+    /// `header.slot_count` has already been advanced to the new value, but
+    /// the slot array is still being zeroed. Snapshotting through the live
+    /// count in that window would capture all-zero slots that read as
+    /// `value=0.0` (a valid finite reading) rather than NaN sentinels, and
+    /// the snapshot would silently encode garbage as live data.
     pub fn save_snapshot(&self, path: &Path) -> Result<()> {
-        let current_slot_count = self.header().slot_count.load(Ordering::Acquire) as usize;
         crate::core::snapshot_save::save_snapshot_impl(
             &self.mmap,
-            current_slot_count,
+            self.slot_count,
             path,
             "SlotReader",
         )
@@ -105,7 +119,7 @@ impl SlotReader {
     }
 }
 
-// ========== SlotIo impl ==========
+// ========== SlotIo (read-only) impl ==========
 
 impl SlotIo for SlotReader {
     #[inline]
@@ -123,18 +137,6 @@ impl SlotIo for SlotReader {
             raw,
             timestamp_ms,
         })
-    }
-
-    /// Readers are not writers — calling `write_slot` always returns false.
-    /// The trait surface is symmetric for the read path; only writers
-    /// actually back this method with a real implementation.
-    fn write_slot(&self, _index: usize, _value: f64, _raw: f64, _timestamp_ms: u64) -> bool {
-        false
-    }
-
-    /// Readers do not maintain a dirty bitmap; always returns empty.
-    fn take_dirty_slots(&self) -> Vec<usize> {
-        Vec::new()
     }
 
     fn generation(&self) -> u64 {

@@ -1211,16 +1211,6 @@ impl crate::core::slot_io::SlotIo for UnifiedWriter {
     }
 
     #[inline]
-    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
-        crate::core::slot_io::SlotIo::write_slot(&self.inner, index, value, raw, timestamp_ms)
-    }
-
-    #[inline]
-    fn take_dirty_slots(&self) -> Vec<usize> {
-        crate::core::slot_io::SlotIo::take_dirty_slots(&self.inner)
-    }
-
-    #[inline]
     fn generation(&self) -> u64 {
         crate::core::slot_io::SlotIo::generation(&self.inner)
     }
@@ -1233,6 +1223,18 @@ impl crate::core::slot_io::SlotIo for UnifiedWriter {
     #[inline]
     fn header(&self) -> &UnifiedHeader {
         crate::core::slot_io::SlotIo::header(&self.inner)
+    }
+}
+
+impl crate::core::slot_io::SlotIoWrite for UnifiedWriter {
+    #[inline]
+    fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {
+        crate::core::slot_io::SlotIoWrite::write_slot(&self.inner, index, value, raw, timestamp_ms)
+    }
+
+    #[inline]
+    fn take_dirty_slots(&self) -> Vec<usize> {
+        crate::core::slot_io::SlotIoWrite::take_dirty_slots(&self.inner)
     }
 }
 
