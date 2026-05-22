@@ -216,34 +216,56 @@ pub async fn health_check<R: Rtdb>(
         );
     }
 
-    // SHM stats: slot occupancy + writer heartbeat
-    if let Some(handle) = manager.shm_handle() {
-        let mut parts = Vec::new();
+    // SHM stats: slot occupancy + writer heartbeat. Always emit a "shm"
+    // entry so operators / Docker healthcheck can distinguish "SHM
+    // healthy" from "SHM never initialized" — the old `if let Some(handle)`
+    // path silently dropped the entry when the handle was None and
+    // returned 200 alongside Redis/SQLite health, masking a degraded SHM.
+    match manager.shm_handle() {
+        Some(handle) => {
+            let mut parts = Vec::new();
 
-        if let Some(guard) = handle.layout()
-            && let Some(layout) = guard.as_ref()
-        {
-            parts.push(format!("total={}", layout.writer.slot_count()));
-            parts.push(format!("heartbeat_ms={}", layout.writer.writer_heartbeat()));
-        }
+            if let Some(guard) = handle.layout()
+                && let Some(layout) = guard.as_ref()
+            {
+                parts.push(format!("total={}", layout.writer.slot_count()));
+                parts.push(format!("heartbeat_ms={}", layout.writer.writer_heartbeat()));
+            }
 
-        if let Some(stats) = manager.slot_bitmap_stats() {
-            parts.push(format!("allocated={}", stats.allocated_slots));
-            parts.push(format!("free={}", stats.free_slots));
-        }
+            if let Some(stats) = manager.slot_bitmap_stats() {
+                parts.push(format!("allocated={}", stats.allocated_slots));
+                parts.push(format!("free={}", stats.free_slots));
+            }
 
-        checks.insert(
-            "shm".to_string(),
-            ComponentHealth {
-                status: HealthServiceStatus::Healthy,
-                message: Some(if parts.is_empty() {
-                    "unavailable".to_string()
-                } else {
-                    parts.join(", ")
-                }),
-                duration_ms: None,
-            },
-        );
+            checks.insert(
+                "shm".to_string(),
+                ComponentHealth {
+                    status: HealthServiceStatus::Healthy,
+                    message: Some(if parts.is_empty() {
+                        "unavailable".to_string()
+                    } else {
+                        parts.join(", ")
+                    }),
+                    duration_ms: None,
+                },
+            );
+        },
+        None => {
+            // SHM never initialized — the writer thread either hasn't
+            // started yet or failed to create the mmap. Report Degraded
+            // so readiness probes can react instead of treating the
+            // node as fully healthy.
+            checks.insert(
+                "shm".to_string(),
+                ComponentHealth {
+                    status: HealthServiceStatus::Degraded,
+                    message: Some(
+                        "not initialized (writer not started or mmap failed)".to_string(),
+                    ),
+                    duration_ms: None,
+                },
+            );
+        },
     }
 
     // Collect system metrics (CPU, memory)
