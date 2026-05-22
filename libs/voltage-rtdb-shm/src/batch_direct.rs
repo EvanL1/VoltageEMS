@@ -77,9 +77,19 @@ fn write_channel_batch_direct_impl(
 
     let mut result = BatchRoutingResult::default();
 
-    // Group updates by (channel_id, point_type) for C2C tracking
+    // Group updates by (channel_id, point_type) for C2C tracking.
+    // Single-writer invariant: comsrv owns Telemetry/Status slots only;
+    // C/A slots belong to modsrv. Silently dropping cross-writer points
+    // would mask protocol-adapter bugs, so we warn and skip.
     let mut grouped: FxHashMap<(u32, PointType), Vec<ChannelPointUpdate>> = FxHashMap::default();
     for update in updates {
+        if !update.point_type.is_measurement() {
+            warn!(
+                "batch_direct refused cross-writer slot ch={} pt={:?} point={} (only T/S allowed)",
+                update.channel_id, update.point_type, update.point_id
+            );
+            continue;
+        }
         grouped
             .entry((update.channel_id, update.point_type))
             .or_default()
