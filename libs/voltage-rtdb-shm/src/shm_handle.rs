@@ -91,24 +91,23 @@ impl ShmHandle {
 
     /// Rebuild SHM writer and indexes from updated channel point counts.
     ///
-    /// Called after routing reload succeeds. Reconfigures the existing
-    /// SHM file in place, then atomically swaps the coherent layout handle.
-    /// Old objects are dropped when the last reader Guard releases.
+    /// Step 3 of the SHM decoupling roadmap routes this through
+    /// [`rebuild_via_swap`](Self::rebuild_via_swap): a fresh SHM file is
+    /// created at a staging path with all slots initialized to the
+    /// NaN-sentinel, then a POSIX `rename(2)` atomically replaces the
+    /// canonical path. Existing readers in other processes that mmap'd
+    /// the old canonical file keep operating on the now-unlinked inode
+    /// (kept live by their mmap reference) until they re-open. modsrv
+    /// learns of the swap via its inode-watcher task in
+    /// `services/modsrv/src/main.rs`, which fires the existing
+    /// `rebuild_trigger` when it observes a canonical-path inode change.
+    ///
+    /// Compared to the legacy `reconfigure_existing` (now removed from
+    /// this path), no live mmap is ever mutated mid-flight — there is
+    /// no window in which a reader can observe torn `slot_count` or
+    /// partially-zeroed slots.
     pub fn rebuild(&self, channel_points: &ChannelPointCounts) -> anyhow::Result<()> {
-        let writer = UnifiedWriter::reconfigure_existing(&self.config, channel_points)?;
-        let slot_count = writer.slot_count();
-        let index = ChannelToSlotIndex::from_unified_writer(&writer);
-        let index_len = index.len();
-        let layout = Arc::new(ShmLayout::new(writer, index));
-        let reverse_len = layout.reverse_index.mapped_count();
-
-        self.layout.store(Some(layout));
-
-        info!(
-            "ShmHandle: rebuilt with {} slots, {} index mappings, {} reverse mappings",
-            slot_count, index_len, reverse_len
-        );
-        Ok(())
+        self.rebuild_via_swap(channel_points)
     }
 
     /// Rebuild via per-generation file + atomic rename — the Step 3
