@@ -171,6 +171,12 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
 
             // Priority 1: Protocol commands (connect/disconnect/diagnostics)
             Some(cmd) = protocol_rx.recv() => {
+                // Shutdown must break the outer loop; handle_protocol_command
+                // would only log it (the backoff branch handles its own copy).
+                if matches!(cmd, ProtocolCommand::Shutdown) {
+                    info!("Ch{} shutdown received, exiting loop", ctx.channel_id);
+                    break;
+                }
                 handle_protocol_command(
                     cmd, &mut protocol, &ctx.log_handler, ctx.channel_id,
                 ).await;
@@ -269,10 +275,11 @@ async fn handle_protocol_command(
             let _ = response_tx.send(result);
         },
         ProtocolCommand::Shutdown => {
-            // Shutdown is handled inline in the select! match — this branch
-            // should not be reached since Shutdown breaks the loop directly.
-            // Kept for exhaustive match.
-            info!("Ch{} received shutdown command", channel_id);
+            // Unreachable: the main select! arm peels Shutdown off before
+            // dispatching here. Kept for exhaustiveness; if hit, the loop
+            // wasn't broken correctly.
+            debug_assert!(false, "Shutdown should be handled in select! arm");
+            info!("Ch{} unexpected shutdown in handler", channel_id);
         },
     }
 }
