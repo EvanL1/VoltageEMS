@@ -68,6 +68,10 @@ pub struct RedisDataStore<R: Rtdb> {
     flush_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
     /// Shutdown signal for flush task
     shutdown_notify: Arc<Notify>,
+    /// Cumulative count of data points dropped because no SHM slot was
+    /// allocated for them (channel reload window). Exposed for metrics
+    /// and warning aggregation — previously these drops were silent.
+    slot_miss_count: std::sync::atomic::AtomicU64,
 }
 
 impl<R: Rtdb> RedisDataStore<R> {
@@ -95,7 +99,15 @@ impl<R: Rtdb> RedisDataStore<R> {
             key_config: KeySpaceConfig::production_cached(),
             flush_handle: RwLock::new(None),
             shutdown_notify: Arc::new(Notify::new()),
+            slot_miss_count: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Cumulative number of slot-miss drops across all batches.
+    /// Surface via /health or metrics to expose silent reload-window data loss.
+    pub fn slot_miss_count(&self) -> u64 {
+        self.slot_miss_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Set shared memory handle for high-performance writes.
@@ -259,7 +271,7 @@ impl<R: Rtdb> RedisDataStore<R> {
         let updates = self.batch_to_updates(channel_id, &batch);
 
         // Select write path: prefer shared memory direct write for best performance
-        let _stats = if let Some(handle) = &self.shm_handle {
+        let stats = if let Some(handle) = &self.shm_handle {
             match handle.layout() {
                 Some(layout_guard) => {
                     if let Some(layout) = layout_guard.as_ref() {
@@ -296,6 +308,16 @@ impl<R: Rtdb> RedisDataStore<R> {
                 updates,
             )
         };
+
+        // Surface slot-miss drops as a cumulative counter. Individual
+        // misses are warn!-logged inside write_channel_batch_direct;
+        // this aggregate is what /health and dashboards consume.
+        if stats.slot_misses > 0 {
+            self.slot_miss_count.fetch_add(
+                stats.slot_misses as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
 
         // Notify subscribers - wrap batch in Arc for 0.2.18 API
         self.notify_subscribers(DataEvent::DataUpdate(Arc::new(batch)));

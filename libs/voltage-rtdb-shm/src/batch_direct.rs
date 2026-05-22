@@ -108,9 +108,25 @@ fn write_channel_batch_direct_impl(
 
             // Direct shared memory write — the only hot-path write.
             // Redis sync is handled by ShmRedisSync background task.
-            if let Some(slot) = channel_index.lookup(channel_id, point_type, update.point_id) {
-                shared_writer.set_direct(slot, update.value, raw_value, timestamp_ms);
-                result.channel_writes += 1;
+            match channel_index.lookup(channel_id, point_type, update.point_id) {
+                Some(slot) => {
+                    shared_writer.set_direct(slot, update.value, raw_value, timestamp_ms);
+                    result.channel_writes += 1;
+                },
+                None => {
+                    // Slot missing: channel/point exists in routing but no
+                    // SHM slot is allocated for it. Happens during a reload
+                    // window after the DB row was added but before
+                    // `perform_channel_reload` rebuilt the slot table.
+                    // Increment a counter so the caller (comsrv RedisStore)
+                    // can expose this via metrics/health instead of dropping
+                    // data silently.
+                    result.slot_misses += 1;
+                    warn!(
+                        "batch_direct slot miss ch={} pt={:?} point={} — channel reload likely pending",
+                        channel_id, point_type, update.point_id
+                    );
+                },
             }
 
             // C2C routing lookup

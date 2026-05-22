@@ -642,6 +642,7 @@ mod tests {
             c2m_writes: 5,
             c2c_forwards: 2,
             cycles_detected: 0,
+            slot_misses: 0,
         };
 
         let result2 = BatchRoutingResult {
@@ -649,6 +650,7 @@ mod tests {
             c2m_writes: 1,
             c2c_forwards: 1,
             cycles_detected: 1,
+            slot_misses: 0,
         };
 
         result1.merge(result2);

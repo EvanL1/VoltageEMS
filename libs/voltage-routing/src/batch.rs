@@ -67,6 +67,12 @@ pub struct BatchRoutingResult {
     pub c2c_forwards: usize,
     /// Number of C2C cycles detected and skipped
     pub cycles_detected: usize,
+    /// Number of data points dropped because the channel/point had no SHM
+    /// slot allocated (e.g. point was created in the DB but the channel
+    /// hasn't been reloaded yet). Used as an observability signal — the
+    /// previous silent-drop path made it impossible to tell if real device
+    /// data was being lost during reload windows.
+    pub slot_misses: usize,
 }
 
 impl BatchRoutingResult {
@@ -76,6 +82,7 @@ impl BatchRoutingResult {
         self.c2m_writes += other.c2m_writes;
         self.c2c_forwards += other.c2c_forwards;
         self.cycles_detected += other.cycles_detected;
+        self.slot_misses += other.slot_misses;
     }
 }
 
@@ -466,17 +473,20 @@ mod tests {
             c2m_writes: 5,
             c2c_forwards: 2,
             cycles_detected: 1,
+            slot_misses: 4,
         };
         let r2 = BatchRoutingResult {
             channel_writes: 3,
             c2m_writes: 1,
             c2c_forwards: 1,
             cycles_detected: 2,
+            slot_misses: 1,
         };
         r1.merge(r2);
         assert_eq!(r1.channel_writes, 13);
         assert_eq!(r1.c2m_writes, 6);
         assert_eq!(r1.c2c_forwards, 3);
         assert_eq!(r1.cycles_detected, 3);
+        assert_eq!(r1.slot_misses, 5);
     }
 }
