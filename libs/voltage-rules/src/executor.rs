@@ -1400,18 +1400,32 @@ impl<R: Rtdb, S: StateStore> RuleExecutor<R, S> {
         value: f64,
     ) -> Result<()> {
         let config = KeySpaceConfig::production();
-
-        // Write to inst:{id}:M Hash
-        // Use precomputed pool for common point IDs (0-255)
         let key = config.instance_measurement_key(instance_id);
+        let ts_key = config.instance_measurement_ts_key(instance_id);
         let point_str = precomputed::get_point_id_str_or_alloc(point);
         let value_bytes = voltage_rtdb::numfmt::f64_to_bytes(value);
+        // Stamp ts in the same call as the value: OnChange triggers that
+        // watch calculation outputs must see value + ts updated atomically
+        // or the time deadband never expires.
+        let now_ms = SystemTimeProvider.now_millis();
+        let ts_bytes = voltage_rtdb::numfmt::i64_to_bytes(now_ms);
+
         self.rtdb
             .hash_set(&key, &point_str, value_bytes)
             .await
             .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?;
+        self.rtdb
+            .hash_set(&ts_key, &point_str, ts_bytes)
+            .await
+            .map_err(|e| crate::error::RuleError::ExecutionError(e.to_string()))?;
 
-        tracing::debug!("Calc write: inst:{}:M:{} = {}", instance_id, point, value);
+        tracing::debug!(
+            "Calc write: inst:{}:M:{} = {} @{}",
+            instance_id,
+            point,
+            value,
+            now_ms
+        );
 
         Ok(())
     }
