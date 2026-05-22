@@ -929,6 +929,27 @@ impl UnifiedWriter {
             bail!("Too many slots: {} (max={})", slot_count, max_slots);
         }
 
+        // Mark reconfigure-in-progress by flipping writer_generation to an
+        // ODD value (low bit = 1). Readers/dispatchers gate on this: any
+        // SHM consumer that reads writer_generation while odd MUST skip
+        // this tick / refuse this dispatch — the slot array is being
+        // cleared and torn reads would produce all-zero garbage. The
+        // matching even-store after the slot init below restores normal
+        // operation with the generation incremented by 2 (odd→even),
+        // which still trips ShmDispatch's mismatch check so the next
+        // dispatch picks up the new layout.
+        {
+            // SAFETY: mmap covers the header; we hold &mut mmap so no
+            // other writer in this process can racing-bump the counter.
+            let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };
+            let prev = header.writer_generation.fetch_add(1, Ordering::Release);
+            debug_assert!(
+                prev & 1 == 0,
+                "reconfigure entered with odd writer_generation = {} — nested reconfigure?",
+                prev
+            );
+        }
+
         // Reset only the previously-used slot region (not the entire 2GB sparse file).
         // Clear max(old, new) slots to cover both old stale data and any new slots.
         let clear_slots = old_slot_count.max(slot_count);
@@ -969,7 +990,17 @@ impl UnifiedWriter {
         header
             .routing_hash
             .store(channel_points.layout_hash(), Ordering::Release);
-        header.writer_generation.fetch_add(1, Ordering::Release);
+        // Restore even parity (was bumped to odd at the start of this
+        // function). Net effect: generation incremented by 2. ShmDispatch's
+        // mismatch check still trips on the next dispatch (any change),
+        // and the low-bit "reconfigure in progress" sentinel is cleared
+        // so normal consumers resume.
+        let post = header.writer_generation.fetch_add(1, Ordering::Release);
+        debug_assert!(
+            post & 1 == 1,
+            "reconfigure exited with even writer_generation = {} — sentinel logic broken",
+            post
+        );
 
         // Flush mmap to backing file — ensures cross-process visibility
         // on systems where mmap coherency isn't guaranteed (H3).

@@ -147,6 +147,19 @@ impl<R: Rtdb> ShmRedisSync<R> {
             return;
         }
 
+        // Reconfigure-in-progress sentinel: comsrv flips writer_generation
+        // to an odd value while it is clearing slots in reconfigure_existing.
+        // Reading slots during this window would yield all-zero garbage
+        // (the byte-fill in progress). Skip this tick and retry next
+        // iteration — the even parity returns once reconfigure completes,
+        // and the subsequent layout/content-hash change will already force
+        // a full_seq reset for the new layout.
+        if writer.generation() & 1 == 1 {
+            trace!("ShmRedisSync: reconfigure in progress (odd generation), skipping tick");
+            self.tick_count += 1;
+            return;
+        }
+
         // Grow last_seq if slot_count expanded after routing reload.
         if self.last_seq.len() < slot_count {
             self.last_seq.resize(slot_count, 0);
