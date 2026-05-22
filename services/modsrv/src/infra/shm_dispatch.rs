@@ -172,6 +172,25 @@ impl ActionDispatch for ShmDispatch {
             };
         }
 
+        // Re-check generation AFTER the write: comsrv may have reconfigured
+        // between the pre-check above and set_action, in which case our write
+        // landed in a slot that now belongs to a different (channel, point).
+        // The SHM write is non-rollbackable, but we can refuse to commit
+        // downstream state (Redis mirror, UDS notify) and trigger a rebuild
+        // so the next dispatch sees the new layout.
+        let post_gen = writer.generation();
+        if expected != 0 && post_gen != expected {
+            warn!(
+                "SHM generation changed mid-dispatch (expected={}, post={}); discarding write",
+                expected, post_gen
+            );
+            self.writer.store(None);
+            self.rebuild_trigger.notify_one();
+            return DispatchOutcome::MirrorMiss {
+                reason: "generation changed mid-dispatch",
+            };
+        }
+
         // Step 2: UDS notification for event-driven dispatch (~1-2ms latency)
         let Some(notifier_lock) = self.notifier.get() else {
             return DispatchOutcome::ShmOnly {
