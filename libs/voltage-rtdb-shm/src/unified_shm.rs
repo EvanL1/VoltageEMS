@@ -461,9 +461,18 @@ impl UnifiedWriter {
         header.writer_heartbeat = AtomicU64::new(0);
         // Store channel layout hash for cross-process synchronization
         header.routing_hash = AtomicU64::new(channel_points.layout_hash());
-        header.writer_generation = AtomicU64::new(0);
+        // Seed generation with wall-clock nanos so a comsrv restart that
+        // recreates the SHM file produces a different generation than the
+        // previous incarnation. Without this seed every create() yielded 1,
+        // and modsrv's cached expected_generation would not trip after a
+        // restart — silently writing into a possibly-shifted layout.
+        let generation_seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1)
+            .max(1);
+        header.writer_generation = AtomicU64::new(generation_seed);
         header._reserved = [0; 8];
-        header.writer_generation.store(1, Ordering::Release);
 
         // Initialize every PointSlot to the "unwritten" sentinel (NaN).
         // `set_len` above zero-filled the file, so without this loop slots
