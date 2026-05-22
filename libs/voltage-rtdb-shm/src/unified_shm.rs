@@ -1226,6 +1226,35 @@ impl crate::core::slot_io::SlotIo for UnifiedWriter {
     }
 }
 
+// UnifiedReader implements only the read view; it does not implement
+// SlotIoWrite, so `&dyn SlotIo` taken from a reader cannot mutate.
+impl crate::core::slot_io::SlotIo for UnifiedReader {
+    #[inline]
+    fn slot_count(&self) -> usize {
+        crate::core::slot_io::SlotIo::slot_count(&self.inner)
+    }
+
+    #[inline]
+    fn read_slot(&self, index: usize) -> Option<crate::core::slot_io::SlotRead> {
+        crate::core::slot_io::SlotIo::read_slot(&self.inner, index)
+    }
+
+    #[inline]
+    fn generation(&self) -> u64 {
+        crate::core::slot_io::SlotIo::generation(&self.inner)
+    }
+
+    #[inline]
+    fn writer_heartbeat(&self) -> u64 {
+        crate::core::slot_io::SlotIo::writer_heartbeat(&self.inner)
+    }
+
+    #[inline]
+    fn header(&self) -> &UnifiedHeader {
+        crate::core::slot_io::SlotIo::header(&self.inner)
+    }
+}
+
 impl crate::core::slot_io::SlotIoWrite for UnifiedWriter {
     #[inline]
     fn write_slot(&self, index: usize, value: f64, raw: f64, timestamp_ms: u64) -> bool {

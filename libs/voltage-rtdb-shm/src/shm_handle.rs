@@ -20,6 +20,7 @@
 use std::sync::Arc;
 
 use crate::channel_points::ChannelPointCounts;
+use crate::core::config::{commit_generation_swap, generation_file_path};
 use crate::reverse_index::ReverseSlotIndex;
 use crate::shared_config::{ChannelToSlotIndex, SharedConfig};
 use crate::unified_shm::UnifiedWriter;
@@ -110,6 +111,84 @@ impl ShmHandle {
         Ok(())
     }
 
+    /// Rebuild via per-generation file + atomic rename — the Step 3
+    /// alternative to `rebuild()`'s in-place `reconfigure_existing` path.
+    ///
+    /// Flow:
+    /// 1. Compute a unique staging path under the same directory using a
+    ///    nanosecond-based generation seed. Wall-clock nanoseconds make
+    ///    collisions effectively impossible in practice and, since
+    ///    `commit_generation_swap` does an unconditional rename, even a
+    ///    collision would only overwrite a stale file (never current).
+    /// 2. Create a fresh `UnifiedWriter` at the staging path — this is a
+    ///    brand-new file with all slots already initialized to the
+    ///    unwritten-NaN sentinel; no in-place mutation of any live mmap.
+    /// 3. Flush the new mmap to its backing file so the data is durable
+    ///    before we publish the file.
+    /// 4. `commit_generation_swap(staging → canonical)`: POSIX `rename(2)`
+    ///    atomically replaces the canonical path. Any reader still
+    ///    holding a mmap of the previous canonical file keeps reading
+    ///    its data (kernel-managed inode lifetime).
+    /// 5. ArcSwap the local layout to the new writer.
+    ///
+    /// **Note**: this updates the *local* layout immediately. Other
+    /// processes that have already mmap'd the canonical path will not
+    /// learn about the new file until they re-open. PR 3 of Step 3 will
+    /// add the cross-service prepare/commit protocol that triggers
+    /// modsrv to re-open. Until then, callers using `rebuild_via_swap`
+    /// must arrange their own modsrv notification (e.g. via the existing
+    /// `ChannelManager` rebuild_trigger, or by explicit HTTP signal).
+    pub fn rebuild_via_swap(&self, channel_points: &ChannelPointCounts) -> anyhow::Result<()> {
+        let canonical = self.config.path().to_path_buf();
+
+        let staging_seq = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1);
+        let staging_path = generation_file_path(&canonical, staging_seq);
+
+        let staging_config = self.config.clone().with_path(staging_path.clone());
+
+        // Step 1-2: build new SHM at staging path. UnifiedWriter::create
+        // initializes the header, every slot to NaN sentinel, and flushes
+        // before returning.
+        let writer = UnifiedWriter::create(&staging_config, channel_points)
+            .map_err(|e| anyhow::anyhow!("create staging SHM at {staging_path:?}: {e}"))?;
+
+        // Step 3: ensure data is on disk before publishing.
+        writer.flush().map_err(|e| {
+            anyhow::anyhow!("flush staging SHM at {staging_path:?} before swap: {e}")
+        })?;
+
+        // Step 4: atomic rename. After this point, fresh opens of
+        // `canonical` see the new file; existing mmaps of the old
+        // canonical keep working on the previous inode.
+        commit_generation_swap(&staging_path, &canonical)?;
+
+        // Step 5: rebuild the local layout pointing at the new writer.
+        // We need to re-derive the writer from the canonical path so the
+        // SlotWriter's stored `path` field matches reality; the
+        // `writer` we just created knows itself as `staging_path` which
+        // no longer exists.
+        let writer =
+            UnifiedWriter::open_for_actions(&self.config, channel_points).map_err(|e| {
+                anyhow::anyhow!("re-open new SHM at canonical {canonical:?} as writer: {e}")
+            })?;
+        let slot_count = writer.slot_count();
+        let index = ChannelToSlotIndex::from_unified_writer(&writer);
+        let index_len = index.len();
+        let layout = Arc::new(ShmLayout::new(writer, index));
+        let reverse_len = layout.reverse_index.mapped_count();
+
+        self.layout.store(Some(layout));
+
+        info!(
+            "ShmHandle: rebuilt via atomic swap (staging={:?}) — {} slots, {} index, {} reverse",
+            staging_path, slot_count, index_len, reverse_len
+        );
+        Ok(())
+    }
+
     /// Get the SharedConfig.
     pub fn config(&self) -> &SharedConfig {
         &self.config
@@ -142,6 +221,53 @@ mod tests {
 
     fn test_config(path: std::path::PathBuf) -> SharedConfig {
         SharedConfig::default().with_path(path).with_max_slots(8)
+    }
+
+    #[test]
+    fn rebuild_via_swap_replaces_canonical_file_and_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("test.shm");
+        let config = test_config(canonical.clone());
+
+        let initial_counts = counts(1001);
+        let writer = UnifiedWriter::create(&config, &initial_counts).unwrap();
+        let initial_inode = std::fs::metadata(&canonical).unwrap().len(); // proxy for "file exists"
+        assert!(initial_inode > 0);
+        let index = ChannelToSlotIndex::from_unified_writer(&writer);
+        let handle = ShmHandle::new(config, writer, index);
+
+        // Sanity: layout starts on channel 1001.
+        let layout = handle.layout_arc().unwrap();
+        assert_eq!(layout.index.lookup(1001, PointType::Telemetry, 0), Some(0));
+
+        // Swap-rebuild to a new topology with channel 2002.
+        let new_counts = counts(2002);
+        handle.rebuild_via_swap(&new_counts).unwrap();
+
+        // The canonical file still exists (POSIX rename replaced it).
+        assert!(canonical.exists());
+
+        // Local layout now reflects the new topology.
+        let layout = handle.layout_arc().unwrap();
+        assert!(layout.index.lookup(1001, PointType::Telemetry, 0).is_none());
+        assert_eq!(layout.index.lookup(2002, PointType::Telemetry, 0), Some(0));
+        let origin = layout.reverse_index.get(0).unwrap();
+        assert_eq!(origin.channel_id, 2002);
+        assert_eq!(origin.point_type, PointType::Telemetry);
+
+        // No staging files left behind.
+        let stragglers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name().to_string_lossy().starts_with("test-")
+                    && e.file_name().to_string_lossy().ends_with(".shm")
+            })
+            .collect();
+        assert!(
+            stragglers.is_empty(),
+            "rebuild_via_swap left staging files behind: {stragglers:?}"
+        );
     }
 
     #[test]
