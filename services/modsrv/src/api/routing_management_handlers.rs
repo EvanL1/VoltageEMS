@@ -18,6 +18,7 @@ use crate::app_state::AppState;
 use crate::dto::{PointType, RoutingRequest};
 use crate::error::ModSrvError;
 use crate::routing_loader::{ActionRoutingRow, MeasurementRoutingRow};
+use voltage_rtdb::Rtdb;
 
 /// Create a new routing for an instance
 ///
@@ -288,11 +289,33 @@ pub async fn update_instance_routing(
             match result {
                 Ok(_) => {
                     success_count += 1;
+                    // Clear corresponding Redis fields so consumers (rules, UI)
+                    // do not keep reading the ghost old value/timestamp.
+                    // Field name = stringified point_id; both value and ts
+                    // hashes live under separate keys.
+                    let keyspace = voltage_model::KeySpaceConfig::production_cached();
+                    let (val_key, ts_key) = match routing_type {
+                        PointType::Measurement => (
+                            keyspace.instance_measurement_key(id),
+                            keyspace.instance_measurement_ts_key(id),
+                        ),
+                        PointType::Action => (
+                            keyspace.instance_action_key(id),
+                            keyspace.instance_action_ts_key(id),
+                        ),
+                    };
+                    let field = routing.point_id.to_string();
+                    let rtdb = &state.instance_manager.rtdb;
+                    for k in [&val_key, &ts_key] {
+                        if let Err(e) = rtdb.hash_del(k, &field).await {
+                            tracing::warn!("Redis HDEL on unbind {}:{}: {}", k, field, e);
+                        }
+                    }
                     tracing::debug!(
                         instance_id = id,
                         point_id = routing.point_id,
                         routing_type = ?routing_type,
-                        "Routing deleted (unbind)"
+                        "Routing deleted (unbind) and Redis fields cleared"
                     );
                 },
                 Err(e) => {
