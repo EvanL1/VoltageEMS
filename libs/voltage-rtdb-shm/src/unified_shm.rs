@@ -32,7 +32,7 @@ use crate::shared_config::SharedConfig;
 use crate::vec_impl::PointSlot;
 use anyhow::{Context, Result, bail};
 use memmap2::{Mmap, MmapMut, MmapOptions};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use voltage_model::PointType;
@@ -309,6 +309,47 @@ macro_rules! impl_shm_accessors {
 #[inline]
 pub const fn calculate_file_size(max_slots: u32) -> usize {
     std::mem::size_of::<UnifiedHeader>() + (max_slots as usize) * std::mem::size_of::<PointSlot>()
+}
+
+/// Verify a file is at least header-sized before any unsafe header cast.
+///
+/// Returns Err if the file is shorter than `size_of::<UnifiedHeader>()`,
+/// which would make casting the mmap pointer to `*const UnifiedHeader`
+/// immediate UB. Guards against truncated or corrupt SHM files at startup.
+fn verify_file_min_size(file: &File, path: &std::path::Path) -> Result<()> {
+    let len = file
+        .metadata()
+        .with_context(|| format!("Failed to stat {:?}", path))?
+        .len();
+    let min = std::mem::size_of::<UnifiedHeader>() as u64;
+    if len < min {
+        bail!(
+            "SHM file {:?} truncated: len={} < header size {} — refusing unsafe header cast",
+            path,
+            len,
+            min
+        );
+    }
+    Ok(())
+}
+
+/// Verify the mmap covers the full slot array implied by `max_slots`.
+///
+/// Called after `validate_shm_header` so we have a trusted `max_slots`.
+/// Returns Err if the mmap is shorter than the slot region would require,
+/// indicating a truncated file that would cause out-of-bounds slot reads.
+fn verify_mmap_covers_slots(mmap_len: usize, max_slots: u32, path: &std::path::Path) -> Result<()> {
+    let required = calculate_file_size(max_slots);
+    if mmap_len < required {
+        bail!(
+            "SHM file {:?} too small for declared max_slots={}: have {} bytes, need {}",
+            path,
+            max_slots,
+            mmap_len,
+            required
+        );
+    }
+    Ok(())
 }
 
 /// Get offset of PointSlot array
@@ -662,18 +703,26 @@ impl UnifiedWriter {
             .open(path)
             .with_context(|| format!("Failed to open {:?} for actions", path))?;
 
-        // SAFETY: File exists and was created by the primary writer (comsrv).
-        // We validate magic/version/layout_hash immediately after mapping.
+        // Guard against truncated/corrupt files: a file shorter than the
+        // header makes the pointer cast below UB. Must verify BEFORE mmap.
+        verify_file_min_size(&file, path)?;
+
+        // SAFETY: File exists, was created by the primary writer (comsrv),
+        // and we just verified it is at least header-sized.
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
                 .with_context(|| "Failed to mmap for actions")?
         };
 
-        // SAFETY: mmap is at least page-sized (>= 64 bytes for header).
-        // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
+        // SAFETY: mmap.len() >= sizeof(UnifiedHeader) by verify_file_min_size.
         let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
         let (max_slots, slot_count) = validate_shm_header(header, channel_points)?;
+
+        // Now that max_slots is trusted, confirm the mmap actually covers
+        // the slot array. Without this, set_direct on slot_count-1 could
+        // read/write past the mmap end.
+        verify_mmap_covers_slots(mmap.len(), max_slots, path)?;
 
         let (channel_layouts, calculated_slots) = allocate_layouts(channel_points);
         verify_slot_count(slot_count, calculated_slots)?;
@@ -1089,18 +1138,21 @@ impl UnifiedReader {
             .open(path)
             .with_context(|| format!("Failed to open {:?}", path))?;
 
-        // SAFETY: File exists and was created by the primary writer (comsrv).
-        // We validate magic/version/layout_hash immediately after mapping.
+        // Guard against truncated/corrupt files before any unsafe cast.
+        verify_file_min_size(&file, path)?;
+
+        // SAFETY: file is at least header-sized per verify_file_min_size.
         let mmap = unsafe {
             MmapOptions::new()
                 .map(&file)
                 .with_context(|| "Failed to mmap")?
         };
 
-        // SAFETY: mmap is at least page-sized (>= 64 bytes for header).
-        // UnifiedHeader is #[repr(C, align(64))], mmap base is page-aligned.
+        // SAFETY: mmap.len() >= sizeof(UnifiedHeader) by verify_file_min_size.
         let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
         let (max_slots, slot_count) = validate_shm_header(header, channel_points)?;
+
+        verify_mmap_covers_slots(mmap.len(), max_slots, path)?;
 
         let (channel_layouts, calculated_slots) = allocate_layouts(channel_points);
         verify_slot_count(slot_count, calculated_slots)?;
@@ -1138,12 +1190,17 @@ impl UnifiedReader {
             .open(path)
             .with_context(|| format!("Failed to open {:?}", path))?;
 
+        // Guard against truncated/corrupt files before any unsafe cast.
+        verify_file_min_size(&file, path)?;
+
+        // SAFETY: file is at least header-sized per verify_file_min_size.
         let mmap = unsafe {
             MmapOptions::new()
                 .map(&file)
                 .with_context(|| "Failed to mmap")?
         };
 
+        // SAFETY: mmap.len() >= sizeof(UnifiedHeader) by verify_file_min_size.
         let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
         if header.magic != UNIFIED_MAGIC {
             bail!(
@@ -1154,6 +1211,7 @@ impl UnifiedReader {
         }
 
         let max_slots = header.max_slots;
+        verify_mmap_covers_slots(mmap.len(), max_slots, path)?;
         let slot_count = header.slot_count.load(Ordering::Acquire) as usize;
 
         tracing::info!(
