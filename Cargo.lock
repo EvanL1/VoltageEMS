@@ -5844,6 +5844,7 @@ dependencies = [
  "tracing-core",
  "tracing-subscriber",
  "uuid",
+ "zerocopy",
  "zeroize",
 ]
 
