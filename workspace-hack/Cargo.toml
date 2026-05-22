@@ -39,7 +39,7 @@ lazy_static = { version = "1", default-features = false, features = ["spin_no_st
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
 mio = { version = "1", features = ["net", "os-ext"] }
-num-traits = { version = "0.2", default-features = false, features = ["i128", "libm", "std"] }
+num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 rand = { version = "0.8" }
@@ -65,6 +65,7 @@ tokio-stream = { version = "0.1", features = ["fs", "sync"] }
 tracing-core = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+zerocopy = { version = "0.8", default-features = false, features = ["derive", "simd"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 
 [build-dependencies]
@@ -99,7 +100,7 @@ lazy_static = { version = "1", default-features = false, features = ["spin_no_st
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
 mio = { version = "1", features = ["net", "os-ext"] }
-num-traits = { version = "0.2", default-features = false, features = ["i128", "libm", "std"] }
+num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 proc-macro2 = { version = "1" }
@@ -130,6 +131,7 @@ tokio-stream = { version = "0.1", features = ["fs", "sync"] }
 tracing-core = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+zerocopy = { version = "0.8", default-features = false, features = ["derive", "simd"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 
 ### END HAKARI SECTION
