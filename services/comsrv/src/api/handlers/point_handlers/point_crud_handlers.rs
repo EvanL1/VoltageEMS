@@ -616,31 +616,32 @@ pub(super) async fn delete_point_handler_inner<R: Rtdb>(
 
     tracing::debug!("Ch{}:{}:{} deleted", channel_id, point_type_upper, point_id);
 
-    // Clear Redis data for the deleted point
+    // Clear Redis data for the deleted point. Values, per-point timestamps,
+    // and per-point raw values live in three separate hashes (value/ts/raw)
+    // sharing the same field name = point_id. The legacy code only deleted
+    // from the value hash, leaving stale entries in `:ts` and `:raw`.
     let pt = PointType::from_str(&point_type_upper)
         .ok_or_else(|| AppError::internal_error("Invalid point type after validation"))?;
     let keyspace = KeySpaceConfig::production_cached();
-    let redis_key = keyspace.channel_key(channel_id, pt);
-    let fields_to_delete = vec![
-        point_id.to_string(),
-        format!("{}:ts", point_id),
-        format!("{}:raw", point_id),
-    ];
+    let value_key = keyspace.channel_key(channel_id, pt);
+    let ts_key = keyspace.channel_ts_key(channel_id, pt);
+    let raw_key = keyspace.channel_raw_key(channel_id, pt);
+    let field = point_id.to_string();
 
-    for field in &fields_to_delete {
-        match state.rtdb.hash_del(&redis_key, field).await {
+    for key in &[&value_key, &ts_key, &raw_key] {
+        match state.rtdb.hash_del(key, &field).await {
             Ok(deleted) => {
                 if deleted {
                     tracing::debug!(
                         "Cleared Redis field {} from {} for point {}",
                         field,
-                        redis_key,
+                        key,
                         point_id
                     );
                 }
             },
             Err(e) => {
-                tracing::warn!("Redis del {}:{}: {}", redis_key, field, e);
+                tracing::warn!("Redis del {}:{}: {}", key, field, e);
             },
         }
     }
