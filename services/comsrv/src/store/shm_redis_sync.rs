@@ -63,6 +63,12 @@ const UNWRITTEN_SEQ: u32 = 0;
 /// counts. Excess slots are deferred to retry_slots for the next tick.
 const MAX_PIPELINE_SLOTS: usize = 1024;
 
+/// Upper bound on retry_slots so sustained overload does not grow it
+/// without limit. Once exceeded we drop the oldest pending retries; the
+/// periodic full-scan (FULL_SCAN_INTERVAL) will re-discover any slot we
+/// drop here, so dropped retries do not lose data permanently.
+const MAX_RETRY_SLOTS: usize = MAX_PIPELINE_SLOTS * 4;
+
 /// Force a full seq scan periodically as a safety net for external writers.
 const FULL_SCAN_INTERVAL: u64 = 600;
 
@@ -191,6 +197,19 @@ impl<R: Rtdb> ShmRedisSync<R> {
         if candidate_slots.len() > MAX_PIPELINE_SLOTS {
             let overflow = candidate_slots.split_off(MAX_PIPELINE_SLOTS);
             self.retry_slots.extend(overflow);
+        }
+
+        // Cap retry_slots so sustained overload (consistent >1024 dirty
+        // slots per tick) does not accumulate unbounded memory. Dropped
+        // entries are re-discovered by the periodic full-scan.
+        if self.retry_slots.len() > MAX_RETRY_SLOTS {
+            let drop_count = self.retry_slots.len() - MAX_RETRY_SLOTS;
+            tracing::warn!(
+                "ShmRedisSync: dropping {} oldest retry slots (cap {})",
+                drop_count,
+                MAX_RETRY_SLOTS
+            );
+            self.retry_slots.drain(..drop_count);
         }
 
         // Accumulate redis_key → Vec<(field, bytes)>.
