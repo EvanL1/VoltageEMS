@@ -195,16 +195,18 @@ where
                     );
                     result.cycles_detected += 1;
                 } else {
-                    // Add to forwards (target will be marked visited when processed).
-                    // Apply optional linear transform configured on the C2C route.
+                    // Apply C2C linear transform to value; raw_value drops to
+                    // None so the target's :raw hash reflects only its own
+                    // device's pre-scale reading (a "raw" twice-transformed
+                    // by both source and C2C scaling would have no physical
+                    // meaning at the target channel).
                     let fwd_value = target.transform(update.value);
-                    let fwd_raw = update.raw_value.map(|r| target.transform(r));
                     c2c_forwards.push(ChannelPointUpdate {
                         channel_id: target.channel_id,
                         point_type: target.point_type,
                         point_id: target.point_id,
                         value: fwd_value,
-                        raw_value: fwd_raw,
+                        raw_value: None,
                         cascade_depth: update.cascade_depth + 1,
                     });
                 }
@@ -376,16 +378,16 @@ fn write_channel_batch_buffered_impl(
                     );
                     result.cycles_detected += 1;
                 } else {
-                    // Add to forwards (target will be marked visited when processed).
-                    // Apply optional linear transform configured on the C2C route.
+                    // Same semantics as the buffered path: transform value,
+                    // drop raw_value so :raw is not polluted with a
+                    // twice-transformed pseudo-raw.
                     let fwd_value = target.transform(update.value);
-                    let fwd_raw = update.raw_value.map(|r| target.transform(r));
                     c2c_forwards.push(ChannelPointUpdate {
                         channel_id: target.channel_id,
                         point_type: target.point_type,
                         point_id: target.point_id,
                         value: fwd_value,
-                        raw_value: fwd_raw,
+                        raw_value: None,
                         cascade_depth: update.cascade_depth + 1,
                     });
                 }
