@@ -121,7 +121,14 @@ pub mod helpers {
         Ok(count)
     }
 
-    /// Buffer channel points for deferred write (via WriteBuffer)
+    /// Buffer channel points for deferred write (via WriteBuffer).
+    ///
+    /// Returns the number of points successfully buffered. If the
+    /// WriteBuffer hits its `max_pending_keys` ceiling, the per-layer
+    /// `BufferOverflow` errors are logged and the failed-layer counts
+    /// subtracted from the return. A caller observing `returned < count`
+    /// (or the cumulative `overflow_drops` stat) can react to the loss
+    /// instead of silently moving on as before.
     pub fn buffer_channel_points(
         write_buffer: &WriteBuffer,
         channel_key: &str,
@@ -149,11 +156,18 @@ pub mod helpers {
         let ts_key = format!("{}:ts", channel_key);
         let raw_key = format!("{}:raw", channel_key);
 
-        write_buffer.buffer_hash_mset(channel_key, values);
-        write_buffer.buffer_hash_mset(&ts_key, timestamps);
-        write_buffer.buffer_hash_mset(&raw_key, raw_values);
-
-        count
+        let mut buffered = count * 3;
+        for result in [
+            write_buffer.buffer_hash_mset(channel_key, values),
+            write_buffer.buffer_hash_mset(&ts_key, timestamps),
+            write_buffer.buffer_hash_mset(&raw_key, raw_values),
+        ] {
+            if let Err(e) = result {
+                tracing::warn!("buffer_channel_points dropped: {}", e);
+                buffered = buffered.saturating_sub(e.dropped_fields);
+            }
+        }
+        buffered / 3
     }
 
     /// Write channel point to Hash only (no M2C notification trigger)

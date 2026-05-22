@@ -31,9 +31,15 @@ async fn test_write_buffer_basic_flush() {
     let rtdb = create_test_rtdb();
 
     // Buffer some writes
-    buffer.buffer_hash_set("comsrv:1001:T", Arc::from("1"), Bytes::from("100.5"));
-    buffer.buffer_hash_set("comsrv:1001:T", Arc::from("2"), Bytes::from("200.3"));
-    buffer.buffer_hash_set("comsrv:1001:S", Arc::from("1"), Bytes::from("1"));
+    buffer
+        .buffer_hash_set("comsrv:1001:T", Arc::from("1"), Bytes::from("100.5"))
+        .unwrap();
+    buffer
+        .buffer_hash_set("comsrv:1001:T", Arc::from("2"), Bytes::from("200.3"))
+        .unwrap();
+    buffer
+        .buffer_hash_set("comsrv:1001:S", Arc::from("1"), Bytes::from("1"))
+        .unwrap();
 
     assert_eq!(buffer.pending_keys(), 2);
     assert_eq!(buffer.pending_fields(), 3);
@@ -70,7 +76,9 @@ async fn test_write_buffer_batch_100_points() {
     for point_id in 1..=100 {
         let field = Arc::from(point_id.to_string());
         let value = Bytes::from(format!("{}.5", point_id));
-        buffer.buffer_hash_set("comsrv:1001:T", field, value);
+        buffer
+            .buffer_hash_set("comsrv:1001:T", field, value)
+            .unwrap();
     }
 
     assert_eq!(buffer.pending_keys(), 1);
@@ -108,7 +116,7 @@ async fn test_write_buffer_batch_1000_points() {
         for point_id in 1..=100 {
             let field = Arc::from(point_id.to_string());
             let value = Bytes::from(format!("{}.{}", channel_id, point_id));
-            buffer.buffer_hash_set(&key, field, value);
+            buffer.buffer_hash_set(&key, field, value).unwrap();
         }
     }
 
@@ -153,12 +161,16 @@ async fn test_write_buffer_forced_flush() {
     // Buffer 4 fields (below threshold)
     for i in 1..=4 {
         let field = Arc::from(i.to_string());
-        buffer.buffer_hash_set("test:key", field, Bytes::from("value"));
+        buffer
+            .buffer_hash_set("test:key", field, Bytes::from("value"))
+            .unwrap();
     }
     assert_eq!(buffer.stats().snapshot().forced_flushes, 0);
 
     // 5th field triggers forced flush notification
-    buffer.buffer_hash_set("test:key", Arc::from("5"), Bytes::from("value"));
+    buffer
+        .buffer_hash_set("test:key", Arc::from("5"), Bytes::from("value"))
+        .unwrap();
     assert_eq!(buffer.stats().snapshot().forced_flushes, 1);
 
     // Verify pending data is still there (flush_notify just sends notification)
@@ -190,7 +202,9 @@ async fn test_write_buffer_stats_accuracy() {
     // Buffer 50 writes
     for i in 1..=50 {
         let field = Arc::from(i.to_string());
-        buffer.buffer_hash_set("key1", field, Bytes::from("value"));
+        buffer
+            .buffer_hash_set("key1", field, Bytes::from("value"))
+            .unwrap();
     }
 
     let stats = buffer.stats().snapshot();
@@ -207,7 +221,9 @@ async fn test_write_buffer_stats_accuracy() {
     // Buffer more and flush again
     for i in 51..=75 {
         let field = Arc::from(i.to_string());
-        buffer.buffer_hash_set("key2", field, Bytes::from("value"));
+        buffer
+            .buffer_hash_set("key2", field, Bytes::from("value"))
+            .unwrap();
     }
 
     buffer.flush(&*rtdb).await.unwrap();
@@ -237,7 +253,9 @@ async fn test_write_buffer_concurrent_writes() {
             for i in 0..100 {
                 let field = Arc::from(format!("{}_{}", task_id, i));
                 let value = Bytes::from(format!("value_{}_{}", task_id, i));
-                buffer.buffer_hash_set("concurrent:key", field, value);
+                buffer
+                    .buffer_hash_set("concurrent:key", field, value)
+                    .unwrap();
             }
         });
         handles.push(handle);
@@ -290,7 +308,9 @@ async fn test_write_buffer_flush_loop_timing() {
     });
 
     // Buffer some data
-    buffer.buffer_hash_set("test:key", Arc::from("field1"), Bytes::from("value1"));
+    buffer
+        .buffer_hash_set("test:key", Arc::from("field1"), Bytes::from("value1"))
+        .unwrap();
 
     // Wait for automatic flush (should happen within ~50ms)
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -329,8 +349,12 @@ async fn test_write_buffer_graceful_shutdown() {
     });
 
     // Buffer some data (won't auto-flush due to long interval)
-    buffer.buffer_hash_set("test:key", Arc::from("field1"), Bytes::from("value1"));
-    buffer.buffer_hash_set("test:key", Arc::from("field2"), Bytes::from("value2"));
+    buffer
+        .buffer_hash_set("test:key", Arc::from("field1"), Bytes::from("value1"))
+        .unwrap();
+    buffer
+        .buffer_hash_set("test:key", Arc::from("field2"), Bytes::from("value2"))
+        .unwrap();
 
     // Verify data not yet flushed
     let value = rtdb.hash_get("test:key", "field1").await.unwrap();
@@ -364,25 +388,31 @@ async fn test_write_buffer_three_layer_data() {
     let timestamp: Arc<str> = Arc::from("42"); // Same field name for ts hash
 
     // Layer 1: Engineering value
-    buffer.buffer_hash_set(
-        &format!("comsrv:{}:T", channel_id),
-        point_id.clone(),
-        Bytes::from("220.5"),
-    );
+    buffer
+        .buffer_hash_set(
+            &format!("comsrv:{}:T", channel_id),
+            point_id.clone(),
+            Bytes::from("220.5"),
+        )
+        .unwrap();
 
     // Layer 2: Timestamp
-    buffer.buffer_hash_set(
-        &format!("comsrv:{}:T:ts", channel_id),
-        timestamp.clone(),
-        Bytes::from("1704067200000"),
-    );
+    buffer
+        .buffer_hash_set(
+            &format!("comsrv:{}:T:ts", channel_id),
+            timestamp.clone(),
+            Bytes::from("1704067200000"),
+        )
+        .unwrap();
 
     // Layer 3: Raw value
-    buffer.buffer_hash_set(
-        &format!("comsrv:{}:T:raw", channel_id),
-        point_id.clone(),
-        Bytes::from("2205"),
-    );
+    buffer
+        .buffer_hash_set(
+            &format!("comsrv:{}:T:raw", channel_id),
+            point_id.clone(),
+            Bytes::from("2205"),
+        )
+        .unwrap();
 
     // Verify 3 keys, 3 fields total
     assert_eq!(buffer.pending_keys(), 3);
@@ -418,7 +448,7 @@ async fn test_write_buffer_mset_batch() {
         .map(|i| (Arc::from(i.to_string()), Bytes::from(format!("{}.0", i))))
         .collect();
 
-    buffer.buffer_hash_mset("comsrv:1001:T", fields);
+    buffer.buffer_hash_mset("comsrv:1001:T", fields).unwrap();
 
     assert_eq!(buffer.pending_keys(), 1);
     assert_eq!(buffer.pending_fields(), 50);

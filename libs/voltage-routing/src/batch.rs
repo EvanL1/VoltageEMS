@@ -412,15 +412,25 @@ fn write_channel_batch_buffered_impl(
         );
         result.channel_writes += buffered;
 
-        // Buffer instance data (C2M results) + sidecar ts hash
+        // Buffer instance data (C2M results) + sidecar ts hash.
+        // Surface BufferOverflow via warn! and slot_misses so dropped
+        // fields are observable rather than silently lost; the c2m_writes
+        // counter still increments on attempt so call sites that don't
+        // distinguish "tried" from "succeeded" stay backward-compatible.
         for (instance_id, values) in instance_writes {
             let instance_key = config.instance_measurement_key(instance_id);
-            write_buffer.buffer_hash_mset(&instance_key, values);
+            if let Err(e) = write_buffer.buffer_hash_mset(&instance_key, values) {
+                warn!("C2M instance buffer dropped: {}", e);
+                result.slot_misses += e.dropped_fields;
+            }
             result.c2m_writes += 1;
         }
         for (instance_id, ts_values) in instance_ts_writes {
             let instance_ts_key = config.instance_measurement_ts_key(instance_id);
-            write_buffer.buffer_hash_mset(&instance_ts_key, ts_values);
+            if let Err(e) = write_buffer.buffer_hash_mset(&instance_ts_key, ts_values) {
+                warn!("C2M ts buffer dropped: {}", e);
+                result.slot_misses += e.dropped_fields;
+            }
         }
 
         // Process C2C forwards recursively (also buffered)
