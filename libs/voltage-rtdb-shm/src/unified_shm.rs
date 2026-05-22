@@ -801,16 +801,28 @@ impl UnifiedWriter {
             .open(path)
             .with_context(|| format!("Failed to open {:?} for SHM reconfigure", path))?;
 
+        // Match the safety gating in open_for_actions / UnifiedReader::open:
+        // a truncated file makes the header cast immediate UB. Without this
+        // check the reconfigure path was the one remaining hole — A.1
+        // patched the three open paths but missed this one.
+        verify_file_min_size(&file, path)?;
+
         let mut mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
                 .with_context(|| "Failed to mmap for SHM reconfigure")?
         };
 
+        // SAFETY: mmap.len() >= sizeof(UnifiedHeader) per verify_file_min_size.
         let max_slots = {
             let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
             validate_reconfigurable_header(header)?
         };
+
+        // Ensure the mmap actually covers the declared slot array. Otherwise
+        // the slot_clear loop and pointer arithmetic below could run off
+        // the mapped region.
+        verify_mmap_covers_slots(mmap.len(), max_slots, path)?;
 
         // Read old slot_count before allocating new layout
         let old_slot_count = {
