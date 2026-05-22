@@ -241,7 +241,17 @@ impl<R: Rtdb> ShmRedisSync<R> {
 
             let (value, raw, ts) = match slot.load_consistent() {
                 Some(data) => data,
-                None => continue, // torn read, retry next tick
+                None => {
+                    // Torn read: writer was mid-update through this slot's
+                    // seqlock. take_dirty_slots() already cleared the dirty
+                    // bit, so without explicit retry the slot would not be
+                    // visited again until the next writer update (which may
+                    // not happen for a long time) or the periodic
+                    // FULL_SCAN_INTERVAL. Push it back to retry_slots so
+                    // the next tick re-reads it.
+                    self.retry_slots.push(slot_idx);
+                    continue;
+                },
             };
 
             // Skip slots whose value is the unwritten NaN sentinel (SHM v3).
