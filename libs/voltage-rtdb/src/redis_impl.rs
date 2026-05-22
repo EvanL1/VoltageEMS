@@ -44,7 +44,12 @@ impl Rtdb for RedisRtdb {
     }
 
     async fn set<'a>(&'a self, key: &'a str, value: Bytes) -> Result<()> {
-        let s = std::str::from_utf8(value.as_ref())?;
+        let s = std::str::from_utf8(value.as_ref()).with_context(|| {
+            format!(
+                "non-UTF-8 value rejected for SET {} (see Rtdb trait docs)",
+                key
+            )
+        })?;
         self.client
             .set(key, s)
             .await
@@ -76,7 +81,12 @@ impl Rtdb for RedisRtdb {
 
     async fn hash_set<'a>(&'a self, key: &'a str, field: &'a str, value: Bytes) -> Result<()> {
         let s = std::str::from_utf8(value.as_ref())
-            .context("UTF-8 conversion failed")?
+            .with_context(|| {
+                format!(
+                    "non-UTF-8 value rejected for HSET {}:{} (see Rtdb trait docs)",
+                    key, field
+                )
+            })?
             .to_owned();
         self.client
             .hset(key, field, s)
@@ -111,7 +121,12 @@ impl Rtdb for RedisRtdb {
             .into_iter()
             .map(|(k, v)| {
                 let s = std::str::from_utf8(v.as_ref())
-                    .context("UTF-8 conversion failed")?
+                    .with_context(|| {
+                        format!(
+                            "non-UTF-8 value rejected for HMSET {}:{} (see Rtdb trait docs)",
+                            key, k
+                        )
+                    })?
                     .to_owned();
                 Ok((k, s))
             })
@@ -296,7 +311,12 @@ fn convert_pipeline_ops(operations: crate::traits::HashMsetOps) -> Result<String
                 .into_iter()
                 .map(|(f, v)| {
                     let s = std::str::from_utf8(v.as_ref())
-                        .context("UTF-8 conversion failed")?
+                        .with_context(|| {
+                            format!(
+                                "non-UTF-8 value rejected for pipeline HSET {}:{} (see Rtdb trait docs)",
+                                key, f
+                            )
+                        })?
                         .to_owned();
                     Ok((f.to_string(), s))
                 })

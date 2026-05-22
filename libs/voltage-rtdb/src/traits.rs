@@ -21,6 +21,24 @@ pub type HashMsetOps = Vec<(String, Vec<(Arc<str>, Bytes)>)>;
 /// - `RedisRtdb`: Production Redis backend
 /// - `MemoryRtdb`: In-memory backend for testing
 ///
+/// # Value contract (IMPORTANT)
+///
+/// The `Bytes` type appears in many signatures (`set`, `hash_set`, `hash_mset`,
+/// `pipeline_hash_mset`) but the **production Redis backend requires valid
+/// UTF-8** for the Redis protocol path used here (`SET`/`HSET` go through
+/// `fred`'s string API). Callers must pass UTF-8 bytes — typically
+/// `Bytes::from(string_data)` or `f64_to_bytes(value)` which emit ASCII.
+///
+/// Non-UTF-8 input is rejected at runtime with a clear `UTF-8 conversion failed`
+/// error rather than silently corrupting the value or panicking. The
+/// in-memory backend (used in tests) accepts any bytes, so writing a test
+/// that passes binary data will pass against `MemoryRtdb` but fail against
+/// `RedisRtdb` — this is the contract.
+///
+/// A future cleanup should narrow the signatures to `&str`/`String` to make
+/// this contract a compile-time check; tracking issue: see review round 4
+/// finding #10.
+///
 /// Note: All async methods use explicit lifetime `'a` to enable zero-copy parameter passing.
 /// The returned Future borrows both `&self` and parameters for the same lifetime,
 /// allowing implementations to use borrowed data directly without cloning.
