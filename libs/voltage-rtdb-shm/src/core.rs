@@ -10,4 +10,5 @@
 
 pub mod bitmap;
 pub mod config;
+pub mod header;
 pub mod slot;

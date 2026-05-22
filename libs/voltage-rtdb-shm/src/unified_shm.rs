@@ -39,21 +39,10 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use voltage_model::PointType;
 use voltage_routing::RoutingCache;
 
-// ========== Constants ==========
-
-/// Magic number for unified shared memory: "VOLTAGE_" in ASCII
-pub const UNIFIED_MAGIC: u64 = 0x564F4C544147455F;
-
-/// Current version
-/// SHM layout version. v3 changed the slot default from `(value=0.0, raw=0.0)`
-/// to `(value=NaN, raw=NaN)` so unwritten slots are self-describing instead
-/// of relying on the `seq==0` side channel. Snapshots from v2 are intentionally
-/// rejected at restore time — the writer starts fresh and the next protocol
-/// poll repopulates each slot with a finite value.
-pub const UNIFIED_VERSION: u32 = 3;
-
-/// Default max slots (100,000 points)
-pub const DEFAULT_MAX_SLOTS: u32 = 100_000;
+pub use crate::core::header::{
+    DEFAULT_MAX_SLOTS, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, calculate_file_size,
+    slot_offset,
+};
 
 #[inline]
 fn dirty_word_count(slot_count: usize) -> usize {
@@ -85,42 +74,6 @@ fn read_u64_ne(buf: &[u8], start: usize, label: &str) -> Result<u64> {
 fn read_u32_ne(buf: &[u8], start: usize, label: &str) -> Result<u32> {
     Ok(u32::from_ne_bytes(read_ne_bytes(buf, start, label)?))
 }
-
-// ========== Header (64 bytes) ==========
-
-/// Unified shared memory header (simplified)
-///
-/// Layout: 64 bytes, cache-line aligned
-#[repr(C, align(64))]
-pub struct UnifiedHeader {
-    /// Magic number for validation ("VOLTAGE_")
-    pub magic: u64,
-    /// Version number
-    pub version: u32,
-    /// Maximum number of slots
-    pub max_slots: u32,
-    /// Current slot count (atomically updated)
-    pub slot_count: AtomicU32,
-    /// Padding for alignment
-    pub _pad: [u8; 4],
-    /// Last update timestamp (for monitoring)
-    pub last_update_ts: AtomicU64,
-    /// Writer heartbeat (for monitoring)
-    pub writer_heartbeat: AtomicU64,
-    /// Channel layout hash for cross-process synchronization
-    ///
-    /// When comsrv creates the SHM, it stores the hash of ChannelPointCounts layout.
-    /// When modsrv opens the SHM, it verifies its ChannelPointCounts has the same hash.
-    /// Mismatch indicates channel point definitions changed between process starts.
-    pub routing_hash: AtomicU64,
-    /// Writer generation counter — bumped on every create/reconfigure.
-    /// modsrv reads this to detect comsrv restarts with routing changes.
-    pub writer_generation: AtomicU64,
-    /// Reserved for future use
-    pub _reserved: [u8; 8],
-}
-
-const _: () = assert!(std::mem::size_of::<UnifiedHeader>() == 64);
 
 // ========== Shared Helpers ==========
 
@@ -393,12 +346,6 @@ macro_rules! impl_shm_accessors {
 
 /// Calculate file size for given max_slots
 ///
-/// Layout: Header (64B) + PointSlot\[max_slots\] (32B each)
-#[inline]
-pub const fn calculate_file_size(max_slots: u32) -> usize {
-    std::mem::size_of::<UnifiedHeader>() + (max_slots as usize) * std::mem::size_of::<PointSlot>()
-}
-
 /// Verify a file is at least header-sized before any unsafe header cast.
 ///
 /// Returns Err if the file is shorter than `size_of::<UnifiedHeader>()`,
@@ -438,12 +385,6 @@ fn verify_mmap_covers_slots(mmap_len: usize, max_slots: u32, path: &std::path::P
         );
     }
     Ok(())
-}
-
-/// Get offset of PointSlot array
-#[inline]
-pub const fn slot_offset() -> usize {
-    std::mem::size_of::<UnifiedHeader>()
 }
 
 // ========== UnifiedWriter ==========
