@@ -28,8 +28,8 @@
 //! - **Routing is permission**: Runtime DashMap, not data synchronization
 
 use crate::channel_points::ChannelPointCounts;
+use crate::core::slot::PointSlot;
 use crate::shared_config::SharedConfig;
-use crate::vec_impl::PointSlot;
 use anyhow::{Context, Result, bail};
 use memmap2::{Mmap, MmapMut, MmapOptions};
 use std::fs::{File, OpenOptions};
@@ -178,7 +178,7 @@ fn save_snapshot_impl(
     // become unwritten-NaN sentinels in the snapshot.
     // SAFETY: bounds checked above; PointSlot is repr(C, align(32)).
     let slots_ptr =
-        unsafe { mmap_data.as_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
+        unsafe { mmap_data.as_ptr().add(slot_offset()) as *const crate::core::slot::PointSlot };
     let mut torn = 0usize;
     for i in 0..slot_count {
         // SAFETY: i < slot_count, and the mmap covers slot_count slots.
@@ -243,9 +243,9 @@ fn slot_snapshot_bytes(value: f64, raw: f64, ts: u64) -> [u8; 32] {
 /// the NaN sentinel filter.
 fn slot_unwritten_bytes() -> [u8; 32] {
     let mut out = [0u8; 32];
-    out[0..8].copy_from_slice(&crate::vec_impl::SLOT_UNWRITTEN_BITS.to_ne_bytes());
+    out[0..8].copy_from_slice(&crate::core::slot::SLOT_UNWRITTEN_BITS.to_ne_bytes());
     // timestamp = 0 (already)
-    out[16..24].copy_from_slice(&crate::vec_impl::SLOT_UNWRITTEN_BITS.to_ne_bytes());
+    out[16..24].copy_from_slice(&crate::core::slot::SLOT_UNWRITTEN_BITS.to_ne_bytes());
     // seq = 0, dirty = 0 (already)
     out
 }
@@ -618,7 +618,7 @@ impl UnifiedWriter {
         // sized. PointSlot is `#[repr(C, align(32))]` so pointer arithmetic
         // is well-defined and reads back as a valid PointSlot reference.
         let slots_ptr =
-            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
+            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::core::slot::PointSlot };
         for i in 0..slot_count {
             let slot = unsafe { &*slots_ptr.add(i) };
             slot.init_unwritten();
@@ -757,7 +757,7 @@ impl UnifiedWriter {
 
     /// Read-only access to a slot by index.
     #[inline]
-    pub fn slot(&self, index: usize) -> &crate::vec_impl::PointSlot {
+    pub fn slot(&self, index: usize) -> &crate::core::slot::PointSlot {
         self.slot_at(index)
     }
 
@@ -963,7 +963,7 @@ impl UnifiedWriter {
         // both bounded by max_slots. The mmap covers max_slots PointSlot values,
         // and PointSlot is #[repr(C, align(32))].
         let slots_ptr =
-            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::vec_impl::PointSlot };
+            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::core::slot::PointSlot };
         for i in 0..clear_slots {
             // SAFETY: i < clear_slots and clear_slots is within the mmap slot region.
             let slot = unsafe { &*slots_ptr.add(i) };

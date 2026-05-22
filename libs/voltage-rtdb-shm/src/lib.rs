@@ -3,10 +3,18 @@
 //! Provides shared memory (SHM) and IPC components for zero-latency
 //! cross-process data sharing between comsrv and modsrv containers.
 //!
+//! # Module Boundary
+//!
+//! - **core::** — pure SHM infrastructure (slot storage + bitmap). No business
+//!   knowledge. Must stay free of `voltage-model` / `voltage-routing` deps so
+//!   it can be promoted to a standalone `voltage-shm-slots` crate later.
+//! - everything else — business adapters (channel/instance/routing/M2C
+//!   dispatch). These will be progressively pushed out of this crate.
+//!
 //! # Key Components
 //!
-//! - **vec_impl**: Vector-based point storage with atomic PointSlot
-//! - **slot_bitmap**: Dynamic slot allocation bitmap
+//! - **core::slot**: Vector-based point storage with atomic PointSlot
+//! - **core::bitmap**: Dynamic slot allocation bitmap
 //! - **notification**: M2C command notification struct
 //! - **notifier**: UDS event notification for M2C dispatch
 //! - **instance_index**: Dynamic instance management with shared slots
@@ -15,11 +23,9 @@
 //! - **snapshot**: Periodic SHM snapshot management
 //! - **shared_config**: SharedConfig, ChannelToSlotIndex, utility functions
 
+pub mod core;
+
 pub mod channel_points;
-
-pub mod vec_impl;
-
-pub mod slot_bitmap;
 
 pub mod notification;
 
@@ -46,12 +52,12 @@ pub mod batch_direct;
 pub mod dispatch;
 
 // Re-exports for convenience
+pub use core::bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
+pub use core::slot::PointSlot;
 pub use instance_index::{DynamicInstanceLayout, InstanceIndex, SharedSlotRef};
 pub use notification::ShmNotification;
 #[cfg(unix)]
 pub use notifier::{DEFAULT_UDS_PATH, NotifyResult, ShmNotifier};
-pub use slot_bitmap::{BitmapStats, SlotAllocation, SlotBitmap, SlotBitmapHeader};
-pub use vec_impl::PointSlot;
 
 // Channel point counts (routing-independent SHM layout data source)
 pub use channel_points::ChannelPointCounts;
