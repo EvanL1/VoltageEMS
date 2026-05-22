@@ -259,6 +259,10 @@ pub async fn update_instance_routing(
     // Insert new routings
     let mut success_count = 0;
     let mut errors = Vec::new();
+    // Defer Redis cleanup until tx.commit() — if the transaction rolls back,
+    // we would otherwise have deleted Redis fields whose SQL row was restored,
+    // leaving consumers blind until the next routing reload.
+    let mut pending_unbinds: Vec<(PointType, u32)> = Vec::new();
 
     for routing in routings {
         // Get routing type from request (explicit M/A specification)
@@ -289,33 +293,12 @@ pub async fn update_instance_routing(
             match result {
                 Ok(_) => {
                     success_count += 1;
-                    // Clear corresponding Redis fields so consumers (rules, UI)
-                    // do not keep reading the ghost old value/timestamp.
-                    // Field name = stringified point_id; both value and ts
-                    // hashes live under separate keys.
-                    let keyspace = voltage_model::KeySpaceConfig::production_cached();
-                    let (val_key, ts_key) = match routing_type {
-                        PointType::Measurement => (
-                            keyspace.instance_measurement_key(id),
-                            keyspace.instance_measurement_ts_key(id),
-                        ),
-                        PointType::Action => (
-                            keyspace.instance_action_key(id),
-                            keyspace.instance_action_ts_key(id),
-                        ),
-                    };
-                    let field = routing.point_id.to_string();
-                    let rtdb = &state.instance_manager.rtdb;
-                    for k in [&val_key, &ts_key] {
-                        if let Err(e) = rtdb.hash_del(k, &field).await {
-                            tracing::warn!("Redis HDEL on unbind {}:{}: {}", k, field, e);
-                        }
-                    }
+                    pending_unbinds.push((routing_type, routing.point_id));
                     tracing::debug!(
                         instance_id = id,
                         point_id = routing.point_id,
                         routing_type = ?routing_type,
-                        "Routing deleted (unbind) and Redis fields cleared"
+                        "Routing unbind queued (Redis cleanup after commit)"
                     );
                 },
                 Err(e) => {
@@ -436,6 +419,31 @@ pub async fn update_instance_routing(
             )));
         }
 
+        // Now that SQL state is durable, clear Redis fields for each unbind.
+        // Best-effort: HDEL errors are logged but do not fail the request —
+        // the SQL row is authoritative, and the next routing reload sweeps
+        // any drift on inst:{id}:M / :A.
+        let keyspace = voltage_model::KeySpaceConfig::production_cached();
+        let rtdb = &state.instance_manager.rtdb;
+        for (routing_type, point_id) in pending_unbinds {
+            let (val_key, ts_key) = match routing_type {
+                PointType::Measurement => (
+                    keyspace.instance_measurement_key(id),
+                    keyspace.instance_measurement_ts_key(id),
+                ),
+                PointType::Action => (
+                    keyspace.instance_action_key(id),
+                    keyspace.instance_action_ts_key(id),
+                ),
+            };
+            let field = point_id.to_string();
+            for k in [&val_key, &ts_key] {
+                if let Err(e) = rtdb.hash_del(k, &field).await {
+                    tracing::warn!("Redis HDEL on unbind {}:{}: {}", k, field, e);
+                }
+            }
+        }
+
         state
             .instance_manager
             .refresh_routing()
@@ -488,6 +496,23 @@ pub async fn delete_instance_routing(
     match state.instance_manager.delete_all_routing(id).await {
         Ok((measurement_count, action_count)) => {
             let total_count = measurement_count + action_count;
+
+            // Drop the whole instance hashes — all routings are gone, so any
+            // surviving field is by definition stale. DEL is cheaper than
+            // enumerating fields and aligns with the per-point unbind path
+            // that HDELs individual fields.
+            let keyspace = voltage_model::KeySpaceConfig::production_cached();
+            let rtdb = &state.instance_manager.rtdb;
+            for key in [
+                keyspace.instance_measurement_key(id),
+                keyspace.instance_measurement_ts_key(id),
+                keyspace.instance_action_key(id),
+                keyspace.instance_action_ts_key(id),
+            ] {
+                if let Err(e) = rtdb.del(&key).await {
+                    tracing::warn!("Redis DEL on bulk routing delete {}: {}", key, e);
+                }
+            }
 
             state
                 .instance_manager
