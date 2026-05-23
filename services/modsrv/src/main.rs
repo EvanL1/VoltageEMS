@@ -295,6 +295,98 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Spawn SHM canonical-path inode watcher.
+    //
+    // Step 3 of the SHM decoupling roadmap replaces in-place
+    // reconfigure_existing with `ShmHandle::rebuild_via_swap`: comsrv
+    // creates a new SHM file at a staging path, then POSIX-renames it
+    // over the canonical path. modsrv's existing UnifiedWriter is still
+    // mmap'd to the *previous* inode (now unlinked but live in memory),
+    // so its `writer.generation()` reads stay constant — the existing
+    // dispatch-time generation-mismatch check never fires for swap-based
+    // reloads.
+    //
+    // To learn about the swap, periodically `stat(canonical_path)` and
+    // compare the inode against a cached baseline. On change, fire the
+    // existing `rebuild_trigger` Notify, which the auto-rebuild task
+    // above already handles end-to-end (open_for_actions on the new
+    // inode, swap into ShmDispatch via set_writer).
+    {
+        use std::os::unix::fs::MetadataExt;
+        const WATCH_INTERVAL: Duration = Duration::from_secs(5);
+
+        let watch_notify = state.shm_dispatch.rebuild_trigger();
+        let watch_path = shm_config.path().to_path_buf();
+        let watch_token = shutdown_token.clone();
+
+        tokio::spawn(async move {
+            // Baseline: capture initial inode (None if canonical does not
+            // yet exist — comsrv may not have created it yet). We only
+            // fire on a *change* from a known-good value to avoid a
+            // spurious rebuild during cold boot.
+            let mut last_inode = std::fs::metadata(&watch_path).ok().map(|m| m.ino());
+            if let Some(ino) = last_inode {
+                info!(
+                    "SHM inode watcher: baseline inode={} for {:?}",
+                    ino, watch_path
+                );
+            } else {
+                info!(
+                    "SHM inode watcher: canonical path {:?} not yet present; will start tracking once it appears",
+                    watch_path
+                );
+            }
+
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(WATCH_INTERVAL) => {},
+                    _ = watch_token.cancelled() => break,
+                }
+
+                let current_inode = match std::fs::metadata(&watch_path) {
+                    Ok(m) => Some(m.ino()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => {
+                        warn!(
+                            "SHM inode watcher: stat {:?} failed (non-NotFound): {}",
+                            watch_path, e
+                        );
+                        continue;
+                    },
+                };
+
+                match (last_inode, current_inode) {
+                    (Some(old), Some(new)) if old != new => {
+                        info!(
+                            "SHM inode watcher: canonical path inode changed {} → {} \
+                             (comsrv likely performed an atomic-swap reload); \
+                             triggering writer rebuild",
+                            old, new
+                        );
+                        last_inode = Some(new);
+                        watch_notify.notify_one();
+                    },
+                    (None, Some(new)) => {
+                        info!(
+                            "SHM inode watcher: canonical path now exists (inode={}); \
+                             tracking baseline",
+                            new
+                        );
+                        last_inode = Some(new);
+                    },
+                    (Some(_), None) => {
+                        warn!(
+                            "SHM inode watcher: canonical path {:?} disappeared — \
+                             comsrv may be mid-restart; keeping prior baseline",
+                            watch_path
+                        );
+                    },
+                    _ => {}, // no change
+                }
+            }
+        });
+    }
+
     // Spawn channel health refresh task: mirrors `comsrv:online` into a
     // process-local cache so the M2C control gate in execute_action() can reject
     // writes targeting offline channels without per-call Redis round-trips.

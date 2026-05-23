@@ -147,13 +147,19 @@ impl<R: Rtdb> ShmRedisSync<R> {
             return;
         }
 
-        // Reconfigure-in-progress sentinel: comsrv flips writer_generation
-        // to an odd value while it is clearing slots in reconfigure_existing.
-        // Reading slots during this window would yield all-zero garbage
-        // (the byte-fill in progress). Skip this tick and retry next
-        // iteration — the even parity returns once reconfigure completes,
-        // and the subsequent layout/content-hash change will already force
-        // a full_seq reset for the new layout.
+        // Reconfigure-in-progress sentinel (defensive).
+        //
+        // Historically, comsrv flipped `writer_generation` to an odd value
+        // while clearing slots in the legacy in-place `reconfigure_existing`
+        // path; reads during that window could yield torn data. Step 3
+        // (PR #93 + this branch) replaced that with `ShmHandle::rebuild_via_swap`
+        // — a brand-new file at a staging path, then a POSIX rename(2)
+        // atomically swaps it in. There is no in-flight-mutation window any
+        // more, and `writer_generation` always stays even.
+        //
+        // The check is kept as cheap defense-in-depth: if any future code
+        // path resurrects an in-place mutation pattern, this skip prevents
+        // Redis sync from publishing torn rows.
         if writer.generation() & 1 == 1 {
             trace!("ShmRedisSync: reconfigure in progress (odd generation), skipping tick");
             self.tick_count += 1;
