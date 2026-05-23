@@ -145,8 +145,9 @@ pub mod fixtures {
     /// Create test instance properties
     pub fn create_test_instance_properties() -> HashMap<String, serde_json::Value> {
         let mut props = HashMap::new();
-        props.insert("capacity".to_string(), json!(100));
-        props.insert("location".to_string(), json!("test_location"));
+        props.insert("Max Capacity".to_string(), json!(500));
+        props.insert("Min SOC".to_string(), json!(10));
+        props.insert("Max SOC".to_string(), json!(95));
         props
     }
 }

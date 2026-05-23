@@ -550,17 +550,18 @@ impl ConfigExporter {
     ) -> Result<BTreeMap<String, BTreeMap<String, serde_yml::Value>>> {
         let mut instances = BTreeMap::new();
 
+        // Since schema v5 the `properties` column was removed from `instances`;
+        // property values now live in `instance_properties(instance_id, property_id, value_json)`.
         let rows = sqlx::query(
-            "SELECT instance_id, instance_name, product_name, properties FROM instances ORDER BY instance_id",
+            "SELECT instance_id, instance_name, product_name FROM instances ORDER BY instance_id",
         )
         .fetch_all(&self.pool)
         .await?;
 
         for row in rows {
-            // instance_id is in the database but we use instance_name as the key
+            let instance_id: i64 = row.try_get("instance_id")?;
             let instance_name: String = row.try_get("instance_name")?;
             let product_name: String = row.try_get("product_name")?;
-            let properties_str: Option<String> = row.try_get("properties")?;
 
             let mut instance_data = BTreeMap::new();
             instance_data.insert(
@@ -568,11 +569,27 @@ impl ConfigExporter {
                 serde_yml::Value::String(product_name),
             );
 
-            if let Some(props_json) = properties_str
-                && let Ok(props) = serde_json::from_str::<serde_json::Value>(&props_json)
-                && let Ok(yaml_props) = serde_yml::to_value(props)
-            {
-                instance_data.insert("properties".to_string(), yaml_props);
+            // Read property values from instance_properties table (keyed by integer property_id).
+            let prop_rows = sqlx::query(
+                "SELECT property_id, value_json FROM instance_properties WHERE instance_id = ?",
+            )
+            .bind(instance_id)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+
+            if !prop_rows.is_empty() {
+                let mut props_map = serde_json::Map::new();
+                for pr in prop_rows {
+                    let pid: i64 = pr.try_get("property_id")?;
+                    let val_json: String = pr.try_get("value_json")?;
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&val_json) {
+                        props_map.insert(pid.to_string(), val);
+                    }
+                }
+                if let Ok(yaml_props) = serde_yml::to_value(serde_json::Value::Object(props_map)) {
+                    instance_data.insert("properties".to_string(), yaml_props);
+                }
             }
 
             instances.insert(instance_name, instance_data);
