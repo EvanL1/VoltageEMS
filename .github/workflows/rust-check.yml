@@ -228,17 +228,18 @@ jobs:
           echo "Checking configuration status..."
           monarch status --detailed --config-path $TEST_CONFIG_DIR --db-path $TEST_DB_DIR
 
-      # Optional: Test export functionality
+      # Test export functionality (round-trip from SQLite -> YAML/CSV)
       - name: Test Configuration Export
         run: |
           echo "Testing export functionality..."
           export EXPORT_DIR="/tmp/monarch_export_test"
           mkdir -p $EXPORT_DIR
 
-          # Try to export (this tests round-trip capability)
-          monarch export all --config-path $EXPORT_DIR --db-path $TEST_DB_DIR || {
-            echo "::warning::Export test failed, but this is optional"
-          }
+          # Export from the synced DB into a fresh output directory.
+          # `monarch export` only needs --output and --db-path; there is no
+          # `all` subcommand. This step now fails CI on real export errors
+          # rather than hiding them behind a soft warning.
+          monarch export --output $EXPORT_DIR --db-path $TEST_DB_DIR
 
           # Clean up export test
           rm -rf $EXPORT_DIR
