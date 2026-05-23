@@ -610,11 +610,13 @@ async fn test_instance_properties_preserved() {
     let manager = create_test_instance_manager(&env).await;
     let ess_id = setup_hierarchy(&manager).await;
 
-    // Create instance with custom properties using built-in product
+    // Create instance with properties declared by the Battery product template (P array).
+    // Battery.json defines number-typed properties only; use three distinct ones to verify
+    // that all written values survive the create → get round-trip.
     let mut properties = HashMap::new();
-    properties.insert("capacity".to_string(), serde_json::json!(500));
-    properties.insert("location".to_string(), serde_json::json!("Building A"));
-    properties.insert("enabled".to_string(), serde_json::json!(true));
+    properties.insert("Max Capacity".to_string(), serde_json::json!(500));
+    properties.insert("Min SOC".to_string(), serde_json::json!(10));
+    properties.insert("Max SOC".to_string(), serde_json::json!(95));
 
     let req = CreateInstanceRequest {
         instance_id: Some(1),
@@ -628,19 +630,19 @@ async fn test_instance_properties_preserved() {
         .await
         .expect("Failed to create instance");
 
-    // Retrieve and verify properties
+    // Retrieve and verify properties are preserved through the round-trip
     let instance = manager.get_instance(1).await.expect("Instance not found");
     assert_eq!(
-        instance.core.properties.get("capacity"),
+        instance.core.properties.get("Max Capacity"),
         Some(&serde_json::json!(500))
     );
     assert_eq!(
-        instance.core.properties.get("location"),
-        Some(&serde_json::json!("Building A"))
+        instance.core.properties.get("Min SOC"),
+        Some(&serde_json::json!(10))
     );
     assert_eq!(
-        instance.core.properties.get("enabled"),
-        Some(&serde_json::json!(true))
+        instance.core.properties.get("Max SOC"),
+        Some(&serde_json::json!(95))
     );
 
     env.cleanup().await.expect("Cleanup failed");

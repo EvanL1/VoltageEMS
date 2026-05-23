@@ -1085,14 +1085,15 @@ impl ConfigSyncer {
 
         let normalized_product = normalize_product_name(product_name);
 
+        // Since schema v5 the `instances` table no longer has a `properties` column.
+        // Properties are stored in the `instance_properties` table keyed by property_id.
         if let Err(e) = sqlx::query(
-            "INSERT OR REPLACE INTO instances (instance_id, instance_name, product_name, parent_id, properties) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO instances (instance_id, instance_name, product_name, parent_id) VALUES (?, ?, ?, ?)",
         )
         .bind(instance_id)
         .bind(instance_name)
         .bind(normalized_product)
         .bind(parent_id.map(|id| id as i64))
-        .bind(&properties)
         .execute(&mut **tx)
         .await
         {
@@ -1104,6 +1105,35 @@ impl ConfigSyncer {
         }
 
         count += 1;
+
+        // Write property values into `instance_properties` (schema v5+).
+        // The CSV uses integer `point_index` as property_id. Insert each value
+        // as a JSON scalar; skip entries that cannot be parsed as integer ids.
+        if let Ok(props_map) =
+            serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&properties)
+        {
+            for (key, value) in &props_map {
+                if let Ok(property_id) = key.parse::<i64>() {
+                    let value_json =
+                        serde_json::to_string(value).unwrap_or_else(|_| "null".to_string());
+                    if let Err(e) = sqlx::query(
+                        "INSERT OR REPLACE INTO instance_properties \
+                         (instance_id, property_id, value_json) VALUES (?, ?, ?)",
+                    )
+                    .bind(instance_id as i64)
+                    .bind(property_id)
+                    .bind(&value_json)
+                    .execute(&mut **tx)
+                    .await
+                    {
+                        debug!(
+                            "Failed to write property {} for instance {}: {}",
+                            key, instance_name, e
+                        );
+                    }
+                }
+            }
+        }
 
         // Load instance mappings
         if instance_dir.exists() {
