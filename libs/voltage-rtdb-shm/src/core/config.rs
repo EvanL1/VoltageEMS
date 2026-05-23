@@ -93,6 +93,83 @@ pub fn generation_file_path(base: &Path, generation: u64) -> PathBuf {
     }
 }
 
+/// Best-effort cleanup of orphaned per-generation SHM staging files.
+///
+/// `rebuild_via_swap` creates a fresh file at `generation_file_path(canonical, N)`,
+/// flushes, then `rename(2)`s it over `canonical`. The rename consumes
+/// the staging filename atomically, so under steady-state operation no
+/// `*-{N}.{ext}` files ever persist. They can only appear if a process
+/// crashed between the create and the rename — typically a comsrv
+/// SIGKILL during reload.
+///
+/// This helper is meant to be called at comsrv startup, before any
+/// new SHM file is created. It scans `canonical.parent()` for entries
+/// whose name matches `{stem}-{digits}.{ext}` (the exact pattern
+/// produced by `generation_file_path`) and unlinks them. Files that
+/// were rename'd over `canonical` are unreachable through this scan
+/// (the staging name no longer exists), so this is safe regardless of
+/// concurrent readers in other processes.
+///
+/// Returns the number of orphan files removed. Individual unlink
+/// failures are logged via `tracing::warn` but do not abort the scan,
+/// because a single permission error should not block startup.
+pub fn cleanup_orphan_generation_files(canonical: &Path) -> Result<usize> {
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("canonical path has no parent: {canonical:?}"))?;
+    if parent.as_os_str().is_empty() {
+        return Ok(0);
+    }
+    let file_name = canonical
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| anyhow::anyhow!("canonical path has no file name: {canonical:?}"))?;
+
+    let (stem, ext_suffix): (String, String) = match file_name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (file_name.to_string(), String::new()),
+    };
+    let prefix = format!("{stem}-");
+
+    let read_dir = match std::fs::read_dir(parent) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => {
+            return Err(anyhow::Error::new(e).context(format!("read_dir {parent:?}")));
+        },
+    };
+
+    let mut removed = 0;
+    for entry in read_dir.flatten() {
+        let entry_name_os = entry.file_name();
+        let Some(name) = entry_name_os.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) || !name.ends_with(&ext_suffix) {
+            continue;
+        }
+        if name.len() <= prefix.len() + ext_suffix.len() {
+            continue;
+        }
+        let middle = &name[prefix.len()..name.len() - ext_suffix.len()];
+        if middle.is_empty() || !middle.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        // Matched pattern {stem}-{digits}{.ext}. Unlink.
+        let path = entry.path();
+        match std::fs::remove_file(&path) {
+            Ok(_) => {
+                removed += 1;
+                tracing::info!("removed orphan generation SHM file: {path:?}");
+            },
+            Err(e) => {
+                tracing::warn!("failed to remove orphan generation SHM file {path:?}: {e}");
+            },
+        }
+    }
+    Ok(removed)
+}
+
 /// Atomically rename a freshly-created per-generation SHM file into the
 /// canonical "current" path.
 ///
@@ -168,6 +245,51 @@ mod tests {
             !staging.exists(),
             "staging file should be gone after rename"
         );
+    }
+
+    #[test]
+    fn cleanup_orphan_removes_matching_files_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().join("voltage-rtdb.shm");
+
+        // Plant a mix:
+        //   - canonical itself (must be preserved)
+        //   - 3 orphan generation files (must be removed)
+        //   - a similar-prefix-but-not-numeric file (must be preserved)
+        //   - a different-prefix file (must be preserved)
+        std::fs::write(&canonical, b"current").unwrap();
+        std::fs::write(dir.path().join("voltage-rtdb-1.shm"), b"orphan1").unwrap();
+        std::fs::write(dir.path().join("voltage-rtdb-42.shm"), b"orphan42").unwrap();
+        std::fs::write(dir.path().join("voltage-rtdb-999999.shm"), b"orphan_big").unwrap();
+        std::fs::write(dir.path().join("voltage-rtdb-alpha.shm"), b"non-numeric").unwrap();
+        std::fs::write(dir.path().join("voltage-other.shm"), b"unrelated").unwrap();
+
+        let removed = cleanup_orphan_generation_files(&canonical).unwrap();
+        assert_eq!(removed, 3);
+
+        assert!(canonical.exists(), "canonical must be preserved");
+        assert!(
+            dir.path().join("voltage-rtdb-alpha.shm").exists(),
+            "non-numeric suffix must not match"
+        );
+        assert!(
+            dir.path().join("voltage-other.shm").exists(),
+            "different-prefix file must not match"
+        );
+        for n in [1u32, 42, 999999] {
+            assert!(
+                !dir.path().join(format!("voltage-rtdb-{n}.shm")).exists(),
+                "orphan {n} should be removed"
+            );
+        }
+    }
+
+    #[test]
+    fn cleanup_orphan_returns_zero_when_dir_missing() {
+        // Canonical path under a non-existent directory — read_dir errors
+        // with NotFound, which the helper turns into Ok(0).
+        let canonical = std::path::PathBuf::from("/tmp/does-not-exist-step3/voltage-rtdb.shm");
+        assert_eq!(cleanup_orphan_generation_files(&canonical).unwrap(), 0);
     }
 
     #[test]

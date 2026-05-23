@@ -35,7 +35,7 @@ use anyhow::{Context, Result, bail};
 use memmap2::MmapOptions;
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use voltage_model::PointType;
 use voltage_routing::RoutingCache;
 
@@ -126,28 +126,6 @@ fn verify_slot_count(file_slot_count: usize, calculated_slots: usize) -> Result<
         );
     }
     Ok(())
-}
-
-/// Validate a shared memory header for writer-side reconfiguration.
-///
-/// Unlike `validate_shm_header`, this intentionally does not verify
-/// `routing_hash` because the caller is about to replace it.
-fn validate_reconfigurable_header(header: &UnifiedHeader) -> Result<u32> {
-    if header.magic != UNIFIED_MAGIC {
-        bail!(
-            "Invalid magic: expected 0x{:X}, got 0x{:X}",
-            UNIFIED_MAGIC,
-            header.magic
-        );
-    }
-    if header.version != UNIFIED_VERSION {
-        bail!(
-            "Version mismatch: expected {}, got {}",
-            UNIFIED_VERSION,
-            header.version
-        );
-    }
-    Ok(header.max_slots)
 }
 
 // The previous `impl_shm_accessors!` macro is gone. Slot-level accessors
@@ -533,155 +511,6 @@ impl UnifiedWriter {
             .flush()
             .context("Failed to flush mmap before snapshot")?;
         self.inner.save_snapshot(path)
-    }
-
-    /// Reconfigure the existing SHM file in place for updated channel point counts.
-    ///
-    /// This keeps the same underlying file/inode alive so existing mmaps are not
-    /// invalidated by truncation. All point slots are cleared before the new
-    /// layout is published to avoid stale values being interpreted as new points.
-    pub fn reconfigure_existing(
-        config: &SharedConfig,
-        channel_points: &ChannelPointCounts,
-    ) -> Result<Self> {
-        let path = config.path();
-
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .with_context(|| format!("Failed to open {:?} for SHM reconfigure", path))?;
-
-        // Match the safety gating in open_for_actions / UnifiedReader::open:
-        // a truncated file makes the header cast immediate UB. Without this
-        // check the reconfigure path was the one remaining hole — A.1
-        // patched the three open paths but missed this one.
-        verify_file_min_size(&file, path)?;
-
-        let mut mmap = unsafe {
-            MmapOptions::new()
-                .map_mut(&file)
-                .with_context(|| "Failed to mmap for SHM reconfigure")?
-        };
-
-        // SAFETY: mmap.len() >= sizeof(UnifiedHeader) per verify_file_min_size.
-        let max_slots = {
-            let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
-            validate_reconfigurable_header(header)?
-        };
-
-        // Ensure the mmap actually covers the declared slot array. Otherwise
-        // the slot_clear loop and pointer arithmetic below could run off
-        // the mapped region.
-        verify_mmap_covers_slots(mmap.len(), max_slots, path)?;
-
-        // Read old slot_count before allocating new layout
-        let old_slot_count = {
-            let header = unsafe { &*(mmap.as_ptr() as *const UnifiedHeader) };
-            header.slot_count.load(Ordering::Acquire) as usize
-        };
-        if old_slot_count > max_slots as usize {
-            bail!(
-                "Invalid SHM header: slot_count {} exceeds max_slots {}",
-                old_slot_count,
-                max_slots
-            );
-        }
-
-        let (channel_layouts, slot_count) = allocate_layouts(channel_points);
-        if slot_count > max_slots as usize {
-            bail!("Too many slots: {} (max={})", slot_count, max_slots);
-        }
-
-        // Mark reconfigure-in-progress by flipping writer_generation to an
-        // ODD value (low bit = 1). Readers/dispatchers gate on this: any
-        // SHM consumer that reads writer_generation while odd MUST skip
-        // this tick / refuse this dispatch — the slot array is being
-        // cleared and torn reads would produce all-zero garbage. The
-        // matching even-store after the slot init below restores normal
-        // operation with the generation incremented by 2 (odd→even),
-        // which still trips ShmDispatch's mismatch check so the next
-        // dispatch picks up the new layout.
-        {
-            // SAFETY: mmap covers the header; we hold &mut mmap so no
-            // other writer in this process can racing-bump the counter.
-            let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };
-            let prev = header.writer_generation.fetch_add(1, Ordering::Release);
-            debug_assert!(
-                prev & 1 == 0,
-                "reconfigure entered with odd writer_generation = {} — nested reconfigure?",
-                prev
-            );
-        }
-
-        // Reset only the previously-used slot region (not the entire 2GB sparse file).
-        // Clear max(old, new) slots to cover both old stale data and any new slots.
-        let clear_slots = old_slot_count.max(slot_count);
-        let clear_end = slot_offset() + clear_slots * std::mem::size_of::<PointSlot>();
-        mmap[slot_offset()..clear_end].fill(0);
-
-        // SHM v3 uses NaN, not zero, as the "unwritten" sentinel. The byte
-        // clear above resets seq/dirty/timestamp; this pass restores value/raw
-        // to NaN so routing reload cannot fabricate real 0.0 readings.
-        // SAFETY: clear_end was computed from max(old_slot_count, slot_count),
-        // both bounded by max_slots. The mmap covers max_slots PointSlot values,
-        // and PointSlot is #[repr(C, align(32))].
-        let slots_ptr =
-            unsafe { mmap.as_mut_ptr().add(slot_offset()) as *const crate::core::slot::PointSlot };
-        for i in 0..clear_slots {
-            // SAFETY: i < clear_slots and clear_slots is within the mmap slot region.
-            let slot = unsafe { &*slots_ptr.add(i) };
-            slot.init_unwritten();
-        }
-
-        // FULL BARRIER: ensure all slot resets are globally visible
-        // before the new routing_hash/slot_count are published.
-        // Without this fence, a reader on ARM64 could see the new
-        // routing_hash but read stale slot data.
-        fence(Ordering::SeqCst);
-
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(std::time::Duration::ZERO)
-            .as_millis() as u64;
-
-        let header = unsafe { &mut *(mmap.as_mut_ptr() as *mut UnifiedHeader) };
-        header
-            .slot_count
-            .store(slot_count as u32, Ordering::Release);
-        header.last_update_ts.store(now_ms, Ordering::Relaxed);
-        header.writer_heartbeat.store(now_ms, Ordering::Relaxed);
-        header
-            .routing_hash
-            .store(channel_points.layout_hash(), Ordering::Release);
-        // Restore even parity (was bumped to odd at the start of this
-        // function). Net effect: generation incremented by 2. ShmDispatch's
-        // mismatch check still trips on the next dispatch (any change),
-        // and the low-bit "reconfigure in progress" sentinel is cleared
-        // so normal consumers resume.
-        let post = header.writer_generation.fetch_add(1, Ordering::Release);
-        debug_assert!(
-            post & 1 == 1,
-            "reconfigure exited with even writer_generation = {} — sentinel logic broken",
-            post
-        );
-
-        // Flush mmap to backing file — ensures cross-process visibility
-        // on systems where mmap coherency isn't guaranteed (H3).
-        mmap.flush()
-            .with_context(|| "Failed to flush mmap after reconfigure")?;
-
-        tracing::info!(
-            "Reconfigured unified shared memory in place: {:?}, slots={}, channels={}",
-            path,
-            slot_count,
-            channel_layouts.iter().filter(|l| l.is_valid()).count()
-        );
-
-        Ok(Self {
-            inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count),
-            channel_layouts,
-        })
     }
 
     /// Restore from snapshot file
@@ -1437,50 +1266,16 @@ mod tests {
         assert!((val - 99.0).abs() < 1e-10);
     }
 
-    #[test]
-    fn test_reconfigure_resets_slots_to_unwritten_nan() {
-        let (_dir, config, channel_points) = setup_test_env();
-        let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
-        let slot = writer.lookup(1001, 0, 0).unwrap();
-        writer.set_direct(slot, 0.0, 0.0, 100);
-        assert!(
-            !writer.slot(slot).is_unwritten(),
-            "real 0.0 write must not be treated as unwritten"
-        );
-        drop(writer);
-
-        let writer = UnifiedWriter::reconfigure_existing(&config, &channel_points).unwrap();
-        let slot = writer.lookup(1001, 0, 0).unwrap();
-        let point = writer.slot(slot);
-        let (value, raw, timestamp) = point.load_consistent().unwrap();
-
-        assert!(value.is_nan(), "reconfigured value must be NaN sentinel");
-        assert!(raw.is_nan(), "reconfigured raw must be NaN sentinel");
-        assert_eq!(timestamp, 0);
-        assert_eq!(point.seq_raw(), 0);
-        assert!(point.is_unwritten());
-    }
-
-    #[test]
-    fn test_reconfigure_rejects_corrupt_slot_count() {
-        let (_dir, config, channel_points) = setup_test_env();
-        let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
-        let max_slots = writer.max_slots();
-        writer
-            .header()
-            .slot_count
-            .store(max_slots.saturating_add(1), Ordering::Release);
-        writer.flush().unwrap();
-        drop(writer);
-
-        let err = match UnifiedWriter::reconfigure_existing(&config, &channel_points) {
-            Ok(_) => panic!("reconfigure must reject corrupt slot_count"),
-            Err(err) => err,
-        };
-        let message = err.to_string();
-        assert!(
-            message.contains("slot_count") && message.contains("exceeds max_slots"),
-            "expected corrupt header error, got: {message}"
-        );
-    }
+    // The previous `test_reconfigure_resets_slots_to_unwritten_nan` and
+    // `test_reconfigure_rejects_corrupt_slot_count` tests exercised the
+    // legacy in-place `reconfigure_existing` path that Step 3 PR 2
+    // replaced with `ShmHandle::rebuild_via_swap`. The atomic-swap path
+    // creates an entirely fresh file (no in-place clearing window), so
+    // the NaN-reset invariant the first test guarded is satisfied
+    // structurally by `UnifiedWriter::create`'s init loop (covered by
+    // `test_write_read` / `test_writer_create`). The corrupt-header
+    // rejection the second test guarded only applies to a code path
+    // that opens an existing file in-place; the swap path never opens
+    // the previous canonical file for writing, so the failure mode is
+    // gone with the function.
 }
