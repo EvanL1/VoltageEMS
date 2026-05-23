@@ -806,7 +806,7 @@ async fn init_command(db_path: &Path, force: bool, json: bool) -> Result<()> {
             if !json {
                 println!("{}", "FAIL".red());
             }
-            anyhow::bail!("Failed to initialize database: {}", e);
+            anyhow::bail!("Failed to initialize database: {:#}", e);
         },
     }
 

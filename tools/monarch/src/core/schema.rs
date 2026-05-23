@@ -409,6 +409,20 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 
     if !has_instances {
         info!("Migration v5: instances table missing, skipping data migration");
+        // Must COMMIT before returning — the BEGIN IMMEDIATE above
+        // started a transaction this connection still owns. A bare
+        // `return Ok(())` would leave it open, and the next migration's
+        // BEGIN IMMEDIATE would fail with "cannot start a transaction
+        // within a transaction" (silently, since the runner reports
+        // the error against the *next* migration). The
+        // INSTANCE_PROPERTIES_TABLE created at step 1 above is the
+        // only side effect to keep; COMMIT preserves it (it is also
+        // re-created idempotently by init_database, so a ROLLBACK
+        // would also be safe — COMMIT is the lower-surprise choice).
+        sqlx::query("COMMIT").execute(&mut **conn).await?;
+        sqlx::query("PRAGMA foreign_keys=ON")
+            .execute(&mut **conn)
+            .await?;
         return Ok(());
     }
 
@@ -422,6 +436,13 @@ async fn migrate_v5(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
 
     if !has_properties_col {
         info!("Migration v5: properties column already dropped, nothing to migrate");
+        // See the COMMIT note in the !has_instances branch above —
+        // the transaction must be closed before returning so the next
+        // migration can BEGIN a fresh one.
+        sqlx::query("COMMIT").execute(&mut **conn).await?;
+        sqlx::query("PRAGMA foreign_keys=ON")
+            .execute(&mut **conn)
+            .await?;
         return Ok(());
     }
 
@@ -566,6 +587,21 @@ async fn migrate_v6(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     sqlx::query("BEGIN IMMEDIATE").execute(&mut **conn).await?;
 
     // ── 1. Rebuild `rules` with AUTOINCREMENT ────────────────────────────
+    //
+    // Two guards are required. `rules_has_autoinc=false` is true both for
+    // "old table without AUTOINCREMENT" (the case we want to migrate) AND
+    // for "table does not exist yet" (fresh DB before init_database
+    // creates the modern definition). The rebuild block does
+    // `INSERT INTO rules_new SELECT FROM rules`, which fails on a fresh
+    // DB with `no such table: rules`. Add `rules_exists` so we only
+    // touch an existing legacy table, matching the pattern used by
+    // sections 2 (rule_history) and 3 (channel_templates) below.
+    let rules_exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='rules'",
+    )
+    .fetch_one(&mut **conn)
+    .await?;
+
     let rules_has_autoinc: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM sqlite_master \
          WHERE type='table' AND name='rules' AND sql LIKE '%AUTOINCREMENT%'",
@@ -573,7 +609,7 @@ async fn migrate_v6(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
     .fetch_one(&mut **conn)
     .await?;
 
-    if !rules_has_autoinc {
+    if rules_exists && !rules_has_autoinc {
         sqlx::query(
             "CREATE TABLE rules_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -740,13 +776,21 @@ async fn migrate_v6(conn: &mut sqlx::pool::PoolConnection<Sqlite>) -> Result<()>
         info!("Migration v6: channel_templates rebuilt with source_channel_id FK");
     }
 
-    // Always (re)create the index — cheap if it already exists.
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_channel_templates_source \
-         ON channel_templates(source_channel_id)",
-    )
-    .execute(&mut **conn)
-    .await?;
+    // (Re)create the index — cheap if it already exists. Gated on
+    // `templates_exists` so a fresh DB (where `channel_templates`
+    // hasn't been created by init_database yet) does not error on
+    // CREATE INDEX against a missing table. The index is recreated
+    // after init_database's CHANNEL_TEMPLATES_TABLE bootstrap via the
+    // helper below; fresh DBs do not need this migration step to wire
+    // it up.
+    if templates_exists {
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_channel_templates_source \
+             ON channel_templates(source_channel_id)",
+        )
+        .execute(&mut **conn)
+        .await?;
+    }
 
     // ── 4. Drop unused alert_rule indexes ────────────────────────────────
     sqlx::query("DROP INDEX IF EXISTS idx_alert_rule_description")
