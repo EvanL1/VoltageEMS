@@ -166,6 +166,125 @@ let instance_ids: Vec<u32> = sqlx::query_scalar(
 
 工作量估计：**2-3 天**（包含 SHM header 协议升级 + 测试）
 
+#### B3. ⚠️ `fetch_point_snapshot()` — OnChange 规则订阅点读取走 Redis
+
+**当前代码**（`libs/voltage-rules/src/scheduler.rs:680-727`）：
+
+```rust
+async fn fetch_point_snapshot(
+    &self,
+    subscriptions: &HashSet<PointRef>,
+) -> HashMap<String, Option<f64>> {
+    // 按 inst:{id}:M / inst:{id}:A 分组
+    for ((hash_key, _kind), refs) in grouped {
+        match self.rtdb.hash_mget(&hash_key, &field_refs).await {
+            // …
+        }
+    }
+}
+```
+
+每个 100ms 调度 tick，OnChange 规则触发前先调此函数批量读取所有订阅点当前值，
+用于和 `last_value` 比较、决定是否触发。`self.rtdb` 在生产环境是 `RedisRtdb` —
+每次触发一组 `HMGET` 命令。
+
+**延迟分析**：
+
+```
+Device → SHM (<10ns/点) → ShmRedisSync (批量，每 100ms 执行一次)
+                                         ↓
+                                      Redis (镜像，有 0-100ms 延迟)
+                                         ↓
+                         fetch_point_snapshot (HMGET，~1ms RTT)
+                                         ↓
+                         OnChange 检测 → 规则触发
+```
+
+| 延迟来源 | 最小 | 最大 | 平均 |
+|---|---|---|---|
+| ShmRedisSync 写入延迟 | 0ms | 100ms | 50ms |
+| 调度 tick 对齐延迟 | 0ms | 100ms | 50ms |
+| **总 OnChange 检测延迟** | **0ms** | **~200ms** | **~100ms** |
+
+对于电网并网/孤岛切换场景，目标 <20ms 的控制链延迟，此路径的 ~100ms 均值
+**直接不合格**。即使 ShmRedisSync 做到实时，100ms tick 本身也是瓶颈之一。
+
+**问题根源**：`RuleScheduler` 持有 `Arc<R: Rtdb>` 做 OnChange 采样，但
+`self.shared_reader: Option<Arc<UnifiedReader>>` **只传给了 executor，
+scheduler 自身没有这个字段**。`fetch_point_snapshot` 完全绕开了 SHM 路径。
+
+**迁移设计**：
+
+1. **在 `RuleScheduler` 中增加 `shared_reader: Option<Arc<UnifiedReader>>`** 字段
+   （与 executor 中同名字段并列）。
+2. **替换 `fetch_point_snapshot` 中的读取路径**：
+
+   ```rust
+   // Before: Redis HMGET
+   self.rtdb.hash_mget(&hash_key, &field_refs).await
+
+   // After: SHM 直读（<1μs/点）
+   if let Some(reader) = &self.shared_reader {
+       let instance_type = match pref.point_type {
+           PointKind::Measurement => 0u8,
+           PointKind::Action => 1u8,
+       };
+       reader.get_instance(pref.instance, instance_type, pref.point, &routing_cache)
+             .map(|(v, _ts)| v)
+             .filter(|v| v.is_finite())
+   }
+   ```
+
+3. **`with_state_store` 已接受 `shared_reader` 参数**（scheduler.rs:287），
+   把它同时存到 `self.shared_reader` 而不只转发给 executor 即可。
+
+**所需基础设施**：
+
+`UnifiedReader::get_instance()` 的 Measurement 路径
+（`unified_shm.rs:901-913`）目前是**线性扫描** C2M 路由表（O(N) per point），
+在点数多时有性能风险：
+
+```rust
+// 现有 Measurement 路径（O(N) 线性扫描）
+for ((ch_id, pt_type, ch_pt_id), target) in routing_cache.c2m_iter() {
+    if target.instance_id == instance_id && target.point_id == point_id {
+        found = Some((ch_id, pt_type.to_u8(), ch_pt_id));
+        break;
+    }
+}
+```
+
+`InstanceIndex`（`libs/voltage-rtdb-shm/src/instance_index.rs`）**已实现**
+O(1) 的 `slot(instance_id, PointType, point_id) → usize` 查找，但它目前
+只存在于 modsrv 的 `DynamicSlotRuntime` 中，并未暴露给 `RuleScheduler`。
+
+两种路线：
+
+| 路线 | 说明 | 工作量 |
+|---|---|---|
+| **A（推荐）** | 给 `RoutingCache` 加反向索引 `(instance_id, point_id) → (channel_id, PointType, channel_point_id)`，消除线性扫描 | 中（~2天） |
+| **B（快速）** | 直接用 `get_instance()` 现有线性扫描路径，OnChange 订阅点数量通常 <100，O(N) 可接受 | 小（<1天） |
+
+对于 B3 本身，路线 B 已足够。路线 A 是独立优化，可放 Step 3 之后处理。
+
+**与 PointWatch 的关系**：
+
+B3 完成后，OnChange 检测延迟从 **0-200ms → 0-100ms**（消除 Redis mirror 延迟，
+保留 100ms tick 延迟）。要达到 <20ms 的网格切换要求，还需要独立的
+**事件驱动机制（PointWatch）** — 由 comsrv SHM 写入后通过 UDS 推送变更通知，
+让 scheduler 在 tick 之外实时响应。PointWatch 是另一个独立设计，B3 是其
+前提条件（先让读取路径走 SHM，再谈事件驱动）。
+
+**改动范围估计**：
+
+| 文件 | 改动 | 行数 |
+|---|---|---|
+| `libs/voltage-rules/src/scheduler.rs` | 增加 `shared_reader` 字段，`with_state_store` 存储它，`fetch_point_snapshot` 增加 SHM 分支 | ~30 行 |
+| 调用点（`services/modsrv/...`） | `with_state_store` 已传 `shared_reader`，无需修改 | 0 行 |
+| 测试 | `MemoryRtdb` fallback 路径已存在，单测无需改 | ~5 行 |
+
+工作量估计：**0.5-1 天**（路线 B；如选路线 A 加 1-2 天）
+
 ### C 类：部署/运维改动
 
 | 项目 | 工作量 |
@@ -184,9 +303,10 @@ let instance_ids: Vec<u32> = sqlx::query_scalar(
 | A 类（直接搬） | 1 天 |
 | B1（scan_match → SQLite） | 1 天 |
 | B2（channel_online 重设计） | 2-3 天 |
+| B3（OnChange snapshot → SHM）| 0.5-1 天 |
 | C 类（部署） | 0.5 天 |
 | 测试 + 集成验证 | 1-2 天 |
-| **总计** | **~1 周** |
+| **总计** | **~1.5 周** |
 
 ---
 
@@ -210,19 +330,21 @@ let instance_ids: Vec<u32> = sqlx::query_scalar(
 
 **风险**：极低（Redis 路径还在，新路径只是 opt-in）
 
-### Step 2：消除 scan_match（解耦"发现真相"）
+### Step 2：消除 scan_match + OnChange snapshot 走 SHM
 
-**目标**：B1 — 把所有 `scan_match("inst:*:M")` 等替换为 SQLite enumerate。
+**目标**：B1 + B3 — 一并去掉两个"用 Redis 读当前值"的设计错误。
 
 **做什么**：
-- hissrv/netsrv/modsrv 的 4 个 `scan_match` 调用点全部改成 SQLite query
-- 加 `enumerate_instance_ids() -> Vec<u32>` helper 到 common crate
+- hissrv/netsrv/modsrv 的 4 个 `scan_match` 调用点全部改成 SQLite query（B1）
+- 加 `enumerate_instance_ids() -> Vec<u32>` helper 到 common crate（B1）
+- `RuleScheduler` 增加 `shared_reader` 字段，`fetch_point_snapshot` 增加 SHM 分支（B3）
 
 **好处**：
-- 单独就有架构清晰收益（即使不去 Redis 也应该做）
-- 不依赖 Step 1 完成
+- B1 单独就有架构清晰收益（即使不去 Redis 也应该做）
+- B3 把 OnChange 检测延迟从 0-200ms 降至 0-100ms，是 PointWatch 的前提条件
+- 两项改动都不依赖 Step 1 完成，可并行推进
 
-**风险**：低（纯重构，SQLite query 已经在 hot path 上）
+**风险**：低（B1 纯重构；B3 有 Redis fallback 路径，SHM 不可用时回退）
 
 ### Step 3：删除 Redis（最后一步）
 
@@ -277,3 +399,6 @@ let instance_ids: Vec<u32> = sqlx::query_scalar(
 - `comsrv:online` 写入：`services/comsrv/src/core/channels/channel_task.rs`
 - `comsrv:online` 读取：`services/modsrv/src/infra/channel_health.rs`
 - SHM 调试工具：`tools/monarch/src/shm.rs`、`tools/monarch/src/shm_dashboard.rs`
+- OnChange 采样（B3）：`libs/voltage-rules/src/scheduler.rs::fetch_point_snapshot`
+- SHM 实例读取：`libs/voltage-rtdb-shm/src/unified_shm.rs::UnifiedReader::get_instance`
+- 实例→槽位索引：`libs/voltage-rtdb-shm/src/instance_index.rs::InstanceIndex`

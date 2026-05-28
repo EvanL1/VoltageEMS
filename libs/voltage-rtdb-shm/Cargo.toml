@@ -23,6 +23,16 @@ workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 tempfile = "3.10"
+criterion = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+voltage-rtdb = { path = "../voltage-rtdb" }
+voltage-rules = { path = "../voltage-rules" }
+voltage-model = { path = "../voltage-model" }
+
+[[bench]]
+name = "control_chain"
+harness = false
 
 [lints]
 workspace = true

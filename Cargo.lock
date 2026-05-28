@@ -5092,6 +5092,8 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "bytemuck",
+ "bytes",
+ "criterion",
  "memmap2",
  "rustc-hash",
  "sqlx",
@@ -5100,6 +5102,8 @@ dependencies = [
  "tracing",
  "voltage-model",
  "voltage-routing",
+ "voltage-rtdb",
+ "voltage-rules",
  "workspace-hack",
 ]
 
