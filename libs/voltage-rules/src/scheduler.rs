@@ -230,6 +230,12 @@ pub struct RuleScheduler<R: Rtdb, S: StateStore = voltage_calc::MemoryStateStore
     logger_manager: RuleLoggerManager,
     /// Maximum concurrent rule executions (default: 4)
     max_concurrency: usize,
+    /// SHM reader for direct OnChange snapshot reads (bypasses Redis lag).
+    /// None when running in test mode with MemoryRtdb.
+    shared_reader: Option<Arc<UnifiedReader>>,
+    /// Routing cache needed for SHM instance→channel reverse lookup.
+    /// Only set when `shared_reader` is Some.
+    routing_cache: Option<Arc<RoutingCache>>,
 }
 
 impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
@@ -257,6 +263,8 @@ impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
             max_concurrency: 4,
+            shared_reader: None,
+            routing_cache: None,
         }
     }
 }
@@ -287,14 +295,18 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         shared_reader: Option<Arc<UnifiedReader>>,
         action_dispatch: Option<Arc<dyn ActionDispatch>>,
     ) -> Self {
-        let mut executor =
-            RuleExecutor::with_state_store(Arc::clone(&rtdb), routing_cache, state_store);
-        if let Some(reader) = shared_reader {
-            executor = executor.with_shared_reader(reader);
+        let mut executor = RuleExecutor::with_state_store(
+            Arc::clone(&rtdb),
+            Arc::clone(&routing_cache),
+            state_store,
+        );
+        if let Some(ref reader) = shared_reader {
+            executor = executor.with_shared_reader(Arc::clone(reader));
         }
         if let Some(dispatch) = action_dispatch {
             executor = executor.with_action_dispatch(dispatch);
         }
+        let has_shm = shared_reader.is_some();
         Self {
             rtdb,
             executor: Arc::new(executor),
@@ -304,6 +316,8 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             tick_ms,
             logger_manager: RuleLoggerManager::new(log_root),
             max_concurrency: 4,
+            shared_reader,
+            routing_cache: if has_shm { Some(routing_cache) } else { None },
         }
     }
 
@@ -681,6 +695,24 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         &self,
         subscriptions: &HashSet<PointRef>,
     ) -> HashMap<String, Option<f64>> {
+        // Fast path: SHM direct read (zero Redis lag, ~10ns per point).
+        if let (Some(reader), Some(routing_cache)) = (&self.shared_reader, &self.routing_cache) {
+            let mut out = HashMap::with_capacity(subscriptions.len());
+            for pref in subscriptions {
+                let instance_type: u8 = match pref.point_type {
+                    PointKind::Measurement => 0,
+                    PointKind::Action => 1,
+                };
+                let value = reader
+                    .get_instance(pref.instance, instance_type, pref.point, routing_cache)
+                    .map(|(v, _seq)| v)
+                    .filter(|v| v.is_finite());
+                out.insert(pref.cache_key(), value);
+            }
+            return out;
+        }
+
+        // Fallback path: Redis HMGET (used when shared_reader is None, e.g. in tests).
         let keyspace = voltage_rtdb::KeySpaceConfig::production_cached();
         let mut grouped: HashMap<(String, PointKind), Vec<PointRef>> = HashMap::new();
         for pref in subscriptions {
