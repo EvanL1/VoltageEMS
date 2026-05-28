@@ -26,12 +26,12 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
-use voltage_routing::RouteContext;
+use voltage_routing::{RouteContext, RoutingCache};
 use voltage_rtdb::MemoryRtdb;
 use voltage_rtdb::Rtdb;
 use voltage_rtdb_shm::{
     ActionDispatch, ChannelPointCounts, DispatchOutcome, PointSlot, SharedConfig, ShmDispatch,
-    ShmNotifier, UnifiedWriter,
+    ShmNotifier, UnifiedReader, UnifiedWriter,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,6 +332,64 @@ fn bench_onchange_tick(c: &mut Criterion) {
                     }
                     black_box(out)
                 })
+            });
+        });
+    }
+
+    // ── phase0_shm_direct: the new path after agent A's refactor ──────────────
+    // Mirrors phase0_hmget_memory above so the criterion report puts them
+    // side-by-side. Uses UnifiedReader::get_instance() exactly like the
+    // production scheduler.rs fast path does.
+    for n in [10usize, 100, 1000] {
+        let tmp = tempdir().unwrap();
+        let config = bench_config(tmp.path());
+
+        // Single channel with `n` T points so we can map them 1:1 to subscriptions.
+        let mut map = BTreeMap::new();
+        map.insert(1001u32, [n as u32, 0, 0, 0]);
+        let channel_points = ChannelPointCounts::from_map(map);
+
+        let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
+        for i in 0..n as u32 {
+            writer.set_direct(i as usize, 220.0 + i as f64 * 0.1, 220.0, 1000);
+        }
+        drop(writer);
+
+        // C2M routing: (1001, T, i) → (1+i/10, M, i%10). Same distribution as
+        // populate_memory_rtdb so the two benches measure the same shape.
+        let mut c2m_data = std::collections::HashMap::new();
+        for i in 0..n as u32 {
+            let inst = 1 + i / 10;
+            let pt = i % 10;
+            c2m_data.insert(format!("1001:T:{i}"), format!("{inst}:M:{pt}"));
+        }
+        let routing = RoutingCache::from_maps(
+            c2m_data,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        );
+
+        let reader = UnifiedReader::open(&config, &channel_points).unwrap();
+
+        let subs: Vec<PointRef> = (0..n as u32)
+            .map(|i| PointRef {
+                instance: 1 + i / 10,
+                point_type: PointKind::Measurement,
+                point: i % 10,
+            })
+            .collect();
+
+        group.bench_with_input(BenchmarkId::new("phase0_shm_direct", n), &n, |b, _| {
+            b.iter(|| {
+                let mut out: HashMap<String, Option<f64>> = HashMap::with_capacity(subs.len());
+                for pref in &subs {
+                    let v = reader
+                        .get_instance(pref.instance, 0u8, pref.point, &routing)
+                        .map(|(v, _)| v)
+                        .filter(|x| x.is_finite());
+                    out.insert(pref.cache_key(), v);
+                }
+                black_box(out)
             });
         });
     }

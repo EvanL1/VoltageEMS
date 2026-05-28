@@ -949,18 +949,13 @@ impl UnifiedReader {
         // Measurement: instance reads channel T/S via C2M
         // Action: instance writes channel C/A via M2C
         let (channel_id, channel_type, channel_point_id) = if instance_type == 0 {
-            // Measurement - need reverse lookup: find which channel maps to this instance point
-            // C2M: (channel, type, point) → (instance, point)
-            // We need: (instance, point) → (channel, type, point)
-            // This requires iterating C2M - inefficient but works for now
-            let mut found = None;
-            for ((ch_id, pt_type, ch_pt_id), target) in routing_cache.c2m_iter() {
-                if target.instance_id == instance_id && target.point_id == point_id {
-                    found = Some((ch_id, pt_type.to_u8(), ch_pt_id));
-                    break;
-                }
-            }
-            found?
+            // Measurement: reverse C2M lookup via the dedicated O(1) reverse index.
+            // RoutingCache now maintains an `(instance, point) → (channel, type, point)`
+            // hashmap built at config-load time, so this is no longer the O(routes)
+            // scan the old implementation did.
+            let (ch_id, pt_type, ch_pt_id) =
+                routing_cache.lookup_c2m_reverse(instance_id, point_id)?;
+            (ch_id, pt_type.to_u8(), ch_pt_id)
         } else {
             // Action - lookup M2C (try Control first, then Adjustment)
             // Instance "Action" can map to either C (Control) or A (Adjustment)
