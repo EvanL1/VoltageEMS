@@ -27,6 +27,9 @@ use crate::unified_shm::UnifiedWriter;
 use arc_swap::{ArcSwapOption, Guard};
 use tracing::info;
 
+#[cfg(unix)]
+use crate::point_watch::PointWatchSignaler;
+
 /// Coherent SHM layout snapshot used by hot paths.
 ///
 /// All fields are built from the same `UnifiedWriter` layout and are swapped as
@@ -57,6 +60,11 @@ impl ShmLayout {
 pub struct ShmHandle {
     layout: ArcSwapOption<ShmLayout>,
     config: SharedConfig,
+    /// PointWatch signaler stored so `rebuild_via_swap` can re-attach it to
+    /// each new `UnifiedWriter` produced during rebuild. `None` until
+    /// `set_point_watcher` is called.
+    #[cfg(unix)]
+    point_watcher: ArcSwapOption<PointWatchSignaler>,
 }
 
 impl ShmHandle {
@@ -65,6 +73,8 @@ impl ShmHandle {
         Self {
             layout: ArcSwapOption::new(Some(Arc::new(ShmLayout::new(writer, index)))),
             config,
+            #[cfg(unix)]
+            point_watcher: ArcSwapOption::empty(),
         }
     }
 
@@ -73,6 +83,8 @@ impl ShmHandle {
         Self {
             layout: ArcSwapOption::empty(),
             config,
+            #[cfg(unix)]
+            point_watcher: ArcSwapOption::empty(),
         }
     }
 
@@ -169,10 +181,18 @@ impl ShmHandle {
         // SlotWriter's stored `path` field matches reality; the
         // `writer` we just created knows itself as `staging_path` which
         // no longer exists.
-        let writer =
+        let mut writer =
             UnifiedWriter::open_for_actions(&self.config, channel_points).map_err(|e| {
                 anyhow::anyhow!("re-open new SHM at canonical {canonical:?} as writer: {e}")
             })?;
+
+        // Re-attach the PointWatch signaler (if one was registered at startup)
+        // so the new writer emits events on the hot path.
+        #[cfg(unix)]
+        if let Some(pw) = self.point_watcher.load_full() {
+            writer.set_point_watcher(Some(pw));
+        }
+
         let slot_count = writer.slot_count();
         let index = ChannelToSlotIndex::from_unified_writer(&writer);
         let index_len = index.len();
@@ -186,6 +206,18 @@ impl ShmHandle {
             staging_path, slot_count, index_len, reverse_len
         );
         Ok(())
+    }
+
+    /// Store a `PointWatchSignaler` so `rebuild_via_swap` can re-attach it to
+    /// each new `UnifiedWriter` produced during rebuild.
+    ///
+    /// The caller must also call `writer.set_point_watcher(Some(signaler))`
+    /// on the initial writer **before** passing that writer to `ShmHandle::new`,
+    /// because the writer is already wrapped in `Arc` by the time this method
+    /// can be called.
+    #[cfg(unix)]
+    pub fn store_point_watcher(&self, signaler: Arc<PointWatchSignaler>) {
+        self.point_watcher.store(Some(signaler));
     }
 
     /// Get the SharedConfig.
