@@ -208,6 +208,20 @@ struct ScheduledRule {
     onchange_state: OnChangeState,
 }
 
+// Allow PointWatchDispatcher::rebuild_from_rules to iterate scheduled rules
+// without exposing the private ScheduledRule struct.
+impl crate::point_watch_dispatcher::RuleSubscriptionInfo for ScheduledRule {
+    fn rule_id(&self) -> i64 {
+        self.rule.id
+    }
+    fn is_enabled(&self) -> bool {
+        self.rule.enabled
+    }
+    fn trigger(&self) -> &TriggerConfig {
+        &self.trigger
+    }
+}
+
 /// Rule Scheduler - manages periodic rule execution
 ///
 /// Generic over `S: StateStore` for stateful function persistence:
@@ -236,6 +250,12 @@ pub struct RuleScheduler<R: Rtdb, S: StateStore = voltage_calc::MemoryStateStore
     /// Routing cache needed for SHM instance→channel reverse lookup.
     /// Only set when `shared_reader` is Some.
     routing_cache: Option<Arc<RoutingCache>>,
+    /// PointWatch fast path: receive events from PointWatchDispatcher.
+    /// When present, `start()` selects on this channel alongside the
+    /// 100 ms tick and immediately executes matching OnChange rules.
+    watch_rx: Option<
+        tokio::sync::Mutex<tokio::sync::mpsc::Receiver<crate::point_watch_dispatcher::WatchEvent>>,
+    >,
 }
 
 impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
@@ -265,6 +285,7 @@ impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
             max_concurrency: 4,
             shared_reader: None,
             routing_cache: None,
+            watch_rx: None,
         }
     }
 }
@@ -318,12 +339,38 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             max_concurrency: 4,
             shared_reader,
             routing_cache: if has_shm { Some(routing_cache) } else { None },
+            watch_rx: None,
         }
     }
 
     /// Set maximum concurrent rule executions (must be called before wrapping in Arc)
     pub fn set_max_concurrency(&mut self, n: usize) {
         self.max_concurrency = n.max(1);
+    }
+
+    /// Rebuild the `PointWatchDispatcher` subscription index from the currently
+    /// loaded rules. Call this after `load_rules` / `reload_rules` to keep the
+    /// event-driven path in sync.
+    pub async fn rebuild_point_watch(
+        &self,
+        dispatcher: &mut crate::point_watch_dispatcher::PointWatchDispatcher,
+        routing_cache: &voltage_routing::RoutingCache,
+        channel_slot_index: &voltage_rtdb_shm::ChannelToSlotIndex,
+        bitmap: &voltage_rtdb_shm::SubscriptionBitmap,
+    ) {
+        let rules = self.rules.read().await;
+        dispatcher.rebuild_from_rules(&rules, routing_cache, channel_slot_index, bitmap);
+    }
+
+    /// Attach a PointWatch event receiver.
+    ///
+    /// When set, `start()` selects on this channel alongside the 100 ms tick.
+    /// Must be called before `start()` (and before wrapping in `Arc`).
+    pub fn set_watch_receiver(
+        &mut self,
+        rx: tokio::sync::mpsc::Receiver<crate::point_watch_dispatcher::WatchEvent>,
+    ) {
+        self.watch_rx = Some(tokio::sync::Mutex::new(rx));
     }
 
     /// Load rules from database and initialize scheduler state
@@ -384,15 +431,40 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         let mut tick_interval = interval(Duration::from_millis(self.tick_ms));
 
         loop {
-            tokio::select! {
-                _ = tick_interval.tick() => {
-                    if let Err(e) = self.tick().await {
-                        error!("Tick err: {}", e);
+            // Branch 1 (common): 100ms tick
+            // Branch 2 (optional fast path): PointWatch event
+            if let Some(ref watch_mutex) = self.watch_rx {
+                let mut watch_guard = watch_mutex.lock().await;
+                tokio::select! {
+                    _ = tick_interval.tick() => {
+                        drop(watch_guard);
+                        if let Err(e) = self.tick().await {
+                            error!("Tick err: {}", e);
+                        }
+                    }
+                    Some(watch_event) = watch_guard.recv() => {
+                        drop(watch_guard);
+                        if let Err(e) = self.execute_watch_triggered(&watch_event).await {
+                            error!("Watch trigger err: {}", e);
+                        }
+                    }
+                    _ = self.shutdown.cancelled() => {
+                        drop(watch_guard);
+                        info!("Scheduler shutdown");
+                        break;
                     }
                 }
-                _ = self.shutdown.cancelled() => {
-                    info!("Scheduler shutdown");
-                    break;
+            } else {
+                tokio::select! {
+                    _ = tick_interval.tick() => {
+                        if let Err(e) = self.tick().await {
+                            error!("Tick err: {}", e);
+                        }
+                    }
+                    _ = self.shutdown.cancelled() => {
+                        info!("Scheduler shutdown");
+                        break;
+                    }
                 }
             }
         }
@@ -807,6 +879,136 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         let _ = self.rtdb.expire(&exec_key, 86400).await;
 
         debug!("Written rule execution result to Redis: {}", rule_id);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // PointWatch fast-path execution
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Execute rules triggered by a PointWatch event (event-driven fast path).
+    ///
+    /// Called from `start()` when a `WatchEvent` arrives on `watch_rx`.
+    /// Evaluates deadband for each matching rule using a minimal one-point
+    /// snapshot (only the triggering point, matching the tick-path logic).
+    ///
+    /// Does NOT remove the 100 ms fallback — both paths run in parallel.
+    /// The tick path handles multi-point rules and provides the fallback
+    /// when the UDS is down.
+    async fn execute_watch_triggered(
+        &self,
+        watch_event: &crate::point_watch_dispatcher::WatchEvent,
+    ) -> Result<()> {
+        let now = Instant::now();
+        let rule_id_set: std::collections::HashSet<i64> =
+            watch_event.rule_ids.iter().copied().collect();
+
+        let rules_guard = self.rules.read().await;
+
+        // Collect rules to execute (check deadband without holding write lock)
+        let mut to_execute: Vec<(usize, Arc<crate::types::Rule>)> = Vec::new();
+
+        for (idx, scheduled) in rules_guard.iter().enumerate() {
+            if !rule_id_set.contains(&scheduled.rule.id) {
+                continue;
+            }
+            if !scheduled.rule.enabled {
+                continue;
+            }
+            let TriggerConfig::OnChange {
+                point_refs,
+                time_deadband_ms,
+                value_deadband,
+            } = &scheduled.trigger
+            else {
+                continue;
+            };
+
+            // Build a minimal one-point snapshot using the event value.
+            // For single-point rules this is exact.
+            // For multi-point rules, missing points are absent → skipped by
+            // should_trigger_onchange (safe — tick fallback handles multi-point).
+            let mut snapshot: HashMap<String, Option<f64>> = HashMap::new();
+            for pref in point_refs {
+                snapshot.insert(pref.cache_key(), Some(watch_event.value));
+            }
+
+            if should_trigger_onchange(
+                &scheduled.onchange_state,
+                point_refs,
+                *time_deadband_ms,
+                value_deadband.as_ref(),
+                &snapshot,
+                now,
+            ) {
+                to_execute.push((idx, Arc::clone(&scheduled.rule)));
+            }
+        }
+        drop(rules_guard);
+
+        if to_execute.is_empty() {
+            return Ok(());
+        }
+
+        // Execute the matching rules
+        use futures::stream::{self, StreamExt};
+        let executor = Arc::clone(&self.executor);
+        let results: Vec<(
+            usize,
+            i64,
+            String,
+            Result<crate::executor::RuleExecutionResult>,
+        )> = stream::iter(to_execute.into_iter().map(|(idx, rule)| {
+            let executor = Arc::clone(&executor);
+            async move {
+                let id = rule.id;
+                let name = rule.name.clone();
+                let result = executor.execute(&rule).await;
+                (idx, id, name, result)
+            }
+        }))
+        .buffer_unordered(self.max_concurrency)
+        .collect()
+        .await;
+
+        // Update onchange_state under write lock
+        if !results.is_empty() {
+            let mut rules_w = self.rules.write().await;
+            for (idx, rule_id, rule_name, result) in results {
+                match result {
+                    Ok(exec_result) => {
+                        self.write_rule_exec_to_redis(rule_id, &rule_name, &exec_result)
+                            .await;
+                        if let Some(scheduled) = rules_w.get_mut(idx)
+                            && scheduled.rule.id == rule_id
+                        {
+                            scheduled.last_execution = Some(now);
+                            // Advance last_value to prevent immediate re-trigger
+                            if let TriggerConfig::OnChange { point_refs, .. } = &scheduled.trigger {
+                                for pref in point_refs {
+                                    if watch_event.value.is_finite() {
+                                        scheduled
+                                            .onchange_state
+                                            .last_value
+                                            .insert(pref.cache_key(), watch_event.value);
+                                    }
+                                }
+                                scheduled.onchange_state.last_trigger = Some(now);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("Watch-triggered rule {} err: {}", rule_id, e);
+                        if let Some(scheduled) = rules_w.get_mut(idx)
+                            && scheduled.rule.id == rule_id
+                        {
+                            scheduled.last_execution = Some(now);
+                        }
+                    },
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

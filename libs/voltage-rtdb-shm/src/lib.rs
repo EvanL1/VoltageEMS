@@ -44,6 +44,15 @@ pub mod notification;
 #[cfg(unix)]
 pub mod notifier;
 
+// PointWatch: cross-process event-driven notification (comsrv → modsrv)
+#[cfg(unix)]
+pub mod point_watch;
+pub mod point_watch_event;
+#[cfg(unix)]
+pub mod point_watch_listener;
+#[cfg(unix)]
+pub mod subscription_bitmap;
+
 pub mod instance_index;
 
 pub mod unified_shm;
@@ -110,3 +119,14 @@ pub use batch_direct::write_channel_batch_direct;
 // SHM/UDS action dispatch — shared by modsrv HTTP path and rules executor
 #[cfg(unix)]
 pub use dispatch::{ActionDispatch, DispatchOutcome, NoopDispatch, ShmDispatch};
+
+// PointWatch public API
+#[cfg(unix)]
+pub use point_watch::{POINT_WATCH_UDS_PATH, PointWatchSignaler};
+pub use point_watch_event::PointWatchEvent;
+#[cfg(unix)]
+pub use point_watch_listener::PointWatchListener;
+#[cfg(unix)]
+pub use subscription_bitmap::{
+    SubscriptionBitmap, WATCH_BITMAP_SIZE, WATCH_WORDS_COUNT, bitmap_path_from_shm,
+};
