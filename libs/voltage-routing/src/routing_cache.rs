@@ -217,22 +217,41 @@ fn parse_route_key(s: &str) -> Option<StructuredRouteKey> {
 ///
 /// Parses string keys/values into structured types. Invalid entries are skipped.
 /// Used by both `from_maps()` and `update()` to eliminate duplicate parsing logic.
+/// Reverse C2M lookup: `(instance_id, instance_point_id)` → `(channel_id, channel_point_type, channel_point_id)`.
+///
+/// Built once from the forward C2M table at construction time so that
+/// instance-keyed callers (rule engine OnChange snapshot, instance-to-slot
+/// resolution) get O(1) lookups instead of O(N) `c2m_iter` scans.
+pub type StructuredC2MReverseKey = (u32, u32);
+pub type StructuredC2MReverseTarget = (u32, PointType, u32);
+
+type BuiltTables = (
+    FxHashMap<StructuredRouteKey, C2MTarget>,
+    FxHashMap<StructuredM2CKey, M2CTarget>,
+    FxHashMap<StructuredRouteKey, C2CTarget>,
+    FxHashMap<StructuredC2MReverseKey, StructuredC2MReverseTarget>,
+);
+
 fn build_tables(
     c2m_data: HashMap<String, String>,
     m2c_data: HashMap<String, String>,
     c2c_data: HashMap<String, String>,
-) -> (
-    FxHashMap<StructuredRouteKey, C2MTarget>,
-    FxHashMap<StructuredM2CKey, M2CTarget>,
-    FxHashMap<StructuredRouteKey, C2CTarget>,
-) {
+) -> BuiltTables {
     let mut c2m = FxHashMap::default();
     let mut m2c = FxHashMap::default();
     let mut c2c = FxHashMap::default();
+    let mut c2m_reverse = FxHashMap::default();
 
     for (k, v) in c2m_data {
         if let (Some(key), Some(target)) = (parse_route_key(&k), parse_c2m_target(&v)) {
+            // forward: (channel, type, point) → (instance, point)
             c2m.insert(key, target);
+            // reverse: (instance, point) → (channel, type, point)
+            //
+            // If multiple channels fan into the same instance point, the
+            // last wins — that is the same forward-table semantic (HashMap
+            // insert overwrite), so the two stay consistent.
+            c2m_reverse.insert((target.instance_id, target.point_id), key);
         }
     }
     for (k, v) in m2c_data {
@@ -248,7 +267,7 @@ fn build_tables(
         }
     }
 
-    (c2m, m2c, c2c)
+    (c2m, m2c, c2c, c2m_reverse)
 }
 
 // ============================================================================
@@ -283,6 +302,12 @@ pub struct RoutingCache {
     c2c: ArcSwap<FxHashMap<StructuredRouteKey, C2CTarget>>,
     /// M2C routing: (instance_id, point_type, point_id) -> channel target
     m2c: ArcSwap<FxHashMap<StructuredM2CKey, M2CTarget>>,
+    /// Reverse C2M routing: (instance_id, instance_point_id) -> (channel_id, point_type, point_id)
+    ///
+    /// Built from the forward C2M table at construction/reload time. Lets
+    /// rule-engine OnChange snapshot and instance-to-slot resolvers do an
+    /// O(1) reverse lookup instead of scanning c2m_iter().
+    c2m_reverse: ArcSwap<FxHashMap<StructuredC2MReverseKey, StructuredC2MReverseTarget>>,
 }
 
 impl RoutingCache {
@@ -292,6 +317,7 @@ impl RoutingCache {
             c2m: ArcSwap::from_pointee(FxHashMap::default()),
             c2c: ArcSwap::from_pointee(FxHashMap::default()),
             m2c: ArcSwap::from_pointee(FxHashMap::default()),
+            c2m_reverse: ArcSwap::from_pointee(FxHashMap::default()),
         }
     }
 
@@ -315,11 +341,12 @@ impl RoutingCache {
         m2c_data: HashMap<String, String>,
         c2c_data: HashMap<String, String>,
     ) -> Self {
-        let (c2m, m2c, c2c) = build_tables(c2m_data, m2c_data, c2c_data);
+        let (c2m, m2c, c2c, c2m_reverse) = build_tables(c2m_data, m2c_data, c2c_data);
         Self {
             c2m: ArcSwap::from_pointee(c2m),
             c2c: ArcSwap::from_pointee(c2c),
             m2c: ArcSwap::from_pointee(m2c),
+            c2m_reverse: ArcSwap::from_pointee(c2m_reverse),
         }
     }
 
@@ -337,11 +364,13 @@ impl RoutingCache {
         m2c_data: HashMap<String, String>,
         c2c_data: HashMap<String, String>,
     ) {
-        let (new_c2m, new_m2c, new_c2c) = build_tables(c2m_data, m2c_data, c2c_data);
+        let (new_c2m, new_m2c, new_c2c, new_c2m_reverse) =
+            build_tables(c2m_data, m2c_data, c2c_data);
         // Independent replacement - each table is atomically swapped
         self.c2m.store(Arc::new(new_c2m));
         self.c2c.store(Arc::new(new_c2c));
         self.m2c.store(Arc::new(new_m2c));
+        self.c2m_reverse.store(Arc::new(new_c2m_reverse));
     }
 
     /// Lookup C2M routing by string key (parses key first)
@@ -397,6 +426,25 @@ impl RoutingCache {
         self.c2m
             .load()
             .get(&(channel_id, point_type, point_id))
+            .copied()
+    }
+
+    /// Reverse C2M lookup: instance/point → channel/point/type.
+    ///
+    /// O(1) hash lookup. Use this when you have an `(instance_id, point_id)`
+    /// from a rule subscription or measurement reference and need to find the
+    /// comsrv-side channel that writes it.
+    ///
+    /// Returns `None` when the instance point has no C2M route configured.
+    #[inline]
+    pub fn lookup_c2m_reverse(
+        &self,
+        instance_id: u32,
+        instance_point_id: u32,
+    ) -> Option<(u32, PointType, u32)> {
+        self.c2m_reverse
+            .load()
+            .get(&(instance_id, instance_point_id))
             .copied()
     }
 

@@ -259,8 +259,8 @@ impl ChannelToSlotIndex {
         self.index.iter()
     }
 
-    /// Create an empty index (test helper)
-    #[cfg(test)]
+    /// Create an empty index (test helper — available in all test builds)
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn new_empty() -> Self {
         Self {
             index: FxHashMap::default(),
@@ -268,8 +268,23 @@ impl ChannelToSlotIndex {
         }
     }
 
-    /// Insert a single mapping (test helper)
-    #[cfg(test)]
+    /// Create an empty index for use in downstream crate tests.
+    ///
+    /// Unlike `new_empty()` (which is `#[cfg(test)]`), this method is always
+    /// compiled so that test code in other crates (e.g. `voltage-rules`) can
+    /// construct a slot index without a real `UnifiedWriter`.
+    ///
+    /// The returned index contains no mappings; `lookup()` always returns `None`.
+    /// This is intentional for tests that only need the index to exist.
+    pub fn empty_for_test() -> Self {
+        Self {
+            index: FxHashMap::default(),
+            mapped_count: 0,
+        }
+    }
+
+    /// Insert a single mapping (test helper — available in all test builds)
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn insert(&mut self, channel_id: u32, point_type: PointType, point_id: u32, slot: usize) {
         self.index.insert((channel_id, point_type, point_id), slot);
         self.mapped_count = self.index.len();

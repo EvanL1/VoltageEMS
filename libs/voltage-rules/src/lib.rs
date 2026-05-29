@@ -35,6 +35,8 @@ mod executor;
 #[cfg(unix)]
 pub mod logger;
 #[cfg(unix)]
+pub mod point_watch_dispatcher;
+#[cfg(unix)]
 mod scheduler;
 
 // Re-export public API
@@ -49,6 +51,8 @@ pub use repository::{
 pub use executor::{ActionResult, RuleExecutionResult, RuleExecutor};
 #[cfg(unix)]
 pub use logger::{RuleLogger, RuleLoggerManager, format_conditions};
+#[cfg(unix)]
+pub use point_watch_dispatcher::{PointWatchDispatcher, RuleSubscriptionInfo, WatchEvent};
 #[cfg(unix)]
 pub use scheduler::{
     DEFAULT_TICK_MS, OnChangeState, PointKind, PointRef, RuleScheduler, SchedulerStatus,

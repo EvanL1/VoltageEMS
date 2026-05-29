@@ -190,10 +190,18 @@ fn verify_mmap_covers_slots(mmap_len: usize, max_slots: u32, path: &std::path::P
 /// by comsrv/modsrv. The split lets pure-infra consumers (snapshot tools,
 /// future generic clients) program against `&SlotWriter` / `&dyn SlotIo`
 /// and have the type system reject business coupling.
+///
+/// Optionally holds a `PointWatchSignaler` that is called after each T/S slot
+/// write on the hot path. The signaler is `None` by default (zero overhead in
+/// non-PointWatch deployments).
 pub struct UnifiedWriter {
     pub(crate) inner: SlotWriter,
     /// Channel layouts (Vec indexed by channel_id) — business adapter state.
     channel_layouts: Vec<ChannelLayout>,
+    /// Optional PointWatch signaler. When set, `set_direct` / `set` will emit
+    /// an event after the seqlock write completes (non-blocking, best-effort).
+    #[cfg(unix)]
+    point_watch: Option<std::sync::Arc<crate::point_watch::PointWatchSignaler>>,
 }
 
 impl UnifiedWriter {
@@ -310,6 +318,8 @@ impl UnifiedWriter {
         Ok(Self {
             inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count),
             channel_layouts,
+            #[cfg(unix)]
+            point_watch: None,
         })
     }
 
@@ -362,15 +372,29 @@ impl UnifiedWriter {
             && let Some(slot) = layout.slot(point_type, point_id)
         {
             self.inner.set_direct(slot, value, raw, timestamp_ms);
+            // Emit PointWatch event after seqlock write completes (non-blocking).
+            #[cfg(unix)]
+            if let Some(ref pw) = self.point_watch {
+                pw.emit(slot, value, raw, timestamp_ms);
+            }
             return true;
         }
         false
     }
 
     /// Direct write to slot index (for hot path). Delegates to `SlotWriter`.
+    ///
+    /// Also emits a `PointWatchEvent` (non-blocking) if a signaler is attached
+    /// and the slot is subscribed in the bitmap. This is the primary injection
+    /// point for the PointWatch event-driven path.
     #[inline]
     pub fn set_direct(&self, slot: usize, value: f64, raw: f64, timestamp_ms: u64) {
         self.inner.set_direct(slot, value, raw, timestamp_ms);
+        // Emit PointWatch event after seqlock write — always after, never before.
+        #[cfg(unix)]
+        if let Some(ref pw) = self.point_watch {
+            pw.emit(slot, value, raw, timestamp_ms);
+        }
     }
 
     /// Drain process-local dirty slots set by this writer.
@@ -414,6 +438,30 @@ impl UnifiedWriter {
     #[inline]
     pub fn update_heartbeat(&self, timestamp_ms: u64) {
         self.inner.update_heartbeat(timestamp_ms);
+    }
+
+    /// Attach a `PointWatchSignaler` to the writer.
+    ///
+    /// After calling this, every `set_direct` / `set` invocation will also call
+    /// `signaler.emit(...)` (non-blocking) for subscribed slots. Safe to call
+    /// multiple times — the last signaler wins.
+    ///
+    /// # Example
+    /// ```ignore
+    /// writer.set_point_watcher(Some(Arc::clone(&my_signaler)));
+    /// ```
+    #[cfg(unix)]
+    pub fn set_point_watcher(
+        &mut self,
+        signaler: Option<std::sync::Arc<crate::point_watch::PointWatchSignaler>>,
+    ) {
+        self.point_watch = signaler;
+    }
+
+    /// Return the currently attached `PointWatchSignaler`, if any.
+    #[cfg(unix)]
+    pub fn point_watcher(&self) -> Option<&std::sync::Arc<crate::point_watch::PointWatchSignaler>> {
+        self.point_watch.as_ref()
     }
 
     /// Open existing shared memory for writing Action points (C/A types only)
@@ -474,6 +522,8 @@ impl UnifiedWriter {
         Ok(Self {
             inner: SlotWriter::from_mmap(mmap, path.to_path_buf(), max_slots, slot_count),
             channel_layouts,
+            #[cfg(unix)]
+            point_watch: None,
         })
     }
 
@@ -899,18 +949,13 @@ impl UnifiedReader {
         // Measurement: instance reads channel T/S via C2M
         // Action: instance writes channel C/A via M2C
         let (channel_id, channel_type, channel_point_id) = if instance_type == 0 {
-            // Measurement - need reverse lookup: find which channel maps to this instance point
-            // C2M: (channel, type, point) → (instance, point)
-            // We need: (instance, point) → (channel, type, point)
-            // This requires iterating C2M - inefficient but works for now
-            let mut found = None;
-            for ((ch_id, pt_type, ch_pt_id), target) in routing_cache.c2m_iter() {
-                if target.instance_id == instance_id && target.point_id == point_id {
-                    found = Some((ch_id, pt_type.to_u8(), ch_pt_id));
-                    break;
-                }
-            }
-            found?
+            // Measurement: reverse C2M lookup via the dedicated O(1) reverse index.
+            // RoutingCache now maintains an `(instance, point) → (channel, type, point)`
+            // hashmap built at config-load time, so this is no longer the O(routes)
+            // scan the old implementation did.
+            let (ch_id, pt_type, ch_pt_id) =
+                routing_cache.lookup_c2m_reverse(instance_id, point_id)?;
+            (ch_id, pt_type.to_u8(), ch_pt_id)
         } else {
             // Action - lookup M2C (try Control first, then Adjustment)
             // Instance "Action" can map to either C (Control) or A (Adjustment)

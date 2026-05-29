@@ -20,7 +20,9 @@ use modsrv::{
     rule_routes::{RuleEngineState, create_rule_routes},
 };
 use voltage_calc::RtdbStateStore;
+use voltage_rtdb_shm::{PointWatchListener, SubscriptionBitmap, bitmap_path_from_shm};
 use voltage_rtdb_shm::{SharedConfig, UnifiedReader, is_shm_available};
+use voltage_rules::{PointWatchDispatcher, WatchEvent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -414,6 +416,94 @@ async fn main() -> Result<()> {
     .and_then(|s| s.parse().ok())
     .unwrap_or(4);
 
+    // ── PointWatch bootstrap (modsrv side) ──────────────────────────────────────
+    // Only active when SHM is available (shared_reader.is_some()).
+    //
+    // 1. Open the SubscriptionBitmap created by comsrv (modsrv writes bits,
+    //    comsrv reads them in the hot path).
+    // 2. Create a PointWatchListener UDS server that receives PointWatchEvents
+    //    from comsrv's drain task.
+    // 3. Create a PointWatchDispatcher (subscription index + WatchEvent forwarder).
+    // 4. Wire the WatchEvent receiver into RuleScheduler via set_watch_receiver.
+    // 5. After rules load, call rebuild_point_watch to populate the subscription index.
+    //
+    // Graceful degradation: any failure disables the event-driven path; modsrv
+    // still works via the 100 ms tick fallback.
+    // PointWatch bootstrap result: all four values are None if SHM is unavailable
+    // or bitmap open fails (graceful degradation).
+    //
+    // Returned values:
+    //   pw_bitmap    — mmap'd subscription bitmap (modsrv sets bits, comsrv reads)
+    //   pw_dispatcher — subscription index; call rebuild_point_watch after load_rules
+    //   pw_event_rx  — raw PointWatchEvent channel from PointWatchListener
+    //   pw_watch_rx  — WatchEvent channel wired into RuleScheduler
+    //
+    // After load_rules: call rebuild_point_watch on pw_dispatcher, then spawn the
+    // bridge task that reads pw_event_rx and calls dispatcher.dispatch() → pw_watch_rx.
+    type PwInitResult = (
+        Option<Arc<SubscriptionBitmap>>,
+        Option<PointWatchDispatcher>,
+        Option<tokio::sync::mpsc::Receiver<voltage_rtdb_shm::PointWatchEvent>>,
+        Option<tokio::sync::mpsc::Receiver<WatchEvent>>,
+    );
+    let (pw_bitmap, pw_dispatcher, pw_event_rx, pw_watch_rx): PwInitResult =
+        if shared_reader.is_some() {
+            let bitmap_path = bitmap_path_from_shm(shm_config.path());
+            match SubscriptionBitmap::open(&bitmap_path) {
+                Ok(bitmap) => {
+                    let bitmap = Arc::new(bitmap);
+
+                    // Listener shutdown via watch channel (matches ShmCommandListener pattern).
+                    let (pw_shutdown_tx, pw_shutdown_rx) = tokio::sync::watch::channel(false);
+
+                    // event_rx: raw PointWatchEvents forwarded from the UDS socket.
+                    let (listener, event_rx) = PointWatchListener::new(None, pw_shutdown_rx);
+
+                    // Spawn the UDS listener run loop (accepts comsrv connection).
+                    let shutdown_token_for_pw = shutdown_token.clone();
+                    let pw_shutdown_tx = Arc::new(pw_shutdown_tx);
+                    let pw_sd = Arc::clone(&pw_shutdown_tx);
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            result = listener.run() => {
+                                if let Err(e) = result {
+                                    warn!("PointWatchListener exited with error: {}", e);
+                                }
+                            }
+                            _ = shutdown_token_for_pw.cancelled() => {
+                                let _ = pw_sd.send(true);
+                            }
+                        }
+                    });
+                    info!(
+                        "PointWatchListener bound ({})",
+                        voltage_rtdb_shm::POINT_WATCH_UDS_PATH
+                    );
+
+                    // Create dispatcher (empty sub index until rebuild_point_watch).
+                    // watch_rx flows to RuleScheduler; dispatcher.dispatch() sends onto it.
+                    let (dispatcher, watch_rx) = PointWatchDispatcher::new();
+
+                    (
+                        Some(bitmap),
+                        Some(dispatcher),
+                        Some(event_rx),
+                        Some(watch_rx),
+                    )
+                },
+                Err(e) => {
+                    warn!(
+                        "PointWatch disabled (bitmap open failed — is comsrv running?): {}",
+                        e
+                    );
+                    (None, None, None, None)
+                },
+            }
+        } else {
+            debug!("PointWatch skipped (SHM not available)");
+            (None, None, None, None)
+        };
+
     // Create rule scheduler with two-tier priority (SharedMemory > Redis)
     // SHM writer enables M2C actions via shared memory (primary path)
     // ShmNotifier enables UDS event notification for immediate dispatch
@@ -434,6 +524,15 @@ async fn main() -> Result<()> {
         Some(Arc::clone(&state.shm_dispatch) as Arc<dyn voltage_rtdb_shm::ActionDispatch>),
     );
     scheduler.set_max_concurrency(max_concurrency);
+
+    // Wire PointWatch event receiver into the scheduler (before Arc::new).
+    // When present, RuleScheduler::start() selects on this channel alongside
+    // the 100 ms tick for sub-millisecond OnChange rule dispatch.
+    if let Some(watch_rx) = pw_watch_rx {
+        scheduler.set_watch_receiver(watch_rx);
+        info!("PointWatch watch_rx wired into RuleScheduler");
+    }
+
     let scheduler = Arc::new(scheduler);
 
     info!(
@@ -445,6 +544,60 @@ async fn main() -> Result<()> {
     match scheduler.load_rules().await {
         Ok(count) => info!("Rule Engine: loaded {} rules", count),
         Err(e) => warn!("Rule Engine: failed to load rules: {}", e),
+    }
+
+    // Rebuild PointWatch subscription index from loaded rules, then spawn the
+    // bridge task that routes raw events → dispatcher → RuleScheduler.
+    // Must run AFTER load_rules so all OnChange rules are visible.
+    if let (Some(bitmap), Some(mut dispatcher), Some(mut event_rx)) =
+        (pw_bitmap, pw_dispatcher, pw_event_rx)
+    {
+        // Build ChannelToSlotIndex from the action writer (same SHM layout).
+        let channel_slot_index = shm_action_writer
+            .as_ref()
+            .map(|w| voltage_rtdb_shm::ChannelToSlotIndex::from_unified_writer(w));
+
+        if let Some(ref slot_idx) = channel_slot_index {
+            scheduler
+                .rebuild_point_watch(
+                    &mut dispatcher,
+                    state.instance_manager.routing_cache(),
+                    slot_idx,
+                    &bitmap,
+                )
+                .await;
+            info!(
+                "PointWatch subscription index built: {} (ch,pt) pairs subscribed",
+                dispatcher.subscription_count()
+            );
+        } else {
+            warn!(
+                "PointWatch: skipping rebuild_point_watch \
+                 (no SHM action writer available for slot index)"
+            );
+        }
+
+        // Spawn the bridge task: drains raw PointWatchEvents from the listener
+        // and calls dispatcher.dispatch() which sends WatchEvents onto the
+        // channel that RuleScheduler reads via set_watch_receiver.
+        // dispatcher is moved in (sole owner); dispatch() takes &self so no
+        // locking is needed on the hot path.
+        let shutdown_token_bridge = shutdown_token.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    ev = event_rx.recv() => {
+                        match ev {
+                            Some(e) => dispatcher.dispatch(&e),
+                            None => break, // listener channel closed
+                        }
+                    }
+                    _ = shutdown_token_bridge.cancelled() => break,
+                }
+            }
+            debug!("PointWatch bridge task stopped");
+        });
+        info!("PointWatch bridge task spawned");
     }
 
     // Create rule engine state and routes

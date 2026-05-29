@@ -39,6 +39,9 @@ use comsrv::{
 };
 use voltage_routing::load_routing_maps;
 use voltage_rtdb_shm::{ChannelToSlotIndex, SharedConfig, ShmHandle, UnifiedWriter};
+use voltage_rtdb_shm::{
+    POINT_WATCH_UDS_PATH, PointWatchSignaler, SubscriptionBitmap, bitmap_path_from_shm,
+};
 use voltage_rtdb_shm::{SnapshotConfig, SnapshotManager, is_shm_available, snapshot_exists};
 
 #[tokio::main]
@@ -155,11 +158,15 @@ async fn main() -> VoltageResult<()> {
     // RTDB is a pure storage abstraction
     // Routing is handled by ChannelManager using routing_cache
 
+    // Shutdown token — created here so the SHM block can capture it for the
+    // PointWatch drain task spawned during UnifiedWriter initialization.
+    let shutdown_token = CancellationToken::new();
+
     // ============ Phase 2.5: Initialize UnifiedWriter (shared memory) ============
     // UnifiedWriter: creates shared memory with indexes from RoutingCache
     // Simplified: no SlotMeta, indexes are Vec in process memory
     // Now with snapshot restore/save support
-    let (shm_handle, snapshot_manager_handle, snapshot_shutdown_tx) = {
+    let (shm_handle, snapshot_manager_handle, snapshot_shutdown_tx, point_watch_drain_handle) = {
         // Load SharedConfig parameters from database
         let config = {
             let mut cfg = SharedConfig::default();
@@ -260,7 +267,7 @@ async fn main() -> VoltageResult<()> {
             };
 
             match writer {
-                Ok(writer) => {
+                Ok(mut writer) => {
                     info!(
                         "UnifiedWriter: ready with {} slots (Header + PointSlots only)",
                         writer.slot_count()
@@ -270,8 +277,57 @@ async fn main() -> VoltageResult<()> {
                     let index = ChannelToSlotIndex::from_unified_writer(&writer);
                     info!("ChannelToSlotIndex: {} mappings", index.len());
 
+                    // ── PointWatch bootstrap (comsrv side) ───────────────────────────
+                    // 1. Derive bitmap path from SHM path.
+                    // 2. Create zero-filled SubscriptionBitmap (modsrv will write bits).
+                    // 3. Build ReverseSlotIndex from the forward index (O(slots) once).
+                    // 4. Spawn drain task + create PointWatchSignaler.
+                    // 5. Attach signaler to writer BEFORE it moves into ShmHandle.
+                    // 6. Register signaler with ShmHandle so rebuild_via_swap re-attaches it.
+                    //
+                    // Graceful degradation: any failure disables PointWatch; comsrv still
+                    // functions and modsrv falls back to the 100 ms tick detection path.
+                    let pw_drain_handle = {
+                        let bitmap_path = bitmap_path_from_shm(config.path());
+                        match SubscriptionBitmap::create(&bitmap_path) {
+                            Ok(bitmap) => {
+                                let bitmap = Arc::new(bitmap);
+                                let slot_count = writer.slot_count();
+                                let reverse_index =
+                                    Arc::new(voltage_rtdb_shm::ReverseSlotIndex::from_forward(
+                                        &index, slot_count,
+                                    ));
+                                let (signaler, drain_handle) = PointWatchSignaler::new_with_drain(
+                                    Arc::clone(&bitmap),
+                                    reverse_index,
+                                    POINT_WATCH_UDS_PATH.to_string(),
+                                    shutdown_token.clone(),
+                                );
+                                // Attach before writer is consumed by ShmHandle::new.
+                                writer.set_point_watcher(Some(Arc::clone(&signaler)));
+                                Some((signaler, drain_handle))
+                            },
+                            Err(e) => {
+                                warn!("PointWatch disabled (bitmap create failed): {}", e);
+                                None
+                            },
+                        }
+                    };
+
                     // Create ShmHandle (runtime-swappable writer + index)
                     let handle = Arc::new(ShmHandle::new(config.clone(), writer, index));
+
+                    // Register signaler with ShmHandle so rebuild_via_swap re-attaches it.
+                    let pw_drain_handle = if let Some((signaler, drain_h)) = pw_drain_handle {
+                        handle.store_point_watcher(Arc::clone(&signaler));
+                        info!(
+                            "PointWatch enabled: signaler attached, drain task spawned ({})",
+                            POINT_WATCH_UDS_PATH
+                        );
+                        Some(drain_h)
+                    } else {
+                        None
+                    };
 
                     // Start SnapshotManager if configured
                     // SnapshotManager holds Arc<ShmHandle> — always snapshots the latest writer after rebuild
@@ -293,16 +349,16 @@ async fn main() -> VoltageResult<()> {
                         (None, None)
                     };
 
-                    (Some(handle), snapshot_handle, snapshot_tx)
+                    (Some(handle), snapshot_handle, snapshot_tx, pw_drain_handle)
                 },
                 Err(e) => {
                     tracing::warn!("UnifiedWriter not available: {}", e);
-                    (None, None, None)
+                    (None, None, None, None)
                 },
             }
         } else {
             info!("SharedMemory path not found, skipping (non-Docker environment)");
-            (None, None, None)
+            (None, None, None, None)
         }
     };
 
@@ -312,7 +368,7 @@ async fn main() -> VoltageResult<()> {
     info!("CommandTxCache initialized (O(1) hot path for Control/Adjustment)");
 
     // Initialize services
-    let shutdown_token = CancellationToken::new();
+    // (shutdown_token already created above for PointWatch drain task bootstrap)
 
     // Use concrete type (native AFIT requires static dispatch)
     let rtdb: Arc<voltage_rtdb::RedisRtdb> = Arc::new(redis_rtdb);
@@ -553,6 +609,14 @@ async fn main() -> VoltageResult<()> {
             Ok(Ok(())) => info!("SnapshotManager shutdown complete"),
             Ok(Err(e)) => error!("SnapshotManager task failed: {}", e),
             Err(_) => error!("SnapshotManager shutdown timed out"),
+        }
+    }
+
+    // Wait for PointWatch drain task to flush remaining events and stop.
+    if let Some(handle) = point_watch_drain_handle {
+        match tokio::time::timeout(std::time::Duration::from_secs(2), handle).await {
+            Ok(_) => info!("PointWatch drain task stopped"),
+            Err(_) => warn!("PointWatch drain task shutdown timed out"),
         }
     }
 
