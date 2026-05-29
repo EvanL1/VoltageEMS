@@ -471,7 +471,9 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             &self.pw_bitmap,
         ) {
             let rules = self.rules.read().await;
-            let mut d = disp.lock().expect("PointWatchDispatcher mutex poisoned");
+            // Mutex poison only indicates a prior holder panicked; the inner
+            // dispatcher state is still valid, so recover via into_inner().
+            let mut d = disp.lock().unwrap_or_else(|p| p.into_inner());
             d.rebuild_from_rules(&rules, routing, slot_idx, bitmap);
             info!(
                 "PointWatch subscription index rebuilt: {} (ch,pt) pairs subscribed",

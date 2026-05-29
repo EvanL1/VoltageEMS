@@ -595,9 +595,11 @@ async fn main() -> Result<()> {
                     ev = event_rx.recv() => {
                         match ev {
                             Some(e) => {
+                                // Recover from mutex poison: prior panic in another
+                                // thread doesn't invalidate the dispatcher state.
                                 let d = dispatcher_for_bridge
                                     .lock()
-                                    .expect("PointWatchDispatcher mutex poisoned");
+                                    .unwrap_or_else(|p| p.into_inner());
                                 d.dispatch(&e);
                             }
                             None => break, // listener channel closed
