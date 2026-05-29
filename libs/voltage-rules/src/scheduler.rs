@@ -256,6 +256,18 @@ pub struct RuleScheduler<R: Rtdb, S: StateStore = voltage_calc::MemoryStateStore
     watch_rx: Option<
         tokio::sync::Mutex<tokio::sync::mpsc::Receiver<crate::point_watch_dispatcher::WatchEvent>>,
     >,
+    /// PointWatch rebuild handles. When all four are Some, `reload_rules`
+    /// rebuilds the subscription index after loading. None in test mode or
+    /// when PointWatch isn't wired in.
+    ///
+    /// `pw_routing_cache` is stored separately from `routing_cache` because the
+    /// latter is only retained when SHM is available (gates SHM reverse lookup),
+    /// while PointWatch rebuild needs routing regardless of SHM presence.
+    pw_dispatcher:
+        Option<Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>>,
+    pw_routing_cache: Option<Arc<RoutingCache>>,
+    pw_channel_slot_index: Option<Arc<voltage_rtdb_shm::ChannelToSlotIndex>>,
+    pw_bitmap: Option<Arc<voltage_rtdb_shm::SubscriptionBitmap>>,
 }
 
 impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
@@ -286,6 +298,10 @@ impl<R: Rtdb + 'static> RuleScheduler<R, voltage_calc::MemoryStateStore> {
             shared_reader: None,
             routing_cache: None,
             watch_rx: None,
+            pw_dispatcher: None,
+            pw_routing_cache: None,
+            pw_channel_slot_index: None,
+            pw_bitmap: None,
         }
     }
 }
@@ -340,6 +356,10 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
             shared_reader,
             routing_cache: if has_shm { Some(routing_cache) } else { None },
             watch_rx: None,
+            pw_dispatcher: None,
+            pw_routing_cache: None,
+            pw_channel_slot_index: None,
+            pw_bitmap: None,
         }
     }
 
@@ -371,6 +391,26 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         rx: tokio::sync::mpsc::Receiver<crate::point_watch_dispatcher::WatchEvent>,
     ) {
         self.watch_rx = Some(tokio::sync::Mutex::new(rx));
+    }
+
+    /// Store handles required to rebuild the PointWatch subscription index
+    /// during `reload_rules`. Must be called before wrapping in `Arc` and
+    /// before any rule reload that should reflect subscription changes.
+    ///
+    /// Without these handles, `reload_rules` only refreshes the rule cache —
+    /// the SubscriptionBitmap and dispatcher index keep their previous state,
+    /// so newly-added OnChange rules won't fire until service restart.
+    pub fn set_point_watch_rebuild_handles(
+        &mut self,
+        dispatcher: Arc<std::sync::Mutex<crate::point_watch_dispatcher::PointWatchDispatcher>>,
+        routing_cache: Arc<RoutingCache>,
+        channel_slot_index: Arc<voltage_rtdb_shm::ChannelToSlotIndex>,
+        bitmap: Arc<voltage_rtdb_shm::SubscriptionBitmap>,
+    ) {
+        self.pw_dispatcher = Some(dispatcher);
+        self.pw_routing_cache = Some(routing_cache);
+        self.pw_channel_slot_index = Some(channel_slot_index);
+        self.pw_bitmap = Some(bitmap);
     }
 
     /// Load rules from database and initialize scheduler state
@@ -413,10 +453,35 @@ impl<R: Rtdb + 'static, S: StateStore + 'static> RuleScheduler<R, S> {
         Ok(count)
     }
 
-    /// Reload rules from database (hot reload)
+    /// Reload rules from database (hot reload).
+    ///
+    /// When PointWatch rebuild handles are present (set via
+    /// `set_point_watch_rebuild_handles`), this also rebuilds the
+    /// subscription bitmap + dispatcher index so newly-added or
+    /// newly-modified OnChange rules start receiving events immediately
+    /// without a service restart.
     pub async fn reload_rules(&self) -> Result<usize> {
         info!("Rules reloading");
-        self.load_rules().await
+        let count = self.load_rules().await?;
+
+        if let (Some(disp), Some(routing), Some(slot_idx), Some(bitmap)) = (
+            &self.pw_dispatcher,
+            &self.pw_routing_cache,
+            &self.pw_channel_slot_index,
+            &self.pw_bitmap,
+        ) {
+            let rules = self.rules.read().await;
+            // Mutex poison only indicates a prior holder panicked; the inner
+            // dispatcher state is still valid, so recover via into_inner().
+            let mut d = disp.lock().unwrap_or_else(|p| p.into_inner());
+            d.rebuild_from_rules(&rules, routing, slot_idx, bitmap);
+            info!(
+                "PointWatch subscription index rebuilt: {} (ch,pt) pairs subscribed",
+                d.subscription_count()
+            );
+        }
+
+        Ok(count)
     }
 
     /// Start the scheduler loop

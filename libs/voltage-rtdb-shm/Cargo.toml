@@ -40,5 +40,9 @@ voltage-model = { path = "../voltage-model" }
 name = "control_chain"
 harness = false
 
+[[bench]]
+name = "pointwatch_e2e"
+harness = false
+
 [lints]
 workspace = true

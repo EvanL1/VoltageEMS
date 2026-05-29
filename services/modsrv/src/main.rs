@@ -533,6 +533,34 @@ async fn main() -> Result<()> {
         info!("PointWatch watch_rx wired into RuleScheduler");
     }
 
+    // Wrap dispatcher in Arc<Mutex<>> so the bridge task and the scheduler's
+    // reload_rules path can share it. std::sync::Mutex (not tokio::sync) since
+    // dispatch() and rebuild_from_rules() never .await inside the critical
+    // section — async overhead would only add cost on the hot path.
+    let pw_dispatcher_arc = pw_dispatcher.map(|d| Arc::new(std::sync::Mutex::new(d)));
+
+    // Build ChannelToSlotIndex once and Arc-share with both the initial rebuild
+    // (below) and the scheduler's reload path (rebuilds on POST /api/scheduler/reload).
+    let pw_channel_slot_index_arc = shm_action_writer
+        .as_ref()
+        .map(|w| Arc::new(voltage_rtdb_shm::ChannelToSlotIndex::from_unified_writer(w)));
+
+    // Wire rebuild handles into scheduler so reload_rules can refresh the
+    // SubscriptionBitmap + dispatcher index without a service restart.
+    if let (Some(disp_arc), Some(slot_idx_arc), Some(bitmap)) = (
+        pw_dispatcher_arc.as_ref(),
+        pw_channel_slot_index_arc.as_ref(),
+        pw_bitmap.as_ref(),
+    ) {
+        scheduler.set_point_watch_rebuild_handles(
+            Arc::clone(disp_arc),
+            Arc::clone(state.instance_manager.routing_cache()),
+            Arc::clone(slot_idx_arc),
+            Arc::clone(bitmap),
+        );
+        info!("PointWatch rebuild handles wired into RuleScheduler");
+    }
+
     let scheduler = Arc::new(scheduler);
 
     info!(
@@ -540,55 +568,40 @@ async fn main() -> Result<()> {
         tick_ms, max_concurrency
     );
 
-    // Load rules into scheduler
-    match scheduler.load_rules().await {
+    // Load rules + initial PointWatch subscription rebuild (if handles wired
+    // above). reload_rules calls load_rules internally and then rebuilds the
+    // SubscriptionBitmap + dispatcher index in a single lock-correct path,
+    // so this also doubles as the initial PointWatch bootstrap.
+    match scheduler.reload_rules().await {
         Ok(count) => info!("Rule Engine: loaded {} rules", count),
         Err(e) => warn!("Rule Engine: failed to load rules: {}", e),
     }
 
-    // Rebuild PointWatch subscription index from loaded rules, then spawn the
-    // bridge task that routes raw events → dispatcher → RuleScheduler.
-    // Must run AFTER load_rules so all OnChange rules are visible.
-    if let (Some(bitmap), Some(mut dispatcher), Some(mut event_rx)) =
-        (pw_bitmap, pw_dispatcher, pw_event_rx)
-    {
-        // Build ChannelToSlotIndex from the action writer (same SHM layout).
-        let channel_slot_index = shm_action_writer
-            .as_ref()
-            .map(|w| voltage_rtdb_shm::ChannelToSlotIndex::from_unified_writer(w));
-
-        if let Some(ref slot_idx) = channel_slot_index {
-            scheduler
-                .rebuild_point_watch(
-                    &mut dispatcher,
-                    state.instance_manager.routing_cache(),
-                    slot_idx,
-                    &bitmap,
-                )
-                .await;
-            info!(
-                "PointWatch subscription index built: {} (ch,pt) pairs subscribed",
-                dispatcher.subscription_count()
-            );
-        } else {
-            warn!(
-                "PointWatch: skipping rebuild_point_watch \
-                 (no SHM action writer available for slot index)"
-            );
-        }
-
+    // Spawn the PointWatch bridge task if PointWatch is enabled. The
+    // subscription index has already been built by reload_rules above; this
+    // task just routes raw UDS events → dispatcher.dispatch() → watch_rx.
+    if let (Some(dispatcher_arc), Some(mut event_rx)) = (pw_dispatcher_arc, pw_event_rx) {
         // Spawn the bridge task: drains raw PointWatchEvents from the listener
         // and calls dispatcher.dispatch() which sends WatchEvents onto the
         // channel that RuleScheduler reads via set_watch_receiver.
-        // dispatcher is moved in (sole owner); dispatch() takes &self so no
-        // locking is needed on the hot path.
+        //
+        // dispatcher_arc is shared with scheduler.reload_rules — the lock is
+        // held briefly (just for the try_send hash lookup, no .await inside).
+        let dispatcher_for_bridge = Arc::clone(&dispatcher_arc);
         let shutdown_token_bridge = shutdown_token.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     ev = event_rx.recv() => {
                         match ev {
-                            Some(e) => dispatcher.dispatch(&e),
+                            Some(e) => {
+                                // Recover from mutex poison: prior panic in another
+                                // thread doesn't invalidate the dispatcher state.
+                                let d = dispatcher_for_bridge
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner());
+                                d.dispatch(&e);
+                            }
                             None => break, // listener channel closed
                         }
                     }
