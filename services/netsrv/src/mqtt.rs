@@ -13,7 +13,8 @@ use std::sync::atomic::Ordering;
 use bytes::Bytes;
 use chrono::Utc;
 use rumqttc::{
-    AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS, TlsConfiguration, Transport,
+    AsyncClient, Event, Incoming, LastWill, MqttOptions, NetworkOptions, QoS, TlsConfiguration,
+    Transport,
 };
 use serde_json::json;
 use tokio::time::{self, Duration};
@@ -23,8 +24,8 @@ use tracing::{error, info, warn};
 use voltage_rtdb::Rtdb;
 
 use crate::models::{
-    CommandReply, ReadReply, ReadReplyProperty, ReadRequest, StatusPayload, WriteReply,
-    WriteRequest,
+    CommandReply, InstSyncItem, InstSyncReply, ReadReply, ReadReplyProperty, ReadRequest,
+    StatusPayload, WriteReply, WriteRequest,
 };
 use crate::state::AppState;
 
@@ -103,12 +104,13 @@ async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> a
     }
 
     // Last Will Testament: broker publishes this automatically on unexpected disconnect.
-    let lwt_payload = json!({
-        "type": "unexpected_disconnect",
-        "gateway": "",
-        "timestamp": Utc::now().timestamp()
+    let lwt_payload = serde_json::to_string(&StatusPayload {
+        msg_type: "offline".to_string(),
+        gateway: state.device.device_sn.clone(),
+        timestamp: Utc::now().timestamp(),
+        reason: Some("unexpected".to_string()),
     })
-    .to_string();
+    .unwrap_or_default();
     options.set_last_will(LastWill::new(
         &state.topics.status,
         lwt_payload.into_bytes(),
@@ -125,6 +127,11 @@ async fn connect_and_run(state: Arc<AppState>, shutdown: CancellationToken) -> a
     }
 
     let (client, mut event_loop) = AsyncClient::new(options, 64);
+    // ARM64 设备无硬件加速时 rustls RSA 握手可能超过默认 5s，调大连接超时避免误报
+    // NetworkOptions 是 rumqttc 0.24 设置连接超时的正确 API（不在 MqttOptions 上）
+    let mut network_options = NetworkOptions::new();
+    network_options.set_connection_timeout(30);
+    event_loop.set_network_options(network_options);
     *state.mqtt_client.lock().await = Some(client.clone());
 
     info!("MQTT connecting to {}:{}", cfg.broker_host, cfg.broker_port);
@@ -202,7 +209,7 @@ pub async fn publish_status(
 ) -> anyhow::Result<()> {
     let payload = StatusPayload {
         msg_type: msg_type.to_string(),
-        gateway: String::new(),
+        gateway: state.device.device_sn.clone(),
         timestamp: Utc::now().timestamp(),
         reason: reason.map(|s| s.to_string()),
     };
@@ -264,6 +271,8 @@ async fn dispatch_message(state: Arc<AppState>, topic: &str, payload: Bytes) {
         handle_call_data(state, payload).await;
     } else if topic == t.call_alarm {
         handle_call_alarm(state, payload).await;
+    } else if topic == t.inst_sync {
+        handle_inst_sync(state, payload).await;
     }
 }
 
@@ -471,6 +480,72 @@ async fn handle_call_alarm(state: Arc<AppState>, payload: Bytes) {
     if let Err(e) = publish_json(&state, &state.topics.call_alarm_reply, &reply).await {
         error!("Failed to publish call-alarm-reply: {}", e);
     }
+}
+
+async fn handle_inst_sync(state: Arc<AppState>, payload: Bytes) {
+    let msg_id: Option<String> = serde_json::from_slice::<serde_json::Value>(&payload)
+        .ok()
+        .and_then(|v| {
+            v.get("msgId")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+        });
+
+    if let Err(e) = do_inst_sync(Arc::clone(&state), msg_id).await {
+        error!("inst-sync failed: {}", e);
+    }
+}
+
+/// Fetch instance list from modsrv and publish an `inst-sync-reply`.
+/// `msg_id` is echoed back verbatim; pass the ms-timestamp string for
+/// HTTP-triggered calls.
+pub async fn do_inst_sync(state: Arc<AppState>, msg_id: Option<String>) -> anyhow::Result<()> {
+    let modsrv_url = state.config.read().await.modsrv_url.clone();
+    let url = format!("{}/api/instances?page_size=100", modsrv_url);
+
+    let list = match state.http_client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
+            Ok(body) => {
+                let raw_list = body
+                    .get("data")
+                    .and_then(|d| d.get("list"))
+                    .and_then(|l| l.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                raw_list
+                    .into_iter()
+                    .filter_map(|item| {
+                        let instance_id = item.get("instance_id")?.as_i64()?;
+                        let instance_name = item.get("instance_name")?.as_str()?.to_string();
+                        let product_name = item.get("product_name")?.as_str()?.to_string();
+                        Some(InstSyncItem {
+                            instance_id,
+                            instance_name,
+                            product_name,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            },
+            Err(e) => {
+                return Err(anyhow::anyhow!("parse modsrv response: {}", e));
+            },
+        },
+        Ok(resp) => {
+            return Err(anyhow::anyhow!("modsrv returned status {}", resp.status()));
+        },
+        Err(e) => {
+            return Err(anyhow::anyhow!("HTTP request to modsrv: {}", e));
+        },
+    };
+
+    let reply = InstSyncReply {
+        msg_id,
+        timestamp: Utc::now().timestamp(),
+        list,
+    };
+
+    publish_json(&state, &state.topics.inst_sync_reply, &reply).await
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

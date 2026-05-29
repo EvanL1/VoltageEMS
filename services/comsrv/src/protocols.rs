@@ -23,6 +23,9 @@ pub mod config;
 pub mod core;
 pub mod gateway;
 
+#[cfg(feature = "modbus")]
+pub mod sunspec;
+
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::protocols::core::{

@@ -60,7 +60,7 @@ fn parse_field<T: std::str::FromStr>(s: &str, field: &str) -> Result<T> {
 ///   - Example: `"temperature"` → key="temperature"
 pub fn parse_address(protocol: &str, address: &str) -> Result<ProtocolAddress> {
     // Use eq_ignore_ascii_case to avoid String allocation from to_lowercase()
-    if protocol.eq_ignore_ascii_case("modbus") {
+    if crate::utils::is_modbus_family(protocol) {
         parse_modbus_address(address)
     } else if protocol.eq_ignore_ascii_case("iec104") {
         parse_iec104_address(address)

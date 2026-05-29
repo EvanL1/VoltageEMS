@@ -29,6 +29,7 @@ pub mod api {
         pub mod network_handlers;
         pub mod point_handlers;
         pub mod protocol_handlers;
+        pub mod provision_handlers;
         pub mod template_handlers;
     }
 }

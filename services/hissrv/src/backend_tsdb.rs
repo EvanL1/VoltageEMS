@@ -11,7 +11,7 @@ use sqlx::{PgPool, Row};
 use tracing::{info, warn};
 
 use crate::backend_pg::PostgresBackend;
-use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams};
+use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesResult};
 use crate::storage::StorageBackend;
 
 pub struct TimescaleDbBackend {
@@ -144,6 +144,18 @@ impl StorageBackend for TimescaleDbBackend {
 
     async fn list_channels(&self) -> anyhow::Result<Vec<String>> {
         self.inner.list_channels().await
+    }
+
+    async fn query_batch(
+        &self,
+        series: &[(String, String)],
+        start_time: chrono::DateTime<Utc>,
+        end_time: chrono::DateTime<Utc>,
+        limit_per_series: i64,
+    ) -> anyhow::Result<Vec<SeriesResult>> {
+        self.inner
+            .query_batch(series, start_time, end_time, limit_per_series)
+            .await
     }
 
     /// TimescaleDB-optimised cleanup: use `drop_chunks` instead of row-level DELETE.

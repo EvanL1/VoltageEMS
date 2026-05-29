@@ -64,6 +64,11 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "http://localhost:6007",
         "alarmsrv base URL for call-alarm",
     ),
+    (
+        "modsrv_url",
+        "http://localhost:6002",
+        "modsrv base URL for inst-sync queries",
+    ),
 ];
 
 pub async fn create_config_table(pool: &SqlitePool) -> anyhow::Result<()> {
@@ -134,6 +139,7 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<NetConfig> {
         .unwrap_or_else(|_| vec!["inst:*:M".to_string(), "inst:*:A".to_string()]),
         exclude_patterns: serde_json::from_str(&get("exclude_patterns", "[]")).unwrap_or_default(),
         alarmsrv_url: get("alarmsrv_url", "http://localhost:6007"),
+        modsrv_url: get("modsrv_url", "http://localhost:6002"),
     };
     cfg.normalize();
     Ok(cfg)
@@ -196,6 +202,7 @@ pub async fn save_config(pool: &SqlitePool, cfg: &NetConfig) -> anyhow::Result<(
             Cow::Owned(serde_json::to_string(&cfg.exclude_patterns)?),
         ),
         ("alarmsrv_url", Cow::Borrowed(cfg.alarmsrv_url.as_str())),
+        ("modsrv_url", Cow::Borrowed(cfg.modsrv_url.as_str())),
     ];
 
     let mut tx = pool.begin().await?;

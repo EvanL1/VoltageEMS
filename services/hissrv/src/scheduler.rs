@@ -1,14 +1,16 @@
 /// Background tasks:
-/// - **collector_task** – polls Redis every `collection_interval_secs` and
-///   appends data points to the shared buffer.
+/// - **collector_task** – ticks every second, checks which patterns are due
+///   (each pattern may have its own interval), and appends data points to
+///   the shared buffer.
 /// - **flush_task** – drains the buffer every `flush_interval_secs` and
 ///   writes to storage in batches.
 /// - **cleanup_task** – runs daily at approximately 02:00 UTC and removes
 ///   data older than `cleanup_older_than_days`.
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
-use tokio::time::{self, Duration};
+use tokio::time::{self, Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -35,28 +37,58 @@ pub fn spawn_all(state: Arc<AppState>, shutdown: CancellationToken) {
 }
 
 async fn collector_task(state: Arc<AppState>, shutdown: CancellationToken) {
-    loop {
-        let interval = { state.config.read().await.collection_interval_secs };
-        let enabled = { state.storage_settings.read().await.enabled };
+    // last_collected: pattern → Instant of most recent collection
+    let mut last_collected: HashMap<String, Instant> = HashMap::new();
 
+    loop {
+        // Tick every second – lightweight; just looks up a few HashMap entries.
         tokio::select! {
-            _ = time::sleep(Duration::from_secs(interval)) => {}
+            _ = time::sleep(Duration::from_secs(1)) => {}
             _ = shutdown.cancelled() => {
                 info!("Collector task shutting down");
                 return;
             }
         }
 
+        let enabled = { state.storage_settings.read().await.enabled };
         if !enabled {
             continue;
         }
 
-        let cfg_snapshot = {
-            let cfg = state.config.read().await;
-            cfg.clone()
+        let cfg = {
+            let guard = state.config.read().await;
+            guard.clone()
         };
+        let default_interval = cfg.collection_interval_secs;
+        let now = Instant::now();
 
-        let points = collector::collect(state.rtdb.as_ref(), &cfg_snapshot).await;
+        // Determine which patterns are due for collection this tick.
+        let due: Vec<_> = cfg
+            .subscribe_patterns
+            .iter()
+            .filter(|entry| {
+                let interval = entry.effective_interval(default_interval);
+                match last_collected.get(&entry.pattern) {
+                    None => true, // never collected → immediately due
+                    Some(t) => now.duration_since(*t).as_secs() >= interval,
+                }
+            })
+            .cloned()
+            .collect();
+
+        if due.is_empty() {
+            continue;
+        }
+
+        // Stamp collection time before the (async) collect so we don't drift.
+        for entry in &due {
+            last_collected.insert(entry.pattern.clone(), now);
+        }
+
+        // Remove stale entries for patterns that no longer exist in config.
+        last_collected.retain(|k, _| cfg.subscribe_patterns.iter().any(|e| &e.pattern == k));
+
+        let points = collector::collect_patterns(state.rtdb.as_ref(), &cfg, &due).await;
         if !points.is_empty() {
             let mut buf = state.buffer.lock().await;
             buf.extend(points);

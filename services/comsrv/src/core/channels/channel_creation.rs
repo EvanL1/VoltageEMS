@@ -167,12 +167,12 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                     .await
             },
             #[cfg(feature = "modbus")]
-            "modbus_tcp" => {
+            "modbus_tcp" | "sunspec_tcp" => {
                 self.create_modbus_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
             #[cfg(feature = "modbus")]
-            "modbus_rtu" => {
+            "modbus_rtu" | "sunspec_rtu" => {
                 self.create_modbus_rtu_channel_impl(channel_id, runtime_config, base_config)
                     .await
             },
@@ -200,7 +200,7 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                 #[allow(unused_mut)]
                 let mut supported = String::from("virtual");
                 #[cfg(feature = "modbus")]
-                supported.push_str(", modbus_tcp, modbus_rtu");
+                supported.push_str(", modbus_tcp, modbus_rtu, sunspec_tcp, sunspec_rtu");
                 #[cfg(all(target_os = "linux", feature = "gpio"))]
                 supported.push_str(", gpio/di_do");
                 #[cfg(all(feature = "can", target_os = "linux"))]
@@ -399,11 +399,13 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
+        let protocol_label = base_config.protocol().to_string();
+
         Ok(ChannelEntry::new(
             protocol,
             store,
             base_config,
-            "modbus_tcp".to_string(),
+            protocol_label,
             poll_interval_ms,
             log_handler,
         ))
@@ -467,11 +469,13 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(1000);
 
+        let protocol_label = base_config.protocol().to_string();
+
         Ok(ChannelEntry::new(
             protocol,
             store,
             base_config,
-            "modbus_rtu".to_string(),
+            protocol_label,
             poll_interval_ms,
             log_handler,
         ))
@@ -656,10 +660,16 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             .and_then(|v| v.as_u64())
             .unwrap_or(1_000);
 
+        let reports: Vec<crate::protocols::adapters::iec61850::ReportConfig> = params
+            .get("reports")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
         let iec61850_params = Iec61850ParamsConfig {
             address,
             connect_timeout_ms,
             request_timeout_ms,
+            reports,
         };
 
         // Convert points: parse protocol_mappings JSON → Iec61850Address.
@@ -670,7 +680,10 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             let json_str = protocol_mappings.as_deref()?;
             let obj: serde_json::Value = serde_json::from_str(json_str).ok()?;
             let addr_str = obj.get("address")?.as_str()?;
-            Iec61850Address::parse(addr_str).ok()
+            let ctrl_model = obj.get("ctrl_model").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+            let mut addr = Iec61850Address::parse(addr_str).ok()?;
+            addr.ctrl_model = ctrl_model;
+            Some(addr)
         };
 
         for tp in &runtime_config.telemetry_points {
@@ -711,6 +724,51 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
                     poll_group: None,
                     enabled: true,
                 });
+            }
+        }
+
+        for cp in &runtime_config.control_points {
+            if let Some(addr) = parse_iec61850_point(&cp.base.protocol_mappings) {
+                point_configs.push(PointConfig {
+                    id: cp.base.point_id,
+                    point_type: voltage_model::PointType::Control,
+                    name: Some(cp.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(addr),
+                    transform: TransformConfig {
+                        reverse: cp.reverse,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            } else {
+                warn!(
+                    "Ch{} control point {} has no valid IEC 61850 address in protocol_mappings",
+                    channel_id, cp.base.point_id
+                );
+            }
+        }
+
+        for ap in &runtime_config.adjustment_points {
+            if let Some(addr) = parse_iec61850_point(&ap.base.protocol_mappings) {
+                point_configs.push(PointConfig {
+                    id: ap.base.point_id,
+                    point_type: voltage_model::PointType::Adjustment,
+                    name: Some(ap.base.signal_name.clone()),
+                    address: ProtocolAddress::Iec61850(addr),
+                    transform: TransformConfig {
+                        scale: ap.scale,
+                        offset: ap.offset,
+                        ..Default::default()
+                    },
+                    poll_group: None,
+                    enabled: true,
+                });
+            } else {
+                warn!(
+                    "Ch{} adjustment point {} has no valid IEC 61850 address in protocol_mappings",
+                    channel_id, ap.base.point_id
+                );
             }
         }
 

@@ -773,80 +773,80 @@ fn validate_mappings(protocol: &str, mappings: &[crate::dto::PointMappingItem]) 
             continue;
         }
 
-        match protocol.to_lowercase().as_str() {
-            "modbus_tcp" | "modbus_rtu" | "modbus" => {
-                // Attempt strong-typed deserialization - automatic type/range validation
-                match serde_json::from_value::<ModbusMappingValidator>(
-                    mapping.protocol_data.clone(),
-                ) {
-                    Ok(validated) => {
-                        // ✅ Type validation passed, now check business rules
+        if crate::utils::is_modbus_family(protocol) {
+            // Attempt strong-typed deserialization - automatic type/range validation
+            match serde_json::from_value::<ModbusMappingValidator>(mapping.protocol_data.clone()) {
+                Ok(validated) => {
+                    // ✅ Type validation passed, now check business rules
 
-                        // 1. Slave ID range (1-247, 0 and 248-255 reserved by Modbus spec)
-                        if validated.slave_id == 0 || validated.slave_id >= 248 {
-                            errors.push(format!(
-                                "Point {}: slave_id {} invalid (must be 1-247, 0 and 248-255 are reserved)",
-                                mapping.point_id, validated.slave_id
-                            ));
-                        }
-
-                        // 2. Function code validity
-                        let valid_fcs = [1u8, 2, 3, 4, 5, 6, 15, 16];
-                        if !valid_fcs.contains(&validated.function_code) {
-                            errors.push(format!(
-                                "Point {}: function_code {} invalid (valid: 1,2,3,4,5,6,15,16)",
-                                mapping.point_id, validated.function_code
-                            ));
-                        }
-
-                        // 3. Optional data type enumeration
-                        if let Some(ref dt) = validated.data_type {
-                            let valid_types = [
-                                "bool", "boolean", "uint16", "int16", "uint32", "int32", "float32",
-                                "float64",
-                            ];
-                            if !valid_types.contains(&dt.as_str()) {
-                                errors.push(format!(
-                                    "Point {}: data_type '{}' invalid (valid: {})",
-                                    mapping.point_id,
-                                    dt,
-                                    valid_types.join(", ")
-                                ));
-                            }
-                        }
-
-                        // 4. Optional byte order enumeration
-                        if let Some(ref bo) = validated.byte_order {
-                            let valid_orders = ["ABCD", "DCBA", "BADC", "CDAB", "AB", "BA"];
-                            if !valid_orders.contains(&bo.as_str()) {
-                                errors.push(format!(
-                                    "Point {}: byte_order '{}' invalid (valid: {})",
-                                    mapping.point_id,
-                                    bo,
-                                    valid_orders.join(", ")
-                                ));
-                            }
-                        }
-
-                        // 5. Business rule: Function code must match point type
-                        let fc_error = validate_modbus_function_code_match(
-                            validated.function_code,
-                            mapping.four_remote.as_str(),
-                            mapping.point_id,
-                        );
-                        if let Some(err) = fc_error {
-                            errors.push(err);
-                        }
-                    },
-                    Err(e) => {
-                        // ❌ Type validation failed (wrong type, missing field, out of range)
+                    // 1. Slave ID range (1-247, 0 and 248-255 reserved by Modbus spec)
+                    if validated.slave_id == 0 || validated.slave_id >= 248 {
                         errors.push(format!(
-                            "Point {}: Modbus mapping validation failed - {}",
-                            mapping.point_id, e
+                            "Point {}: slave_id {} invalid (must be 1-247, 0 and 248-255 are reserved)",
+                            mapping.point_id, validated.slave_id
                         ));
-                    },
-                }
-            },
+                    }
+
+                    // 2. Function code validity
+                    let valid_fcs = [1u8, 2, 3, 4, 5, 6, 15, 16];
+                    if !valid_fcs.contains(&validated.function_code) {
+                        errors.push(format!(
+                            "Point {}: function_code {} invalid (valid: 1,2,3,4,5,6,15,16)",
+                            mapping.point_id, validated.function_code
+                        ));
+                    }
+
+                    // 3. Optional data type enumeration
+                    if let Some(ref dt) = validated.data_type {
+                        let valid_types = [
+                            "bool", "boolean", "uint16", "int16", "uint32", "int32", "float32",
+                            "float64",
+                        ];
+                        if !valid_types.contains(&dt.as_str()) {
+                            errors.push(format!(
+                                "Point {}: data_type '{}' invalid (valid: {})",
+                                mapping.point_id,
+                                dt,
+                                valid_types.join(", ")
+                            ));
+                        }
+                    }
+
+                    // 4. Optional byte order enumeration
+                    if let Some(ref bo) = validated.byte_order {
+                        let valid_orders = ["ABCD", "DCBA", "BADC", "CDAB", "AB", "BA"];
+                        if !valid_orders.contains(&bo.as_str()) {
+                            errors.push(format!(
+                                "Point {}: byte_order '{}' invalid (valid: {})",
+                                mapping.point_id,
+                                bo,
+                                valid_orders.join(", ")
+                            ));
+                        }
+                    }
+
+                    // 5. Business rule: Function code must match point type
+                    let fc_error = validate_modbus_function_code_match(
+                        validated.function_code,
+                        mapping.four_remote.as_str(),
+                        mapping.point_id,
+                    );
+                    if let Some(err) = fc_error {
+                        errors.push(err);
+                    }
+                },
+                Err(e) => {
+                    // ❌ Type validation failed (wrong type, missing field, out of range)
+                    errors.push(format!(
+                        "Point {}: Modbus mapping validation failed - {}",
+                        mapping.point_id, e
+                    ));
+                },
+            }
+            continue;
+        }
+
+        match protocol.to_lowercase().as_str() {
             "virtual" => {
                 // Virtual protocol validation
                 match serde_json::from_value::<VirtualMappingValidator>(
@@ -1021,26 +1021,29 @@ fn normalize_protocol_data(protocol: &str, value: &serde_json::Value) -> serde_j
     };
 
     // Determine which fields need normalization based on protocol
-    let numeric_fields: &[&str] = match protocol {
-        "modbus_tcp" | "modbus_rtu" => &[
+    let numeric_fields: &[&str] = if crate::utils::is_modbus_family(protocol) {
+        &[
             "slave_id",
             "function_code",
             "register_address",
             "bit_position",
-        ],
-        "di_do" | "gpio" | "dido" => &["gpio_number"],
-        "can" => &[
-            "can_id",
-            "byte_offset",
-            "bit_position",
-            "bit_length",
-            "scale",
-            "offset",
-        ],
-        _ => {
-            // Virtual or unknown protocol: no normalization needed
-            return value.clone();
-        },
+        ]
+    } else {
+        match protocol {
+            "di_do" | "gpio" | "dido" => &["gpio_number"],
+            "can" => &[
+                "can_id",
+                "byte_offset",
+                "bit_position",
+                "bit_length",
+                "scale",
+                "offset",
+            ],
+            _ => {
+                // Virtual or unknown protocol: no normalization needed
+                return value.clone();
+            },
+        }
     };
 
     // Check if any field actually needs conversion (lazy clone optimization)

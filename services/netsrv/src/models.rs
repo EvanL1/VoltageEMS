@@ -93,6 +93,26 @@ pub struct WriteReply {
     pub msg_id: Option<String>,
 }
 
+// ── inst-sync ─────────────────────────────────────────────────────────────────
+
+/// One device entry in an `inst-sync-reply` message.
+#[derive(Serialize)]
+pub struct InstSyncItem {
+    pub instance_id: i64,
+    pub instance_name: String,
+    pub product_name: String,
+}
+
+/// Reply payload for `inst-sync-reply/{productSN}/{deviceSN}`.
+#[derive(Serialize)]
+pub struct InstSyncReply {
+    #[serde(rename = "msgId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msg_id: Option<String>,
+    pub timestamp: i64,
+    pub list: Vec<InstSyncItem>,
+}
+
 /// Generic command-acknowledgement reply (call-data-reply, call-alarm-reply).
 /// Format matches Python netsrv: `{ result, message, timestamp, msgId }`.
 /// `call-alarm-reply` may use `result: "warning"` when alarmsrv returns a non-2xx status.
@@ -234,6 +254,10 @@ pub struct NetConfig {
     /// alarmsrv base URL, used for reverse alarm-broadcast notifications.
     #[schema(example = "http://localhost:6007")]
     pub alarmsrv_url: String,
+
+    /// modsrv 服务地址，用于设备同步查询
+    #[schema(example = "http://localhost:6002")]
+    pub modsrv_url: String,
 }
 
 impl Default for NetConfig {
@@ -257,6 +281,7 @@ impl Default for NetConfig {
             subscribe_patterns: vec!["inst:*:M".to_string(), "inst:*:A".to_string()],
             exclude_patterns: vec![],
             alarmsrv_url: "http://localhost:6007".to_string(),
+            modsrv_url: "http://localhost:6002".to_string(),
         }
     }
 }

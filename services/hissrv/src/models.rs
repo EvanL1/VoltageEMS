@@ -29,6 +29,60 @@ pub struct HistoryRecord {
 
 // ── Query models ──────────────────────────────────────────────────────────────
 
+// ── Batch query models ────────────────────────────────────────────────────────
+
+/// One (redis_key, point_id) pair in a batch query request.
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+pub struct BatchSeriesItem {
+    pub redis_key: String,
+    pub point_id: String,
+}
+
+/// Request body for `POST /hisApi/data/batch-query`.
+#[derive(Debug, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "start_time": "2026-05-11T02:14:34.712Z",
+    "end_time":   "2026-05-11T08:14:34.712Z",
+    "series": [
+        { "redis_key": "inst:9:M",  "point_id": "101" },
+        { "redis_key": "inst:9:M",  "point_id": "102" },
+        { "redis_key": "inst:12:M", "point_id": "201" }
+    ],
+    "limit_per_series": 500
+}))]
+pub struct BatchQueryRequest {
+    pub start_time: String,
+    pub end_time: String,
+    /// 最多 20 条 series
+    pub series: Vec<BatchSeriesItem>,
+    /// 每条 series 最多返回的数据点数，默认 1000，最大 5000
+    pub limit_per_series: Option<i64>,
+}
+
+/// One data point in a batch query response.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SeriesPoint {
+    pub time: String,
+    pub value: Option<f64>,
+}
+
+/// Query result for one (redis_key, point_id) series.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SeriesResult {
+    pub redis_key: String,
+    pub point_id: String,
+    pub count: usize,
+    pub data: Vec<SeriesPoint>,
+}
+
+/// Response body for `POST /hisApi/data/batch-query`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BatchQueryResponse {
+    pub start_time: String,
+    pub end_time: String,
+    pub series: Vec<SeriesResult>,
+}
+
 /// Query string parameters for `GET /hisApi/data/query`.
 #[derive(Debug, Deserialize, IntoParams)]
 pub struct QueryRangeParams {
@@ -72,7 +126,172 @@ pub struct DataStats {
 
 // ── Dynamic service configuration ────────────────────────────────────────────
 
-/// Service runtime configuration (`/hisApi/config`).
+/// One entry in `subscribe_patterns`: a Redis glob pattern with an optional
+/// per-pattern collection-interval override.
+///
+/// Serialized as a JSON object `{"pattern": interval_secs_or_null}`, e.g.:
+/// ```json
+/// { "inst:*:M": null, "inst:4:M": 60 }
+/// ```
+/// `null`, `""`, or `0` all mean "use the global `collection_interval_secs`".
+#[derive(Debug, Clone)]
+pub struct PatternEntry {
+    pub pattern: String,
+    /// Per-pattern override in seconds.  `None` or `0` → use global default.
+    pub interval_secs: Option<u64>,
+}
+
+impl PatternEntry {
+    pub fn new(pattern: impl Into<String>) -> Self {
+        Self {
+            pattern: pattern.into(),
+            interval_secs: None,
+        }
+    }
+
+    /// Return the effective collection interval for this pattern.
+    pub fn effective_interval(&self, default: u64) -> u64 {
+        match self.interval_secs {
+            Some(n) if n > 0 => n,
+            _ => default,
+        }
+    }
+}
+
+/// Custom serde for `Vec<PatternEntry>` and plain-`Value` helpers used by
+/// `db_config.rs` (which cannot use serde's generic machinery directly).
+///
+/// **Deserialises** both the legacy array-of-strings format and the new
+/// object format:
+/// - Legacy: `["inst:*:M", "inst:*:A"]`
+/// - New:    `{"inst:*:M": null, "inst:4:M": 60}`
+///
+/// **Serialises** always as the object format.
+pub mod pattern_serde {
+    use super::PatternEntry;
+    use serde::{
+        Deserializer, Serializer,
+        de::{MapAccess, SeqAccess, Visitor},
+        ser::SerializeMap,
+    };
+
+    // ── serde `with` hooks (used by ServiceConfig) ────────────────────────────
+
+    pub fn serialize<S>(patterns: &[PatternEntry], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(patterns.len()))?;
+        for p in patterns {
+            map.serialize_entry(&p.pattern, &p.interval_secs)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<PatternEntry>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PatternVisitor;
+
+        impl<'de> Visitor<'de> for PatternVisitor {
+            type Value = Vec<PatternEntry>;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(
+                    "an array of strings or an object mapping pattern to interval (seconds)",
+                )
+            }
+
+            // Legacy: ["inst:*:M", "inst:*:A"]
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut result = Vec::new();
+                while let Some(pattern) = seq.next_element::<String>()? {
+                    result.push(PatternEntry {
+                        pattern,
+                        interval_secs: None,
+                    });
+                }
+                Ok(result)
+            }
+
+            // New: {"inst:*:M": null, "inst:4:M": 60}
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut result = Vec::new();
+                while let Some((pattern, raw)) =
+                    map.next_entry::<String, Option<serde_json::Value>>()?
+                {
+                    let interval_secs = raw.and_then(value_to_interval);
+                    result.push(PatternEntry {
+                        pattern,
+                        interval_secs,
+                    });
+                }
+                Ok(result)
+            }
+        }
+
+        deserializer.deserialize_any(PatternVisitor)
+    }
+
+    // ── Plain-Value helpers for db_config.rs ─────────────────────────────────
+
+    /// Parse a JSON string (either old array or new object format) into
+    /// `Vec<PatternEntry>`.  Returns defaults on parse failure.
+    pub fn from_json_str(s: &str) -> Vec<PatternEntry> {
+        let v: serde_json::Value = match serde_json::from_str(s) {
+            Ok(v) => v,
+            Err(_) => return vec![PatternEntry::new("inst:*:M"), PatternEntry::new("inst:*:A")],
+        };
+        from_value(v)
+    }
+
+    /// Serialize `Vec<PatternEntry>` to a JSON string (object format).
+    pub fn to_json_str(patterns: &[PatternEntry]) -> serde_json::Result<String> {
+        let map: serde_json::Map<String, serde_json::Value> = patterns
+            .iter()
+            .map(|p| {
+                let v = match p.interval_secs {
+                    Some(n) => serde_json::Value::Number(n.into()),
+                    None => serde_json::Value::Null,
+                };
+                (p.pattern.clone(), v)
+            })
+            .collect();
+        serde_json::to_string(&serde_json::Value::Object(map))
+    }
+
+    fn from_value(v: serde_json::Value) -> Vec<PatternEntry> {
+        match v {
+            serde_json::Value::Array(arr) => arr
+                .into_iter()
+                .filter_map(|item| item.as_str().map(PatternEntry::new))
+                .collect(),
+            serde_json::Value::Object(map) => map
+                .into_iter()
+                .map(|(pattern, val)| {
+                    let interval_secs = value_to_interval(val);
+                    PatternEntry {
+                        pattern,
+                        interval_secs,
+                    }
+                })
+                .collect(),
+            _ => vec![PatternEntry::new("inst:*:M"), PatternEntry::new("inst:*:A")],
+        }
+    }
+
+    /// Convert a JSON value to a positive `u64` interval, or `None`.
+    fn value_to_interval(v: serde_json::Value) -> Option<u64> {
+        match v {
+            serde_json::Value::Number(n) => n.as_u64().filter(|&x| x > 0),
+            serde_json::Value::String(s) => s.trim().parse::<u64>().ok().filter(|&x| x > 0),
+            _ => None,
+        }
+    }
+}
+
+/// 服务运行参数配置（`/hisApi/config`）
 ///
 /// Controls collection frequency, write batch size, query limits, and
 /// Redis subscription patterns. Storage backend connection parameters are
@@ -87,7 +306,7 @@ pub struct DataStats {
     "default_page_size": 100,
     "max_page_size": 1000,
     "max_time_range_days": 365,
-    "subscribe_patterns": ["inst:*:M", "inst:*:A"],
+    "subscribe_patterns": {"inst:*:M": null, "inst:4:M": 60},
     "exclude_patterns": []
 }))]
 pub struct ServiceConfig {
@@ -152,33 +371,26 @@ pub struct ServiceConfig {
 
     /// Redis key subscription patterns (**glob syntax**, same as Redis SCAN).
     ///
-    /// The collector only scans Redis keys matching at least one of these
-    /// patterns. Glob syntax:
-    /// - `*` — matches any sequence of characters
-    /// - `?` — matches any single character
+    /// 接受两种格式（向下兼容旧的数组格式）：
     ///
-    /// Example: `inst:*:M` matches telemetry for all channels;
-    /// `inst:*:A` matches status data.
-    #[schema(example = json!(["inst:*:M", "inst:*:A"]))]
-    pub subscribe_patterns: Vec<String>,
+    /// **旧格式**（数组）：所有 pattern 使用全局 `collection_interval_secs`
+    /// ```json
+    /// ["inst:*:M", "inst:*:A"]
+    /// ```
+    ///
+    /// **新格式**（对象）：可为每个 pattern 指定独立采集间隔（秒）；
+    /// `null`、`0` 或省略均表示使用全局默认值。
+    /// ```json
+    /// {"inst:*:M": null, "inst:4:M": 60}
+    /// ```
+    #[serde(with = "pattern_serde")]
+    #[schema(value_type = Object, example = json!({"inst:*:M": null, "inst:4:M": 60}))]
+    pub subscribe_patterns: Vec<PatternEntry>,
 
     /// Exclusion patterns (**regex syntax** — distinct from the glob syntax
     /// used in `subscribe_patterns`).
     ///
-    /// Any Redis key matching at least one regex is skipped. Leave empty to
-    /// collect all matched keys.
-    ///
-    /// Common regex constructs:
-    /// - `.`  — any single character
-    /// - `.*` — any sequence of characters (equivalent to glob `*`)
-    /// - `^`  — start of string; `$` — end of string
-    ///
-    /// Examples:
-    /// - `["^inst:0:"]` — exclude all data for channel 0
-    /// - `["^inst:0:.*", "^inst:1:.*"]` — exclude channels 0 and 1
-    ///
-    /// Note: glob syntax is **not** valid here — `inst:0:*` has incorrect
-    /// meaning as a regex.
+    /// 命中任意一条正则的 Redis Key 将被跳过，不采集。
     #[schema(example = json!([]))]
     pub exclude_patterns: Vec<String>,
 }
@@ -194,7 +406,7 @@ impl Default for ServiceConfig {
             default_page_size: 100,
             max_page_size: 1000,
             max_time_range_days: 365,
-            subscribe_patterns: vec!["inst:*:M".to_string(), "inst:*:A".to_string()],
+            subscribe_patterns: vec![PatternEntry::new("inst:*:M"), PatternEntry::new("inst:*:A")],
             exclude_patterns: vec![],
         }
     }

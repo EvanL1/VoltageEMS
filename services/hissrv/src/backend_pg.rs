@@ -9,7 +9,8 @@ use sqlx::PgPool;
 use tracing::{error, info};
 
 use crate::models::{
-    DataPoint, DataStats, HistoryRecord, QueryRangeParams, fmt_ts, parse_time, source_from_key,
+    DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesPoint, SeriesResult, fmt_ts,
+    parse_time, source_from_key,
 };
 use crate::storage::StorageBackend;
 
@@ -248,6 +249,77 @@ impl StorageBackend for PostgresBackend {
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows.into_iter().map(|(k,)| k).collect())
+    }
+
+    async fn query_batch(
+        &self,
+        series: &[(String, String)],
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        limit_per_series: i64,
+    ) -> anyhow::Result<Vec<SeriesResult>> {
+        if series.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let keys: Vec<&str> = series.iter().map(|(k, _)| k.as_str()).collect();
+        let pids: Vec<&str> = series.iter().map(|(_, p)| p.as_str()).collect();
+
+        // Single query with ROW_NUMBER() window function to enforce per-series limit.
+        // UNNEST($3, $4) produces a set of (redis_key, point_id) pairs that act as
+        // an IN-filter, avoiding N round-trips while still bounding result size.
+        let rows = sqlx::query_as::<_, (DateTime<Utc>, String, String, Option<f64>)>(
+            "SELECT time, redis_key, point_id, value
+             FROM (
+                 SELECT time, redis_key, point_id, value,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY redis_key, point_id
+                            ORDER BY time ASC
+                        ) AS rn
+                 FROM history
+                 WHERE time >= $1 AND time <= $2
+                   AND (redis_key, point_id) IN (
+                       SELECT * FROM UNNEST($3::TEXT[], $4::TEXT[])
+                   )
+             ) sub
+             WHERE rn <= $5
+             ORDER BY redis_key, point_id, time ASC",
+        )
+        .bind(start_time)
+        .bind(end_time)
+        .bind(&keys)
+        .bind(&pids)
+        .bind(limit_per_series)
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Group fetched rows by (redis_key, point_id), preserving the request order.
+        let mut map: std::collections::HashMap<(&str, &str), Vec<SeriesPoint>> =
+            std::collections::HashMap::new();
+        for (time, rk, pid, value) in &rows {
+            map.entry((rk.as_str(), pid.as_str()))
+                .or_default()
+                .push(SeriesPoint {
+                    time: fmt_ts(time),
+                    value: *value,
+                });
+        }
+
+        let results = series
+            .iter()
+            .map(|(k, p)| {
+                let data = map.remove(&(k.as_str(), p.as_str())).unwrap_or_default();
+                let count = data.len();
+                SeriesResult {
+                    redis_key: k.clone(),
+                    point_id: p.clone(),
+                    count,
+                    data,
+                }
+            })
+            .collect();
+
+        Ok(results)
     }
 
     async fn cleanup_old_data(&self, older_than_days: i32) -> anyhow::Result<u64> {

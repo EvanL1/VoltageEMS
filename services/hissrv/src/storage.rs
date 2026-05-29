@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
-use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams};
+use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesResult};
 
 /// Uniform interface for all historical-data storage backends.
 ///
@@ -39,6 +40,20 @@ pub trait StorageBackend: Send + Sync + 'static {
 
     /// Return distinct Redis keys that have data in storage.
     async fn list_channels(&self) -> anyhow::Result<Vec<String>>;
+
+    /// Batch range query: fetch multiple (redis_key, point_id) series in one call.
+    ///
+    /// Returns one `SeriesResult` per requested series (in the same order).
+    /// Each series contains at most `limit_per_series` data points ordered by
+    /// time ascending.  Series with no data are included with an empty `data`
+    /// vec so the caller always gets a result for every requested key/point.
+    async fn query_batch(
+        &self,
+        series: &[(String, String)],
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        limit_per_series: i64,
+    ) -> anyhow::Result<Vec<SeriesResult>>;
 
     /// Delete rows older than `older_than_days`. Returns deleted row count.
     async fn cleanup_old_data(&self, older_than_days: i32) -> anyhow::Result<u64>;

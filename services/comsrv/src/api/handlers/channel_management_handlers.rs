@@ -92,6 +92,23 @@ use voltage_rtdb::Rtdb;
                     }
                 })
             )),
+            ("SunSpec TCP" = (
+                summary = "SunSpec over Modbus TCP (transport alias)",
+                description = "Use Modbus register mappings in protocol_mappings, or POST /api/channels/{id}/provision for SunSpec auto-discovery",
+                value = json!({
+                    "name": "PV Inverter SunSpec",
+                    "description": "SunSpec inverter via Modbus TCP",
+                    "protocol": "sunspec_tcp",
+                    "enabled": true,
+                    "parameters": {
+                        "host": "192.168.1.100",
+                        "port": 502,
+                        "connect_timeout_ms": 3000,
+                        "read_timeout_ms": 3000,
+                        "poll_interval_ms": 1000
+                    }
+                })
+            )),
             ("DI/DO GPIO (sysfs)" = (
                 summary = "DI/DO GPIO - sysfs driver (legacy)",
                 description = "Digital I/O using legacy sysfs interface (/sys/class/gpio). Use global GPIO numbers.",
