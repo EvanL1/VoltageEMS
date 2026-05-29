@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "alarmsrv"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -130,7 +130,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "apigateway"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -815,7 +815,7 @@ dependencies = [
 
 [[package]]
 name = "common"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -861,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "comsrv"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1410,7 +1410,7 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
 name = "errors"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1764,7 +1764,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hissrv"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "modsrv"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "monarch"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2629,7 +2629,7 @@ dependencies = [
 
 [[package]]
 name = "netsrv"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3948,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "simulator"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4971,7 +4971,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voltage-calc"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -4988,7 +4988,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-config"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5004,7 +5004,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "schemars",
  "serde",
@@ -5013,7 +5013,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-infra"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bb8",
@@ -5032,7 +5032,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-model"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "schemars",
@@ -5048,7 +5048,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-routing"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5066,7 +5066,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-rtdb"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5086,7 +5086,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-rtdb-shm"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5110,7 +5110,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-rules"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5135,7 +5135,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-schema-macro"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "darling 0.20.11",
  "heck",
@@ -5147,7 +5147,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-shm"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "memmap2",
  "tempfile",
@@ -5157,7 +5157,7 @@ dependencies = [
 
 [[package]]
 name = "voltage-sim"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "rand 0.8.5",

@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-29 — Sub-millisecond Event Plane (亚毫秒事件平面)
+
+事件驱动 SHM 路径上线，并离网切换关键路径压到 ~1.5 ms（之前 Redis tick 模型 50–150 ms）。生产硬件（Cortex-A55 @ 1.4 GHz / EdgeLinux 22.04）端到端实测 P50 = 206 µs。
+
+### Added
+- **rtdb-shm**: **PointWatch** 事件驱动通知子系统 — 反向 M2C：comsrv `set_direct` → SubscriptionBitmap 检查 → 56 B PointWatchEvent → UDS → modsrv PointWatchListener → RuleScheduler 即时唤醒。彻底消除 100 ms tick 等待 + Redis HMGET 拉取。
+- **rtdb-shm**: `SubscriptionBitmap` (mmap 共享) + `PointWatchSignaler` + `PointWatchListener` + 独立 UDS socket `/tmp/voltage-point-watch.sock`。
+- **rules**: `PointWatchDispatcher` 订阅索引 `(channel_id, point_id) → Vec<rule_id>`，事件→规则路由。
+- **rules**: `RuleScheduler::reload_rules` 现在原子重建 SubscriptionBitmap + dispatcher 订阅索引——`POST /api/scheduler/reload` 规则改动立即生效，无需 service restart。
+- **routing**: `c2m_reverse` `FxHashMap` 反向索引（O(1) instance→channel 查找），消除 O(N²) routing scan bug。
+- **rtdb-shm**: `ShmHandle::rebuild_via_swap` 原子换页式 SHM 重建（修复 reconfigure_existing 的撕裂窗口）。
+- **rtdb-shm**: per-generation file 文件机制 + modsrv inode watcher，跨进程感知 SHM 重建。
+- **shm core**: 提取 `SlotReader` / `SlotWriter` / `SlotIo` trait — 纯基础设施层，与业务路由解耦。
+- **bench**: 控制链路 baseline 套件（`control_chain.rs`，含 SHM 热路径 + M2C UDS + Phase 0 HMGET vs SHM-direct）。
+- **bench**: PointWatch 端到端延迟 bench（`pointwatch_e2e.rs`，跨 Tokio runtime UDS round-trip）。
+- **docs**: `docs/plans/2026-05-28-point-watch-design.md`（946 行设计文档），`BASELINE.md` 含 Apple M3 Pro + ECU-1170 双硬件实测。
+
+### Changed
+- **rules**: OnChange Phase 0 `fetch_point_snapshot` 优先走 SHM 直读（取代 Redis HMGET）。N=1000 订阅点时延迟 5.25 ms → 1.44 ms（A55 实测，3.65× 加速）。
+- **rtdb-shm**: 移除 legacy `reconfigure_existing`、orphan 文件清理，统一走 atomic-swap rebuild。
+- **comsrv/modsrv**: PointWatch bootstrap 集成入 main.rs（`SubscriptionBitmap::create`/`open` + signaler/listener + bridge task）。
+- **modsrv**: `PointWatchDispatcher` 包成 `Arc<std::sync::Mutex<>>` 在 bridge task 与 scheduler reload 间共享（std mutex 选型理由：dispatch hot path 不 .await）。
+- **build**: cargo-hakari workspace-hack 重新生成（含 SHM core/ 重构后的依赖图）。
+
+### Fixed
+- **routing**: 反向 M2C 查找原本 O(routes) 线性扫描，导致 N=1000 时比 Redis HMGET 还慢 9×。加 `c2m_reverse` 索引后 O(1)。
+- **rules,modsrv**: PointWatchDispatcher mutex 改用 `unwrap_or_else(|p| p.into_inner())` 替代 `expect()`，满足 CI clippy panic-boundary check + 标准 poison-recovery 语义。
+- **comsrv**: `routes` 测试更新匹配 SHM-aware health + fail-closed C/A writes。
+- **ci**: monarch `export` 子命令语法修正。
+
+### Performance (Cortex-A55 @ 1.4 GHz, ECU-1170 production hardware)
+| 路径 | 旧 (Redis tick) | 新 (PointWatch event) | 加速 |
+|---|---|---|---|
+| OnChange Phase 0 (N=1000) | 5.25 ms | 1.44 ms | 3.65× |
+| Tick alignment wait | 0–100 ms | 0 | ∞ |
+| **端到端 P50** | **50–150 ms** | **206 µs** | **~500×** |
+| 端到端 P99 | (same) | 526 µs | — |
+| 端到端 P99.9 | (same) | 1.4–2.2 ms | — |
+
+→ 20 ms 并离网切换 SLA 中位数仅消耗 **1.03 % 预算**，P99 消耗 **2.63 %**。
+
+### Compatibility
+- **API**: `POST /api/scheduler/reload` 行为增强（兼容）——规则改动后 SubscriptionBitmap + PointWatchDispatcher 也会重建。
+- **SHM 协议**: PointWatchEvent (56 B 定长) 与 ShmNotification (48 B) 兼容并存，两个独立 UDS socket。
+- **依赖关系**: comsrv 必须先于 modsrv 启动以创建 SubscriptionBitmap mmap 文件。
+
+---
+
 ## [0.3.0] - 2026-04-21 — First Beta (首个内测版本)
 
 首个内测版本。功能完备度与稳定性已达到小范围试用标准，欢迎内部测试反馈。
