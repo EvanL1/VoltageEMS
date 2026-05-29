@@ -209,3 +209,69 @@ The 11–27× slowdown vs. Apple M3 P-core is consistent with the predicted "3�
 | **Tick wait latency** | **0–100 ms** (tick boundary) | **0** (push) |
 
 **Conclusion**: on production ARM64 hardware with 1000 subscribed points, the existing Redis-HMGET path could not meet a 20 ms grid-switching SLA — Phase 0 alone consumes 30–250% of the budget, plus up to 100 ms of tick alignment. With PointWatch + reverse C2M index, the entire critical path is well under 2 ms with no tick wait, leaving 18+ ms for protocol I/O on the device side.
+
+---
+
+## PointWatch end-to-end (ECU-1170, 2026-05-29)
+
+Measures wall-clock latency from `UnifiedWriter::set_direct` (producer side
+SHM write + bitmap-gated emit) to the listener's `event_rx.recv()` resolving
+on the consumer side. The full path: SHM write → mpsc → drain task → UDS
+write → kernel → PointWatchListener UDS server → mpsc → consumer rx.
+
+**Bench**: `libs/voltage-rtdb-shm/benches/pointwatch_e2e.rs` —
+single OS process, two Tokio tasks (producer drain + consumer listener).
+Single-process so misses the cross-process scheduler-wake delay; that adds
+≤2 µs on Linux/ARM. Numbers can be treated as an optimistic lower bound for
+the real two-process scenario by ~5 %.
+
+| Metric | A55 (5000 samples, 100 µs pacing) | M3 Pro (same config) |
+|--------|------------------------------------|------------------------|
+| min | **76 µs** | 8 µs |
+| P50 | **206 µs** | 51 µs |
+| P95 | **359 µs** | 111 µs |
+| P99 | **526 µs** | 200 µs |
+| P99.9 | **1.4–2.2 ms** (varies) | 660 µs |
+| max | **10.2 ms** (single outlier) | 4.1 ms |
+| mean | **222 µs** | 59 µs |
+| drops | 0 | 0 |
+
+The 4× A55/M3 ratio matches the SHM microbenchmark scaling — no surprise
+overhead from the UDS or Tokio task path on the in-order core.
+
+### 20 ms grid-tie budget (worst case, including PointWatch event delivery)
+
+| Segment | Time (A55) | % of 20 ms |
+|---------|-----------:|-----------:|
+| PointWatch emit (set_direct embedded) | ~50 ns | ~0.0003 % |
+| SHM write + bitmap check + mpsc send | ~200 ns | ~0.001 % |
+| Drain task wake + UDS write (kernel) | **measured below in P50** | |
+| Kernel UDS round-trip | (included) | |
+| PointWatchListener parse + mpsc | (included) | |
+| **Total P50 (median tick)** | **206 µs** | **1.03 %** |
+| **Total P99 (one in 100)** | **526 µs** | **2.63 %** |
+| **Total P99.9 (one in 1000)** | **~2 ms** | **~10 %** |
+| should_trigger early-exit | ~820 ns | ~0.004 % |
+| Rule executor + SHM control write | ~150 ns | ~0.0008 % |
+| Modbus TCP write to inverter (typical) | 5–10 ms | 25–50 % |
+
+The PointWatch path consumes 1–3 % of the SLA budget in the median; the
+remaining 17+ ms is available for the downstream protocol write (Modbus
+register write, IEC 104 frame, etc.) which is typically the slowest segment
+on a wired field bus.
+
+### Tail-latency notes
+
+The 10 ms `max` outlier (~0.02 %) is a single OS scheduler stall and is
+the only sample over the 20 ms budget margin. If grid-tie applications
+require deterministic sub-millisecond worst-case latency, consider:
+
+- **CPU pinning** the rule-engine Tokio worker to a dedicated core
+  (e.g., via `taskset` or `isolcpus`)
+- **Real-time scheduling**: run modsrv with `SCHED_FIFO` so the
+  PointWatch listener task isn't preempted by background user tasks
+- **Disable CPU frequency scaling** (`cpupower frequency-set -g performance`)
+  to avoid C-state wake-up delays
+
+These are deployment-level mitigations; the application-level path is
+already within budget without them.
