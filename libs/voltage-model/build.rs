@@ -55,10 +55,10 @@ fn generate_sunspec_models(
     manifest_dir: &str,
     out_dir: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let sunspec_dir = Path::new(manifest_dir).join("src/sunspec-json");
+    let sunspec_dir = Path::new(manifest_dir).join("src/sunspec/models/json");
     let dest = Path::new(out_dir).join("sunspec_models.rs");
 
-    println!("cargo:rerun-if-changed=src/sunspec-json");
+    println!("cargo:rerun-if-changed=src/sunspec/models/json");
 
     let mut entries: Vec<(u16, String)> = fs::read_dir(&sunspec_dir)?
         .filter_map(|e| e.ok())
