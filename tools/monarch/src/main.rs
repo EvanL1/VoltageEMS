@@ -3,9 +3,11 @@
 //! A powerful management tool that combines configuration synchronization,
 //! service management, and operational control for all VoltageEMS services.
 
+mod alarms;
 mod channels;
 mod core;
 mod doctor;
+mod history;
 mod logs;
 mod logs_tui;
 mod models;
@@ -50,16 +52,20 @@ Service Operations:
   logs        Log level control and log file viewer
 
 Examples:
-  monarch sync                          # Sync all configurations
-  monarch sync --dry-run                # Validate without syncing
-  monarch channels list                 # List all channels
-  monarch models products list          # List products
-  monarch rules enable R001             # Enable a rule
-  monarch services status               # Check service status
-  monarch logs level all debug          # Switch all services to debug mode
-  monarch logs list                     # List today's log files
-  monarch logs view comsrv -n 100       # View last 100 lines of comsrv log
-  monarch logs tail modsrv --grep ERROR # Follow modsrv log, filter ERRORs
+  monarch sync                               # Sync all configurations
+  monarch sync --dry-run                     # Validate without syncing
+  monarch channels list                      # List all channels
+  monarch models products list               # List products
+  monarch rules enable R001                  # Enable a rule
+  monarch alarms list                        # List active alerts
+  monarch alarms events --level 3            # High-level alert history
+  monarch history latest inst:9:M 101        # Latest value of a point
+  monarch history query inst:9:M 101 --from 2026-05-01T00:00:00Z
+  monarch services status                    # Check service status
+  monarch logs level all debug               # Switch all services to debug mode
+  monarch logs list                          # List today's log files
+  monarch logs view comsrv -n 100            # View last 100 lines of comsrv log
+  monarch logs tail modsrv --grep ERROR      # Follow modsrv log, filter ERRORs
 
 Use 'monarch <command> --help' for more information on a specific command.")]
 #[command(version)]
@@ -209,6 +215,20 @@ enum Commands {
     Templates {
         #[command(subcommand)]
         command: templates::TemplateCommands,
+    },
+
+    /// Query and inspect alarm rules and active alerts
+    #[command(about = "Query alarm rules, active alerts, events, and statistics")]
+    Alarms {
+        #[command(subcommand)]
+        command: alarms::AlarmCommands,
+    },
+
+    /// Query historical data from hissrv
+    #[command(about = "Query historical sensor data (latest values, time-range queries)")]
+    History {
+        #[command(subcommand)]
+        command: history::HistoryCommands,
     },
 
     /// Interactive TUI dashboard for real-time monitoring
@@ -435,6 +455,24 @@ async fn run(cli: Cli) -> Result<()> {
                 host,
             );
             templates::handle_command(command, &url, json).await?;
+        },
+        Commands::Alarms { command } => {
+            let url = service_url(
+                "VOLTAGE_ALARMSRV_URL",
+                "http",
+                voltage_model::service_ports::ALARMSRV_PORT,
+                host,
+            );
+            alarms::handle_command(command, &url, json).await?;
+        },
+        Commands::History { command } => {
+            let url = service_url(
+                "VOLTAGE_HISSRV_URL",
+                "http",
+                voltage_model::service_ports::HISSRV_PORT,
+                host,
+            );
+            history::handle_command(command, &url, json).await?;
         },
         Commands::Top => {
             let modsrv_url = service_url(

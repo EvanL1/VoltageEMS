@@ -5,7 +5,7 @@ use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::Json,
-    routing::get,
+    routing::{get, post},
 };
 use serde_json::{Value, json};
 use tracing::{error, info};
@@ -16,8 +16,9 @@ use utoipa_swagger_ui::{Config, SwaggerUi};
 use crate::backend_null::NullBackend;
 use crate::db_config;
 use crate::models::{
-    DataStats, HistoryRecord, LatestParams, QueryRangeParams, QueryResult, ServiceConfig,
-    StorageConfigRequest, StorageSettings, StorageTestRequest,
+    BatchQueryRequest, BatchQueryResponse, DataStats, HistoryRecord, LatestParams,
+    QueryRangeParams, QueryResult, SeriesResult, ServiceConfig, StorageConfigRequest,
+    StorageSettings, StorageTestRequest,
 };
 use crate::state::AppState;
 use crate::storage::StorageBackend;
@@ -75,6 +76,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/hisApi/data/query", get(query_range))
         .route("/hisApi/data/latest", get(query_latest))
         .route("/hisApi/data/range", get(data_range))
+        .route("/hisApi/data/batch-query", post(batch_query))
         // Metadata
         .route("/hisApi/channels", get(list_channels))
         .route("/hisApi/metrics", get(metrics))
@@ -118,6 +120,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         query_range,
         query_latest,
         data_range,
+        batch_query,
         list_channels,
         metrics,
         get_config,
@@ -134,6 +137,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ServiceConfig,
         StorageConfigRequest,
         StorageTestRequest,
+        BatchQueryRequest,
+        BatchQueryResponse,
+        SeriesResult,
     )),
     tags(
         (name = "Data",    description = "Historical data queries"),
@@ -399,12 +405,107 @@ async fn query_latest(
     }
 }
 
-/// Overall time span and record count of stored historical data.
+/// Batch range query – fetch multiple (redis_key, point_id) series in one request.
 ///
-/// Accepts no filter parameters. Returns global metrics for the entire
-/// storage backend: earliest record timestamp, latest record timestamp,
-/// total row count, and unique channel count. Use this for an at-a-glance
-/// overview of how much history is stored and to estimate query scan cost.
+/// Returns one result entry per requested series (in the same order), even if
+/// a series has no data in the given range.  Each series contains at most
+/// `limit_per_series` data points ordered by time ascending.
+///
+/// Limits:
+/// - Maximum 20 series per request
+/// - `limit_per_series` default 1000, max 5000
+#[utoipa::path(
+    post,
+    path = "/hisApi/data/batch-query",
+    tag = "Data",
+    request_body = BatchQueryRequest,
+    responses(
+        (status = 200, description = "批量历史数据", body = BatchQueryResponse),
+        (status = 400, description = "请求参数错误"),
+        (status = 500, description = "查询失败"),
+    )
+)]
+async fn batch_query(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<BatchQueryRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    const MAX_SERIES: usize = 20;
+    const DEFAULT_LIMIT: i64 = 1000;
+    const MAX_LIMIT: i64 = 5000;
+
+    if req.series.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "message": "series 列表不能为空"})),
+        ));
+    }
+    if req.series.len() > MAX_SERIES {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "success": false,
+                "message": format!("series 数量不能超过 {} 条，当前 {} 条", MAX_SERIES, req.series.len())
+            })),
+        ));
+    }
+
+    let start_time = crate::models::parse_time(&req.start_time).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "message": format!("start_time 格式错误: {}", e)})),
+        )
+    })?;
+    let end_time = crate::models::parse_time(&req.end_time).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "message": format!("end_time 格式错误: {}", e)})),
+        )
+    })?;
+    if end_time <= start_time {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "message": "end_time 必须晚于 start_time"})),
+        ));
+    }
+
+    let limit = req
+        .limit_per_series
+        .unwrap_or(DEFAULT_LIMIT)
+        .clamp(1, MAX_LIMIT);
+
+    let pairs: Vec<(String, String)> = req
+        .series
+        .iter()
+        .map(|s| (s.redis_key.clone(), s.point_id.clone()))
+        .collect();
+
+    let backend = state.storage.read().await.clone();
+    match backend
+        .query_batch(&pairs, start_time, end_time, limit)
+        .await
+    {
+        Ok(series) => {
+            let resp = BatchQueryResponse {
+                start_time: req.start_time,
+                end_time: req.end_time,
+                series,
+            };
+            Ok(Json(json!({
+                "success": true,
+                "message": "OK",
+                "data": resp,
+            })))
+        },
+        Err(e) => {
+            error!("batch_query error: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "message": e.to_string()})),
+            ))
+        },
+    }
+}
+
 #[utoipa::path(get, path = "/hisApi/data/range", tag = "Data",
     responses(
         (status = 200, description = "Data time range and aggregate statistics", body = DataStats),

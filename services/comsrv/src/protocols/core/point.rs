@@ -309,6 +309,18 @@ pub struct Iec61850Address {
     pub domain: String,
     /// MMS item ID with functional constraint, e.g. "GGIO1$MX$AnIn1$mag$f"
     pub item: String,
+    /// IEC 61850 control model (only relevant for Control/Adjustment points):
+    ///   1 = direct-with-normal-security  (default)
+    ///   2 = SBO-with-normal-security
+    ///   3 = direct-with-enhanced-security
+    ///   4 = SBO-with-enhanced-security (SBOw)
+    #[serde(default = "default_ctrl_model")]
+    pub ctrl_model: u8,
+}
+
+#[cfg(feature = "iec61850")]
+fn default_ctrl_model() -> u8 {
+    1
 }
 
 #[cfg(feature = "iec61850")]
@@ -317,6 +329,7 @@ impl Iec61850Address {
         Self {
             domain: domain.into(),
             item: item.into(),
+            ctrl_model: 1,
         }
     }
 

@@ -22,7 +22,7 @@ use crate::api::{
     handlers::{
         channel_handlers::*, channel_management_handlers::*, control_handlers::*,
         mapping_handlers::*, network_handlers::*, point_handlers::*, protocol_handlers::*,
-        template_handlers::*,
+        provision_handlers::*, template_handlers::*,
     },
 };
 use common::admin_api::{get_log_level, list_log_files, set_log_level, view_log_file};
@@ -138,6 +138,7 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
         crate::api::handlers::channel_management_handlers::create_channel_handler,
         crate::api::handlers::channel_management_handlers::update_channel_handler,
         crate::api::handlers::channel_management_handlers::set_channel_enabled_handler,
+        crate::api::handlers::provision_handlers::provision_channel_handler,
         crate::api::handlers::channel_management_handlers::delete_channel_handler,
         crate::api::handlers::channel_management_handlers::reload_configuration_handler,
         crate::api::handlers::channel_management_handlers::reload_routing_handler,
@@ -218,6 +219,10 @@ pub type ProductionAppState = AppState<voltage_rtdb::RedisRtdb>;
             crate::dto::UpdateTemplateReq,
             crate::dto::ApplyTemplateReq,
             crate::dto::TemplateListQuery,
+            // Provision schemas
+            crate::api::handlers::provision_handlers::ProvisionRequest,
+            crate::api::handlers::provision_handlers::ProvisionResult,
+            crate::api::handlers::provision_handlers::DiscoveredModelInfo,
             // Admin schemas
             common::admin_api::SetLogLevelRequest,
             common::admin_api::LogLevelResponse,
@@ -318,6 +323,7 @@ pub fn create_api_routes_generic<R: Rtdb>(
                 .delete(delete_adjustment_point_handler))
         // Batch point operations endpoint (create/update/delete in single request)
         .route("/api/channels/{channel_id}/points/batch", post(batch_point_operations_handler))
+        .route("/api/channels/{channel_id}/provision", post(provision_channel_handler))
         // Unified write endpoint for all point types (T/S/C/A)
         .route("/api/channels/{channel_id}/write", post(write_channel_point))
         .route(

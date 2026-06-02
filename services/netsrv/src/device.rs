@@ -86,6 +86,10 @@ pub struct Topics {
     pub call_alarm: String,
     pub call_alarm_reply: String,
     pub alarm: String,
+    /// Incoming device-list sync request from the cloud.
+    pub inst_sync: String,
+    /// Reply topic for the device-list sync response.
+    pub inst_sync_reply: String,
 }
 
 impl Topics {
@@ -107,6 +111,8 @@ impl Topics {
             call_alarm: f("call-alarm/{productSN}/{deviceSN}"),
             call_alarm_reply: f("call-alarm-reply/{productSN}/{deviceSN}"),
             alarm: f("alarm/{productSN}/{deviceSN}"),
+            inst_sync: f("inst-sync/{productSN}/{deviceSN}"),
+            inst_sync_reply: f("inst-sync-reply/{productSN}/{deviceSN}"),
         }
     }
 
@@ -117,6 +123,7 @@ impl Topics {
             (self.write.as_str(), rumqttc::QoS::AtLeastOnce),
             (self.call_data.as_str(), rumqttc::QoS::AtLeastOnce),
             (self.call_alarm.as_str(), rumqttc::QoS::AtLeastOnce),
+            (self.inst_sync.as_str(), rumqttc::QoS::AtLeastOnce),
         ]
     }
 }

@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 use std::borrow::Cow;
 use tracing::info;
 
-use crate::models::{ServiceConfig, StorageSettings};
+use crate::models::{ServiceConfig, StorageSettings, pattern_serde};
 
 const DEFAULTS: &[(&str, &str, &str)] = &[
     // ── Operational ──────────────────────────────────────────────────────────
@@ -131,9 +131,10 @@ pub async fn load_config(pool: &SqlitePool) -> anyhow::Result<ServiceConfig> {
     let map = load_all_kv(pool).await?;
     let get = |k: &str, d: &str| map.get(k).cloned().unwrap_or_else(|| d.to_string());
 
-    let subscribe_patterns: Vec<String> =
-        serde_json::from_str(&get("subscribe_patterns", r#"["inst:*:M","inst:*:A"]"#))
-            .unwrap_or_else(|_| vec!["inst:*:M".to_string(), "inst:*:A".to_string()]);
+    let subscribe_patterns = crate::models::pattern_serde::from_json_str(&get(
+        "subscribe_patterns",
+        r#"["inst:*:M","inst:*:A"]"#,
+    ));
     let exclude_patterns: Vec<String> =
         serde_json::from_str(&get("exclude_patterns", "[]")).unwrap_or_default();
 
@@ -186,7 +187,7 @@ pub async fn save_config(pool: &SqlitePool, cfg: &ServiceConfig) -> anyhow::Resu
         ),
         (
             "subscribe_patterns",
-            Cow::Owned(serde_json::to_string(&cfg.subscribe_patterns)?),
+            Cow::Owned(pattern_serde::to_json_str(&cfg.subscribe_patterns)?),
         ),
         (
             "exclude_patterns",

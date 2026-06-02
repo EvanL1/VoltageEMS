@@ -6,7 +6,9 @@
 /// backend is never called.
 use async_trait::async_trait;
 
-use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams};
+use chrono::{DateTime, Utc};
+
+use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesResult};
 use crate::storage::StorageBackend;
 
 pub struct NullBackend;
@@ -51,6 +53,16 @@ impl StorageBackend for NullBackend {
 
     async fn list_channels(&self) -> anyhow::Result<Vec<String>> {
         anyhow::bail!("Storage backend not configured")
+    }
+
+    async fn query_batch(
+        &self,
+        _series: &[(String, String)],
+        _start_time: DateTime<Utc>,
+        _end_time: DateTime<Utc>,
+        _limit_per_series: i64,
+    ) -> anyhow::Result<Vec<SeriesResult>> {
+        anyhow::bail!("存储后端未配置")
     }
 
     async fn cleanup_old_data(&self, _older_than_days: i32) -> anyhow::Result<u64> {

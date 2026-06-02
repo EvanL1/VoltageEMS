@@ -94,7 +94,7 @@ redis = { workspace = true }
 hex = "0.4"
 
 [features]
-default = ["modbus", "gpio", "voltage_485", "openapi", "iec61850"]
+default = ["modbus", "gpio", "voltage_485", "openapi", "iec61850", "can"]
 modbus = ["dep:voltage_modbus"]
 iec104 = ["dep:voltage_iec104"]
 opcua = ["dep:async-opcua"]

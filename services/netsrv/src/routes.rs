@@ -16,7 +16,7 @@ use utoipa_swagger_ui::{Config, SwaggerUi};
 
 use crate::db_config;
 use crate::models::{AlarmBroadcastRequest, CertUploadForm, NetConfig, SystemMetrics};
-use crate::mqtt::publish_json;
+use crate::mqtt::{do_inst_sync, publish_json};
 use crate::state::AppState;
 
 // ============================================================================
@@ -40,6 +40,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/netApi/certificate/upload", post(cert_upload))
         .route("/netApi/certificate/info", get(cert_info))
         .route("/netApi/certificate/{cert_type}", delete(cert_delete))
+        // Device sync
+        .route("/netApi/inst-sync", post(inst_sync_push))
         // Admin API (shared endpoints from common lib)
         .route("/api/admin/logs/level", get(common::admin_api::get_log_level).post(common::admin_api::set_log_level))
         .route("/api/admin/logs/files", get(common::admin_api::list_log_files))
@@ -73,6 +75,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         health,
         alarm_broadcast,
         alarm_config,
+        inst_sync_push,
         mqtt_get_config,
         mqtt_update_config,
         mqtt_status,
@@ -567,4 +570,39 @@ async fn cert_delete(
             Json(json!({"success": false, "message": e.to_string()})),
         )),
     }
+}
+
+// ============================================================================
+// Device sync
+// ============================================================================
+
+/// 主动向平台发送设备列表同步消息（inst-sync-reply）。
+///
+/// msgId 自动设为当前毫秒级时间戳，数据从 modsrv 实时拉取。
+#[utoipa::path(post, path = "/netApi/inst-sync", tag = "MQTT",
+    responses(
+        (status = 200, description = "已发布 inst-sync-reply"),
+        (status = 503, description = "MQTT 未连接或 modsrv 不可达"),
+    ))]
+async fn inst_sync_push(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let msg_id = chrono::Utc::now().timestamp_millis().to_string();
+
+    do_inst_sync(Arc::clone(&state), Some(msg_id.clone()))
+        .await
+        .map(|_| {
+            Json(json!({
+                "success": true,
+                "message": "inst-sync-reply published",
+                "data": { "msgId": msg_id }
+            }))
+        })
+        .map_err(|e| {
+            error!("inst-sync-push failed: {}", e);
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"success": false, "message": e.to_string()})),
+            )
+        })
 }

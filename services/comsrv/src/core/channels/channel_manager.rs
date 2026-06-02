@@ -245,13 +245,10 @@ impl<R: Rtdb + 'static> ChannelManager<R> {
             }
         }
 
-        // 4. Shutdown store to flush WriteBuffer to Redis
+        // 3. Shutdown store to flush WriteBuffer to Redis
         entry.store.shutdown().await;
 
-        // 5. Disconnect channel
-        let _ = entry.disconnect().await;
-
-        // 6. Dynamic Slot Deallocation
+        // 4. Dynamic Slot Deallocation
         if let (Some(index), Some(bitmap)) = (&self.dynamic_channel_index, &self.slot_bitmap) {
             let mut bitmap_guard = bitmap.write();
             match index.remove_channel(channel_id, &mut bitmap_guard) {

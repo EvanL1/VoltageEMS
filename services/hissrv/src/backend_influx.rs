@@ -11,7 +11,9 @@
 /// 3. Wire the backend in `main.rs` when `STORAGE_BACKEND=influxdb`.
 use async_trait::async_trait;
 
-use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams};
+use chrono::{DateTime, Utc};
+
+use crate::models::{DataPoint, DataStats, HistoryRecord, QueryRangeParams, SeriesResult};
 use crate::storage::StorageBackend;
 
 pub struct InfluxDbBackend;
@@ -53,6 +55,16 @@ impl StorageBackend for InfluxDbBackend {
     }
 
     async fn list_channels(&self) -> anyhow::Result<Vec<String>> {
+        anyhow::bail!("InfluxDB backend is not yet implemented")
+    }
+
+    async fn query_batch(
+        &self,
+        _series: &[(String, String)],
+        _start_time: DateTime<Utc>,
+        _end_time: DateTime<Utc>,
+        _limit_per_series: i64,
+    ) -> anyhow::Result<Vec<SeriesResult>> {
         anyhow::bail!("InfluxDB backend is not yet implemented")
     }
 

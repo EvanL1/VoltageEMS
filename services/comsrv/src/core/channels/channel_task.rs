@@ -177,9 +177,13 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
                     info!("Ch{} shutdown received, exiting loop", ctx.channel_id);
                     break;
                 }
-                handle_protocol_command(
+                if handle_protocol_command(
                     cmd, &mut protocol, &ctx.log_handler, ctx.channel_id,
-                ).await;
+                )
+                .await
+                {
+                    break;
+                }
             }
 
             // Priority 2: Business commands (control/adjustment from M2C SHM)
@@ -204,6 +208,9 @@ pub(super) async fn run_unified_channel_task<R: Rtdb>(
         }
     }
 
+    // Stop protocol background tasks (e.g. CAN receive/read loops) on any exit path.
+    let _ = protocol.disconnect().await;
+
     // Mark as disconnected on shutdown
     ctx.cached_state.store(
         crate::core::channels::types::ConnectionState::Disconnected.as_u8(),
@@ -227,12 +234,14 @@ enum TickAction {
 }
 
 /// Handle a protocol command from the command channel.
+///
+/// Returns `true` when the unified task should exit (Shutdown received).
 async fn handle_protocol_command(
     cmd: ProtocolCommand,
     protocol: &mut Box<dyn ChannelRuntime>,
     log_handler: &Arc<dyn ChannelLogHandler>,
     channel_id: u32,
-) {
+) -> bool {
     match cmd {
         ProtocolCommand::WriteControl {
             internal_id,
@@ -280,8 +289,11 @@ async fn handle_protocol_command(
             // wasn't broken correctly.
             debug_assert!(false, "Shutdown should be handled in select! arm");
             info!("Ch{} unexpected shutdown in handler", channel_id);
+            let _ = protocol.disconnect().await;
+            return true;
         },
     }
+    false
 }
 
 /// Handle a business command (control/adjustment from M2C SHM).

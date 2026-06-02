@@ -9,9 +9,20 @@ use regex::Regex;
 use tracing::{debug, warn};
 use voltage_rtdb::Rtdb;
 
-use crate::models::{DataPoint, ServiceConfig};
+use crate::models::{DataPoint, PatternEntry, ServiceConfig};
 
+#[allow(dead_code)]
 pub async fn collect<R: Rtdb>(rtdb: &R, cfg: &ServiceConfig) -> Vec<DataPoint> {
+    collect_patterns(rtdb, cfg, &cfg.subscribe_patterns).await
+}
+
+/// Collect only the supplied subset of patterns (used by the per-pattern
+/// scheduler to avoid collecting patterns that are not yet due).
+pub async fn collect_patterns<R: Rtdb>(
+    rtdb: &R,
+    cfg: &ServiceConfig,
+    patterns: &[PatternEntry],
+) -> Vec<DataPoint> {
     let exclude_regexes: Vec<Regex> = cfg
         .exclude_patterns
         .iter()
@@ -24,7 +35,8 @@ pub async fn collect<R: Rtdb>(rtdb: &R, cfg: &ServiceConfig) -> Vec<DataPoint> {
 
     let mut all_points = Vec::new();
 
-    for pattern in &cfg.subscribe_patterns {
+    for entry in patterns {
+        let pattern = &entry.pattern;
         let keys = match rtdb.scan_match(pattern).await {
             Ok(k) => k,
             Err(e) => {
@@ -159,7 +171,7 @@ mod tests {
             .unwrap();
 
         let cfg = ServiceConfig {
-            subscribe_patterns: vec!["inst:*:M".to_string()],
+            subscribe_patterns: vec![crate::models::PatternEntry::new("inst:*:M")],
             exclude_patterns: vec![],
             ..ServiceConfig::default()
         };

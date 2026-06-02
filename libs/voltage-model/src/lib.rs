@@ -14,6 +14,7 @@ pub mod error;
 pub mod keyspace;
 pub mod product_lib;
 pub mod service_ports;
+pub mod sunspec;
 pub mod types;
 pub mod validation;
 

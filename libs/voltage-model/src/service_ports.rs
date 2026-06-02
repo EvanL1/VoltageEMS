@@ -16,10 +16,10 @@ pub const HISSRV_PORT: u16 = 6004;
 pub const APIGATEWAY_PORT: u16 = 6005;
 
 /// Default port for alarmsrv (alarm service)
-pub const ALARMSRV_PORT: u16 = 6006;
+pub const ALARMSRV_PORT: u16 = 6007;
 
 /// Default port for netsrv (network service)
-pub const NETSRV_PORT: u16 = 6007;
+pub const NETSRV_PORT: u16 = 6006;
 
 /// Default port for voltage-apps (frontend)
 pub const APPS_PORT: u16 = 8080;

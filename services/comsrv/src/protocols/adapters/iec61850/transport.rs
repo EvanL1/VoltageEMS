@@ -209,11 +209,18 @@ pub fn unwrap_data_pdu(cotp_payload: &[u8]) -> Option<&[u8]> {
 /// TCP stream wrapped with TPKT/COTP/Session/Presentation framing.
 pub struct Framer {
     stream: TcpStream,
+    /// Unconfirmed MMS PDUs (tag 0xA3, i.e. reports) received out-of-band
+    /// while waiting for a confirmed response.  Callers drain this with
+    /// [`Framer::take_pending_reports`] or [`Framer::drain_socket`].
+    pending_reports: Vec<Vec<u8>>,
 }
 
 impl Framer {
     pub fn new(stream: TcpStream) -> Self {
-        Self { stream }
+        Self {
+            stream,
+            pending_reports: Vec::new(),
+        }
     }
 
     /// Send a COTP Connection Request and wait for the Connection Confirm.
@@ -265,7 +272,56 @@ impl Framer {
     }
 
     /// Receive one TPKT and return the raw MMS PDU (unwrapped from all framing layers).
+    ///
+    /// Unconfirmed PDUs (tag `0xA3`, i.e. IEC 61850 Reports) are **silently**
+    /// buffered into `self.pending_reports` and the loop continues until a
+    /// confirmed response (or error) is returned.  This means callers never
+    /// see spurious report PDUs mixed in with their expected responses.
     pub async fn recv_mms(&mut self) -> Result<Vec<u8>> {
+        loop {
+            let pdu = self.recv_mms_raw().await?;
+            if pdu.first() == Some(&0xA3) {
+                self.pending_reports.push(pdu);
+            } else {
+                return Ok(pdu);
+            }
+        }
+    }
+
+    /// Return all buffered unconfirmed PDUs and clear the buffer.
+    pub fn take_pending_reports(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.pending_reports)
+    }
+
+    /// Actively drain any additional unconfirmed PDUs already sitting in the
+    /// TCP receive buffer.  Uses a very short per-read timeout so it returns
+    /// quickly when no more data is waiting.
+    ///
+    /// Should be called at the *start* of a poll cycle to pick up reports that
+    /// arrived while the channel was idle between cycles.
+    pub async fn drain_socket(&mut self) -> Vec<Vec<u8>> {
+        // First return everything already in the pending buffer.
+        let mut out = std::mem::take(&mut self.pending_reports);
+
+        // Then try to read more frames from the socket with a very short
+        // timeout.  We stop as soon as the socket has no data ready.
+        // This is safe because recv_mms_raw uses read_exact: if it starts
+        // reading a TPKT header we will finish reading the full frame before
+        // the timeout fires (the data is already in the OS buffer).
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_millis(20), self.recv_mms_raw())
+                .await
+            {
+                Ok(Ok(pdu)) if pdu.first() == Some(&0xA3) => out.push(pdu),
+                Ok(Ok(_)) => break, // unexpected confirmed PDU between cycles, discard
+                _ => break,         // timeout or IO error → no more data
+            }
+        }
+        out
+    }
+
+    /// Low-level: receive exactly one TPKT and unwrap it to a raw MMS PDU.
+    async fn recv_mms_raw(&mut self) -> Result<Vec<u8>> {
         let cotp_payload = self.recv_tpkt().await?;
         let mms = unwrap_data_pdu(&cotp_payload).ok_or_else(|| {
             GatewayError::Protocol("IEC 61850: failed to unwrap MMS PDU from data frame".into())

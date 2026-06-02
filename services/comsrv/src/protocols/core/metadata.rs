@@ -172,6 +172,24 @@ fn build_registry() -> ProtocolRegistry {
             display_name: "Modbus TCP",
             description: "Industrial Modbus TCP protocol",
             protocol_type: "modbus_tcp",
+            drivers: vec![modbus_meta.clone()],
+            supports_points: true,
+        });
+        registry.register(ProtocolMetadata {
+            name: "sunspec_tcp",
+            display_name: "SunSpec TCP",
+            description:
+                "SunSpec information model over Modbus TCP (same transport and point mappings as Modbus)",
+            protocol_type: "sunspec_tcp",
+            drivers: vec![modbus_meta.clone()],
+            supports_points: true,
+        });
+        registry.register(ProtocolMetadata {
+            name: "sunspec_rtu",
+            display_name: "SunSpec RTU",
+            description:
+                "SunSpec information model over Modbus RTU (same transport and point mappings as Modbus)",
+            protocol_type: "sunspec_rtu",
             drivers: vec![modbus_meta],
             supports_points: true,
         });

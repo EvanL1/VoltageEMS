@@ -1,3 +1,6 @@
 [submodule "libs/voltage-model/src/products"]
 	path = libs/voltage-model/src/products
 	url = https://github.com/EvanL1/voltage-product-lib
+[submodule "libs/voltage-model/src/sunspec/models"]
+	path = libs/voltage-model/src/sunspec/models
+	url = https://github.com/sunspec/models
