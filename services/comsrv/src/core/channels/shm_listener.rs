@@ -93,7 +93,24 @@ impl ShmCommandListener {
 
         let listener = match UnixListener::bind(&self.uds_path) {
             Ok(l) => {
-                info!("ShmCommandListener started on {}", self.uds_path);
+                // This socket accepts device control commands (M2C). Restrict
+                // to owner-only: without this the mode is umask-dependent and
+                // any local user able to write the socket could inject
+                // Control/Adjustment commands to arbitrary channels.
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) =
+                    std::fs::set_permissions(&self.uds_path, std::fs::Permissions::from_mode(0o600))
+                {
+                    error!(
+                        "ShmListener: failed to chmod 0600 on {}: {} — refusing to listen",
+                        self.uds_path, e
+                    );
+                    return Err(e);
+                }
+                info!(
+                    "ShmCommandListener started on {} (mode 0600)",
+                    self.uds_path
+                );
                 l
             },
             Err(e) => {

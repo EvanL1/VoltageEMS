@@ -176,6 +176,14 @@ impl MmapWriter {
         // SAFETY: Header validity was confirmed by is_valid() above; slot_count is a plain u32 read.
         let max_slots = unsafe { (*header).slot_count() };
 
+        // slot_count comes from the file and is untrusted: a truncated or
+        // corrupt file can declare more slots than the mmap actually holds,
+        // and slot()/slot_mut() bound their offsets by max_slots. Reject
+        // here so no slot access can run past the mmap end.
+        if metadata.len() < shm_size(max_slots) as u64 {
+            return Err(ShmError::FileTooSmall);
+        }
+
         Ok(Self { mmap, max_slots })
     }
 
@@ -208,7 +216,8 @@ impl MmapWriter {
             return None;
         }
         let offset = HEADER_SIZE + (index as usize) * SLOT_SIZE;
-        // SAFETY: index < max_slots is checked above, so offset is within the mmap region.
+        // SAFETY: index < max_slots is checked above, and create()/open() verified the
+        // mmap covers shm_size(max_slots), so offset is within the mmap region.
         // PointSlot alignment is satisfied by SLOT_SIZE being a multiple of its alignment.
         unsafe { Some(&mut *(self.mmap.as_mut_ptr().add(offset) as *mut PointSlot)) }
     }
@@ -220,7 +229,8 @@ impl MmapWriter {
             return None;
         }
         let offset = HEADER_SIZE + (index as usize) * SLOT_SIZE;
-        // SAFETY: index < max_slots is checked above, so offset is within the mmap region.
+        // SAFETY: index < max_slots is checked above, and create()/open() verified the
+        // mmap covers shm_size(max_slots), so offset is within the mmap region.
         // PointSlot alignment is satisfied by SLOT_SIZE.
         unsafe { Some(&*(self.mmap.as_ptr().add(offset) as *const PointSlot)) }
     }
@@ -317,6 +327,14 @@ impl MmapReader {
         // SAFETY: Header was validated by is_valid() above; slot_count is a plain u32 read.
         let max_slots = unsafe { (*header).slot_count() };
 
+        // slot_count comes from the file and is untrusted: a truncated or
+        // corrupt file can declare more slots than the mmap actually holds,
+        // and slot() bounds its offsets by max_slots. Reject here so no
+        // slot access can run past the mmap end.
+        if metadata.len() < shm_size(max_slots) as u64 {
+            return Err(ShmError::FileTooSmall);
+        }
+
         Ok(Self { mmap, max_slots })
     }
 
@@ -335,8 +353,9 @@ impl MmapReader {
             return None;
         }
         let offset = HEADER_SIZE + (index as usize) * SLOT_SIZE;
-        // SAFETY: index < max_slots is bounds-checked above. offset is within the
-        // mmap region. PointSlot alignment is satisfied by SLOT_SIZE.
+        // SAFETY: index < max_slots is bounds-checked above, and open() verified the
+        // mmap covers shm_size(max_slots), so offset is within the mmap region.
+        // PointSlot alignment is satisfied by SLOT_SIZE.
         unsafe { Some(&*(self.mmap.as_ptr().add(offset) as *const PointSlot)) }
     }
 }
@@ -439,6 +458,36 @@ mod tests {
         assert_eq!(value, 42.5);
         assert_eq!(ts, 1234567890);
         assert_eq!(quality, 0);
+    }
+
+    #[test]
+    fn test_open_rejects_file_truncated_below_declared_slots() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("truncated.shm");
+
+        let config = ShmConfig {
+            path: path.clone(),
+            max_slots: 100,
+        };
+
+        // Create a valid SHM whose header claims 100 slots, then drop it.
+        drop(MmapWriter::create(&config).unwrap());
+
+        // Truncate so the file only holds 10 slots while the header still
+        // claims 100. Stays above shm_size(1), so the minimum-size check
+        // alone would let this through — the slot-region check must reject.
+        let file = OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(shm_size(10) as u64).unwrap();
+        drop(file);
+
+        assert!(matches!(
+            MmapWriter::open(&config),
+            Err(ShmError::FileTooSmall)
+        ));
+        assert!(matches!(
+            MmapReader::open(&config),
+            Err(ShmError::FileTooSmall)
+        ));
     }
 
     #[test]
