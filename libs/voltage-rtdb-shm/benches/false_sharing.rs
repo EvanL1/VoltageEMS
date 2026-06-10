@@ -38,7 +38,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use voltage_rtdb_shm::PointSlot;
+use std::collections::BTreeMap;
+use voltage_rtdb_shm::{ChannelPointCounts, PointSlot, allocate_layouts};
 
 /// 64-byte-aligned home for four `PointSlot`s so the slot→cache-line mapping
 /// is deterministic:
@@ -117,7 +118,52 @@ fn bench_false_sharing(c: &mut Criterion) {
         });
     });
 
+    // End-to-end check of the REAL production layout: resolve the comsrv/
+    // modsrv ownership boundary through allocate_layouts (channel with
+    // T=3, C=1) and hammer the last T slot vs the first C slot. With the
+    // cache-line padding in allocate_layouts this must match
+    // separate_cache_line / single_thread; without it, same_cache_line.
+    group.bench_function("layout_boundary", |b| {
+        let counts = ChannelPointCounts::from_map(BTreeMap::from([(1u32, [3u32, 0, 1, 0])]));
+        let (layouts, slot_count) = allocate_layouts(&counts);
+        let t_last = layouts[1].slot(0, 2).unwrap();
+        let c_first = layouts[1].slot(2, 0).unwrap();
+        assert!(slot_count <= ARENA_SLOTS, "arena too small for layout");
+
+        // 64-byte-aligned arena mirrors the mmap guarantee (slot array
+        // starts at file offset 64).
+        let arena = AlignedArena::new();
+        b.iter_custom(|iters| {
+            let barrier = Barrier::new(2);
+            let slot_a = &arena.0[t_last];
+            let slot_b = &arena.0[c_first];
+            thread::scope(|s| {
+                let h = s.spawn(|| {
+                    barrier.wait();
+                    hammer(slot_b, iters);
+                });
+                barrier.wait();
+                let t0 = Instant::now();
+                hammer(slot_a, iters);
+                h.join().unwrap();
+                t0.elapsed()
+            })
+        });
+    });
+
     group.finish();
+}
+
+const ARENA_SLOTS: usize = 16;
+
+/// 64-byte-aligned slot arena sized for the layout_boundary topology.
+#[repr(C, align(64))]
+struct AlignedArena([PointSlot; ARENA_SLOTS]);
+
+impl AlignedArena {
+    fn new() -> Self {
+        Self(std::array::from_fn(|_| PointSlot::new()))
+    }
 }
 
 criterion_group!(benches, bench_false_sharing);
