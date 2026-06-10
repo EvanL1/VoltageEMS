@@ -1301,15 +1301,17 @@ mod tests {
         assert_eq!(layout_1002.type_counts[1], 1); // S
         assert_eq!(layout_1002.total_points, 1);
 
-        // Total slots
-        assert_eq!(slot_count, 5); // 4 + 1
+        // Total slots: ch1001 T@0-2, pad@3, C@4 (cache-line aligned) = 5;
+        // ch1002 base aligned to 6, S@6 = 7 total. See allocate_layouts
+        // writer-ownership padding.
+        assert_eq!(slot_count, 7);
     }
 
     #[test]
     fn test_writer_create() {
         let (_dir, config, channel_points) = setup_test_env();
         let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
-        assert_eq!(writer.slot_count(), 5);
+        assert_eq!(writer.slot_count(), 7); // includes ownership-boundary padding
         assert_eq!(writer.max_slots(), 1000);
     }
 
@@ -1320,7 +1322,7 @@ mod tests {
             assert!(w.set(1001, 0, 0, 3.14, 3.14, 1705234567890));
             assert!(w.set(1001, 0, 1, 2.71, 2.71, 1705234567890));
         });
-        assert_eq!(reader.slot_count(), 5);
+        assert_eq!(reader.slot_count(), 7); // includes ownership-boundary padding
 
         let (val, ts) = reader.get_channel(1001, 0, 0).unwrap();
         assert!((val - 3.14).abs() < 1e-10);

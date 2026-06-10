@@ -258,16 +258,19 @@ impl<R: Rtdb> ShmRedisSync<R> {
                 continue;
             }
 
-            let (value, raw, ts) = match slot.load_consistent() {
+            let (value, raw, ts) = match slot.try_load_consistent() {
                 Some(data) => data,
                 None => {
                     // Torn read: writer was mid-update through this slot's
-                    // seqlock. take_dirty_slots() already cleared the dirty
-                    // bit, so without explicit retry the slot would not be
-                    // visited again until the next writer update (which may
-                    // not happen for a long time) or the periodic
-                    // FULL_SCAN_INTERVAL. Push it back to retry_slots so
-                    // the next tick re-reads it.
+                    // seqlock. Single-attempt `try_load_consistent` (not the
+                    // spinning `load_consistent`) — this is a 100ms background
+                    // sweep running on a tokio worker, so it must never spin
+                    // (up to 32768 iterations ≈ 3-16ms) and block the runtime.
+                    // take_dirty_slots() already cleared the dirty bit, so
+                    // without explicit retry the slot would not be visited
+                    // again until the next writer update (which may not happen
+                    // for a long time) or the periodic FULL_SCAN_INTERVAL.
+                    // Push it back to retry_slots so the next tick re-reads it.
                     self.retry_slots.push(slot_idx);
                     continue;
                 },

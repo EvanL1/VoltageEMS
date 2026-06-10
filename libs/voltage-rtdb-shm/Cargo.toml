@@ -44,5 +44,9 @@ harness = false
 name = "pointwatch_e2e"
 harness = false
 
+[[bench]]
+name = "false_sharing"
+harness = false
+
 [lints]
 workspace = true
