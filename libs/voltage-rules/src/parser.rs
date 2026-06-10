@@ -490,11 +490,74 @@ fn extract_rule_wires_map(config: &Value) -> Result<HashMap<String, Vec<String>>
     Ok(wires_map)
 }
 
+/// The two `rules` table flow columns, produced together.
+///
+/// Named fields (rather than a `(String, String)` tuple) so call sites
+/// cannot silently swap the editor document and the execution topology
+/// when binding SQL parameters.
+#[derive(Debug, Clone)]
+pub struct FlowColumns {
+    /// Original Vue Flow editor document → `rules.flow_json`.
+    pub flow_json: String,
+    /// Compact execution topology → `rules.nodes_json`.
+    pub nodes_json: String,
+}
+
+/// Serialize a Vue Flow document into both `rules` table flow columns.
+///
+/// Invariant: `flow_json` (editor document) and `nodes_json` (execution
+/// topology) must always be written together — a row where they diverge
+/// silently executes a different rule than the editor shows. Every SQL
+/// site that writes either column must take both values from here instead
+/// of serializing them itself. Current writers: `repository::upsert_rule`,
+/// modsrv `update_rule`, `monarch sync`.
+pub fn flow_column_values(flow: &Value) -> Result<FlowColumns> {
+    let compact = extract_rule_flow(flow)?;
+    Ok(FlowColumns {
+        flow_json: serde_json::to_string(flow)?,
+        nodes_json: serde_json::to_string(&compact)?,
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // Test code - unwrap is acceptable
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_flow_column_values_produces_both_columns_together() {
+        let flow = json!({
+            "nodes": [
+                {
+                    "id": "start",
+                    "type": "start",
+                    "position": { "x": 0, "y": 0 },
+                    "data": { "config": { "wires": { "default": ["end"] } } }
+                },
+                { "id": "end", "type": "end", "position": { "x": 100, "y": 0 } }
+            ],
+            "edges": []
+        });
+
+        let cols = flow_column_values(&flow).unwrap();
+
+        // nodes_json must be exactly what extract_rule_flow produces — the
+        // two columns cannot diverge when produced through this function.
+        // Compare as parsed Values: RuleFlow.nodes is a HashMap, so the
+        // serialized key order is not deterministic.
+        let actual_nodes: Value = serde_json::from_str(&cols.nodes_json).unwrap();
+        let expected_nodes: Value =
+            serde_json::to_value(extract_rule_flow(&flow).unwrap()).unwrap();
+        assert_eq!(actual_nodes, expected_nodes);
+
+        // flow_json must round-trip to the original editor document.
+        let round_trip: Value = serde_json::from_str(&cols.flow_json).unwrap();
+        assert_eq!(round_trip, flow);
+
+        // Invalid flow (missing nodes) must fail as a unit — no partial output.
+        assert!(flow_column_values(&json!({"edges": []})).is_err());
+    }
 
     #[test]
     fn test_extract_rule_flow() {

@@ -464,16 +464,16 @@ impl UnifiedWriter {
         self.point_watch.as_ref()
     }
 
-    /// Open existing shared memory for writing Action points (C/A types only)
+    /// Re-open and validate an existing SHM file without truncating it.
     ///
-    /// This is used by modsrv to write downstream commands (Control/Adjustment)
-    /// while comsrv owns the main writer for upstream data (Telemetry/Signal).
-    ///
-    /// # Safety
-    /// - Only writes to C/A slots (type 2 and 3)
-    /// - T/S slots (type 0 and 1) should not be written by this writer
-    /// - Atomic operations ensure cross-process safety
-    pub fn open_for_actions(
+    /// Validates magic/version/routing-hash and slot coverage like every
+    /// other open path. Two consumers: comsrv's `ShmHandle::rebuild_via_swap`
+    /// (full writer over the freshly swapped canonical file) and
+    /// [`ActionWriter::open`] (modsrv's restricted C/A handle). Deliberately
+    /// crate-private — external writers must choose `create` (comsrv, owns
+    /// T/S) or `ActionWriter::open` (modsrv, owns C/A) so cross-ownership
+    /// writes stay unrepresentable outside this crate.
+    pub(crate) fn open_existing(
         config: &SharedConfig,
         channel_points: &ChannelPointCounts,
     ) -> Result<Self> {
@@ -778,6 +778,57 @@ impl UnifiedWriter {
         }
 
         Ok(writer)
+    }
+}
+
+// ========== ActionWriter ==========
+
+/// Write handle restricted to Control/Adjustment slots — modsrv's side of
+/// the writer-ownership contract.
+///
+/// comsrv owns T/S slots through the full [`UnifiedWriter`]; modsrv opens
+/// the same SHM through this type, which exposes no general `set()` — a
+/// cross-ownership write to T/S slots is unrepresentable at compile time
+/// instead of a runtime warning.
+pub struct ActionWriter(UnifiedWriter);
+
+impl ActionWriter {
+    /// Open an existing SHM file for Control/Adjustment writes (modsrv).
+    ///
+    /// Fails if comsrv has not created the file yet, or if the header
+    /// validation chain (magic/version/routing-hash/slot coverage) rejects it.
+    pub fn open(config: &SharedConfig, channel_points: &ChannelPointCounts) -> Result<Self> {
+        UnifiedWriter::open_existing(config, channel_points).map(Self)
+    }
+
+    /// Write an Action point (Control=2 or Adjustment=3 only).
+    ///
+    /// Returns false for non-action point types (defense-in-depth on top of
+    /// the type-level restriction) or unmapped slots.
+    #[inline]
+    pub fn set_action(
+        &self,
+        channel_id: u32,
+        point_type: u8,
+        point_id: u32,
+        value: f64,
+        timestamp_ms: u64,
+    ) -> bool {
+        self.0
+            .set_action(channel_id, point_type, point_id, value, timestamp_ms)
+    }
+
+    /// Writer generation stamped in the SHM header (comsrv bumps on rebuild).
+    #[inline]
+    pub fn generation(&self) -> u64 {
+        self.0.generation()
+    }
+
+    /// Build a read-only channel→slot index from this writer's layout.
+    ///
+    /// Read-only derivation — grants no write capability to T/S slots.
+    pub fn channel_slot_index(&self) -> crate::shared_config::ChannelToSlotIndex {
+        crate::shared_config::ChannelToSlotIndex::from_unified_writer(&self.0)
     }
 }
 
@@ -1166,6 +1217,24 @@ mod tests {
         map.insert(1001, [3u32, 0, 1, 0]); // T=3, S=0, C=1, A=0
         map.insert(1002, [0u32, 1, 0, 0]); // T=0, S=1, C=0, A=0
         ChannelPointCounts::from_map(map)
+    }
+
+    #[test]
+    fn action_writer_exposes_only_action_writes() {
+        let dir = tempdir().unwrap();
+        let config = test_config(dir.path());
+        let counts = test_channel_points();
+
+        // comsrv side creates the SHM; modsrv side opens it as ActionWriter.
+        let owner = UnifiedWriter::create(&config, &counts).unwrap();
+
+        let aw = ActionWriter::open(&config, &counts).unwrap();
+        assert_eq!(aw.generation(), owner.generation());
+
+        // Control write lands; Telemetry write is refused (runtime guard
+        // kept as defense-in-depth — the type itself exposes no `set()`).
+        assert!(aw.set_action(1001, 2, 0, 42.0, 1));
+        assert!(!aw.set_action(1001, 0, 0, 42.0, 1));
     }
 
     /// Build RoutingCache for tests that still exercise instance-based lookup APIs.

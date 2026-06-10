@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use tracing::warn;
 use voltage_routing::RouteContext;
 
-use crate::{ShmNotifier, UnifiedWriter, shared_config::SharedConfig};
+use crate::{ActionWriter, ShmNotifier, shared_config::SharedConfig};
 
 /// Outcome of an action dispatch operation.
 ///
@@ -62,7 +62,7 @@ pub trait ActionDispatch: Send + Sync {
 /// to comsrv for immediate processing. Degrades gracefully if UDS notification fails
 /// (SHM value is written but comsrv delivery is not guaranteed without UDS).
 pub struct ShmDispatch {
-    writer: arc_swap::ArcSwapOption<UnifiedWriter>,
+    writer: arc_swap::ArcSwapOption<ActionWriter>,
     config: std::sync::OnceLock<SharedConfig>,
     notifier: std::sync::OnceLock<Arc<tokio::sync::Mutex<ShmNotifier>>>,
     expected_generation: AtomicU64,
@@ -92,7 +92,7 @@ impl ShmDispatch {
     }
 
     /// Configure SHM action writer for M2C via shared memory.
-    pub fn set_writer(&self, writer: Arc<UnifiedWriter>, config: SharedConfig) {
+    pub fn set_writer(&self, writer: Arc<ActionWriter>, config: SharedConfig) {
         // Capture generation so dispatch() can detect comsrv restarts.
         self.expected_generation
             .store(writer.generation(), Ordering::Release);

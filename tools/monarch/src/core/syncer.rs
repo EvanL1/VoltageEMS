@@ -1370,10 +1370,10 @@ impl ConfigSyncer {
             let flow_value: JsonValue = serde_json::from_str(&flow_json).map_err(|e| {
                 anyhow::anyhow!("Rule '{}': Failed to parse flow_json: {}", name, e)
             })?;
-            let nodes_json = match voltage_rules::parser::extract_rule_flow(&flow_value) {
-                Ok(rule_flow) => serde_json::to_string(&rule_flow).map_err(|e| {
-                    anyhow::anyhow!("Rule '{}': Failed to serialize RuleFlow: {}", name, e)
-                })?,
+            // Both flow columns come from the single sanctioned producer so
+            // flow_json/nodes_json can never diverge.
+            let columns = match voltage_rules::flow_column_values(&flow_value) {
+                Ok(columns) => columns,
                 Err(e) => {
                     warn!(
                         "Rule '{}' ({}): not a Vue Flow rule, skipping. ({})",
@@ -1391,8 +1391,8 @@ impl ConfigSyncer {
             )
             .bind(name)
             .bind(description)
-            .bind(&flow_json)
-            .bind(&nodes_json)
+            .bind(&columns.flow_json)
+            .bind(&columns.nodes_json)
             .bind(enabled)
             .bind(priority)
             .execute(&mut **tx)

@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 use voltage_model::PointType;
 use voltage_routing::RouteContext;
 use voltage_rtdb_shm::{
-    ChannelPointCounts, SharedConfig, ShmNotification, ShmNotifier, UnifiedWriter,
+    ActionWriter, ChannelPointCounts, SharedConfig, ShmNotification, ShmNotifier, UnifiedWriter,
 };
 
 // ============================================================================
@@ -116,9 +116,10 @@ async fn test_dispatch_delivered() {
     let channel_points = make_channel_point_counts();
     let config = make_shm_config(&temp_dir);
 
-    // Create the SHM file with the correct routing layout
-    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
-    let writer = Arc::new(writer);
+    // Create the SHM file with the correct routing layout (comsrv role),
+    // then open the modsrv-side restricted ActionWriter on it.
+    let _owner = UnifiedWriter::create(&config, &channel_points).unwrap();
+    let writer = Arc::new(ActionWriter::open(&config, &channel_points).unwrap());
 
     // Set up UDS notifier
     let sock_path = temp_dir.path().join("dispatch_delivered.sock");
@@ -189,7 +190,8 @@ async fn test_dispatch_shm_only_no_notifier() {
     let channel_points = make_channel_point_counts();
     let config = make_shm_config(&temp_dir);
 
-    let writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
+    let _owner = UnifiedWriter::create(&config, &channel_points).unwrap();
+    let writer = Arc::new(ActionWriter::open(&config, &channel_points).unwrap());
 
     let dispatch = ShmDispatch::new();
     dispatch.set_writer(writer, config.clone());
@@ -227,7 +229,8 @@ async fn test_dispatch_mirror_miss_fails_before_notify() {
     let channel_points = make_channel_point_counts();
     let config = make_shm_config(&temp_dir);
 
-    let writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
+    let _owner = UnifiedWriter::create(&config, &channel_points).unwrap();
+    let writer = Arc::new(ActionWriter::open(&config, &channel_points).unwrap());
 
     let dispatch = ShmDispatch::new();
     dispatch.set_writer(writer, config.clone());

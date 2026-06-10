@@ -182,7 +182,7 @@ impl ShmHandle {
         // `writer` we just created knows itself as `staging_path` which
         // no longer exists.
         let mut writer =
-            UnifiedWriter::open_for_actions(&self.config, channel_points).map_err(|e| {
+            UnifiedWriter::open_existing(&self.config, channel_points).map_err(|e| {
                 anyhow::anyhow!("re-open new SHM at canonical {canonical:?} as writer: {e}")
             })?;
 

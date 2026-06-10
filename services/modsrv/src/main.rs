@@ -168,16 +168,17 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Initialize UnifiedWriter for M2C actions (Control/Adjustment via SHM)
+    // Initialize ActionWriter for M2C actions (Control/Adjustment via SHM).
+    // The type only exposes C/A writes — comsrv's T/S slots are untouchable.
     // Only open if reader succeeded (SHM file exists)
     let shm_action_writer = if shared_reader.is_some() {
-        match voltage_rtdb_shm::UnifiedWriter::open_for_actions(&shm_config, &channel_points) {
+        match voltage_rtdb_shm::ActionWriter::open(&shm_config, &channel_points) {
             Ok(writer) => {
-                info!("UnifiedWriter (actions) opened for M2C via SHM");
+                info!("ActionWriter opened for M2C via SHM");
                 Some(Arc::new(writer))
             },
             Err(e) => {
-                warn!("UnifiedWriter (actions) unavailable: {}", e);
+                warn!("ActionWriter unavailable: {}", e);
                 None
             },
         }
@@ -257,10 +258,7 @@ async fn main() -> Result<()> {
                             warn!("SHM rebuild: failed to load channel points: {}", e);
                             voltage_rtdb_shm::ChannelPointCounts::new()
                         });
-                    match voltage_rtdb_shm::UnifiedWriter::open_for_actions(
-                        &rebuild_shm_config,
-                        &cp,
-                    ) {
+                    match voltage_rtdb_shm::ActionWriter::open(&rebuild_shm_config, &cp) {
                         Ok(writer) => {
                             let writer = Arc::new(writer);
                             rebuild_dispatch
@@ -302,7 +300,7 @@ async fn main() -> Result<()> {
     // Step 3 of the SHM decoupling roadmap replaces in-place
     // reconfigure_existing with `ShmHandle::rebuild_via_swap`: comsrv
     // creates a new SHM file at a staging path, then POSIX-renames it
-    // over the canonical path. modsrv's existing UnifiedWriter is still
+    // over the canonical path. modsrv's existing ActionWriter is still
     // mmap'd to the *previous* inode (now unlinked but live in memory),
     // so its `writer.generation()` reads stay constant — the existing
     // dispatch-time generation-mismatch check never fires for swap-based
@@ -311,7 +309,7 @@ async fn main() -> Result<()> {
     // To learn about the swap, periodically `stat(canonical_path)` and
     // compare the inode against a cached baseline. On change, fire the
     // existing `rebuild_trigger` Notify, which the auto-rebuild task
-    // above already handles end-to-end (open_for_actions on the new
+    // above already handles end-to-end (ActionWriter::open on the new
     // inode, swap into ShmDispatch via set_writer).
     {
         use std::os::unix::fs::MetadataExt;
@@ -543,7 +541,7 @@ async fn main() -> Result<()> {
     // (below) and the scheduler's reload path (rebuilds on POST /api/scheduler/reload).
     let pw_channel_slot_index_arc = shm_action_writer
         .as_ref()
-        .map(|w| Arc::new(voltage_rtdb_shm::ChannelToSlotIndex::from_unified_writer(w)));
+        .map(|w| Arc::new(w.channel_slot_index()));
 
     // Wire rebuild handles into scheduler so reload_rules can refresh the
     // SubscriptionBitmap + dispatcher index without a service restart.

@@ -30,8 +30,8 @@ use voltage_routing::{RouteContext, RoutingCache};
 use voltage_rtdb::MemoryRtdb;
 use voltage_rtdb::Rtdb;
 use voltage_rtdb_shm::{
-    ActionDispatch, ChannelPointCounts, DispatchOutcome, PointSlot, SharedConfig, ShmDispatch,
-    ShmNotifier, UnifiedReader, UnifiedWriter,
+    ActionDispatch, ActionWriter, ChannelPointCounts, DispatchOutcome, PointSlot, SharedConfig,
+    ShmDispatch, ShmNotifier, UnifiedReader, UnifiedWriter,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,7 +207,10 @@ fn bench_shm_dispatch(c: &mut Criterion) {
     let dir = tempdir().unwrap();
     let config = bench_config(dir.path());
     let channel_points = bench_channel_points();
-    let writer = Arc::new(UnifiedWriter::create(&config, &channel_points).unwrap());
+    // comsrv role creates the SHM; the dispatch path uses the modsrv-side
+    // restricted ActionWriter, matching production.
+    let _owner = UnifiedWriter::create(&config, &channel_points).unwrap();
+    let writer = Arc::new(ActionWriter::open(&config, &channel_points).unwrap());
 
     // Wire up a ShmDispatch with the real writer but a disabled notifier
     // (path = "" → NotifyResult::off(), no kernel UDS round-trip).

@@ -560,17 +560,13 @@ pub async fn update_rule<R: Rtdb + Send + Sync + 'static, S: StateStore + 'stati
         query = query.bind(cooldown as i64);
     }
     if let Some(flow) = &req.flow_json {
-        // Bind flow_json (original Vue Flow data for editor)
-        let flow_str = serde_json::to_string(flow)
-            .map_err(|e| ModSrvError::SerializationError(e.to_string()))?;
-        query = query.bind(flow_str);
-
-        // Extract and bind nodes_json (compact format for execution)
-        let compact_flow = voltage_rules::extract_rule_flow(flow)
+        // Both flow columns come from the single sanctioned producer so
+        // flow_json/nodes_json can never diverge. Bind order matches the
+        // "flow_json = ?, nodes_json = ?" pushes above.
+        let columns = voltage_rules::flow_column_values(flow)
             .map_err(|e| ModSrvError::ParseError(e.to_string()))?;
-        let nodes_str = serde_json::to_string(&compact_flow)
-            .map_err(|e| ModSrvError::SerializationError(e.to_string()))?;
-        query = query.bind(nodes_str);
+        query = query.bind(columns.flow_json);
+        query = query.bind(columns.nodes_json);
     }
     if let Some(trig) = &req.trigger_config {
         // Validate by parsing into the strongly-typed enum; reject malformed

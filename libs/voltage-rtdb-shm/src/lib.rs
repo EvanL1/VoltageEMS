@@ -91,7 +91,7 @@ pub use layout::{ChannelLayout, allocate_layouts};
 
 // Unified shared memory
 pub use unified_shm::{
-    UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, UnifiedReader, UnifiedWriter,
+    ActionWriter, UNIFIED_MAGIC, UNIFIED_VERSION, UnifiedHeader, UnifiedReader, UnifiedWriter,
     calculate_file_size,
 };
 

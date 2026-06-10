@@ -3,7 +3,7 @@
 //! Stores rules with compact flow topology (simplified Vue Flow structure)
 
 use crate::error::{Result, RuleError};
-use crate::parser::extract_rule_flow;
+use crate::parser::flow_column_values;
 use crate::types::{Rule, RuleFlow};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
@@ -177,21 +177,14 @@ pub async fn upsert_rule(pool: &SqlitePool, rule_id: i64, rule: &Value) -> Resul
         .unwrap_or("vue-flow")
         .to_string();
 
-    // Get the flow JSON - either from "flow_json" field or the entire rule object
-    let flow_json_value = rule.get("flow_json").cloned();
-
-    // Save original flow_json for frontend editing
-    let flow_json_str = flow_json_value
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()?;
-
-    // Extract compact flow from Vue Flow JSON (discards UI-only information)
-    let source_json = flow_json_value.as_ref().unwrap_or(rule);
-    let compact_flow = extract_rule_flow(source_json)?;
-
-    // Serialize compact flow to JSON
-    let nodes_json = serde_json::to_string(&compact_flow)?;
+    // Both flow columns come from the single sanctioned producer
+    // (parser::flow_column_values) so they can never diverge. The source is
+    // the "flow_json" field, or the entire rule object for legacy
+    // compact-only rules — those keep storing NULL flow_json.
+    let flow_json_value = rule.get("flow_json");
+    let columns = flow_column_values(flow_json_value.unwrap_or(rule))?;
+    let flow_json_str = flow_json_value.map(|_| columns.flow_json);
+    let nodes_json = columns.nodes_json;
 
     sqlx::query(
         r#"
