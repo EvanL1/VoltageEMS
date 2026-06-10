@@ -22,6 +22,10 @@ ssh root@192.168.30.21 '/tmp/MonarchEdge-arm64-*.run'
 # 配置管理
 monarch init && monarch sync              # 配置初始化并同步到 SQLite
 monarch services start/stop/refresh       # 服务管理
+monarch doctor                            # 系统健康检查
+
+# Docker 本地部署
+docker compose up -d && docker compose ps
 ```
 
 ## 服务端口
@@ -42,11 +46,12 @@ libs/
   voltage-model   — PointType、KeySpaceConfig、产品常量（编译时）
   voltage-routing — RoutingCache、set_action_point
   voltage-rtdb    — Rtdb trait + RedisRtdb + MemoryRtdb
-  voltage-rtdb-shm — 统一 SHM（UnifiedWriter/Reader）、UDS notifier、bitmap、snapshot
+  voltage-rtdb-shm — 统一 SHM（UnifiedWriter/Reader/ActionWriter）、UDS notifier、PointWatch、snapshot
   voltage-rules   — 规则引擎：parser → scheduler → executor
   voltage-calc    — 公式求值、CalcEngine
+  voltage-config  — 跨平台配置 schema（comsrv/modsrv/monarch 共用，Windows 可构建）
   voltage-core    — no_std 核心类型（固件共用）
-  voltage-shm     — 平台抽象 SHM（含 embedded RawPtrShm）
+  voltage-shm     — 固件 SHM（RawPtrShm 裸机 SRAM 用；与 voltage-rtdb-shm 是两套独立格式，勿混淆）
   voltage-infra   — Redis/SQLite 连接池封装
   voltage-schema-macro — proc-macro，从 Rust struct 自动生成 SQL DDL
   voltage-sim     — 波形生成库（simulator 用）
@@ -63,6 +68,7 @@ workspace-hack/ — cargo-hakari 生成，统一 feature flags（勿手动编辑
 |------|------|------|
 | comsrv → all（数据） | SHM 直写 + 后台异步 Redis 同步 | <1ms（SHM），~100ms（Redis） |
 | comsrv → modsrv（读数） | SHM mmap 零拷贝 | <1ms |
+| comsrv → modsrv（点位事件） | SubscriptionBitmap 过滤 + PointWatch UDS | sub-ms |
 | modsrv → comsrv（M2C 命令） | SHM write + UDS notify | ~1–2ms |
 | alarmsrv → apigateway/netsrv | HTTP POST (reqwest) | ~5ms |
 | netsrv → cloud | MQTT | network |
@@ -137,26 +143,28 @@ sqlx::query_as::<_, Row>("SELECT * FROM t WHERE id = ?").bind(id)     // SQLx（
 
 **文件**: `VOLTAGE_SHM_PATH` → `/shm/rtdb/voltage-rtdb.shm`（Docker）→ `/dev/shm/...`（Linux）→ `/tmp/...`（macOS），`UnifiedHeader(64B) + PointSlot[N](32B each)`
 
-**写者所有权**: comsrv 拥有 T/S 槽，modsrv 拥有 C/A 槽。**永远不要交叉写入。**
+**写者所有权（类型强制）**: comsrv 拥有 T/S 槽（`UnifiedWriter::create`），modsrv 拥有 C/A 槽（`ActionWriter::open`，只暴露 `set_action`/`generation`/`channel_slot_index`，没有 `set()`——跨写 T/S 是编译错误）。重开既有文件的机制构造器 `open_existing` 是 crate 私有的。
 
 **关键 header 字段**:
 - `routing_hash` — comsrv 和 modsrv 必须匹配，否则 modsrv 拒绝打开
 - `writer_generation` — comsrv 每次 create/reconfigure 递增，modsrv dispatch 时检测不一致
 
-**M2C 通知**: `ShmNotifier` → UDS(`/tmp/voltage-m2c.sock`) → `ShmCommandListener`
-- 48 字节 `ShmNotification`，`producer_id + seq` 去重
+**M2C 通知**: `ShmNotifier` → UDS(`/tmp/voltage-m2c.sock`，bind 后 chmod 0600) → `ShmCommandListener`
+- 48 字节 `ShmNotification`（bytemuck Pod），`producer_id + seq` 去重（wrapping 比较）
 - UDS 失败自动重连（指数退避 1–5s），无轮询降级
 
-**Seqlock**: `load_consistent()` 返回 `Option`（重试耗尽返回 None，不返回撕裂数据）
+**Seqlock**: `try_load_consistent()` 单次尝试（tokio worker 上的后台任务必须用它，如 ShmRedisSync）；`load_consistent()` 自旋重试最多 ~3–16ms（仅限专用线程），耗尽返回 None，不返回撕裂数据
+
+**PointWatch 事件平面（v0.4.0）**: comsrv 每次 T/S 写后查 `SubscriptionBitmap`（独立 mmap 文件，modsrv 按规则订阅写入），命中才发事件 → UDS → modsrv `PointWatchListener` → `PointWatchDispatcher`（`(channel,point)→rule_ids` 索引）→ 有界通道(1024) `try_send` 进 scheduler，满载丢弃 + `dropped_count` 计数。事件自带值，死区判断不回读 SHM/Redis。
 
 ## 规则引擎
 
 **双列存储（关键不变量）**:
 - `flow_json` — 前端 Vue Flow 完整 JSON（含 UI 布局）
 - `nodes_json` — 紧凑执行拓扑（`RuleFlow { start_node, nodes }`）
-- **两列必须同步更新**：API PUT 调用 `extract_rule_flow()`，`monarch sync` 同样调用
+- **两列只能经 `voltage_rules::flow_column_values()` 一起产出**（返回 `FlowColumns` 结构体）。现有三个写入点（`repository::upsert_rule`、modsrv PUT、`monarch sync`）全走它；新增 rules 表写路径必须同样收口，不要自己 serialize 任一列
 
-**执行流**: Scheduler(100ms tick) → Executor → RTDB write + SHM C/A write + UDS notify
+**执行流**: Scheduler（100ms tick + PointWatch 事件混合，`tokio::select!`；Interval 规则走 tick，OnChange 规则走事件+死区）→ Executor → RTDB write + SHM C/A write（经 `ActionDispatch`）+ UDS notify
 **执行结果**: 写入 Redis `rule:{id}:exec`（24h TTL），WebSocket 直接推送
 
 ## 配置流
@@ -173,10 +181,18 @@ config/*.yaml → monarch sync → SQLite(voltage.db) → 服务启动时加载
 `VoltageErrorTrait` 定义统一接口（`error_code()`、`is_retryable()`）。HTTP status 通过 `VoltageError::status_code()` 映射。
 
 - **comsrv**: `ComSrvError`（15 variants）实现 `VoltageErrorTrait`，有完整错误链
-- **modsrv/hissrv/netsrv/alarmsrv**: 用 `anyhow::Result`（内部服务，不直接面向前端）
+- **modsrv**: `ModSrvError` 实现 `IntoResponse`（经 `common::api_types::AppError` 产出嵌套 error 格式）
+- **hissrv/netsrv/alarmsrv**: 用 `anyhow::Result` + handler 内联 json! 错误
 - **apigateway**: 面向前端，通过 `VoltageError` 映射 HTTP status
 
-API 响应统一格式：`{ success, data, error: { code, message, details }, meta }`
+**API 响应格式（事实约定,2026-06 审定）**:
+
+- 成功统一为 `{ success: true, data, metadata? }`（`common::api_types::SuccessResponse`）
+- 错误响应有三种形状共存（历史原因,前端已按各自路径解析,**不要批量迁移**）:
+  - 类型化错误（comsrv/modsrv/alarmsrv 经 `common::api_types::AppError`）: `{ success: false, error: { code, message, details?, suggestion?, field_errors? } }`
+  - handler 内联校验（apigateway/hissrv/netsrv 等 100+ 处）: `{ success: false, message }`
+  - apigateway 的 `VoltageError` 映射: `{ error_code, message, category, retryable, retry_delay_ms }`（无 success 字段）
+- **新代码**: 错误优先用所在服务的类型化错误（`ModSrvError`/`ComSrvError`/`AppError`,实现 `IntoResponse`）,不要新增内联 `json!({"success": false, "message"})`
 
 ## 测试
 
