@@ -9,7 +9,9 @@
 
 use std::collections::BTreeMap;
 use tempfile::tempdir;
-use voltage_rtdb_shm::{ChannelPointCounts, SharedConfig, UnifiedReader, UnifiedWriter};
+use voltage_rtdb_shm::{
+    ChannelPointCounts, SharedConfig, UNIFIED_VERSION, UnifiedReader, UnifiedWriter,
+};
 
 // ============================================================================
 // Test Helpers
@@ -336,6 +338,39 @@ fn test_snapshot_with_special_values() {
         );
         assert_eq!(ts, *expected_ts, "1001:T:{pid} timestamp mismatch");
     }
+}
+
+/// v4 adds physical padding slots. A v3 snapshot may have identical channel
+/// counts but different physical slot indices, so restore must reject it.
+#[test]
+fn test_snapshot_rejects_pre_padding_layout_version() {
+    let dir = tempdir().unwrap();
+    let config = test_config(dir.path());
+    let channel_points = test_channel_points();
+    let snapshot_path = dir.path().join("snap.bin");
+
+    assert_eq!(UNIFIED_VERSION, 4, "this test guards the v3 -> v4 bump");
+
+    let writer = UnifiedWriter::create(&config, &channel_points).unwrap();
+    assert!(writer.set(1001, 0, 0, 10.5, 105.0, 1_704_067_200_000));
+    writer.flush().unwrap();
+    writer.save_snapshot(&snapshot_path).unwrap();
+
+    let mut snapshot_data = std::fs::read(&snapshot_path).unwrap();
+    snapshot_data[8..12].copy_from_slice(&3u32.to_ne_bytes());
+    std::fs::write(&snapshot_path, snapshot_data).unwrap();
+
+    let config2 = SharedConfig::default()
+        .with_path(dir.path().join("test2.shm"))
+        .with_max_slots(1000);
+    let result = UnifiedWriter::restore_from_snapshot(&config2, &snapshot_path, &channel_points);
+    assert!(result.is_err(), "v3 snapshots must not restore as v4");
+
+    let err_msg = format!("{:#}", result.err().unwrap());
+    assert!(
+        err_msg.contains("Snapshot version mismatch"),
+        "expected version mismatch error, got: {err_msg}"
+    );
 }
 
 /// Attempting to restore from a non-existent snapshot file should return

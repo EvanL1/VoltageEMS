@@ -15,11 +15,16 @@ use crate::core::slot::PointSlot;
 /// Magic number for unified shared memory: "VOLTAGE_" in ASCII.
 pub const UNIFIED_MAGIC: u64 = 0x564F4C544147455F;
 
-/// SHM layout version. v3 changed the slot default from `(value=0.0, raw=0.0)`
-/// to `(value=NaN, raw=NaN)` so unwritten slots are self-describing instead
-/// of relying on the `seq==0` side channel. Snapshots from v2 are
-/// intentionally rejected at restore time.
-pub const UNIFIED_VERSION: u32 = 3;
+/// SHM layout version.
+///
+/// - v3 changed the slot default from `(value=0.0, raw=0.0)` to
+///   `(value=NaN, raw=NaN)`, so unwritten slots are self-describing instead
+///   of relying on the `seq==0` side channel.
+/// - v4 added physical padding slots to keep writer-ownership boundaries on
+///   fresh cache lines. This changes physical slot indices even when channel
+///   point counts are unchanged, so v3 snapshots must be rejected rather than
+///   restored into the wrong slots.
+pub const UNIFIED_VERSION: u32 = 4;
 
 /// Default max slots (100,000 points).
 pub const DEFAULT_MAX_SLOTS: u32 = 100_000;
