@@ -1,19 +1,19 @@
 # VoltageEMS
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.90%2B-orange.svg)](https://www.rust-lang.org/)
-[![Version](https://img.shields.io/badge/version-0.3.0--beta-yellow.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.4.0-yellow.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-beta-orange.svg)](CHANGELOG.md)
 
 [English](README.md) | [文档](docs/README.md) | [更新日志](CHANGELOG.md)
 
-> **v0.3.0 — 首个内测版本（2026-04-21）。** 功能已基本完备并达到小范围试用标准，欢迎内部测试反馈。详见 [CHANGELOG](CHANGELOG.md#030---2026-04-21--first-beta-首个内测版本)。
+> **v0.4.0 — 亚毫秒事件平面（2026-05-29）。** 事件驱动共享内存路径（PointWatch）将关键控制延迟压至 ~1.5 ms — 生产环境 Cortex-A55 端到端 P50 ≈ 206 µs。详见 [CHANGELOG](CHANGELOG.md)。
 
 基于 Rust 构建的工业物联网能源管理系统。多协议数据采集、共享内存实时处理、规则引擎执行，为工业能源场景提供全栈监控能力。
 
 ## 特性
 
-- **多协议支持** — Modbus TCP/RTU、IEC 60870-5-104、OPC UA、MQTT、HTTP、DL/T 645、CAN、J1939、GPIO
+- **多协议支持** — Modbus TCP/RTU、IEC 60870-5-104、IEC 61850（MMS）、OPC UA、MQTT、HTTP、DL/T 645、CAN/J1939、GPIO、BLE、Zigbee、Matter、Voltage-485、Virtual（14 种协议）
 - **零拷贝共享内存** — 通过 `/dev/shm` 实现服务间高性能数据通路，绕过序列化开销
 - **规则引擎** — 可视化规则编辑（Vue Flow），支持实时执行、表达式求值和定时调度
 - **可插拔时序存储** — 运行时可配置后端（PostgreSQL / TimescaleDB），历史数据持久化
@@ -22,24 +22,23 @@
 ## 架构
 
 ```
-                        ┌─────────────────────────────────────────────┐
-                        │              voltage-redis(:6379)           │
-                        │            实时数据存储 + 消息路由            │
-                        └──────┬──────────────────────┬───────────────┘
-                               │                      │
-  设备 ────────► comsrv(:6001) ┤                      ├─► modsrv(:6002)
-   Modbus          通信服务    │    SHM + UDS         │   规则 / 计算
-   IEC104          数据采集    ◄──────────────────────┘   设备实例
-   OPC UA                     │
-   MQTT/HTTP                  │
-   DL645/CAN         apigateway(:6005) ──── apps(:8080)
-   J1939/GPIO           API 网关            Vue.js 前端
-                              │
-                      hissrv(:6004) ◄── PostgreSQL/TimescaleDB
-                      历史数据服务          可插拔存储后端
-                              │
-                    alarmsrv(:6007)    netsrv(:6006)
-                    告警管理            MQTT 网络通信
+  设备 ─────► comsrv(:6001) ──── SHM（热路径，~10ns/点）
+  14 种协议    通信 & 采集        │
+                                ├── ShmRedisSync（100ms 异步）
+                                │         │
+                                │   voltage-redis(:6379)
+                     SHM + UDS  │   数据镜像 + 路由
+                ◄───────────────┤         │
+                                │   ┌─────┴─────────────────┐
+                          modsrv(:6002)                      │
+                          规则 / 计算            apigateway(:6005) ── apps(:8080)
+                          设备实例                  API 网关         Vue.js 前端
+                                                       │
+                                               hissrv(:6004) ◄── PostgreSQL/TimescaleDB
+                                               历史数据服务
+                                                       │
+                                             alarmsrv(:6007)    netsrv(:6006)
+                                             告警管理            MQTT 网络通信
 ```
 
 ### 服务端口
@@ -53,7 +52,7 @@
 | netsrv | 6006 | Rust | 网络服务 — MQTT 代理集成 |
 | alarmsrv | 6007 | Rust | 告警服务 — 告警规则与通知 |
 | apps | 8080 | Vue.js | 前端 — ECharts 仪表盘、Vue Flow 规则编辑器 |
-| voltage-redis | 6379 | — | 实时数据存储与消息路由 |
+| voltage-redis | 6379 | — | 数据镜像（从 SHM 异步同步）与路由表 |
 | TimescaleDB | 5432 | — | 时序数据库，历史数据存储（可选，运行时配置） |
 
 ## 快速开始
@@ -101,7 +100,7 @@ VoltageEMS/
 │   ├── apigateway/          # API 网关 (Rust)
 │   ├── netsrv/              # MQTT 网络通信 (Rust)
 │   └── alarmsrv/            # 告警管理 (Rust)
-├── libs/                    # 13 个共享 Rust 库
+├── libs/                    # 14 个共享 Rust 库
 ├── tools/
 │   ├── monarch/             # CLI 配置与服务管理工具
 │   └── simulator/           # Modbus TCP/RTU 从站模拟器
@@ -118,7 +117,8 @@ VoltageEMS/
 | 库名 | 说明 |
 |------|------|
 | voltage-core | 核心类型与编解码器 — 支持 `no_std`，可用于嵌入式固件 |
-| voltage-model | 模型层 — 计算、产品定义、实例管理 |
+| voltage-model | 模型层 — PointType、KeySpaceConfig、编译期产品常量 |
+| voltage-config | 跨平台配置 schema — comsrv/modsrv/monarch 共用，可在 Windows 构建 |
 | voltage-infra | 基础设施层 — Redis 和 SQLite 集成 |
 | common | 服务引导、配置管理和共享工具 |
 | errors | 统一错误类型 |
@@ -146,9 +146,8 @@ VoltageEMS/
 ### 上行（设备 → 云端）
 
 ```
-设备 → comsrv → Redis (route:c2m) → modsrv
-                 通道数据              规则执行
-                 "comsrv:{ch_id}:T"   实例计算
+设备 → comsrv → SHM（set_direct，~10ns/点）
+              → ShmRedisSync（100ms 异步）→ Redis pipeline → 下游服务
 ```
 
 ### 下行（云端 → 设备）
@@ -157,7 +156,7 @@ VoltageEMS/
 主路径：modsrv → SHM + UDS 通知 → comsrv ShmCommandListener → 设备
 ```
 
-主路径通过共享内存（`/dev/shm/voltage-rtdb.shm`）配合 Unix Domain Socket 通知实现最低延迟。UDS 断线后自动重连，使用指数退避策略（1-30 秒）。
+主路径通过共享内存（路径经 `VOLTAGE_SHM_PATH` 环境变量解析，Docker 下默认 `/shm/rtdb/voltage-rtdb.shm`）配合 Unix Domain Socket 通知实现最低延迟。若 comsrv 重启，UDS 会以指数退避（1–5 秒）自动重连。
 
 ## Monarch CLI
 
@@ -168,9 +167,6 @@ Monarch 是 VoltageEMS 的统一管理工具 — 配置管理、实时监控、�
 ```bash
 # 一键安装 (Linux / macOS / WSL)
 curl -fsSL https://raw.githubusercontent.com/EvanL1/VoltageEMS/develop/tools/monarch/install.sh | bash
-
-# 通过 Bun/npm 跨平台安装（含 Windows）
-bun install -g @voltage/monarch
 
 # 源码编译
 cargo install --path tools/monarch
@@ -255,7 +251,8 @@ monarch shm top                # 本地共享内存 TUI
 | `VOLTAGE_COMSRV_URL` | Comsrv 地址 | `http://localhost:6001` |
 | `VOLTAGE_MODSRV_URL` | Modsrv 地址 | `http://localhost:6002` |
 | `VOLTAGE_CONFIG_PATH` | 配置目录 | 自动检测 |
-| `VOLTAGE_DATA_PATH` | 数据目录 | 自动检测 |
+| `VOLTAGE_DATA_PATH` | SQLite 数据目录 | 自动检测 |
+| `VOLTAGE_SHM_PATH` | SHM 文件路径 | `/shm/rtdb/voltage-rtdb.shm` |
 | `MONARCH_JSON` | 强制 JSON 输出 | — |
 
 ## 开发
@@ -273,7 +270,7 @@ cargo test --workspace
 
 ## 许可证
 
-MIT License - 详见 [LICENSE](LICENSE)
+MIT OR Apache-2.0 — 详见 [LICENSE](LICENSE)
 
 ## 链接
 
