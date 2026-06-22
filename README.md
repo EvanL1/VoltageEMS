@@ -158,6 +158,18 @@ Primary: modsrv → SHM + UDS notify → comsrv ShmCommandListener → Device
 
 The primary path uses shared memory (path resolved via `VOLTAGE_SHM_PATH` env, defaults to `/shm/rtdb/voltage-rtdb.shm` in Docker) with Unix Domain Socket notifications for minimal latency. UDS reconnects automatically with exponential backoff (1–5s) if comsrv restarts.
 
+### Control Latency
+
+Measured end-to-end on production hardware (Cortex-A55 @ 1.4 GHz, ECU-1170 / EdgeLinux 22.04). Full benchmark: [`libs/voltage-rtdb-shm/benches/BASELINE.md`](libs/voltage-rtdb-shm/benches/BASELINE.md).
+
+| Path | P50 | P99 |
+|------|-----|-----|
+| Data change → modsrv event received (PointWatch delivery) | 206 µs | 526 µs |
+| + rule evaluation + control SHM write + UDS notify to comsrv | ~215 µs | ~540 µs |
+| + device protocol write (Modbus / IEC 104 field bus) | +5–10 ms | +5–10 ms |
+
+The software-internal control path is sub-millisecond; the field-bus protocol write dominates the physical loop. Within a 20 ms grid-tie switching SLA, software event delivery consumes ~1% of the budget at P50, leaving 17+ ms for device-side I/O. PointWatch replaced the previous 100 ms Redis-tick polling model (50–150 ms end-to-end) — a ~500× improvement on the critical path.
+
 ## Monarch CLI
 
 Monarch is the unified management tool for VoltageEMS — configuration, monitoring, and remote operations across all services.

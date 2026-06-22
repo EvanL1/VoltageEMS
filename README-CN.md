@@ -158,6 +158,18 @@ VoltageEMS/
 
 主路径通过共享内存（路径经 `VOLTAGE_SHM_PATH` 环境变量解析，Docker 下默认 `/shm/rtdb/voltage-rtdb.shm`）配合 Unix Domain Socket 通知实现最低延迟。若 comsrv 重启，UDS 会以指数退避（1–5 秒）自动重连。
 
+### 控制延迟
+
+生产硬件实测（Cortex-A55 @ 1.4 GHz，ECU-1170 / EdgeLinux 22.04）。完整基准见 [`libs/voltage-rtdb-shm/benches/BASELINE.md`](libs/voltage-rtdb-shm/benches/BASELINE.md)。
+
+| 链路 | P50 | P99 |
+|------|-----|-----|
+| 数据变动 → modsrv 收到事件（PointWatch 投递） | 206 µs | 526 µs |
+| + 规则判定 + 控制量写入 SHM + UDS 通知 comsrv | ~215 µs | ~540 µs |
+| + 设备协议写入（Modbus / IEC 104 现场总线） | +5–10 ms | +5–10 ms |
+
+软件内部控制链路稳定在亚毫秒级；现场总线协议写入主导物理闭环耗时。在 20 ms 并离网切换 SLA 下，软件事件投递 P50 仅消耗约 1% 预算，剩余 17 ms+ 留给设备侧 I/O。PointWatch 取代了此前 100 ms Redis tick 轮询模型（端到端 50–150 ms）——关键路径提升约 500×。
+
 ## Monarch CLI
 
 Monarch 是 VoltageEMS 的统一管理工具 — 配置管理、实时监控、远程运维。
